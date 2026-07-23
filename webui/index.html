@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="navin web UI — chat with your navin workspace."
+      data-i18n-meta="description"
+    />
+    <link rel="icon" type="image/svg+xml" href="/logo/navin-mark.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/logo/navin.png" />
+    <link rel="apple-touch-icon" href="/logo/navin.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <meta name="theme-color" content="#f5f8fc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111827" media="(prefers-color-scheme: dark)" />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #f7fafc;
+        color: #142033;
+        font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+      }
+
+      html.dark body {
+        background: #0f1724;
+        color: #f3f6fb;
+      }
+
+      .boot-splash {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at 20% 10%, rgba(3, 105, 255, 0.12), transparent 42%),
+          radial-gradient(circle at 80% 90%, rgba(84, 212, 205, 0.14), transparent 40%);
+      }
+
+      .boot-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        color: rgba(20, 32, 51, 0.72);
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+      }
+
+      html.dark .boot-splash-inner {
+        color: rgba(243, 246, 251, 0.72);
+      }
+
+      .boot-logo {
+        width: 44px;
+        height: 44px;
+        object-fit: contain;
+        border-radius: 12px;
+        box-shadow: 0 10px 28px -16px rgba(3, 105, 255, 0.55);
+      }
+
+      .boot-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: #0369ff;
+        opacity: 0.85;
+        animation: boot-pulse 1s ease-in-out infinite;
+      }
+
+      html.dark .boot-dot {
+        background: #54d4cd;
+      }
+
+      @keyframes boot-pulse {
+        0%,
+        100% {
+          transform: scale(0.9);
+          opacity: 0.45;
+        }
+        50% {
+          transform: scale(1);
+          opacity: 0.95;
+        }
+      }
+    </style>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("navin-webui.theme");
+          var dark =
+            stored === "dark" ||
+            (!stored &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch {}
+      })();
+    </script>
+    <title>Navin</title>
+  </head>
+  <body class="bg-background text-foreground antialiased">
+    <div id="root">
+      <div class="boot-splash">
+        <div class="boot-splash-inner">
+          <img class="boot-logo" src="/logo/navin-mark.svg" alt="" />
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="boot-dot" aria-hidden="true"></span>
+            <span data-boot-copy>Loading Navin…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var localeKey = "navin.locale";
+        var copy = {
+          en: {
+            boot: "Loading Navin…",
+            description: "Navin web UI — chat with your Navin workspace."
+          },
+          fr: {
+            boot: "Chargement de Navin…",
+            description: "Interface web Navin — discutez avec votre espace de travail Navin."
+          }
+        };
+
+        function normalizeLocale(input) {
+          if (!input) return "en";
+          var raw = String(input).trim();
+          if (!raw) return "en";
+          if (copy[raw]) return raw;
+          var base = raw.toLowerCase().split("-")[0];
+          return copy[base] ? base : "en";
+        }
+
+        try {
+          var stored = localStorage.getItem(localeKey);
+          var detected =
+            stored ||
+            (navigator.languages && navigator.languages[0]) ||
+            navigator.language ||
+            "en";
+          var locale = normalizeLocale(detected);
+          var localized = copy[locale] || copy.en;
+          document.documentElement.lang = locale;
+          var description = document.querySelector('[data-i18n-meta=\"description\"]');
+          if (description) description.setAttribute("content", localized.description);
+          var boot = document.querySelector("[data-boot-copy]");
+          if (boot) boot.textContent = localized.boot;
+        } catch {}
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

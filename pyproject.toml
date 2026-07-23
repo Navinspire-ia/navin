@@ -1,0 +1,211 @@
+[project]
+name = "navin-ai"
+version = "0.2.2"
+description = "A lightweight personal AI assistant framework"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Xubin Ren"},
+    {name = "the navin contributors"}
+]
+keywords = ["ai", "agent", "chatbot"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+license-files = [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+]
+
+dependencies = [
+    "typer>=0.20.0,<1.0.0",
+    "anthropic>=0.45.0,<1.0.0",
+    "pydantic>=2.12.0,<3.0.0",
+    "pydantic-settings>=2.12.0,<3.0.0",
+    "websockets>=16.0,<17.0",
+    "websocket-client>=1.9.0,<2.0.0",
+    "httpx>=0.28.0,<1.0.0",
+    "ddgs>=9.5.5,<10.0.0",
+    "oauth-cli-kit>=0.1.6,<1.0.0",
+    "loguru>=0.7.3,<1.0.0",
+    "readability-lxml>=0.8.4,<1.0.0",
+    "lxml-html-clean>=0.4.0,<1.0.0",
+    "rich>=14.0.0,<15.0.0",
+    "croniter>=6.0.0,<7.0.0",
+    "prompt-toolkit>=3.0.50,<4.0.0",
+    "mcp>=1.26.0,<2.0.0",
+    "json-repair>=0.57.0,<1.0.0",
+    "chardet>=3.0.2,<6.0.0",
+    "openai>=2.8.0",
+    "tiktoken>=0.12.0,<1.0.0",
+    "jinja2>=3.1.0,<4.0.0",
+    "dulwich>=0.22.0,<1.0.0",
+    "pyyaml>=6.0,<7.0.0",
+    "filelock>=3.25.2",
+    "packaging>=24.0",
+    "tzdata>=2025.2; sys_platform == 'win32'",
+    "defusedxml>=0.7.1,<1.0.0",
+    "pypdf>=5.0.0,<6.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "openpyxl>=3.1.0,<4.0.0",
+    "python-pptx>=1.0.0,<2.0.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "aiohttp>=3.9.0,<4.0.0",
+]
+azure = [
+    "azure-identity>=1.19.0,<2.0.0",
+]
+bedrock = [
+    "boto3>=1.43.0",
+]
+documents = [
+    # Compatibility extra: document readers are bundled since v0.2.3.
+    "defusedxml>=0.7.1,<1.0.0",
+    "pypdf>=5.0.0,<6.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "openpyxl>=3.1.0,<4.0.0",
+    "python-pptx>=1.0.0,<2.0.0",
+]
+studio = [
+    # Studio modules (Documents, Marketing, SEO, Leads, Team): generation
+    # and analysis packages the document/marketing skills rely on.
+    "reportlab>=4.0.0,<5.0.0",
+    "weasyprint>=62.0",
+    "pandas>=2.0.0,<3.0.0",
+    "matplotlib>=3.8.0,<4.0.0",
+    "pillow>=10.0.0",
+    "xlsxwriter>=3.1.0,<4.0.0",
+    "pdfplumber>=0.11.0,<1.0.0",
+    "markdown>=3.5,<4.0",
+    "yt-dlp>=2024.10.0",
+]
+slack = [
+    "aiohttp>=3.9.0,<4.0.0",
+    "slack-sdk>=3.39.0,<4.0.0",
+    "slackify-markdown>=0.2.0,<1.0.0",
+]
+telegram = [
+    "python-telegram-bot[socks,webhooks]>=22.6,<23.0",
+    "socksio>=1.0.0,<2.0.0",
+    "python-socks[asyncio]>=2.8.0,<3.0.0; sys_platform != 'win32'",
+]
+msteams = [
+    "PyJWT>=2.0,<3.0",
+    "cryptography>=41.0",
+]
+
+matrix = [
+    "matrix-nio[e2e]>=0.25.2; sys_platform != 'win32'",
+    "matrix-nio>=0.25.2; sys_platform == 'win32'",
+    "aiohttp>=3.9.0,<4.0.0",
+    "mistune>=3.0.0,<4.0.0",
+    "nh3>=0.2.17,<1.0.0",
+]
+discord = [
+    "discord.py>=2.5.2,<3.0.0",
+]
+whatsapp = [
+    "neonize>=0.3.18.post0,<0.4.0",
+    "segno>=1.6.1,<2.0.0",
+]
+langfuse = [
+    "langfuse>=3.0.0,<4.0.0",
+]
+pdf = [
+    # Compatibility extra: PDF reading is bundled since v0.2.3.
+    "pypdf>=5.0.0,<6.0.0",
+]
+olostep = [
+    "olostep>=0.1.0",
+]
+dev = [
+    "aiohttp>=3.9.0,<4.0.0",
+    "ruff>=0.1.0",
+    "pymupdf>=1.25.0",
+    "pypdf>=5.0.0,<6.0.0",
+    "python-docx>=1.1.0,<2.0.0",
+    "openpyxl>=3.1.0,<4.0.0",
+    "python-pptx>=1.0.0,<2.0.0",
+    # Studio module packages so `make install` covers every module.
+    "reportlab>=4.0.0,<5.0.0",
+    "weasyprint>=62.0",
+    "pandas>=2.0.0,<3.0.0",
+    "matplotlib>=3.8.0,<4.0.0",
+    "pillow>=10.0.0",
+    "xlsxwriter>=3.1.0,<4.0.0",
+    "pdfplumber>=0.11.0,<1.0.0",
+    "markdown>=3.5,<4.0",
+    "yt-dlp>=2024.10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/EIAGEN/navin-claw"
+Repository = "https://github.com/EIAGEN/navin-claw"
+Issues = "https://github.com/EIAGEN/navin-claw/issues"
+
+[project.scripts]
+navin = "navin.cli.commands:app"
+
+# Third-party tool plugins register here.  Built-in tools are discovered
+# automatically via pkgutil scanning in ToolLoader.discover().
+# [project.entry-points."navin.tools"]
+# my_plugin = "my_package.plugins:MyTool"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.hooks.custom]
+# Implementation lives in the conventional `hatch_build.py` at the repo root.
+
+[tool.hatch.build]
+include = [
+    "navin/**/*.py",
+    "navin/templates/**/*.md",
+    "navin/skills/**/*.md",
+    "navin/skills/**/*.sh",
+    "navin/web/dist/**/*",
+]
+# navin/web/dist/ is produced by `cd webui && bun run build` and is
+# git-ignored. List it as an artifact so hatch ships it in both wheel and
+# sdist even though VCS does not track it.
+artifacts = [
+    "navin/web/dist/**/*",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["navin"]
+
+[tool.hatch.build.targets.wheel.sources]
+"navin" = "navin"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "navin/",
+    "navin/web/dist/",
+    "hatch_build.py",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
