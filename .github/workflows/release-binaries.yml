@@ -1,0 +1,109 @@
+name: Release binaries
+
+# Builds standalone executables for Windows (navin.exe), Linux, and macOS,
+# plus the tiny navin.exe launcher, and attaches them to the GitHub release.
+#
+# Trigger: push a tag like v0.2.3, or run manually from the Actions tab.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  standalone:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: navin-windows-x64
+            binary: navin.exe
+          - os: ubuntu-latest
+            artifact: navin-linux-x64
+            binary: navin
+          - os: macos-latest
+            artifact: navin-macos-arm64
+            binary: navin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build WebUI
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install navin + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]" pyinstaller
+
+      - name: Build standalone binary
+        working-directory: packaging/pyinstaller
+        run: pyinstaller navin.spec --noconfirm --distpath ../../dist
+
+      - name: Smoke test
+        run: dist/navin-standalone/${{ matrix.binary }} --version
+
+      - name: Archive
+        shell: bash
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "${{ matrix.artifact }}.zip" navin-standalone
+          else
+            tar czf "${{ matrix.artifact }}.tar.gz" navin-standalone
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+
+  launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build navin.exe launcher
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File packaging\windows\build-launcher.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navin-launcher
+          path: dist/navin.exe
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [standalone, launcher]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/navin-windows-x64.zip
+            artifacts/navin-linux-x64.tar.gz
+            artifacts/navin-macos-arm64.tar.gz
+            artifacts/navin.exe

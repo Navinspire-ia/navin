@@ -1,0 +1,1898 @@
+{
+  "app": {
+    "brand": "navin",
+    "loading": {
+      "connecting": "Connexion à navin…",
+      "boot": "Chargement de Navin…"
+    },
+    "error": {
+      "title": "Impossible de joindre navin",
+      "gatewayHint": "Assurez-vous que la gateway est en cours d’exécution (`navin gateway`) et que cette page est ouverte sur la même machine."
+    },
+    "auth": {
+      "title": "Authentification requise",
+      "hint": "Saisissez le secret configuré comme tokenIssueSecret dans la configuration de votre gateway.",
+      "placeholder": "Mot de passe",
+      "submit": "Se connecter",
+      "invalid": "Mot de passe invalide. Réessayez."
+    },
+    "account": {
+      "section": "Compte",
+      "logoutHint": "Déconnecter ce navigateur du gateway.",
+      "logout": "Se déconnecter"
+    },
+    "system": {
+      "section": "Système",
+      "restartHint": "Redémarrez navin pour appliquer les changements d’exécution.",
+      "restart": "Redémarrer navin",
+      "restarting": "Redémarrage...",
+      "restartEngine": "Redémarrer le moteur",
+      "restartingEngine": "Redémarrage du moteur..."
+    },
+    "restart": {
+      "completed": "Redémarrage terminé en {{seconds}} s."
+    },
+    "documentTitle": {
+      "base": "navin",
+      "chat": "{{title}} · navin"
+    },
+    "meta": {
+      "description": "Interface web Navin — discutez avec votre espace de travail Navin."
+    }
+  },
+  "sidebar": {
+    "navigation": "Navigation de la barre latérale",
+    "collapse": "Réduire la barre latérale",
+    "newChat": "Nouvelle discussion",
+    "searchAria": "Rechercher",
+    "searchPlaceholder": "Rechercher",
+    "searchResults": "Résultats",
+    "noSearchResults": "Aucun chat correspondant.",
+    "recent": "Récentes",
+    "settings": "Paramètres",
+    "language": {
+      "label": "Langue",
+      "ariaLabel": "Changer de langue"
+    },
+    "apps": "Apps",
+    "automations": "Automatisations",
+    "dev": "Dev",
+    "contentStudio": "Documents",
+    "marketingStudio": "Marketing",
+    "seoStudio": "SEO",
+    "leadsStudio": "Leads",
+    "teamStudio": "Équipe",
+    "skills": {
+      "title": "Compétences"
+    }
+  },
+  "dev": {
+    "workspace": "Espace de travail",
+    "refreshTree": "Actualiser les fichiers",
+    "loadingTree": "Chargement des fichiers…",
+    "closeTab": "Fermer l’onglet",
+    "browserTab": "Aperçu",
+    "browserGo": "Ouvrir",
+    "browserEmpty": "Lancez un serveur de dev avec l’agent (ex. « lance npm run dev »), puis ouvrez son URL ici.",
+    "refreshFile": "Recharger",
+    "fileTruncated": "Fichier tronqué pour l’aperçu — édition désactivée.",
+    "editorEmpty": "Ouvrez un fichier depuis l’explorateur, ou demandez à l’agent de construire quelque chose — planifier, coder, exécuter et déboguer ensemble.",
+    "save": "Enregistrer",
+    "unsaved": "Modifications non enregistrées",
+    "emptyDir": "vide",
+    "binaryFile": "Fichier binaire — impossible de l’afficher en texte.",
+    "terminal": "Terminal",
+    "toggleTerminal": "Afficher/masquer le terminal",
+    "newTerminal": "Nouveau terminal",
+    "hideTerminal": "Masquer le terminal",
+    "maximizeTerminal": "Agrandir le terminal",
+    "restoreTerminal": "Restaurer la taille du terminal",
+    "hideExplorer": "Masquer l’explorateur",
+    "showExplorer": "Afficher l’explorateur",
+    "hideChat": "Masquer le chat",
+    "showChat": "Afficher le chat",
+    "newAgent": "Nouvel agent",
+    "closeAgentTab": "Fermer l’onglet agent",
+    "agentRunning": "Agent en cours",
+    "nameAgentTitle": "Nommer cette session",
+    "nameAgentDescription": "Donnez à la session d’agent un nom qui décrit sa tâche (ex. « Refonte API », « Page d’accueil »).",
+    "nameAgentPlaceholder": "Nom de la session",
+    "renameAgentHint": "Double-cliquez pour renommer",
+    "selectShell": "Choisir le shell",
+    "defaultShell": "défaut",
+    "terminalExited": "processus terminé",
+    "graphTab": "Graphe",
+    "panel": {
+      "files": "Fichiers",
+      "search": "Recherche",
+      "git": "Git"
+    },
+    "search": {
+      "placeholder": "Rechercher dans le projet…",
+      "run": "Rechercher",
+      "caseSensitive": "Respecter la casse",
+      "regex": "Expression régulière",
+      "results": "{{count}} résultats",
+      "noResults": "Aucun résultat."
+    },
+    "git": {
+      "changes": "Modifications",
+      "refresh": "Actualiser les modifications",
+      "notRepo": "Ce projet n'est pas un dépôt git.",
+      "clean": "Arbre de travail propre.",
+      "untracked": "non suivi",
+      "openFile": "Ouvrir le fichier",
+      "noDiff": "Aucune modification pour ce fichier."
+    },
+    "graph": {
+      "loading": "Construction du métagraphe…",
+      "retry": "Réessayer",
+      "search": "Filtrer les fichiers…",
+      "connectedOnly": "Connectés uniquement",
+      "annotated": "annotés",
+      "refreshMetadata": "Actualiser .metadata",
+      "generateMetadata": "Générer .metadata",
+      "reload": "Recharger le graphe",
+      "noMetadata": "Pas encore de .metadata/index.json — le graphe n'affiche que les imports détectés. Générez-le pour que l'agent annote le rôle de chaque fichier.",
+      "empty": "Aucun fichier ne correspond aux filtres.",
+      "truncated": "Grand projet : seuls les premiers fichiers sont affichés."
+    },
+    "status": {
+      "environment": "Environnement",
+      "gitTooltip": "Branche {{branch}} — {{staged}} indexés, {{unstaged}} modifiés, {{untracked}} non suivis",
+      "changes": "modifs",
+      "noRepo": "pas de git",
+      "errors": "Erreurs",
+      "warnings": "Avertissements",
+      "notAnalyzed": "pas de linter"
+    },
+    "actions": {
+      "title": "Actions projet",
+      "button": "Actions",
+      "applyTo": "Appliquer à",
+      "wholeProject": "Projet entier",
+      "activeFile": "Fichier : {{name}}",
+      "noFile": "Aucun fichier ouvert",
+      "autoFix": "Correction auto",
+      "autoFixDescription": "Appliquer aussi les corrections des problèmes confirmés",
+      "groups": {
+        "quality": "Qualité",
+        "security": "Sécurité",
+        "performance": "Performance",
+        "design": "Design & UX",
+        "maintenance": "Maintenance"
+      },
+      "items": {
+        "review": {
+          "label": "Review de code",
+          "description": "Bugs, régressions, tests manquants, nettoyage"
+        },
+        "security": {
+          "label": "Audit sécurité",
+          "description": "Front, back, SQL, env, secrets, durcissement"
+        },
+        "vulnerabilities": {
+          "label": "Scan de failles",
+          "description": "Injections, secrets exposés, CVE, dépendances"
+        },
+        "performance": {
+          "label": "Performance",
+          "description": "Chemins critiques, requêtes, bundle, mémoire"
+        },
+        "monitoring": {
+          "label": "Supervision & métriques",
+          "description": "Santé du projet, KPIs, couverture, instrumentation"
+        },
+        "tests": {
+          "label": "Tests",
+          "description": "Lancer la suite, expliquer les échecs"
+        },
+        "quality": {
+          "label": "Barrière qualité",
+          "description": "Lint + types + tests + sécurité en une passe"
+        },
+        "uxui": {
+          "label": "Review UX/UI",
+          "description": "Parcours, états, espacements, responsive, retours"
+        },
+        "design": {
+          "label": "Cohérence design",
+          "description": "Couleurs, typographie, composants, mode sombre"
+        },
+        "accessibility": {
+          "label": "Accessibilité",
+          "description": "WCAG : contraste, clavier, aria, focus"
+        },
+        "refactor": {
+          "label": "Refactoring",
+          "description": "Code mort, duplication, modules trop gros"
+        },
+        "docs": {
+          "label": "Documentation",
+          "description": "README, docstrings, docs API, sections obsolètes"
+        }
+      }
+    },
+    "project": {
+      "selectorAria": "Sélectionner un projet",
+      "none": "Ouvrir un projet",
+      "current": "Projet actuel",
+      "recent": "Projets récents",
+      "quickAccess": "Accès rapide",
+      "pathPlaceholder": "/chemin/absolu/du/projet",
+      "open": "Ouvrir",
+      "browse": "Parcourir les dossiers…",
+      "browseTitle": "Choisir le dossier du projet",
+      "useFolder": "Ouvrir ce dossier",
+      "loading": "Chargement…",
+      "emptyDir": "Aucun sous-dossier."
+    }
+  },
+  "studio": {
+    "content": {
+      "title": "Studio documents",
+      "subtitle": "Générez des PowerPoint, Word, PDF et Excel soignés à partir de modèles."
+    },
+    "marketing": {
+      "title": "Studio marketing",
+      "subtitle": "Campagnes, vidéos pub, images produit, contenu social — produits de bout en bout."
+    },
+    "seo": {
+      "title": "Studio SEO",
+      "subtitle": "Audits, recherche de mots-clés, contenu optimisé et stratégie de liens."
+    },
+    "leads": {
+      "title": "Studio leads & ventes",
+      "subtitle": "Trouvez entreprises, contacts et offres d'emploi ; qualifiez, enrichissez et transformez-les en pipeline."
+    },
+    "team": {
+      "title": "Studio équipe",
+      "subtitle": "Concevez l'organisation, recrutez, pilotez — et lancez des équipes d'agents IA en mission."
+    },
+    "briefPlaceholder": "Brief optionnel : produit, cible, objectif, ton… (joint à chaque action)",
+    "allGroups": "Tout",
+    "org": {
+      "title": "Organisation",
+      "loading": "Chargement de l'organisation…",
+      "loadError": "Impossible de charger l'organisation.",
+      "addMember": "Ajouter un membre",
+      "editMember": "Modifier le membre",
+      "call": "Appeler",
+      "edit": "Modifier",
+      "remove": "Supprimer",
+      "cancel": "Annuler",
+      "save": "Enregistrer",
+      "fieldName": "Nom (ex. Nova)",
+      "fieldRole": "Rôle (ex. Responsable marketing)",
+      "fieldSpecialty": "Spécialité / fonctions",
+      "fieldAvatar": "Avatar (emoji)",
+      "fieldCommand": "Commande de workflow",
+      "fieldSkills": "Skills, séparés par des virgules (ex. campaign-manager, copywriting-agent)",
+      "fieldManager": "Rattaché à",
+      "noManager": "— niveau racine (sans manager)"
+    },
+    "themePicker": {
+      "label": "Thème :",
+      "auto": "Auto",
+      "names": {
+        "executive": "Executive",
+        "minimal": "Minimal",
+        "tech": "Tech",
+        "bold": "Bold",
+        "warm": "Chaleureux",
+        "nature": "Nature",
+        "elegant": "Élégant",
+        "corporate": "Corporate"
+      }
+    },
+    "footerHint": "Chaque action lance l'agent dans le panneau de chat — les fichiers sont enregistrés dans votre espace de travail.",
+    "themes": {
+      "project": "Projet",
+      "invest": "Investissement",
+      "marketing": "Marketing",
+      "sales": "Ventes",
+      "hr": "RH & Formation"
+    },
+    "groups": {
+      "creative": "Créatif",
+      "content": "Contenu",
+      "strategy": "Stratégie",
+      "audit": "Audit",
+      "research": "Recherche",
+      "optimize": "Optimisation",
+      "prospect": "Prospecter",
+      "qualify": "Qualifier",
+      "outreach": "Contacter",
+      "pipeline": "Pipeline",
+      "design": "Concevoir",
+      "staff": "Recruter",
+      "run": "Piloter",
+      "grow": "Progresser"
+    },
+    "cards": {
+      "projectPitch": {
+        "label": "Pitch deck projet",
+        "desc": "10-12 slides : vision, problème, solution, plan, équipe, prochaines étapes."
+      },
+      "projectCharter": {
+        "label": "Charte de projet",
+        "desc": "Périmètre, objectifs, parties prenantes, gouvernance, risques."
+      },
+      "projectRoadmap": {
+        "label": "Roadmap & planning",
+        "desc": "Planning par phases avec jalons, responsables et statuts."
+      },
+      "projectStatus": {
+        "label": "Rapport d'avancement",
+        "desc": "Progression, KPIs, blocages, décisions à prendre."
+      },
+      "projectBudget": {
+        "label": "Budget projet",
+        "desc": "Ventilation des coûts, prévu vs réel, burn rate."
+      },
+      "investDeck": {
+        "label": "Pitch deck investisseurs",
+        "desc": "12-15 slides : traction, marché, modèle, levée."
+      },
+      "businessPlan": {
+        "label": "Business plan",
+        "desc": "Plan complet structuré : marché, stratégie, finances."
+      },
+      "financialModel": {
+        "label": "Modèle financier 3 ans",
+        "desc": "Revenus, coûts, trésorerie, unit economics."
+      },
+      "onePager": {
+        "label": "One-pager investisseur",
+        "desc": "Teaser d'une page : chiffres clés et demande."
+      },
+      "dueDiligence": {
+        "label": "Pack due diligence",
+        "desc": "Checklist data-room et mémo société."
+      },
+      "marketingPlan": {
+        "label": "Plan marketing",
+        "desc": "Plan annuel : objectifs, canaux, budget, KPIs."
+      },
+      "campaignBrief": {
+        "label": "Brief de campagne",
+        "desc": "Objectifs, audience, message, livrables."
+      },
+      "editorialCalendar": {
+        "label": "Calendrier éditorial",
+        "desc": "Planning de contenu 30 jours multicanal."
+      },
+      "marketResearch": {
+        "label": "Étude de marché",
+        "desc": "Taille de marché, tendances, concurrents, insights."
+      },
+      "brandDeck": {
+        "label": "Deck de marque",
+        "desc": "Identité, voix, messages et guidelines."
+      },
+      "salesProposal": {
+        "label": "Proposition commerciale",
+        "desc": "Proposition client : besoins, solution, tarifs."
+      },
+      "salesDeck": {
+        "label": "Deck de vente produit",
+        "desc": "Deck orienté valeur pour les rendez-vous prospects."
+      },
+      "pipelineForecast": {
+        "label": "Pipeline & prévisions",
+        "desc": "Suivi des deals par étape et forecast pondéré."
+      },
+      "battlecard": {
+        "label": "Battlecard concurrentielle",
+        "desc": "Gagner face à un concurrent : forces, pièges, contre-arguments."
+      },
+      "pricingSheet": {
+        "label": "Devis & grille tarifaire",
+        "desc": "Modèle de devis configurable avec paliers."
+      },
+      "onboardingBook": {
+        "label": "Livret d'onboarding",
+        "desc": "Guide d'accueil : culture, outils, 30 premiers jours."
+      },
+      "trainingDeck": {
+        "label": "Support de formation",
+        "desc": "Slides pédagogiques avec exercices et récapitulatifs."
+      },
+      "reviewGrid": {
+        "label": "Grille d'évaluation",
+        "desc": "Matrice de compétences et notation d'entretien annuel."
+      },
+      "jobDescription": {
+        "label": "Fiche de poste",
+        "desc": "Rôle, missions, prérequis, processus de recrutement."
+      },
+      "hrReport": {
+        "label": "Rapport RH mensuel",
+        "desc": "Effectifs, recrutement, attrition, KPIs d'engagement."
+      },
+      "productImages": {
+        "label": "Images produit",
+        "desc": "Visuels produit et packshots soignés générés par IA."
+      },
+      "adVideo": {
+        "label": "Vidéo publicitaire",
+        "desc": "Script + scènes + vidéo publicitaire générée."
+      },
+      "socialVisuals": {
+        "label": "Visuels réseaux sociaux",
+        "desc": "Jeux d'images de marque pour chaque format de plateforme."
+      },
+      "brandKit": {
+        "label": "Kit de marque",
+        "desc": "Pistes de logo, palette, typographie, voix."
+      },
+      "socialPosts": {
+        "label": "Posts réseaux sociaux",
+        "desc": "Posts natifs par plateforme avec accroches et hashtags."
+      },
+      "blogArticle": {
+        "label": "Article de blog",
+        "desc": "Article long format optimisé pour l'engagement."
+      },
+      "emailSequence": {
+        "label": "Séquence email",
+        "desc": "Séquence de 5 emails nurture ou lancement."
+      },
+      "landingCopy": {
+        "label": "Copy landing page",
+        "desc": "Page orientée conversion : hero, preuves, CTA."
+      },
+      "fullCampaign": {
+        "label": "Campagne 360°",
+        "desc": "Campagne complète : message, assets, plan."
+      },
+      "persona": {
+        "label": "Persona client",
+        "desc": "Persona documenté avec pains et canaux."
+      },
+      "contentCalendar": {
+        "label": "Plan de contenu 30 jours",
+        "desc": "Un mois complet de contenu aligné sur vos objectifs."
+      },
+      "competitorScan": {
+        "label": "Analyse concurrentielle",
+        "desc": "Carte de positionnement et écarts de messages."
+      },
+      "techAudit": {
+        "label": "Audit technique",
+        "desc": "Crawlabilité, vitesse, données structurées, meta."
+      },
+      "onPageAudit": {
+        "label": "Audit on-page (URL)",
+        "desc": "Audit approfondi d'une page vs sa requête cible."
+      },
+      "seoCompetitors": {
+        "label": "Analyse concurrents",
+        "desc": "Comparer stratégie de ranking, contenu et écarts."
+      },
+      "contentAudit": {
+        "label": "Audit de contenu",
+        "desc": "Inventaire, obsolescence, cannibalisation, plan de refresh."
+      },
+      "keywordResearch": {
+        "label": "Recherche de mots-clés",
+        "desc": "Mots-clés avec intention, difficulté et priorité."
+      },
+      "topicClusters": {
+        "label": "Plan de contenu & clusters",
+        "desc": "Pages piliers et articles de cluster associés."
+      },
+      "questionsResearch": {
+        "label": "Questions & intentions",
+        "desc": "Questions type « autres questions posées » à cibler."
+      },
+      "localSeo": {
+        "label": "SEO local",
+        "desc": "Pack local, fiche, citations, pages locales."
+      },
+      "seoArticle": {
+        "label": "Article SEO",
+        "desc": "Article complet optimisé prêt à publier."
+      },
+      "metaTags": {
+        "label": "Optimisation meta & balises",
+        "desc": "Titres, descriptions et balises OG réécrits."
+      },
+      "schemaMarkup": {
+        "label": "Balisage Schema.org",
+        "desc": "Données structurées prêtes à coller (JSON-LD)."
+      },
+      "linkStrategy": {
+        "label": "Plan liens & backlinks",
+        "desc": "Maillage interne et acquisition de backlinks."
+      },
+      "companySearch": {
+        "label": "Recherche d'entreprises",
+        "desc": "Liste d'entreprises sourcée correspondant à votre ICP."
+      },
+      "peopleSearch": {
+        "label": "Recherche de personnes",
+        "desc": "Décideurs avec rôle, profil et source."
+      },
+      "jobSearch": {
+        "label": "Recherche d'offres d'emploi",
+        "desc": "Signaux de recrutement : qui recrute pour quoi."
+      },
+      "contactEnrich": {
+        "label": "Trouver les contacts",
+        "desc": "Patterns d'emails et contexte de contact, sourcés."
+      },
+      "icpBuilder": {
+        "label": "Définir l'ICP",
+        "desc": "Profil client idéal avec critères d'exclusion."
+      },
+      "leadScoring": {
+        "label": "Scorer & enrichir",
+        "desc": "Scoring fit + signaux sur votre liste de leads."
+      },
+      "accountDeepDive": {
+        "label": "Fiche compte complète",
+        "desc": "Recherche approfondie sur un compte cible."
+      },
+      "signalScan": {
+        "label": "Scan signaux d'achat",
+        "desc": "Levées, recrutements, changements tech — qui contacter maintenant."
+      },
+      "coldEmails": {
+        "label": "Séquence cold email",
+        "desc": "Cadence d'emails multi-touches personnalisée."
+      },
+      "linkedinScripts": {
+        "label": "Scripts réseaux pros",
+        "desc": "Notes de connexion et séquences de DM qui obtiennent des réponses."
+      },
+      "callScript": {
+        "label": "Script d'appel & objections",
+        "desc": "Plan d'appel découverte avec traitement des objections."
+      },
+      "cadencePlan": {
+        "label": "Cadence de relance",
+        "desc": "Séquence multicanale complète sur 3 semaines."
+      },
+      "crmExport": {
+        "label": "Export prêt pour CRM",
+        "desc": "CSV propre formaté pour import HubSpot/Salesforce."
+      },
+      "meetingPrep": {
+        "label": "Préparation de rendez-vous",
+        "desc": "Brief, questions et angles pour un rendez-vous précis."
+      },
+      "pipelineReview": {
+        "label": "Revue de pipeline",
+        "desc": "Bilan de santé et forecast pondéré de vos deals."
+      },
+      "competitorCustomers": {
+        "label": "Clients des concurrents",
+        "desc": "Qui achète chez les concurrents — cibles de conquête."
+      },
+      "orgChart": {
+        "label": "Structure & organigramme",
+        "desc": "Structure dérivée de la stratégie, avec lignes hiérarchiques."
+      },
+      "roleSheets": {
+        "label": "Fiches de rôle",
+        "desc": "Une fiche par rôle : mission, résultats, KPIs."
+      },
+      "raciMatrix": {
+        "label": "RACI & droits de décision",
+        "desc": "Qui décide quoi — aucune décision orpheline ni double propriétaire."
+      },
+      "ritualsPlan": {
+        "label": "Rituels & gouvernance",
+        "desc": "Rythme opérationnel : syncs, revues, cadence OKR."
+      },
+      "hiringPlan": {
+        "label": "Plan de recrutement",
+        "desc": "Embauches séquencées avec déclencheurs métriques, pas des dates."
+      },
+      "jobPostings": {
+        "label": "Fiches de poste",
+        "desc": "Annonces précises et attractives par rôle."
+      },
+      "interviewKit": {
+        "label": "Kits d'entretien",
+        "desc": "Entretiens structurés avec grilles de notation."
+      },
+      "onboardingPlan": {
+        "label": "Plans d'onboarding",
+        "desc": "Plans 30-60-90 jours par rôle."
+      },
+      "virtualTeam": {
+        "label": "Équipe IA virtuelle",
+        "desc": "Lancez une équipe d'agents IA avec des rôles sur une mission."
+      },
+      "okrCascade": {
+        "label": "OKRs & objectifs",
+        "desc": "Cascade d'objectifs entreprise → équipe → rôle."
+      },
+      "projectStaffing": {
+        "label": "Staffing de projet",
+        "desc": "Affectez les bonnes personnes et le RACI à un projet."
+      },
+      "opsReview": {
+        "label": "Pack revue d'ops",
+        "desc": "Revue hebdo/mensuelle : KPIs, risques, décisions."
+      },
+      "skillsMatrix": {
+        "label": "Matrice de compétences",
+        "desc": "Écarts de compétences et plan de formation."
+      },
+      "feedbackCycle": {
+        "label": "Performance & feedback",
+        "desc": "Modèles d'évaluation et cadence de feedback."
+      },
+      "careerPaths": {
+        "label": "Parcours de carrière",
+        "desc": "Trajectoires de progression et critères de promotion."
+      },
+      "teamHealth": {
+        "label": "Santé de l'équipe",
+        "desc": "Diagnostic charge, engagement, frictions."
+      }
+    }
+  },
+  "settings": {
+    "backToChat": "Retour au chat",
+    "sidebar": {
+      "title": "Réglages",
+      "ariaLabel": "Sections des réglages"
+    },
+    "nav": {
+      "general": "Général",
+      "byok": "BYOK",
+      "overview": "Aperçu",
+      "appearance": "Apparence",
+      "models": "Modèles",
+      "providers": "Fournisseurs",
+      "image": "Images",
+      "video": "Vidéo",
+      "voice": "Voix",
+      "browser": "Internet",
+      "tools": "Outils",
+      "channels": "Outils",
+      "runtime": "Système",
+      "advanced": "Sécurité",
+      "cliApps": "Apps CLI",
+      "mcp": "MCP",
+      "apps": "Applications",
+      "automations": "Automatisations",
+      "skills": "Compétences"
+    },
+    "sections": {
+      "interface": "Interface utilisateur",
+      "ai": "AI",
+      "system": "Système",
+      "about": "À propos",
+      "status": "État",
+      "localPreferences": "Préférences locales",
+      "presets": "Préréglages",
+      "imageGeneration": "Génération d’images",
+      "imageDefaults": "Valeurs par défaut",
+      "videoGeneration": "Génération de vidéos",
+      "videoDefaults": "Valeurs par défaut",
+      "webSearch": "Recherche web",
+      "webBehavior": "Comportement",
+      "identity": "Identité",
+      "webuiSafety": "Sécurité WebUI",
+      "capabilities": "Capacités",
+      "cliApps": "Applications CLI",
+      "mcp": "Services MCP",
+      "apps": "Applications",
+      "nativeHost": "Hôte natif",
+      "hostSafety": "Sécurité de l’app",
+      "voiceInput": "Saisie vocale",
+      "agentPermissions": "Permissions de l’agent"
+    },
+    "execPolicy": {
+      "loading": "Chargement des permissions de l’agent…",
+      "execEnabled": "Exécution shell",
+      "execEnabledHelp": "Interrupteur principal : autoriser ou non l’agent à exécuter des commandes shell.",
+      "restrictWorkspace": "Restreindre au projet",
+      "restrictWorkspaceHelp": "Bloquer par défaut les commandes et chemins hors du dossier projet actif.",
+      "denyTitle": "Commandes interdites",
+      "denyHelp": "L’agent ne peut jamais exécuter une commande correspondant à l’une de ces règles. Le texte simple est traité comme un préfixe ; les regex sont acceptées.",
+      "allowTitle": "Exceptions autorisées",
+      "allowHelp": "Les commandes correspondant à ces règles contournent la liste d’interdiction (y compris les protections intégrées). Si au moins une règle existe, seules les commandes correspondantes sont autorisées.",
+      "noDenyRules": "Aucune commande interdite personnalisée.",
+      "noAllowRules": "Aucune exception définie.",
+      "denyPlaceholder": "ex. git push --force, ou une regex",
+      "allowPlaceholder": "ex. rm -rf ./build, ou une regex",
+      "addRule": "Ajouter",
+      "removeRule": "Supprimer la règle",
+      "builtinTitle": "Protections intégrées",
+      "builtinHelp": "Toujours actives. Seule une exception autorisée permet de les contourner.",
+      "saving": "Enregistrement…",
+      "appliedLive": "Enregistré — appliqué à l’agent en cours d’exécution.",
+      "appliedRestart": "Enregistré — redémarrez navin pour l’appliquer à l’agent en cours.",
+      "builtin": {
+        "recursiveDelete": "Suppression récursive",
+        "forcedDelete": "Suppression forcée",
+        "recursiveRmdir": "Rmdir récursif",
+        "diskFormat": "Formatage disque",
+        "diskOperations": "Opérations disque",
+        "rawDiskCopy": "Copie disque brute",
+        "rawDiskWrite": "Écriture disque brute",
+        "systemPower": "Alimentation système",
+        "forkBomb": "Fork bomb",
+        "internalState": "État interne Navin"
+      }
+    },
+    "rows": {
+      "theme": "Thème",
+      "language": "Langue",
+      "provider": "Fournisseur",
+      "model": "Modèle",
+      "restart": "Redémarrer navin",
+      "configPath": "Chemin de config",
+      "activePreset": "Préréglage actif",
+      "gateway": "Passerelle",
+      "restartState": "État du redémarrage",
+      "pendingChanges": "Modifications en attente",
+      "selectedPreset": "Préréglage sélectionné",
+      "presetModel": "Modèle du préréglage",
+      "density": "Densité",
+      "activityMode": "Détail d’activité",
+      "fileEditDisplay": "Affichage des modifications de fichiers",
+      "codeWrap": "Retour à la ligne du code",
+      "maxResults": "Résultats max.",
+      "timeout": "Délai d’attente",
+      "jinaReader": "Lecteur Jina",
+      "imageGeneration": "Génération d’images",
+      "imageProvider": "Fournisseur d’images",
+      "imageProviderStatus": "État du fournisseur",
+      "imageProviderBase": "Base du fournisseur",
+      "imageModel": "Modèle d’image",
+      "defaultAspectRatio": "Ratio par défaut",
+      "defaultImageSize": "Taille par défaut",
+      "maxImagesPerTurn": "Images max. par tour",
+      "imageSaveDir": "Dossier d’enregistrement",
+      "videoGeneration": "Génération de vidéos",
+      "videoProvider": "Fournisseur de vidéos",
+      "videoProviderStatus": "État du fournisseur",
+      "videoProviderBase": "Base du fournisseur",
+      "videoModel": "Modèle vidéo",
+      "defaultDuration": "Durée par défaut (s)",
+      "defaultResolution": "Résolution par défaut",
+      "videoSaveDir": "Dossier d’enregistrement",
+      "botName": "Nom du bot",
+      "botIcon": "Icône du bot",
+      "timezone": "Fuseau horaire",
+      "workspacePath": "Espace de travail par défaut",
+      "localServiceAccess": "Services locaux",
+      "webuiDefaultAccess": "Accès par défaut",
+      "currentModel": "Configuration actuelle",
+      "brandLogos": "Logos de marque",
+      "cliAppsCatalog": "Catalogue",
+      "cliAppsFilter": "Filtre",
+      "engine": "Moteur",
+      "logs": "Journaux",
+      "diagnostics": "Diagnostic",
+      "contextWindow": "Fenêtre de contexte",
+      "transcription": "Transcription",
+      "transcriptionProvider": "Fournisseur",
+      "transcriptionProviderStatus": "Etat du fournisseur",
+      "transcriptionModel": "Modele",
+      "transcriptionLanguage": "Langue",
+      "voiceLimits": "Limites"
+    },
+    "help": {
+      "theme": "Basculer entre l’apparence claire et sombre.",
+      "language": "Choisissez la langue utilisée par WebUI.",
+      "provider": "Sélectionnez le fournisseur à utiliser pour les nouvelles requêtes de modèle.",
+      "model": "Définissez le nom du modèle utilisé par défaut par navin.",
+      "configPath": "Le fichier de configuration actuellement utilisé par la passerelle.",
+      "selectedPreset": "Les préréglages nommés sont en lecture seule ici ; modifiez-les dans config.json.",
+      "presetModel": "Passez à Default pour modifier le modèle et le fournisseur depuis WebUI.",
+      "density": "Enregistré seulement dans ce navigateur.",
+      "activityMode": "Choisissez le niveau de détail d’activité agent affiché par défaut.",
+      "fileEditDisplay": "Choisissez si l’activité de modification affiche le nombre de lignes ou le diff.",
+      "codeWrap": "Garde les longues lignes de code lisibles sur les petits écrans.",
+      "maxResults": "Résultats renvoyés par chaque appel web_search.",
+      "timeout": "Nombre de secondes avant l’expiration d’une requête de recherche.",
+      "jinaReader": "Utilise Jina Reader pour web_fetch lorsque disponible.",
+      "imageGeneration": "Expose generate_image dans les chats lorsqu’un fournisseur d’image configuré est disponible.",
+      "imageProvider": "Choisissez le fournisseur inscrit utilisé par generate_image.",
+      "imageProviderStatus": "La génération d’images réutilise les identifiants des fournisseurs.",
+      "imageModel": "Nom du modèle envoyé au fournisseur d’images sélectionné.",
+      "defaultAspectRatio": "Utilisé lorsque le prompt ne choisit pas de ratio.",
+      "defaultImageSize": "Indication de taille envoyée aux fournisseurs compatibles.",
+      "maxImagesPerTurn": "Limite supérieure pour une requête generate_image.",
+      "videoGeneration": "Expose generate_video dans les chats lorsqu’un fournisseur vidéo configuré est disponible.",
+      "videoProvider": "Choisissez le fournisseur utilisé par generate_video (Veo via Gemini, Sora via OpenAI, Hailuo via MiniMax).",
+      "videoProviderStatus": "La génération de vidéos réutilise les identifiants des fournisseurs.",
+      "videoModel": "Nom du modèle envoyé au fournisseur vidéo sélectionné, ex. veo-3.1-generate-preview, sora-2, MiniMax-Hailuo-02.",
+      "defaultVideoAspectRatio": "16:9 pour YouTube/web, 9:16 pour Reels, TikTok et Shorts.",
+      "defaultDuration": "Durée du clip en secondes lorsque la requête n’en précise pas.",
+      "defaultResolution": "Indication de résolution envoyée aux fournisseurs compatibles.",
+      "botName": "Affiché là où navin utilise un nom visible.",
+      "botIcon": "Emoji ou texte court affiché avec le nom du bot.",
+      "timezone": "Utilisé pour les horaires et les réponses tenant compte du temps.",
+      "localServiceAccess": "Autorise les commandes shell Full Access à atteindre les services localhost.",
+      "webuiDefaultAccess": "Utilisé par les chats web sans permission propre au projet.",
+      "securityManagedControls": "Les récupérations web protègent toujours les services locaux, privés et de métadonnées. La sécurité des canaux principaux reste gérée dans config.json.",
+      "currentModel": "Utilisée pour les nouvelles réponses.",
+      "selectedModelProvider": "Défini par le modèle sélectionné.",
+      "selectedModelValue": "Défini par le modèle sélectionné.",
+      "brandLogos": "Affiche les logos de fournisseurs tiers et CLI dans les Réglages.",
+      "cliAppsCatalog": "Installe uniquement les adaptateurs CLI d’apps que navin peut exécuter localement ; les apps natives restent inchangées.",
+      "cliAppsFilter": "Recherchez par app, catégorie ou capacité.",
+      "logs": "Ouvre le dossier des journaux du moteur natif.",
+      "diagnostics": "Exporte un petit rapport d’exécution pour le support.",
+      "localServiceAccessNative": "Autorise les commandes shell Full Access à atteindre les services sur ce Mac.",
+      "webuiDefaultAccessNative": "Utilisé par les chats natifs sans permission propre au projet.",
+      "contextWindow": "Choisissez le budget de contexte par défaut pour cette configuration de modèle.",
+      "transcription": "Transcrit l'entree micro avant l'envoi. Les messages vocaux des canaux utilisent les memes reglages.",
+      "transcriptionProvider": "Utilise les identifiants du fournisseur correspondant dans Fournisseurs.",
+      "transcriptionProviderStatus": "Les cles API restent dans les fournisseurs, pas dans les reglages de transcription.",
+      "transcriptionModel": "Laissez le modele resolu par defaut sauf si votre fournisseur exige un id personnalise.",
+      "transcriptionLanguage": "Indice ISO-639 facultatif, comme en, zh, ja ou ko."
+    },
+    "values": {
+      "light": "Clair",
+      "dark": "Sombre",
+      "notAvailable": "Indisponible",
+      "providerDefault": "Défaut du fournisseur",
+      "enabled": "Activé",
+      "disabled": "Désactivé",
+      "restartPending": "Redémarrage en attente",
+      "ready": "Prêt",
+      "privateEngine": "Moteur privé",
+      "unixSocket": "Socket Unix",
+      "defaultWorkspace": "Espace par défaut",
+      "comfortable": "Confortable",
+      "compact": "Compacte",
+      "auto": "Automatique",
+      "expanded": "Développé",
+      "summary": "Résumé",
+      "diff": "Diff",
+      "collapsedDiff": "Diff replié",
+      "on": "Activé",
+      "off": "Désactivé",
+      "defaultPermission": "Autorisation par défaut",
+      "fullAccess": "Accès complet",
+      "configured": "Configuré",
+      "notConfigured": "Non configuré",
+      "pending": "En attente",
+      "restartingEngine": "Redémarrage"
+    },
+    "status": {
+      "loading": "Chargement des réglages...",
+      "loadError": "Impossible de charger les réglages",
+      "unsaved": "Modifications non enregistrées.",
+      "upToDate": "À jour.",
+      "savedRestart": "Enregistré. Redémarrez navin pour appliquer.",
+      "restartAfterSaving": "Enregistrez les changements, puis redémarrez quand vous êtes prêt.",
+      "savedRestartApply": "Enregistré. Redémarrez quand vous êtes prêt.",
+      "imageProviderRestart": "Changements du fournisseur d’image enregistrés. Redémarrez quand vous êtes prêt.",
+      "hostRestartAfterSaving": "En enregistrant, navin redémarrera son moteur.",
+      "hostRestartPending": "Enregistré. Le moteur redémarrera lorsqu’il sera prêt.",
+      "hostApiUnavailable": "Les actions de l’hôte ne sont disponibles que dans l’app native.",
+      "logsOpened": "Dossier des journaux ouvert.",
+      "logsOpenFailed": "Impossible d’ouvrir le dossier des journaux.",
+      "diagnosticsExported": "Diagnostic exporté vers {{path}}.",
+      "diagnosticsExportFailed": "Impossible d’exporter le diagnostic."
+    },
+    "actions": {
+      "save": "Enregistrer",
+      "saving": "Enregistrement",
+      "edit": "Modifier",
+      "cancel": "Annuler",
+      "open": "Ouvrir",
+      "export": "Exporter",
+      "opening": "Ouverture...",
+      "exporting": "Exportation..."
+    },
+    "byok": {
+      "description": "Ajoutez ici vos clés API ou endpoints locaux. Seuls les fournisseurs configurés peuvent être sélectionnés dans Modèles.",
+      "configured": "Configuré",
+      "notConfigured": "Non configuré",
+      "configuredSection": "Configurés",
+      "notConfiguredSection": "Non configurés",
+      "showMore": "Afficher {{count}} de plus",
+      "showLess": "Afficher moins",
+      "apiKey": "API key",
+      "apiBase": "API base",
+      "apiKeyPlaceholder": "Saisir l'API key",
+      "apiKeyConfiguredPlaceholder": "Laisser vide pour conserver la key actuelle",
+      "configuredKeyHint": "Key configurée",
+      "apiBasePlaceholder": "Utiliser la valeur par défaut du fournisseur",
+      "apiKeyRequired": "Une API key est requise pour configurer ce fournisseur.",
+      "showApiKey": "Afficher l'API key",
+      "hideApiKey": "Masquer l'API key",
+      "noConfiguredProviders": "Aucun fournisseur configuré",
+      "configureFirst": "Configurez d'abord un fournisseur dans BYOK.",
+      "openByok": "Ouvrir BYOK",
+      "tabs": {
+        "ariaLabel": "Type d'identifiants BYOK",
+        "llm": "LLM",
+        "webSearch": "Recherche web"
+      },
+      "webSearch": {
+        "provider": "Fournisseur de recherche",
+        "providerHelp": "Choisissez le backend utilisé par l'outil web search.",
+        "selectProvider": "Choisir un fournisseur",
+        "credentials": "Identifiants",
+        "noCredentialRequired": "Aucune key requise",
+        "noCredentialHelp": "DuckDuckGo fonctionne sans API key enregistrée.",
+        "apiKeyHelp": "Enregistrée dans la config et masquée après l'enregistrement.",
+        "baseUrl": "Base URL",
+        "baseUrlHelp": "SearXNG nécessite l'URL de votre propre instance.",
+        "baseUrlPlaceholder": "https://search.example.com",
+        "apiKeyRequired": "Ce fournisseur de recherche nécessite une API key.",
+        "baseUrlRequired": "SearXNG nécessite une Base URL.",
+        "missingCredential": "Ajoutez l'identifiant requis avant d'enregistrer.",
+        "saveHint": "Les changements s'appliquent aux nouvelles requêtes web search."
+      }
+    },
+    "overview": {
+      "model": "Modèle actuel",
+      "providers": "Fournisseurs",
+      "providersCaption": "Ajoutez des clés API ou endpoints locaux avant de choisir un modèle.",
+      "configuredCount": "{{count}} configurés",
+      "totalProviders": "{{count}} disponibles",
+      "webSearch": "Recherche web",
+      "imageGeneration": "Génération d’images",
+      "videoGeneration": "Génération de vidéos",
+      "voiceInput": "Saisie vocale",
+      "workspace": "Espace de travail"
+    },
+    "usage": {
+      "title": "Activité des tokens",
+      "shortTitle": "Token Usage",
+      "subtitle": "Usage signalé par le fournisseur sur les 12 derniers mois.",
+      "empty": "L’activité des tokens apparaîtra après les nouvelles réponses du modèle.",
+      "totalTokens": "Tokens cumulés",
+      "peakTokens": "Pic de tokens",
+      "thirtyDayTokens": "Tokens sur 30 jours",
+      "currentStreak": "Série actuelle",
+      "longestStreak": "Plus longue série",
+      "daysValue": "{{count}} j",
+      "last30": "30 jours",
+      "activeDays": "Jours actifs",
+      "requests": "Requêtes",
+      "estimated": "estimé",
+      "includesEstimates": "inclut des estimations",
+      "cellTitle": "{{date}} : {{tokens}} tokens, {{requests}} requêtes",
+      "sources": {
+        "user": "Chat",
+        "api": "API",
+        "cron": "Automatisations",
+        "dream": "Mémoire",
+        "system": "Système"
+      }
+    },
+    "providers": {
+      "heroTitle": "Fournisseurs",
+      "searchPlaceholder": "Rechercher des fournisseurs",
+      "noMatches": "Aucun fournisseur ne correspond.",
+      "saveProvider": "Enregistrer le fournisseur"
+    },
+    "image": {
+      "selectProvider": "Choisir un fournisseur",
+      "selectAspect": "Choisir un ratio",
+      "selectSize": "Choisir une taille",
+      "configureProvider": "Configurer le fournisseur",
+      "missingCredential": "Configurez ce fournisseur avant d’activer la génération d’images."
+    },
+    "video": {
+      "selectProvider": "Choisir un fournisseur",
+      "selectAspect": "Choisir un ratio",
+      "selectResolution": "Choisir une résolution",
+      "configureProvider": "Configurer le fournisseur",
+      "missingCredential": "Configurez ce fournisseur avant d’activer la génération de vidéos."
+    },
+    "models": {
+      "selectModel": "Choisir un modèle",
+      "addConfiguration": "Ajouter une configuration",
+      "newConfiguration": "Nouvelle configuration de modèle",
+      "newConfigurationHelp": "Enregistre un fournisseur et un modèle comme option en un clic.",
+      "configurationName": "Nom de la configuration",
+      "configurationNameHelp": "Renomme cette configuration de modèle enregistrée.",
+      "configurationNamePlaceholder": "Rédaction rapide",
+      "searchModels": "Rechercher ou saisir un ID de modèle",
+      "useCustomModel": "Utiliser",
+      "loadingModels": "Chargement des modèles...",
+      "needsProviderTitle": "Configurez d’abord un fournisseur",
+      "needsProviderHelp": "Ajoutez une clé API ou un endpoint local dans Fournisseurs, puis choisissez le modèle ici.",
+      "searchCatalog": "Rechercher dans le catalogue du fournisseur pour choisir un modèle.",
+      "modelsAvailable": "disponibles",
+      "noModelResults": "Aucun modèle correspondant.",
+      "loadFailed": "Liste des modèles indisponible.",
+      "unsupportedModelList": "Saisissez manuellement un ID de modèle.",
+      "providerNotConfigured": "Configurez ce fournisseur avant de charger les modèles.",
+      "autoProviderCustomOnly": "Le mode fournisseur automatique utilise des IDs de modèle personnalisés."
+    },
+    "timezone": {
+      "select": "Choisir un fuseau horaire",
+      "search": "Rechercher un fuseau horaire",
+      "empty": "Aucun fuseau horaire correspondant."
+    },
+    "cliApps": {
+      "allCategories": "Toutes les catégories",
+      "availableCount": "{{count}} applications",
+      "installedCount": "{{count}} installées",
+      "summary": "{{installed}} CLIs installées sur {{total}}",
+      "filterAll": "Tout",
+      "filterInstalled": "CLIs installées",
+      "filterNotInstalled": "Non installées",
+      "searchPlaceholder": "Rechercher des CLIs",
+      "statusInstalled": "Installée",
+      "statusAvailable": "Disponible",
+      "statusMissing": "Dépendance manquante",
+      "statusUnsupported": "Non compatible",
+      "statusNotInstalled": "Non installée",
+      "unsupported": "Non compatible",
+      "loading": "Chargement des apps CLI...",
+      "empty": "Aucune app CLI ne correspond à ce filtre.",
+      "readyTitle": "@{{name}} est prêt",
+      "readyStatus": "Prêt",
+      "readyPrompt": "Utilisez @{{name}} pour voir ce que ce CLI peut faire.",
+      "readyTry": "Essayer @{{name}}",
+      "readyCopied": "Copié",
+      "openChat": "Ouvrir le chat",
+      "requires": "Requiert",
+      "test": "Tester le CLI",
+      "update": "Mettre à jour le CLI",
+      "uninstall": "Désinstaller le CLI",
+      "install": "Installer le CLI",
+      "unavailable": "Indisponible",
+      "noDescription": "Aucune description disponible."
+    },
+    "about": {
+      "version": "Version",
+      "checking": "Recherche de mises à jour...",
+      "checkForUpdates": "Rechercher les mises à jour",
+      "upToDate": "Vous êtes à jour",
+      "updateAvailable": "Mise à jour disponible v{{version}}"
+    },
+    "mcp": {
+      "allCategories": "Toutes les catégories",
+      "summary": "{{installed}} presets activés sur {{total}}",
+      "filterAll": "Tout",
+      "filterInstalled": "Activés",
+      "filterNotInstalled": "Non activés",
+      "searchPlaceholder": "Rechercher des presets MCP",
+      "moreOptions": "Plus d'options MCP",
+      "moreOptionsSubtitle": "Ajoutez un serveur personnalisé ou importez mcp.json.",
+      "customTitle": "MCP personnalisé",
+      "customSubtitle": "Ajoutez n'importe quel serveur MCP stdio, HTTP ou SSE.",
+      "customAction": "Personnalisé",
+      "importAction": "Importer",
+      "serverName": "Nom du serveur",
+      "serverUrl": "URL",
+      "transport": "Transport",
+      "command": "Commande",
+      "args": "Args JSON",
+      "headers": "Headers JSON",
+      "env": "Env JSON",
+      "timeout": "Délai d'outil",
+      "advancedOptions": "Options avancées",
+      "hideAdvanced": "Masquer les options avancées",
+      "saveCustom": "Enregistrer MCP",
+      "configImport": "Importer mcp.json",
+      "importConfig": "Importer",
+      "restartRequired": "Redémarrez navin pour connecter les outils MCP mis à jour.",
+      "toolsFound": "{{count}} outils",
+      "loading": "Chargement des presets MCP...",
+      "empty": "Aucun preset MCP ne correspond à ce filtre.",
+      "openDocs": "Ouvrir la doc",
+      "test": "Tester",
+      "remove": "Supprimer",
+      "enable": "Activer",
+      "enabled": "Activé",
+      "setup": "Connecter",
+      "configure": "Connecter",
+      "connectTitle": "Connecter {{name}}",
+      "connectHint": "Ajoutez la clé depuis les paramètres de votre compte.",
+      "saveAndEnable": "Enregistrer et activer",
+      "updateSetup": "Mettre à jour la configuration",
+      "configured": "configuré",
+      "keepExisting": "Laissez vide pour conserver la valeur actuelle",
+      "statusConfigured": "Configuré",
+      "statusMissingCredentials": "Clé requise",
+      "statusMissingDependency": "Dépendance requise",
+      "statusComingSoon": "Bientôt disponible",
+      "statusNotInstalled": "Non activé",
+      "toolScope": "Outils",
+      "allTools": "Tous",
+      "noTools": "Aucun",
+      "testForTools": "Exécutez Tester pour inspecter et choisir des outils individuels."
+    },
+    "api": {
+      "title": "Serveur API",
+      "openaiCompatible": "API compatible OpenAI",
+      "description": "Connectez des SDK et agents via un endpoint /v1 local.",
+      "start": "Démarrer le serveur API",
+      "starting": "Démarrage...",
+      "stop": "Arrêter",
+      "stopping": "Arrêt...",
+      "access": "Accès",
+      "thisDevice": "Cet appareil",
+      "localNetwork": "Réseau local",
+      "localHelp": "Seul cet appareil peut se connecter.",
+      "networkHelp": "D’autres appareils peuvent se connecter ; une clé API est requise.",
+      "port": "Port",
+      "portHelp": "L’API utilise ce port local.",
+      "apiKey": "Clé API",
+      "apiKeyHelp": "Les clients l’envoient comme jeton Bearer.",
+      "apiKeyRequired": "Requise avant d’exposer l’API au réseau.",
+      "apiKeyPlaceholder": "Saisissez une clé API",
+      "autoInstall": "Le support API sera installé automatiquement au démarrage."
+    },
+    "observability": {
+      "title": "Observabilité",
+      "configured": "Les identifiants de traçage sont disponibles pour navin.",
+      "environment": "Définissez LANGFUSE_SECRET_KEY et LANGFUSE_PUBLIC_KEY, puis redémarrez navin.",
+      "enable": "Activer le traçage"
+    },
+    "apps": {
+      "heroTitle": "Apps",
+      "description": "Installez des apps CLI et des intégrations MCP, puis utilisez-les avec @ dans le chat.",
+      "cliLabel": "App",
+      "mcpLabel": "Intégration",
+      "channelLabel": "Canal",
+      "featureLabel": "Fonction",
+      "filterAll": "Prêts",
+      "filterPlugins": "Extensions",
+      "filterCli": "Apps",
+      "filterMcp": "Intégrations",
+      "enabledSummary": "{{count}} prêts",
+      "caption": "{{cli}} apps · {{mcp}} intégrations",
+      "searchPlaceholder": "Rechercher des apps",
+      "featured": "Catalogue",
+      "loading": "Chargement des apps...",
+      "empty": "Aucun outil ne correspond à cette vue.",
+      "restartRequired": "Redémarrez Navin pour appliquer les apps et intégrations mises à jour."
+    },
+    "tools": {
+      "heroTitle": "Outils",
+      "description": "Connectez les apps de discussion, l’e-mail et la WebUI locale pour que Navin parle à vos équipes.",
+      "caption": "{{enabled}} connectés · {{total}} outils",
+      "searchPlaceholder": "Rechercher des outils",
+      "backToTools": "Tous les outils",
+      "filterAll": "Tous",
+      "filterOn": "Connectés",
+      "filterOff": "Disponibles",
+      "loading": "Chargement des outils...",
+      "empty": "Aucun outil ne correspond à ce filtre.",
+      "restartRequired": "Redémarrez Navin pour appliquer le support d’outil mis à jour."
+    },
+    "channels": {
+      "description": "Connectez Navin aux apps de discussion.",
+      "caption": "{{enabled}} connectés · {{total}} outils",
+      "searchPlaceholder": "Rechercher des outils",
+      "backToChannels": "Tous les outils",
+      "selectChannel": "Voir les réglages {{name}}",
+      "toggleChannel": "Outil {{name}}",
+      "catalog": "Outils",
+      "loading": "Chargement des outils...",
+      "empty": "Aucun outil ne correspond à ce filtre.",
+      "restartRequired": "Redémarrez Navin pour appliquer le support d’outil mis à jour.",
+      "requires": "Requiert : {{requirements}}",
+      "setUp": "Configurer",
+      "setupGuide": "Guide de configuration",
+      "setupSummary": "L'activation n'active que le support Navin. Ajoutez les identifiants de la plateforme, puis redémarrez Navin.",
+      "configKeys": "Clés de configuration",
+      "enable": "Activer l’outil",
+      "disable": "Désactiver l’outil",
+      "needsConfig": "Configuration requise",
+      "connect": "Connecter",
+      "reconnect": "Reconnecter",
+      "filterAll": "Tous",
+      "filterOn": "Connectés",
+      "filterOff": "Disponibles"
+    },
+    "navinFeatures": {
+      "enabled": "Activé",
+      "enable": "Activer",
+      "disable": "Désactiver",
+      "ready": "Prêt",
+      "missingDependency": "Support manquant",
+      "installSupport": "Installer le support",
+      "installConfirmTitle": "Installer le support pour {{name}} ?",
+      "installConfirmDescription": "navin ajoutera ce dont {{name}} a besoin, puis l'activera. Continuer ?",
+      "installConfirmAction": "Installer et activer",
+      "websocketRequired": "Requis pour la WebUI",
+      "channelDisabled": "Outil désactivé",
+      "notEnabled": "Non activé"
+    },
+    "automations": {
+      "filters": {
+        "all": "Toutes",
+        "active": "Actives",
+        "paused": "En pause",
+        "failed": "À traiter",
+        "system": "Système"
+      },
+      "sort": {
+        "next": "Prochaine exécution",
+        "last": "Dernière exécution",
+        "updated": "Mise à jour",
+        "name": "Nom"
+      },
+      "search": "Rechercher tâche, message, discussion liée ou planning",
+      "queue": "File",
+      "loading": "Chargement des automatisations...",
+      "noMatches": "Aucune automatisation ne correspond à cette vue.",
+      "empty": "Aucune automatisation pour le moment.",
+      "emptyHint": "Créez-la depuis son point d'exécution pour que navin conserve le bon contexte.",
+      "oneShot": "Ponctuelle",
+      "systemTask": "Automatisation gérée par le système",
+      "localTrigger": "Déclencheur local",
+      "labels": {
+        "schedule": "Planning",
+        "next": "Prochaine",
+        "origin": "Discussion liée",
+        "created": "Créée",
+        "updated": "Modifiée"
+      },
+      "runNow": "Exécuter maintenant",
+      "pause": "Mettre en pause",
+      "resume": "Reprendre",
+      "edit": "Modifier",
+      "delete": "Supprimer",
+      "protected": "Protégée",
+      "editTitle": "Modifier l’automatisation",
+      "save": "Enregistrer",
+      "deleteTitle": "Supprimer l’automatisation",
+      "deleteDescription": "Cela supprime {{name}} du stockage cron. Les anciens messages de chat restent dans la session.",
+      "cancel": "Annuler",
+      "status": {
+        "system": "Système",
+        "running": "En cours d’exécution",
+        "paused": "En pause",
+        "failed": "Échouée",
+        "completed": "Terminée",
+        "noSchedule": "Aucun planning",
+        "active": "En cours"
+      },
+      "origin": {
+        "system": "Système",
+        "unknown": "Aucune discussion liée"
+      },
+      "channels": {
+        "api": "API",
+        "cli": "CLI",
+        "discord": "Discord",
+        "email": "Email",
+        "matrix": "Matrix",
+        "msteams": "Microsoft Teams",
+        "slack": "Slack",
+        "telegram": "Telegram",
+        "whatsapp": "WhatsApp"
+      },
+      "schedule": {
+        "at": "À {{time}}",
+        "every": "Toutes les {{duration}}",
+        "cron": "Cron {{expr}}",
+        "cronWithTz": "Cron {{expr}} · {{tz}}",
+        "withTz": "{{summary}} · {{tz}}",
+        "dailyAt": "Chaque jour à {{time}}",
+        "weekdaysAt": "Jours ouvrés à {{time}}",
+        "hourlyAt": "Toutes les heures à :{{minute}}",
+        "hourlyWindow": "Toutes les heures {{start}}-{{end}} à :{{minute}}",
+        "local": "Déclencheur local",
+        "custom": "Planning personnalisé"
+      },
+      "next": {
+        "paused": "En pause",
+        "pending": "En cours d’exécution",
+        "local": "En attente du déclencheur",
+        "none": "Aucune prochaine exécution"
+      },
+      "message": {
+        "showMore": "Afficher le message complet",
+        "showLess": "Afficher moins"
+      },
+      "fields": {
+        "name": "Nom",
+        "message": "Message",
+        "scheduleType": "Type de planning",
+        "every": "Toutes les",
+        "unit": "Unité",
+        "cronExpression": "Expression cron",
+        "timezone": "Fuseau horaire",
+        "runAt": "Exécuter à"
+      },
+      "scheduleTypes": {
+        "every": "Intervalle",
+        "cron": "Cron",
+        "at": "Une fois"
+      },
+      "everyUnits": {
+        "second": "Secondes",
+        "minute": "Minutes",
+        "hour": "Heures",
+        "day": "Jours"
+      },
+      "validation": {
+        "nameRequired": "Le nom est obligatoire.",
+        "messageRequired": "Le message est obligatoire.",
+        "intervalRequired": "L’intervalle doit être un nombre positif.",
+        "cronRequired": "L’expression cron est obligatoire.",
+        "timeRequired": "L’heure d’exécution est obligatoire.",
+        "futureRequired": "L’heure d’exécution doit être dans le futur."
+      }
+    },
+    "oauth": {
+      "authentication": "Authentification OAuth",
+      "signIn": "Se connecter",
+      "signingIn": "Connexion...",
+      "signInAgain": "Se reconnecter",
+      "signOut": "Se déconnecter",
+      "signedInAs": "Connecté en tant que {{account}}",
+      "signInHelp": "Inicia sesión desde este dispositivo; no se guarda API key en config.",
+      "signInRequired": "Connexion requise",
+      "signInBeforeSaving": "Inicia sesión antes de guardar este proveedor OAuth como proveedor activo.",
+      "signedIn": "Connecté",
+      "notSignedIn": "Non connecté"
+    },
+    "skills": {
+      "heroTitle": "Compétences",
+      "description": "Packs d’instructions que l’agent charge dans le chat. Les compétences personnalisées sont enregistrées dans votre workspace et utilisées comme les intégrées.",
+      "caption": "{{available}} prêts · {{total}} au total",
+      "customCaption": "{{count}} personnalisées",
+      "setupHint": "À configurer ≠ désactivé. Les CLI manquants (ex. gh, summarize) doivent être installés sur l’hôte. Les compétences custom vivent dans workspace/skills et apparaissent tout de suite dans le résumé agent.",
+      "searchPlaceholder": "Rechercher des compétences",
+      "filterAll": "Toutes",
+      "filterAvailable": "Prêtes",
+      "filterUnavailable": "À configurer",
+      "filterCustom": "Perso",
+      "addCustom": "Ajouter",
+      "createTitle": "Ajouter une compétence",
+      "createDescription": "Crée workspace/skills/<name>/SKILL.md. L’agent la verra dans le résumé des skills et pourra la charger avec read_file.",
+      "createAction": "Créer la compétence",
+      "nameLabel": "Nom",
+      "descriptionLabel": "Description",
+      "descriptionPlaceholder": "Quand utiliser cette compétence et ce qu’elle aide l’agent à faire…",
+      "wizardModeGuided": "Assistant guidé",
+      "wizardModePaste": "Coller un SKILL.md",
+      "wizardStepIdentity": "Identité",
+      "wizardStepContent": "Instructions",
+      "wizardStepReview": "Aperçu",
+      "wizardDescriptionHint": "L’agent utilise cette description pour décider quand charger la compétence — soyez précis.",
+      "wizardCategoryLabel": "Catégorie",
+      "wizardEmojiLabel": "Emoji (optionnel)",
+      "wizardWhenLabel": "Quand l’utiliser (un déclencheur par ligne)",
+      "wizardWhenPlaceholder": "L’utilisateur demande une analyse concurrentielle\nL’utilisateur partage un brief d’étude de marché",
+      "wizardWorkflowLabel": "Workflow (une étape par ligne)",
+      "wizardWorkflowPlaceholder": "Clarifier l’objectif et les contraintes\nCollecter les sources avec web_search\nRédiger le rapport avec citations",
+      "wizardGuidelinesLabel": "Consignes & contraintes (optionnel)",
+      "wizardGuidelinesPlaceholder": "Ton, format de sortie, limites, choses à ne jamais faire…",
+      "wizardBinsLabel": "CLI requis (optionnel)",
+      "wizardEnvLabel": "Variables ENV requises (optionnel)",
+      "wizardAlwaysLabel": "Toujours active",
+      "wizardAlwaysHint": "Injecte la compétence complète dans chaque prompt au lieu du chargement à la demande. À utiliser avec parcimonie — cela consomme du contexte à chaque tour.",
+      "wizardReviewHint": "SKILL.md final — vous pouvez encore l’ajuster avant la création. Le frontmatter name et description sont obligatoires.",
+      "wizardRegenerate": "Revenir à la version générée",
+      "wizardPasteLabel": "Contenu complet du SKILL.md",
+      "wizardPasteNoFrontmatter": "Le contenu doit commencer par un frontmatter YAML (--- name / description ---).",
+      "wizardPasteDetected": "Description détectée :",
+      "wizardBack": "Retour",
+      "wizardNext": "Suivant",
+      "wizardPreview": "Aperçu",
+      "editAction": "Modifier SKILL.md",
+      "cancelEdit": "Annuler l’édition",
+      "editHint": "Conservez le frontmatter YAML avec name + description. L’agent utilise la description pour le déclenchement.",
+      "saveAction": "Enregistrer",
+      "deleteAction": "Supprimer",
+      "deleteConfirm": "Supprimer la compétence « {{name}} » ? Action irréversible.",
+      "instructionsTitle": "Instructions",
+      "featured": "Compétences agent",
+      "empty": "Aucune compétence ne correspond à cette vue.",
+      "sourceWorkspace": "Personnalisée",
+      "sourceBuiltin": "Intégrée",
+      "statusAvailable": "Prête",
+      "statusUnavailable": "À configurer",
+      "unavailableReason": "Manquant : {{reason}}",
+      "notAToggle": "Il n’y a pas de bouton Activer. Installez le CLI/ENV manquant sur l’hôte, puis redémarrez Navin.",
+      "openDetails": "Ouvrir les détails de {{name}}",
+      "loadingDetail": "Chargement des détails...",
+      "loadFailed": "Impossible de charger les détails.",
+      "descriptionTitle": "Description",
+      "source": "Source",
+      "status": "Statut",
+      "requirements": "Prérequis",
+      "noRequirements": "Aucun prérequis explicite.",
+      "commands": "Commandes",
+      "environment": "Variables d’environnement",
+      "missingCommands": "CLI manquant",
+      "missingEnvironment": "ENV manquant",
+      "unavailableReasonLabel": "Raison d’indisponibilité",
+      "rawInstructions": "SKILL.md brut",
+      "rawInstructionsEmpty": "Aucune instruction brute.",
+      "detailDescription": "Détails de {{name}}.",
+      "categories": {
+        "custom": "Personnalisées",
+        "plugin": "Packs de plugins",
+        "seo": "SEO",
+        "marketing": "Marketing",
+        "writing": "Rédaction & Copy",
+        "sales": "Ventes",
+        "careers": "Carrières & RH",
+        "documents": "Documents",
+        "intelligence": "Intelligence",
+        "security": "Sécurité",
+        "navigation": "Web & Recherche",
+        "devops": "DevOps",
+        "data": "Data",
+        "core": "Essentielles"
+      }
+    },
+    "plugins": {
+      "title": "Packs de plugins",
+      "description": "Bundles autonomes de skills et de serveurs MCP (npx, uvx, docker, binaires). Installez depuis un dépôt git ou un dossier local — les skills se chargent instantanément, les serveurs MCP se rechargent à chaud.",
+      "install": "Installer un pack",
+      "installTitle": "Installer un pack de plugins",
+      "installDescription": "Un pack est un dossier avec skills/<nom>/SKILL.md, un mcp.json optionnel ({\"mcpServers\": {…}}) et un manifeste plugin.json optionnel.",
+      "installConfirm": "Installer",
+      "sourceGit": "Dépôt Git",
+      "sourcePath": "Dossier local",
+      "namePlaceholder": "Nom personnalisé (optionnel)",
+      "loading": "Chargement des packs de plugins…",
+      "empty": "Aucun pack de plugins installé. Un pack contient skills/<nom>/SKILL.md et un mcp.json optionnel.",
+      "enabled": "Activé",
+      "disabled": "Désactivé",
+      "enable": "Activer",
+      "disable": "Désactiver",
+      "remove": "Supprimer",
+      "removeConfirm": "Supprimer le pack « {{name}} » ? Ses skills et serveurs MCP seront désenregistrés.",
+      "skillsCount": "{{count}} skill(s)",
+      "mcpCount": "{{count}} serveur(s) MCP"
+    },
+    "voice": {
+      "selectProvider": "Choisir un fournisseur",
+      "configureProvider": "Configurer le fournisseur",
+      "languageAuto": "Auto"
+    }
+  },
+  "chat": {
+    "fallbackTitle": "Discussion {{id}}",
+    "forkTitle": "Branche : {{title}}",
+    "loading": "Chargement…",
+    "noSessions": "Aucune session pour le moment.",
+    "showMore": "Afficher {{count}} de plus",
+    "collapsed": "{{count}} discussions masquées",
+    "showLess": "Afficher moins",
+    "actions": "Actions de la discussion {{title}}",
+    "newInProject": "Démarrer une nouvelle discussion dans {{project}}",
+    "activity": {
+      "running": "Agent running",
+      "complete": "Agent finished",
+      "updated": "New activity"
+    },
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "rename": "Rename",
+    "renameTitle": "Rename chat",
+    "renameDescription": "Choose a local sidebar name for this chat.",
+    "renamePlaceholder": "Chat name",
+    "renameProjectTitle": "Rename project",
+    "renameProjectDescription": "Choose a local sidebar name for this project.",
+    "renameProjectPlaceholder": "Project name",
+    "renameSave": "Save",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "showArchived": "Show archived",
+    "hideArchived": "Hide archived",
+    "delete": "Supprimer",
+    "newChat": "Nouvelle discussion",
+    "groups": {
+      "pinned": "Pinned",
+      "all": "Chats",
+      "projects": "Projects",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "earlier": "Earlier",
+      "archived": "Archived"
+    }
+  },
+  "deleteConfirm": {
+    "title": "Supprimer cette discussion ?",
+    "description": "Cette action est irréversible.",
+    "cancel": "Annuler",
+    "confirm": "Supprimer",
+    "automationsDescription": "Cette discussion contient des automatisations planifiées. La supprimer les supprimera aussi.",
+    "moreAutomations": "+ {{count}} autres",
+    "confirmWithAutomations": "Supprimer",
+    "schedule": {
+      "at": "{{time}}",
+      "every": "Tous les {{duration}}",
+      "cron": "Cron {{expr}}",
+      "cronWithTz": "Cron {{expr}} · {{tz}}",
+      "local": "Déclencheur local",
+      "unknown": "Planification personnalisée"
+    },
+    "next": {
+      "label": "Prochaine exécution : {{time}}",
+      "disabled": "En pause",
+      "local": "En attente du déclencheur",
+      "none": "Aucune prochaine exécution"
+    }
+  },
+  "connection": {
+    "idle": "Inactif",
+    "connecting": "Connexion…",
+    "open": "Connecté",
+    "reconnecting": "Reconnexion…",
+    "closed": "Déconnecté",
+    "error": "Erreur de connexion"
+  },
+  "thread": {
+    "loadingConversation": "Chargement de la conversation…",
+    "empty": {
+      "greetings": {
+        "workOn": "Sur quoi travaillons-nous ensemble ?",
+        "start": "Par où commence-t-on ?",
+        "build": "Que construisons-nous aujourd'hui ?",
+        "tackle": "Que résout-on ensemble ?"
+      },
+      "quickActions": {
+        "plan": {
+          "title": "Créer un plan de projet",
+          "prompt": "Créez un plan de projet concis pour ce que je devrais construire ensuite."
+        },
+        "analyze": {
+          "title": "Analyser ces données",
+          "prompt": "Aidez-moi à analyser ces données et à faire ressortir les tendances les plus importantes."
+        },
+        "brainstorm": {
+          "title": "Trouver des idées",
+          "prompt": "Proposez quelques idées pratiques et leurs compromis pour ce problème."
+        },
+        "code": {
+          "title": "Écrire du code",
+          "prompt": "Aidez-moi à écrire le code pour cette tâche, en commençant par le plus petit changement utile."
+        },
+        "summarize": {
+          "title": "Résumer ce document",
+          "prompt": "Résumez ce document et listez les points clés à retenir."
+        },
+        "more": {
+          "title": "Plus",
+          "prompt": "Montrez-moi quelques façons utiles dont vous pouvez m’aider dans cet espace de travail."
+        }
+      },
+      "imageQuickActions": {
+        "icon": {
+          "title": "Créer une icône d’app",
+          "prompt": "Générez une icône d’application 1:1 propre pour navin : robot sympathique, style vectoriel simple, palette douce bleu et blanc, sans texte."
+        },
+        "sticker": {
+          "title": "Créer un sticker",
+          "prompt": "Générez une image façon sticker d’un petit assistant robot, avec un fond d’apparence transparente, expressive et ludique."
+        },
+        "poster": {
+          "title": "Créer une affiche",
+          "prompt": "Générez un concept d’affiche soigné pour un assistant IA personnel, composition moderne, hiérarchie visuelle forte, adapté à une landing page."
+        },
+        "product": {
+          "title": "Maquette produit",
+          "prompt": "Générez une maquette produit propre pour une application web d’IA conversationnelle, interface minimale, éclairage premium, cadre d’appareil réaliste."
+        },
+        "portrait": {
+          "title": "Portrait stylisé",
+          "prompt": "Générez un portrait stylisé d’un compagnon IA sympathique, lumière douce, détaillé mais accessible, style illustration moderne."
+        },
+        "edit": {
+          "title": "Modifier une image",
+          "prompt": "Aidez-moi à modifier une image. Demandez-moi d’abord de téléverser ou d’indiquer l’image, puis générez le résultat modifié."
+        }
+      }
+    },
+    "header": {
+      "toggleSidebar": "Afficher ou masquer la barre latérale",
+      "newChat": "Démarrer un nouveau chat",
+      "toggleTheme": "Changer le thème depuis l’en-tête",
+      "settings": "Ouvrir les paramètres",
+      "sessionInfo": "Détails de la session"
+    },
+    "sessionInfo": {
+      "title": "Session",
+      "untitled": "Chat sans titre",
+      "automations": "Automatisations",
+      "count": "{{count}}",
+      "loading": "Chargement des automatisations...",
+      "loadFailed": "Impossible de charger les automatisations.",
+      "empty": "Aucune automatisation dans cette session pour le moment.",
+      "disabled": "Désactivé",
+      "schedule": {
+        "at": "À {{time}}",
+        "every": "Toutes les {{duration}}",
+        "cron": "Cron {{expr}}",
+        "cronWithTz": "Cron {{expr}} · {{tz}}",
+        "local": "Déclencheur local",
+        "unknown": "Planification personnalisée"
+      },
+      "next": {
+        "label": "Prochaine {{time}}",
+        "pending": "Exécution imminente",
+        "disabled": "En pause",
+        "local": "En attente du déclencheur",
+        "none": "Aucune prochaine exécution"
+      }
+    },
+    "composer": {
+      "placeholderThread": "Saisissez votre message…",
+      "placeholderHero": "Qu’avez-vous en tête ?",
+      "placeholderOpening": "Ouverture d’une nouvelle discussion…",
+      "placeholderStreaming": "Le modèle est en train de répondre…",
+      "inputAria": "Champ de message",
+      "sendHint": "Entrée pour envoyer · Maj+Entrée pour un retour à la ligne",
+      "runRuntimeTitle": "Exécution · {{elapsed}}",
+      "goalStateStrip": "Objectif · {{label}}",
+      "goalStateFallback": "Objectif",
+      "goalStateExpandAria": "Afficher l’objectif complet",
+      "goalStateSheetTitle": "Objectif",
+      "goalStateCloseAria": "Fermer l’objectif",
+      "send": "Envoyer le message",
+      "stop": "Arrêter la réponse",
+      "modelNotConfigured": "Modèle non configuré",
+      "configureModel": "Configurer le modèle",
+      "queued": {
+        "label": "Guidage en attente",
+        "guide": "Guider",
+        "delete": "Supprimer le guidage",
+        "edit": "Modifier le guidage",
+        "drag": "Faire glisser pour réordonner"
+      },
+      "attachImage": "Joindre des fichiers",
+      "imageMode": {
+        "label": "Génération d’image",
+        "toggle": "Activer ou désactiver le mode génération d’image",
+        "placeholder": "Décrire ou modifier une image…",
+        "aspectAria": "Format de l’image",
+        "aspectLabel": "Format de l’image",
+        "aspect": {
+          "auto": "Auto",
+          "1_1": "Carré 1:1",
+          "3_4": "Portrait 3:4",
+          "9_16": "Story 9:16",
+          "4_3": "Paysage 4:3",
+          "16_9": "Large 16:9"
+        }
+      },
+      "tools": {
+        "search": "Rechercher",
+        "reason": "Raisonner",
+        "deepResearch": "Recherche approfondie",
+        "voice": "Entrée vocale"
+      },
+      "voice": {
+        "hint": "Cliquez pour dicter ou maintenez",
+        "stop": "Arrêter l'enregistrement",
+        "transcribing": "Transcription...",
+        "recordingStatus": "Enregistrement {{time}}"
+      },
+      "voiceErrors": {
+        "unsupported": "La saisie vocale n'est pas prise en charge par ce navigateur.",
+        "permission": "L'autorisation du microphone est requise.",
+        "notConfigured": "Configurez d'abord un fournisseur de transcription.",
+        "tooLong": "L'enregistrement est trop long.",
+        "tooShort": "Maintenez un peu plus longtemps pour enregistrer la voix.",
+        "noInput": "Aucune entrée microphone détectée.",
+        "failed": "Impossible de transcrire l'audio."
+      },
+      "slash": {
+        "ariaLabel": "Commandes slash",
+        "label": "commandes",
+        "navigateHint": "↑↓ Naviguer",
+        "selectHint": "Entrée/Tab Insérer",
+        "closeHint": "Échap Fermer",
+        "commands": {
+          "new": {
+            "title": "Nouvelle discussion",
+            "description": "Réinitialiser cette discussion et démarrer une nouvelle conversation."
+          },
+          "stop": {
+            "title": "Arrêter la tâche en cours",
+            "description": "Annuler le tour agent actif pour cette discussion."
+          },
+          "restart": {
+            "title": "Redémarrer navin",
+            "description": "Redémarrer le processus du bot sur place."
+          },
+          "status": {
+            "title": "Afficher l’état",
+            "description": "Afficher l’état du runtime, du provider et des channels."
+          },
+          "model": {
+            "title": "Modèle",
+            "description": "Afficher ou changer le préréglage de modèle actif."
+          },
+          "history": {
+            "title": "Afficher l’historique",
+            "description": "Afficher les N derniers messages persistés de la conversation."
+          },
+          "dream": {
+            "title": "Lancer Dream",
+            "description": "Déclencher manuellement la consolidation de la mémoire."
+          },
+          "dream_log": {
+            "title": "Afficher le journal Dream",
+            "description": "Afficher ce que la dernière consolidation Dream a changé."
+          },
+          "dream_restore": {
+            "title": "Restaurer la mémoire",
+            "description": "Revenir à un instantané Dream précédent."
+          },
+          "dream_prompt": {
+            "title": "Mémoire Dream",
+            "description": "Indiquez à Dream comment organiser la mémoire de cet espace de travail."
+          },
+          "goal": {
+            "title": "Objectif long terme",
+            "description": "Demandez à l’agent de traiter ceci comme un objectif multi‑étapes durable."
+          },
+          "trigger": {
+            "title": "Créer un trigger local",
+            "description": "Crée un trigger CLI lié à cette session de chat."
+          },
+          "help": {
+            "title": "Afficher l’aide",
+            "description": "Lister les commandes slash disponibles."
+          },
+          "pairing": {
+            "title": "Appairage",
+            "description": "Gérer les demandes d’appairage."
+          }
+        },
+        "badges": {
+          "current": "Actuel",
+          "recent": "Récent"
+        },
+        "details": {
+          "goalActive": "L’objectif est en cours",
+          "goalReady": "Démarrer un objectif durable",
+          "history": "Afficher les messages récents",
+          "stopRunning": "En cours"
+        }
+      },
+      "encoding": "Traitement…",
+      "remove": "Retirer la pièce jointe",
+      "normalizedSizeHint": "{{orig}} → {{current}} (auto)",
+      "textTooLarge": "Le texte du message est trop volumineux (maximum {{max}})",
+      "imageRejected": {
+        "unsupported_type": "Type de fichier non pris en charge",
+        "empty_file": "Impossible de joindre des fichiers vides",
+        "too_many_attachments": "Maximum {{max}} pièces jointes par message",
+        "too_many_images": "Maximum {{max}} images par message",
+        "magic_mismatch": "Ce fichier n'est pas une image",
+        "decode_failed": "Impossible de décoder cette image",
+        "too_large": "Fichier trop volumineux — essayez-en un plus petit",
+        "total_too_large": "Les pièces jointes sont trop volumineuses ensemble — supprimez-en ou utilisez des fichiers plus petits",
+        "transport_too_large": "Cette pièce jointe dépasserait la limite de transport de la passerelle",
+        "io": "Impossible de lire ce fichier"
+      },
+      "mentions": {
+        "ariaLabel": "Apps",
+        "label": "Apps",
+        "cliGroup": "Apps CLI",
+        "mcpGroup": "Services MCP",
+        "cliBadge": "CLI",
+        "mcpBadge": "MCP",
+        "cliDescription": "Utiliser @{{name}} comme app CLI locale",
+        "mcpDescription": "Utiliser @{{name}} comme serveur MCP",
+        "teamDescription": "Appeler {{name}} de votre équipe"
+      },
+      "workspace": {
+        "accessAria": "Mode d’accès à l’espace de travail",
+        "projectAria": "Choisir un projet",
+        "projectPlaceholder": "Sélectionner un projet",
+        "default": "Autorisation par défaut",
+        "full": "Accès complet"
+      }
+    },
+    "scrollToBottom": "Faire défiler vers le bas",
+    "loadEarlier": "Charger les messages précédents",
+    "forkedFromHistory": "Bifurqué depuis l'historique",
+    "promptNavigator": {
+      "open": "Ouvrir le navigateur de prompts",
+      "title": "Prompts",
+      "search": "Rechercher des prompts",
+      "noResults": "Aucun prompt correspondant.",
+      "jumpTo": "Aller au prompt : {{label}}"
+    }
+  },
+  "message": {
+    "streaming": "en cours de génération",
+    "assistantTyping": "L’assistant est en train d’écrire",
+    "toolSingle": "Utilisation d’un outil",
+    "toolMany": "{{count}} outils utilisés",
+    "toolSummary": "{{count}} outil",
+    "toolSummaryMany": "{{count}} outils",
+    "reasoningTools": "Raisonnement · {{count}} outils",
+    "reasoningToolsSingular": "Raisonnement · 1 outil",
+    "reasoning": "Raisonnement",
+    "reasoningStreaming": "En réflexion…",
+    "reasoningSummary": "Raisonnement",
+    "agentActivitySummary": "{{reasoning}} étapes · {{tools}} appels d’outils",
+    "agentActivityToolsOnly": "{{tools}} appels d’outils",
+    "agentActivityLiveSummary": "En cours… · {{reasoning}} étapes · {{tools}} appels d’outils",
+    "agentActivityLiveToolsOnly": "En cours… · {{tools}} appels d’outils",
+    "imageAttachment": "Pièce jointe image",
+    "forkFromHere": "Bifurquer",
+    "copyReply": "Copier",
+    "copiedReply": "Copié",
+    "turnLatencyTitle": "Temps de réponse (de bout en bout)",
+    "fileEditViewDiff": "Voir le diff",
+    "fileEditViewLargeDiff": "Voir le grand diff",
+    "fileEditDiffLineCount": "{{count}} lignes",
+    "fileEditUnchangedLinesHidden": "{{count}} lignes inchangées masquées",
+    "fileEditShowMoreLines": "Afficher {{count}} lignes de plus",
+    "fileEditShowFewerLines": "Afficher moins de lignes",
+    "fileEditOpenFile": "Ouvrir le fichier",
+    "fileEditDiffTruncated": "Diff tronqué. Ouvrez le fichier pour voir la modification complète.",
+    "activityThinkingFor": "Réflexion pendant {{duration}}",
+    "activityThought": "Réflexion terminée",
+    "activityThoughtFor": "Réflexion terminée en {{duration}}",
+    "activityWorkingFor": "Travail en cours depuis {{duration}}",
+    "activityWorked": "Travail terminé",
+    "activityWorkedFor": "Travail terminé en {{duration}}",
+    "cliActivityRunningOne": "Utilisation de @{{name}}",
+    "cliActivityRanOne": "@{{name}} utilisé",
+    "cliActivityFailedOne": "Échec de @{{name}}",
+    "cliActivityRunningMany": "Utilisation de {{count}} apps CLI",
+    "cliActivityRanMany": "{{count}} apps CLI utilisées",
+    "cliActivityFailedMany": "Échec de {{count}} apps CLI",
+    "cliRunRunning": "Utilisation",
+    "cliRunRan": "Utilisé",
+    "cliRunFailed": "Échec",
+    "automationSourceFallback": "Automatisation",
+    "automationTriggered": "Déclenché automatiquement"
+  },
+  "lightbox": {
+    "title": "Aperçu de l’image",
+    "open": "Voir l’image",
+    "prev": "Image précédente",
+    "next": "Image suivante",
+    "close": "Fermer l’aperçu"
+  },
+  "filePreview": {
+    "aria": "Aperçu du fichier",
+    "close": "Fermer l’aperçu du fichier",
+    "loading": "Chargement de l’aperçu...",
+    "failed": "Impossible de prévisualiser ce fichier.",
+    "routeMissing": "L’aperçu du fichier nécessite le dernier gateway. Redémarrez navin gateway puis réessayez.",
+    "resize": "Redimensionner l’aperçu du fichier",
+    "truncated": "L’aperçu est tronqué car le fichier est volumineux."
+  },
+  "code": {
+    "fallbackLanguage": "code",
+    "copyAria": "Copier le code",
+    "copy": "Copier",
+    "copied": "Copié"
+  },
+  "common": {
+    "dismiss": "Fermer"
+  },
+  "providerSetup": {
+    "message": "Aucun provider de modèle n'est configuré. Ajoutez-en un pour commencer à discuter.",
+    "action": "Configurer un provider",
+    "dismiss": "Fermer"
+  },
+  "errors": {
+    "messageTooBig": {
+      "title": "Message trop volumineux",
+      "body": "Le serveur a rejeté votre dernier message car il dépasse la taille autorisée. Retirez des images ou choisissez des fichiers plus légers, puis renvoyez-le."
+    },
+    "workspaceScopeRejected": {
+      "title": "L’espace de travail n’a pas changé",
+      "body": "La passerelle a refusé le projet ou le mode d’accès demandé ; Navin a conservé l’espace de travail précédent."
+    }
+  },
+  "workspace": {
+    "dialog": {
+      "defaultProject": "Espace de travail par défaut",
+      "manual": "Coller un chemin",
+      "manualPlaceholder": "/Users/name/project",
+      "usePath": "Utiliser le chemin",
+      "absolutePathRequired": "Saisissez un chemin absolu de dossier sur cette machine."
+    }
+  }
+}
