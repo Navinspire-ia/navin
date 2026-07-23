@@ -6,17 +6,15 @@ export function webuiManualChunk(id: string): string | undefined {
   if (id.includes("node_modules/refractor/lang/")) {
     return;
   }
-  // Refractor reaches this HAST helper through hastscript. Keeping it with
-  // Refractor prevents syntax-highlight <-> markdown-vendor circular chunks.
+  // The whole unified/hast/refractor/react-syntax-highlighter ecosystem must
+  // live in ONE chunk: these packages import each other in both directions
+  // (hastscript <-> hast-util-parse-selector, refractor <-> hast helpers),
+  // and splitting them across chunks creates circular chunk imports that
+  // throw "Cannot access 'X' before initialization" (TDZ) at load time.
   if (
     id.includes("node_modules/react-syntax-highlighter")
     || id.includes("node_modules/refractor/core")
-    || id.includes("node_modules/hast-util-parse-selector")
-  ) {
-    return "syntax-highlight";
-  }
-  if (
-    id.includes("node_modules/react-markdown")
+    || id.includes("node_modules/react-markdown")
     || id.includes("node_modules/remark-")
     || id.includes("node_modules/rehype-")
     || id.includes("node_modules/unified")
