@@ -163,10 +163,12 @@ export function DevProjectActions({
   activeFilePath,
   disabled,
   onRun,
+  compact,
 }: {
   activeFilePath: string | null;
   disabled?: boolean;
   onRun: (text: string) => void;
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -198,7 +200,7 @@ export function DevProjectActions({
           title={t("dev.actions.title", { defaultValue: "Project actions" })}
         >
           <ListChecks className="h-3.5 w-3.5" aria-hidden />
-          {t("dev.actions.button", { defaultValue: "Actions" })}
+          {compact ? null : t("dev.actions.button", { defaultValue: "Actions" })}
           <ChevronDown className="h-3 w-3" aria-hidden />
         </button>
       </DropdownMenuTrigger>

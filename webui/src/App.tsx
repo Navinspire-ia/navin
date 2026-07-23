@@ -1081,11 +1081,12 @@ function Shell({
   const [devChatWidth, setDevChatWidth] = useState(460);
   // Dev view: multiple agent chats open as tabs.
   const [devChatTabs, setDevChatTabs] = useState<string[]>([]);
-  // Keep the dev chat pane within the window so the workbench stays usable.
+  // Keep the dev chat pane within the window so the workbench stays usable:
+  // always leave at least ~520px for the explorer + editor column.
   useEffect(() => {
     const clamp = () => {
       setDevChatWidth((width) =>
-        Math.min(width, Math.max(280, window.innerWidth - 320)),
+        Math.min(width, Math.max(280, window.innerWidth - 520)),
       );
     };
     clamp();
@@ -1101,7 +1102,7 @@ function Shell({
         const drag = devChatDragRef.current;
         if (!drag) return;
         const next = drag.startWidth - (ev.clientX - drag.startX);
-        setDevChatWidth(Math.min(Math.max(300, next), Math.max(360, window.innerWidth - 420)));
+        setDevChatWidth(Math.min(Math.max(280, next), Math.max(320, window.innerWidth - 520)));
       };
       const onUp = () => {
         devChatDragRef.current = null;

@@ -69,12 +69,14 @@ export function DevProjectSelector({
   recentProjects,
   disabled,
   onSelectProject,
+  compact,
 }: {
   projectPath: string | null;
   projectName?: string | null;
   recentProjects: RecentProjectEntry[];
   disabled?: boolean;
   onSelectProject: (path: string, name?: string) => void;
+  compact?: boolean;
 }) {
   const { token } = useClient();
   const { t } = useTranslation();
@@ -130,10 +132,12 @@ export function DevProjectSelector({
             )}
           >
             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-            <span className="truncate">
-              {label ?? t("dev.project.none", { defaultValue: "Open project" })}
-            </span>
-            {envLabel ? (
+            {compact ? null : (
+              <span className="truncate">
+                {label ?? t("dev.project.none", { defaultValue: "Open project" })}
+              </span>
+            )}
+            {envLabel && !compact ? (
               <span className="rounded bg-muted px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {envLabel}
               </span>

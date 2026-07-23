@@ -27,8 +27,9 @@ from navin.security.workspace_policy import is_path_within
 CLI_ANYTHING_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/registry.json"
 CLI_ANYTHING_PUBLIC_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/public_registry.json"
 CLI_ANYTHING_RAW_BASE = "https://raw.githubusercontent.com/HKUDS/CLI-Anything/main"
-NAVIN_EXTENSION_REGISTRY_URL = "https://raw.githubusercontent.com/Re-bin/navin-extension/main/registry.json"
-NAVIN_EXTENSION_RAW_BASE = "https://raw.githubusercontent.com/Re-bin/navin-extension/main"
+# Community extension registry (upstream project name; the repo is external).
+NAVIN_EXTENSION_REGISTRY_URL = "https://raw.githubusercontent.com/Re-bin/nanobot-extension/main/registry.json"
+NAVIN_EXTENSION_RAW_BASE = "https://raw.githubusercontent.com/Re-bin/nanobot-extension/main"
 _CATALOG_SOURCES = (
     ("harness", CLI_ANYTHING_REGISTRY_URL, CLI_ANYTHING_RAW_BASE, True),
     ("public", CLI_ANYTHING_PUBLIC_REGISTRY_URL, CLI_ANYTHING_RAW_BASE, True),

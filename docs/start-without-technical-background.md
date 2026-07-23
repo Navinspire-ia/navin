@@ -72,7 +72,9 @@ irm https://raw.githubusercontent.com/EIAGEN/navin-claw/main/scripts/install.ps1
 
 **Windows — the easiest way: navin.exe**
 
-If you prefer to avoid the terminal entirely, download `navin.exe` from the [GitHub releases page](https://github.com/EIAGEN/navin-claw/releases) and double-click it. It installs everything for you (offering to install Python automatically if needed) and then opens Navin in your browser. Next time, double-clicking `navin.exe` just starts Navin.
+If you prefer to avoid the terminal entirely, download `navin.exe` from the [GitHub releases page](https://github.com/EIAGEN/navin-claw/releases) and double-click it. It installs everything for you (offering to install Python automatically if needed) and then opens Navin in its own app window — no address bar or tabs, like a desktop application. Next time, double-clicking `navin.exe` just starts Navin.
+
+You can also pin Navin like a native app: with Navin open in Edge or Chrome, use the browser menu → **Apps → Install Navin**. This adds a Navin icon to the Start menu and taskbar that opens straight into the app window. To force a classic browser tab instead of the app window, set the environment variable `NAVIN_WEBUI_TAB=1`.
 
 The installer downloads the stable navin package into an isolated Python environment. It can take a few minutes on the first run. When it finishes, it prints the exact command it used to run navin. Keep that command: if `navin` is not found later, reuse the whole printed command instead of switching to a different Python command.
 
