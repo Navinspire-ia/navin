@@ -1159,13 +1159,78 @@ def _print_foreground_port_conflict(
     console.print("Or choose different ports with [cyan]--port[/cyan] and [cyan]--gateway-port[/cyan].")
 
 
+def _find_chromium_browser() -> list[str] | None:
+    """Locate a Chromium-based browser that supports ``--app`` windows."""
+    import platform
+    import shutil
+
+    system = platform.system()
+    if system == "Windows":
+        program_dirs = [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.environ.get("LocalAppData", ""),
+        ]
+        relative_paths = [
+            r"Microsoft\Edge\Application\msedge.exe",
+            r"Google\Chrome\Application\chrome.exe",
+            r"BraveSoftware\Brave-Browser\Application\brave.exe",
+        ]
+        for base in program_dirs:
+            if not base:
+                continue
+            for rel in relative_paths:
+                exe = os.path.join(base, rel)
+                if os.path.isfile(exe):
+                    return [exe]
+        return None
+    if system == "Darwin":
+        mac_apps = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ]
+        for exe in mac_apps:
+            if os.path.isfile(exe):
+                return [exe]
+        return None
+    for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"):
+        found = shutil.which(name)
+        if found:
+            return [found]
+    return None
+
+
 def _open_webui_browser(url: str, *, wait: bool = True) -> None:
-    """Open the WebUI in the user's default browser, with a copyable fallback."""
+    """Open the WebUI as a dedicated app window (Cursor-style), or a tab as fallback.
+
+    Chromium ``--app=URL`` gives a standalone window without the address bar,
+    with its own taskbar entry. ``NAVIN_WEBUI_TAB=1`` forces a normal tab.
+    """
+    import subprocess
     import webbrowser
 
     if wait:
         _wait_for_webui(url)
     display_url = _webui_display_url(url)
+
+    if os.environ.get("NAVIN_WEBUI_TAB", "").strip() not in {"1", "true", "yes"}:
+        browser = _find_chromium_browser()
+        if browser:
+            try:
+                subprocess.Popen(  # noqa: S603
+                    [*browser, f"--app={url}", "--window-size=1440,900"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                console.print(
+                    f"[green]✓[/green] Opened Navin app window: [cyan]{display_url}[/cyan]"
+                )
+                return
+            except OSError:
+                pass  # Fall back to a normal browser tab below.
+
     try:
         webbrowser.open(url)
         console.print(f"[green]✓[/green] Opened WebUI: [cyan]{display_url}[/cyan]")
@@ -1984,7 +2049,6 @@ def _run_gateway(
         """Wait for the gateway to bind, then point the user's browser at the webui."""
         if not open_browser_url:
             return
-        import webbrowser
         from urllib.parse import urlparse
 
         parsed = urlparse(open_browser_url)
@@ -2003,11 +2067,8 @@ def _run_gateway(
                 break
             except OSError:
                 await asyncio.sleep(0.1)
-        try:
-            webbrowser.open(open_browser_url)
-            console.print(f"[green]✓[/green] Opened browser at {open_browser_url}")
-        except Exception as e:
-            console.print(f"[yellow]Could not open browser ({e}); visit {open_browser_url}[/yellow]")
+        # App-window (Cursor-style) with tab fallback; already past the bind poll.
+        await asyncio.to_thread(_open_webui_browser, open_browser_url, wait=False)
 
     async def run():
         tasks: list[asyncio.Task] = []

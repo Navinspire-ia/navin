@@ -206,6 +206,19 @@ export function DevWorkbench({
   const [explorerWidth, setExplorerWidth] = useState(240);
   const [terminalHeight, setTerminalHeight] = useState(260);
   const [terminalMaximized, setTerminalMaximized] = useState(false);
+  // Narrow columns (chat pane open on a small window) switch the toolbar to
+  // icon-only buttons so every control stays visible and clickable.
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  const [compactBar, setCompactBar] = useState(false);
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const update = () => setCompactBar(el.clientWidth < 640);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragState = useRef<{ kind: "explorer" | "terminal"; startPos: number; startSize: number } | null>(null);
 
@@ -659,8 +672,12 @@ export function DevWorkbench({
       {/* Editor / browser area + terminal */}
       <div className="flex min-w-0 flex-1 flex-col">
        <div className={cn("flex min-h-0 flex-1 flex-col", terminalOpen && terminalMaximized && "hidden")}>
-        {/* Tab bar */}
-        <div className="flex items-center gap-1 border-b border-border/55 bg-muted/15 px-2 py-1.5">
+        {/* Tab bar — min-w-0 + overflow keeps buttons inside the column so they
+            never bleed under (and lose clicks to) the chat panel's tab strip. */}
+        <div
+          ref={tabBarRef}
+          className="flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border/55 bg-muted/15 px-2 py-1.5"
+        >
           {!explorerOpen ? (
             <button
               type="button"
@@ -717,9 +734,10 @@ export function DevWorkbench({
                 ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
             )}
+            title={tx("dev.browserTab", "Preview")}
           >
             <Globe className="h-3.5 w-3.5" aria-hidden />
-            {tx("dev.browserTab", "Preview")}
+            {compactBar ? null : tx("dev.browserTab", "Preview")}
           </button>
           <button
             type="button"
@@ -730,9 +748,10 @@ export function DevWorkbench({
                 ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
             )}
+            title={tx("dev.graphTab", "Graph")}
           >
             <Waypoints className="h-3.5 w-3.5" aria-hidden />
-            {tx("dev.graphTab", "Graph")}
+            {compactBar ? null : tx("dev.graphTab", "Graph")}
           </button>
           <button
             type="button"
@@ -746,12 +765,13 @@ export function DevWorkbench({
             title={tx("dev.toggleTerminal", "Toggle terminal")}
           >
             <TerminalSquare className="h-3.5 w-3.5" aria-hidden />
-            {tx("dev.terminal", "Terminal")}
+            {compactBar ? null : tx("dev.terminal", "Terminal")}
           </button>
           {onRunAction ? (
             <DevProjectActions
               activeFilePath={mode === "code" ? activeTab : null}
               onRun={onRunAction}
+              compact={compactBar}
             />
           ) : null}
           {onSelectProject ? (
@@ -761,6 +781,7 @@ export function DevWorkbench({
                 projectName={projectName}
                 recentProjects={recentProjects ?? []}
                 onSelectProject={onSelectProject}
+                compact={compactBar}
               />
             </div>
           ) : null}

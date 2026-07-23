@@ -1283,12 +1283,16 @@ class GatewayHTTPHandler:
         except OSError as e:
             self._log.warning("static: failed to read {}: {}", candidate, e)
             return _http_error(500, "Internal Server Error")
-        ctype, _ = mimetypes.guess_type(candidate.name)
-        if ctype is None:
-            ctype = "application/octet-stream"
-        if ctype.startswith("text/") or ctype in {"application/javascript", "application/json"}:
-            ctype = f"{ctype}; charset=utf-8"
-        if candidate.name == "index.html":
+        if candidate.name.endswith(".webmanifest"):
+            ctype = "application/manifest+json; charset=utf-8"
+        else:
+            ctype, _ = mimetypes.guess_type(candidate.name)
+            if ctype is None:
+                ctype = "application/octet-stream"
+            if ctype.startswith("text/") or ctype in {"application/javascript", "application/json"}:
+                ctype = f"{ctype}; charset=utf-8"
+        # Only hashed assets are immutable; entry points must revalidate.
+        if candidate.name in {"index.html", "manifest.webmanifest"}:
             cache = "no-cache"
         else:
             cache = "public, max-age=31536000, immutable"
