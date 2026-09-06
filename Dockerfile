@@ -9,6 +9,12 @@ RUN mkdir -p /app/navin/web && npm run build
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+LABEL org.opencontainers.image.title="Navin" \
+      org.opencontainers.image.source="https://github.com/navinspire-ai/navin-agi" \
+      org.opencontainers.image.url="https://navin.live" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.description="Navin gateway and bundled WebUI. Public source: navinspire-ai/navin-agi."
+
 # ffmpeg comes from apt here rather than from packaging/vendor: this image is
 # installed with pip, so it has no PyInstaller bundle to carry the static build
 # the desktop packages ship. Without it, video attachments, montage and social

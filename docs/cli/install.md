@@ -64,7 +64,12 @@ Providers: **Ctrl+G** in `navin-cli`. This tree is BYOK only (your keys or a loc
 
 ### From a `navin-agi` clone
 
-After `sh scripts/start.sh --install` (or `make install`), launch the CLI from the repo root:
+```bash
+make install
+make start
+```
+
+Or `sh scripts/install.sh` then `sh scripts/start.sh`. After that, launch the CLI from the repo root:
 
 ```bash
 cd /path/to/navin-agi

@@ -222,18 +222,23 @@ Téléchargez depuis [navin.live/download](https://navin.live/download).
 ```bash
 git clone https://github.com/navinspire-ai/navin-agi.git
 cd navin-agi
-sh scripts/start.sh --install
+make install
+make start
 ```
 
-Cela démarre l'interface web locale. Configurez les providers et les modèles dans Settings, puis travaillez. Arrêt : `sh scripts/stop.sh`.
-
-Depuis le dossier `navin-agi`, vous pouvez lancer le CLI directement, sans activer le venv :
+`make install` installe tout (dependances systeme si besoin, backend, WebUI). `make start` lance le gateway et l'interface web.
 
 ```bash
-.venv/bin/navin-cli
+make stop
 ```
 
-Windows : `.venv\Scripts\navin-cli`
+Pareil avec les scripts : `sh scripts/install.sh` puis `sh scripts/start.sh`. En une fois : `sh scripts/start.sh --install`.
+
+`make start backend` = gateway seul. `make start front` = UI Vite seule. Relancer : `make restart`.
+
+Depuis le depot : `.venv/bin/navin-cli` (Windows : `.venv\Scripts\navin-cli`).
+
+Details : [Installation](./docs/Installation.md).
 
 ## Agents
 

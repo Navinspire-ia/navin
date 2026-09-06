@@ -112,76 +112,77 @@ Config file: `~/.navin/config.json`. Same file for `navin-cli` and the desktop.
 
 Use this when you clone the repository and want to run or change Navin locally.
 
+`make install` installs missing system packages when it can (`apt` on Debian/Ubuntu, `dnf`/`yum` on Fedora/RHEL, `pacman` on Arch, `zypper`, Homebrew on macOS), then the Python backend and the WebUI.
+
 ### Prerequisites
+
+If you skip system install (`NAVIN_SKIP_SYSTEM=1` or `--no-system`):
 
 - Python 3.11 or newer
 - Make
 - Git
-- Node.js + npm (WebUI)
+- Node.js 18+ and npm
 - Linux / macOS: [rustup](https://rustup.rs) if you need the native sandbox (`make native`)
 
-### One command
+### Two commands
 
-From the repository root:
+```bash
+git clone https://github.com/navinspire-ai/navin-agi.git
+cd navin-agi
+make install
+make start
+```
+
+Or the same with scripts:
+
+```bash
+sh scripts/install.sh
+sh scripts/start.sh
+```
+
+One shot (install + start):
 
 ```bash
 sh scripts/start.sh --install
 ```
 
-This creates `.venv`, installs the backend in editable mode, installs WebUI dependencies, then starts:
+This starts:
 
 - the gateway (WebUI + WebSocket, default `http://127.0.0.1:8765`)
 - the Vite dev server (`http://127.0.0.1:5173`)
 
-Stop:
-
 ```bash
-sh scripts/stop.sh
+make stop
+# or: sh scripts/stop.sh
 ```
 
-### Step by step
+### Front / backend
+
+Make and scripts accept the same scopes:
+
+| Command | What it does |
+| --- | --- |
+| `make install` / `sh scripts/install.sh` | System + backend + WebUI |
+| `make install backend` | Backend only (`.venv`) |
+| `make install front` | WebUI only (`npm ci`) |
+| `make start` / `sh scripts/start.sh` | Gateway + Vite (background) |
+| `make start backend` | Gateway only |
+| `make start front` | Vite only |
+| `make start-fg` / `sh scripts/start.sh --fg` | Gateway in the foreground |
+| `make stop` / `restart` / `status` | Same scopes: `front` or `backend` |
 
 ```bash
-# backend
-make install
-
-# native helpers (Linux / macOS)
-make native
-
-# frontend
-make -C webui install
-```
-
-Start:
-
-```bash
-sh scripts/start.sh              # gateway + Vite, background
-sh scripts/start.sh --backend    # gateway only
-sh scripts/start.sh --front      # Vite only
-sh scripts/start.sh --fg         # gateway in the foreground
-```
-
-Make equivalents:
-
-```bash
-make start-bg
+make start backend
+make start front
+make restart
 make status
 make logs
-make -C webui start-bg
-make -C webui logs
 ```
 
-Or without Make, from an activated venv:
+Native helpers (Linux / macOS), after `make install`:
 
 ```bash
-python -m pip install -e ".[dev]"
-navin gateway
-```
-
-```bash
-cd webui
-npm ci
-npm run dev
+make native
 ```
 
 Vite proxies `/api`, `/webui`, `/auth` and the WebSocket to the gateway. If the gateway is not on 8765:
@@ -189,6 +190,16 @@ Vite proxies `/api`, `/webui`, `/auth` and the WebSocket to the gateway. If the 
 ```bash
 NAVIN_API_URL=http://127.0.0.1:8766 npm run dev
 ```
+
+### Docker (this repo)
+
+No third-party Navin image. Build from `https://github.com/navinspire-ai/navin-agi` (this tree):
+
+```bash
+docker compose up navin-gateway
+```
+
+The image installs the `navin` CLI and serves the bundled WebUI. Gateway health defaults to `18790`, WebUI to `8765`. Config: `~/.navin` mounted into the container.
 
 ### Use the source CLI
 

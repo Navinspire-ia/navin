@@ -22,7 +22,7 @@ irm 'https://navin.live/install?win32=true' | iex
 
 Then `navin-cli` in a project, or `navin .` for the desktop window. [CLI](./cli/overview.md).
 
-From a `navin-agi` clone: `.venv/bin/navin-cli`.
+From a `navin-agi` clone: `make install` then `make start`, and `.venv/bin/navin-cli`.
 
 ## 2. First launch
 
