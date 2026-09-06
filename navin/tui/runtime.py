@@ -338,7 +338,10 @@ class TuiRuntime:
         from navin.config.paths import is_default_workspace
         from navin.cron.service import CronService
         from navin.cron.spend import CronSpendHook
-        from navin.providers.factory import load_provider_snapshot_allowing_unconfigured
+        from navin.providers.factory import (
+            build_provider_snapshot_allowing_unconfigured,
+            load_provider_snapshot_allowing_unconfigured,
+        )
         from navin.providers.image_generation import image_gen_provider_configs
         from navin.utils.helpers import sync_workspace_templates
         from navin.webui.token_usage import TokenUsageHook
@@ -357,6 +360,7 @@ class TuiRuntime:
 
                 _migrate_cron_store(config)
         cron = CronService(config.workspace_path / "cron" / "jobs.json")
+        snapshot = build_provider_snapshot_allowing_unconfigured(config)
 
         self.agent_loop = AgentLoop.from_config(
             config,
@@ -369,6 +373,7 @@ class TuiRuntime:
                 CronSpendHook(cron),
                 *self._managed_usage_hooks(config),
             ],
+            provider=snapshot.provider,
             provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
         )
         self._refresh_status()
