@@ -59,6 +59,31 @@ class ContextMeterTests(unittest.TestCase):
         self.assertGreaterEqual(len(line) - len("11% of 200k") - 1, 16)
 
 
+class HiddenNavinProviderTests(unittest.TestCase):
+    def test_leftover_navin_slot_stays_off_the_providers_table(self) -> None:
+        from navin.optional_live import live_modules_available
+        from navin.tui.hubs import provider_rows
+
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        rows = provider_rows(
+            {
+                "providers": {
+                    "navin": {
+                        "apiKey": "sk-xxxxxxxxxxxxxxxx39dc",
+                        "apiBase": "https://openrouter.ai/api/v1",
+                    },
+                    "openai": {"apiKey": "sk-xxxxxxxxxxxxxxxxabcd"},
+                }
+            }
+        )
+        keys = [str(row.key).lower() for row in rows]
+        labels = [str(row.cells[1]).lower() for row in rows if len(row.cells) > 1]
+        self.assertNotIn("navin", keys)
+        self.assertNotIn("navin", labels)
+        self.assertIn("openai", keys)
+
+
 class ProviderPanelLabelTests(unittest.TestCase):
     def test_shows_openai_and_configured_count(self) -> None:
         data = {

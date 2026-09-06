@@ -46,11 +46,29 @@ class MediaProviderRowTest(unittest.TestCase):
         if live_modules_available():
             self.skipTest("live account enabled")
         config = Config()
+        config.providers.navin = ProviderConfig(
+            api_key="sk-xxxxxxxxxxxxxxxx39dc",
+            api_base="https://openrouter.ai/api/v1",
+        )
         for rows in (
             _image_generation_provider_rows(config),
             _video_generation_provider_rows(config),
         ):
             self.assertFalse(any(row["name"] == "navin" for row in rows))
+
+    def test_leftover_navin_slot_is_absent_from_settings_providers(self) -> None:
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        config = Config()
+        config.providers.navin = ProviderConfig(
+            api_key="sk-xxxxxxxxxxxxxxxx39dc",
+            api_base="https://openrouter.ai/api/v1",
+        )
+        with mock.patch("navin.webui.settings_api.load_config", return_value=config), mock.patch(
+            "navin.webui.settings_api.save_config"
+        ):
+            payload = settings_payload()
+        self.assertFalse(any(row["name"] == "navin" for row in payload["providers"]))
 
     def test_navin_row_is_not_managed_without_a_plan(self) -> None:
         if not live_modules_available():

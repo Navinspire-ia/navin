@@ -403,6 +403,10 @@ const RETIRED_LLM_PROVIDERS = new Set([
   "aihubmix",
 ]);
 
+function hiddenSettingsProvider(name: string, liveAccount: boolean): boolean {
+  return RETIRED_LLM_PROVIDERS.has(name) || (name === "navin" && !liveAccount);
+}
+
 const PROVIDER_DISPLAY_ORDER = new Map(
   [
     "openai",
@@ -662,7 +666,7 @@ const DEFAULT_WEB_SEARCH_FORM: WebSearchSettingsUpdate = {
 
 const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
   enabled: false,
-  provider: "navin",
+  provider: "",
   model: "google/gemini-3.1-flash-image",
   defaultAspectRatio: "1:1",
   defaultImageSize: "2K",
@@ -671,7 +675,7 @@ const DEFAULT_IMAGE_GENERATION_FORM: ImageGenerationSettingsUpdate = {
 
 const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
   enabled: false,
-  provider: "navin",
+  provider: "",
   model: "minimax/hailuo-3",
   defaultAspectRatio: "16:9",
   defaultDurationSeconds: 8,
@@ -680,7 +684,7 @@ const DEFAULT_VIDEO_GENERATION_FORM: VideoGenerationSettingsUpdate = {
 
 const DEFAULT_VIDEO_GENERATION_SETTINGS: NonNullable<SettingsPayload["video_generation"]> = {
   enabled: false,
-  provider: "navin",
+  provider: "",
   provider_configured: false,
   model: "minimax/hailuo-3",
   default_aspect_ratio: "16:9",
@@ -693,7 +697,7 @@ const DEFAULT_VIDEO_GENERATION_SETTINGS: NonNullable<SettingsPayload["video_gene
 
 const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
   enabled: true,
-  provider: "navin",
+  provider: "",
   model: "nvidia/parakeet-tdt-0.6b-v3",
   language: "",
   maxDurationSec: 120,
@@ -702,7 +706,7 @@ const DEFAULT_TRANSCRIPTION_FORM: TranscriptionSettingsUpdate = {
 
 const DEFAULT_TRANSCRIPTION_SETTINGS: NonNullable<SettingsPayload["transcription"]> = {
   enabled: true,
-  provider: "navin",
+  provider: "",
   provider_configured: false,
   model: "nvidia/parakeet-tdt-0.6b-v3",
   language: null,
@@ -714,14 +718,14 @@ const DEFAULT_TRANSCRIPTION_SETTINGS: NonNullable<SettingsPayload["transcription
 
 const DEFAULT_MUSIC_GENERATION_FORM: MusicGenerationSettingsUpdate = {
   enabled: true,
-  provider: "navin",
+  provider: "",
   model: "google/lyria-3-clip-preview",
 };
 
 const DEFAULT_MUSIC_GENERATION_SETTINGS: NonNullable<SettingsPayload["music_generation"]> = {
   enabled: true,
   enabled_auto: true,
-  provider: "navin",
+  provider: "",
   provider_configured: false,
   model: "google/lyria-3-clip-preview",
   save_dir: "generated-music",
@@ -730,7 +734,7 @@ const DEFAULT_MUSIC_GENERATION_SETTINGS: NonNullable<SettingsPayload["music_gene
 };
 
 const DEFAULT_VOICE_FORM: VoiceSettingsUpdate = {
-  ttsProvider: "navin",
+  ttsProvider: "",
   ttsModel: "google/gemini-3.1-flash-tts-preview",
   voice: "eve",
   autoSpeak: false,
@@ -739,7 +743,7 @@ const DEFAULT_VOICE_FORM: VoiceSettingsUpdate = {
 };
 
 const DEFAULT_VOICE_SETTINGS: NonNullable<SettingsPayload["voice"]> = {
-  tts_provider: "navin",
+  tts_provider: "",
   tts_provider_configured: false,
   tts_model: "google/gemini-3.1-flash-tts-preview",
   voice: "eve",
@@ -3088,7 +3092,10 @@ function OverviewSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const configuredProviders = settings.providers.filter((provider) => provider.configured);
+  const configuredProviders = settings.providers.filter(
+    (provider) =>
+      provider.configured && !hiddenSettingsProvider(provider.name, liveAccountEnabled(settings)),
+  );
   const activePreset = settings.agent.model_preset || "default";
   const activeProvider = settings.agent.resolved_provider ?? settings.agent.provider;
   const activeProviderConfigured = settingsProviderConfigured(settings, activeProvider);
@@ -4418,7 +4425,10 @@ function ModelsSettings({
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const [activeTab, setActiveTab] = useState<"model" | "routing">("model");
   const showRoutingTab = Boolean(onUpdateModelRoute);
-  const configuredProviders = settings.providers.filter((provider) => provider.configured);
+  const configuredProviders = settings.providers.filter(
+    (provider) =>
+      provider.configured && !hiddenSettingsProvider(provider.name, liveAccountEnabled(settings)),
+  );
   const showAutoProvider = defaultPreset(settings)?.provider === "auto" || form.provider === "auto";
   const selectableProviders = uniqueProviders(configuredProviders);
   const providerOptions = showAutoProvider
@@ -5152,9 +5162,10 @@ function ProvidersSettings({
     Record<string, ProviderConnectionTestPayload | { status: "testing" }>
   >({});
   const accountConnected = Boolean(account?.connected);
+  const liveAccount = liveAccountEnabled(settings);
   const configuredProviders = orderUnconfiguredProviders(
     settings.providers.filter((provider) => {
-      if (RETIRED_LLM_PROVIDERS.has(provider.name)) return false;
+      if (hiddenSettingsProvider(provider.name, liveAccount)) return false;
       if (!provider.configured) return false;
       return true;
     }),
@@ -5163,7 +5174,7 @@ function ProvidersSettings({
     () =>
       orderUnconfiguredProviders(
         settings.providers.filter((provider) => {
-          if (provider.configured || RETIRED_LLM_PROVIDERS.has(provider.name)) {
+          if (provider.configured || hiddenSettingsProvider(provider.name, liveAccountEnabled(settings))) {
             return false;
           }
           return true;
