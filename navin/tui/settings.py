@@ -220,6 +220,8 @@ def build_sections(
             ("exa", "Exa"),
             ("tavily", "Tavily"),
         )
+    from navin.optional_live import live_modules_available
+
     machine, _ = _machine_line()
     kill = _get(data, ("tools", "boardGit"), {}) or {}
     kill_line = (
@@ -689,12 +691,18 @@ def build_sections(
             kind="rules",
             keys=(("enter", "edit"), ("n", "new rule")),
         ),
-        Section(
-            "account",
-            "Account",
-            "navin.live subscription, managed models and usage.",
-            kind="account",
-            keys=(("enter", "open"),),
+        *(
+            (
+                Section(
+                    "account",
+                    "Account",
+                    "navin.live subscription, managed models and usage.",
+                    kind="account",
+                    keys=(("enter", "open"),),
+                ),
+            )
+            if live_modules_available()
+            else ()
         ),
         Section(
             "about",

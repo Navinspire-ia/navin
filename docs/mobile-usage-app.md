@@ -8,7 +8,7 @@ Use Navin from a phone or tablet as a **chat companion** while your desktop Navi
 | Where | Browser or home-screen shortcut to your running Navin | Workbench **Mobile** tab in the desktop app |
 | Docs | This page | [Mobile Agent](./mobile.md) |
 
-Licensing is the same as desktop: free with your own API keys, or a paid plan for managed models.
+This tree is BYOK only: use your own API keys or a local model.
 
 ## What you need
 
@@ -32,7 +32,6 @@ Chat still needs your desktop Navin online. Offline, you may reopen the shell, b
 
 - **Chat** - same threads and composer as desktop; the sidebar becomes a sheet on small screens
 - **Voice** - mic / STT when a transcription provider is configured in Settings
-- **Account** - connect your navin.live account from Settings when you use managed plans
 - **Artifacts** - read-only preview when the agent shares a document or page
 
 Full Dev tooling (terminals, device preview, heavy workbench) stays on the desktop app.

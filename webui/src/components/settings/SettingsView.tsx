@@ -220,6 +220,7 @@ import type {
   WebuiDefaultAccessMode,
 } from "@/lib/types";
 import { useAccount } from "@/hooks/useAccount";
+import { liveAccountEnabled } from "@/lib/live-account";
 
 export type SettingsSectionKey =
   | "overview"
@@ -902,6 +903,7 @@ export function SettingsView({
   const { token } = useClient();
   const { account } = useAccount();
   const [settings, setSettings] = useState<SettingsPayload | null>(() => initialSettings);
+  const liveAccount = liveAccountEnabled(settings);
   const [cliApps, setCliApps] = useState<CliAppsPayload | null>(null);
   const [navinFeatures, setNavinFeatures] = useState<NavinFeaturesPayload | null>(null);
   const featureCatalog = navinFeatures?.features ?? [];
@@ -1015,11 +1017,19 @@ export function SettingsView({
 
   const selectSection = useCallback(
     (section: SettingsSectionKey) => {
-      setActiveSection(section);
-      onSectionChange?.(section);
+      const next =
+        section === "account" && !liveAccountEnabled(settings) ? "providers" : section;
+      setActiveSection(next);
+      onSectionChange?.(next);
     },
-    [onSectionChange],
+    [onSectionChange, settings],
   );
+
+  useEffect(() => {
+    if (activeSection === "account" && !liveAccount) {
+      selectSection("providers");
+    }
+  }, [activeSection, liveAccount, selectSection]);
   const [webSearchKeyVisible, setWebSearchKeyVisible] = useState(false);
   const [webSearchKeyEditing, setWebSearchKeyEditing] = useState(false);
   const [form, setForm] = useState<AgentSettingsDraft>(() =>
@@ -2357,6 +2367,7 @@ export function SettingsView({
           />
         );
       case "account":
+        if (!liveAccount) return null;
         return (
           <AccountSettings
             onOpenProviders={() => selectSection("providers")}
@@ -2422,7 +2433,7 @@ export function SettingsView({
             imageProviderRestartPending={pendingRestartSections.image || pendingRestartSections.runtime}
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
-            onOpenAccount={() => selectSection("account")}
+            onOpenAccount={liveAccount ? () => selectSection("account") : undefined}
           />
         );
       case "models":
@@ -2451,7 +2462,7 @@ export function SettingsView({
             onToggleConfigurationEnabled={handleToggleModelConfigurationEnabled}
             onSetDefaultConfiguration={handleSetDefaultModelConfiguration}
             onOpenProviders={() => selectSection("providers")}
-            onOpenAccount={() => selectSection("account")}
+            onOpenAccount={liveAccount ? () => selectSection("account") : undefined}
             onUpdateModelRoute={handleUpdateModelRoute}
           />
         );
@@ -2705,6 +2716,7 @@ export function SettingsView({
           onSelectSection={selectSection}
           onBackToChat={onBackToChat}
           hostChromeInset={hostChromeInset}
+          liveAccount={liveAccount}
         />
       ) : null}
 
@@ -3001,11 +3013,13 @@ function SettingsSidebar({
   onSelectSection,
   onBackToChat,
   hostChromeInset,
+  liveAccount = false,
 }: {
   activeSection: SettingsSectionKey;
   onSelectSection: (section: SettingsSectionKey) => void;
   onBackToChat: () => void;
   hostChromeInset?: boolean;
+  liveAccount?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -3033,7 +3047,7 @@ function SettingsSidebar({
         aria-label={t("settings.sidebar.ariaLabel")}
         className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:block lg:space-y-1 lg:overflow-visible lg:px-0 lg:pb-0"
       >
-        {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback, labelKey }) => {
+        {SETTINGS_NAV_ITEMS.filter((item) => item.key !== "account" || liveAccount).map(({ key, icon: Icon, fallback, labelKey }) => {
           const active =
             key === activeSection
             || (key === "tools" && (activeSection === "tools" || activeSection === "apps"))
@@ -4397,7 +4411,7 @@ function ModelsSettings({
   ) => Promise<void> | void;
   onSetDefaultConfiguration?: (name: string) => Promise<void> | void;
   onOpenProviders: () => void;
-  onOpenAccount: () => void;
+  onOpenAccount?: () => void;
   onUpdateModelRoute?: (role: string, preset: string) => Promise<void> | void;
 }) {
   const { t } = useTranslation();
@@ -4559,14 +4573,16 @@ function ModelsSettings({
           <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
             {tx(
               "settings.models.needsProviderHelp",
-              "Subscribe on navin.live for managed models, or add your own API key / local endpoint under Providers.",
+              "Add your own API key or a local endpoint under Providers.",
             )}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={onOpenAccount} className="rounded-full">
-              <CircleUserRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {tx("settings.models.subscribeOrSignIn", "Subscribe or sign in")}
-            </Button>
+            {onOpenAccount ? (
+              <Button size="sm" onClick={onOpenAccount} className="rounded-full">
+                <CircleUserRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                {tx("settings.models.subscribeOrSignIn", "Subscribe or sign in")}
+              </Button>
+            ) : null}
             <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
               <KeyRound className="mr-1.5 h-3.5 w-3.5" aria-hidden />
               {tx("settings.nav.providers", "Providers")}

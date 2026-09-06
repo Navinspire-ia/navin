@@ -1610,6 +1610,8 @@ export interface OAuthLoginState {
 }
 
 export interface SettingsPayload {
+  /** navin.live account + managed Navin provider. Off on main / navin-agi. */
+  live_account?: boolean;
   oauth?: OAuthLoginState;
   surface?: RuntimeSurface;
   runtime_surface?: RuntimeSurface;

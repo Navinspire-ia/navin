@@ -1225,7 +1225,7 @@ export function ThreadShell({
       if (modality === "image" && settings && preset?.model) {
         void updateImageGenerationSettings(token, {
           enabled: settings.image_generation.enabled,
-          provider: settings.image_generation.provider || "navin",
+          provider: settings.image_generation.provider || "",
           model: preset.model,
           defaultAspectRatio: settings.image_generation.default_aspect_ratio,
           defaultImageSize: settings.image_generation.default_image_size,
@@ -1243,7 +1243,7 @@ export function ThreadShell({
         if (!video) return;
         void updateVideoGenerationSettings(token, {
           enabled: video.enabled,
-          provider: video.provider || "navin",
+          provider: video.provider || "",
           model: preset.model,
           defaultAspectRatio: video.default_aspect_ratio,
           defaultDurationSeconds: video.default_duration_seconds,
@@ -1260,7 +1260,7 @@ export function ThreadShell({
         const voice = settings.voice;
         if (!voice) return;
         void updateVoiceSettings(token, {
-          ttsProvider: voice.tts_provider || "navin",
+          ttsProvider: voice.tts_provider || "",
           ttsModel: preset.model,
           voice: voice.voice || "eve",
           autoSpeak: voice.auto_speak,
@@ -1278,7 +1278,7 @@ export function ThreadShell({
         const music = settings.music_generation;
         void updateMusicGenerationSettings(token, {
           enabled: music?.enabled ?? true,
-          provider: music?.provider || "navin",
+          provider: music?.provider || "",
           model: preset.model,
         })
           .then((next) => setSettings(next))
@@ -1292,7 +1292,7 @@ export function ThreadShell({
         const transcription = settings.transcription;
         void updateTranscriptionSettings(token, {
           enabled: transcription?.enabled ?? true,
-          provider: transcription?.provider || "navin",
+          provider: transcription?.provider || "",
           model: preset.model,
           language: transcription?.language ?? "",
           maxDurationSec: transcription?.max_duration_sec ?? 120,

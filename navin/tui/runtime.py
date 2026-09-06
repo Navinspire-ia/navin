@@ -321,6 +321,10 @@ class TuiRuntime:
 
     @staticmethod
     def _managed_usage_hooks(config: Any) -> list[Any]:
+        from navin.optional_live import live_modules_available
+
+        if not live_modules_available():
+            return []
         try:
             from navin.license_client import ManagedUsageHook
         except ImportError:
@@ -369,7 +373,11 @@ class TuiRuntime:
         )
         self._refresh_status()
         self._subscribe_runtime_events()
+        from navin.optional_live import live_modules_available
+
         try:
+            if not live_modules_available():
+                raise ImportError("live account disabled")
             from navin.license_sync import start_license_sync
 
             self._license_sync = start_license_sync(lambda: self.agent_loop)
@@ -937,10 +945,13 @@ class TuiRuntime:
         from navin.config.loader import load_config
 
         self.config = load_config(config_path) if config_path else load_config()
-        with contextlib.suppress(ImportError):
-            from navin.license_sync import apply_live_account_runtime
+        from navin.optional_live import live_modules_available
 
-            apply_live_account_runtime()
+        if live_modules_available():
+            with contextlib.suppress(ImportError):
+                from navin.license_sync import apply_live_account_runtime
+
+                apply_live_account_runtime()
         loop = self.agent_loop
         if loop is not None:
             with contextlib.suppress(Exception):

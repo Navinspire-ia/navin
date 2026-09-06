@@ -525,7 +525,12 @@ class AgentLoop:
             )
 
             try:
+                from navin.optional_live import live_modules_available
                 from navin.license_client import uses_managed_key
+
+                if not live_modules_available():
+                    def uses_managed_key(_cfg: object) -> bool:
+                        return False
             except ImportError:
                 def uses_managed_key(_cfg: object) -> bool:
                     return False

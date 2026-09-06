@@ -49,6 +49,10 @@ def _set_navin_logs(enabled: bool) -> None:
 
 
 def _optional_managed_usage_hooks(config: Any) -> list[Any]:
+    from navin.optional_live import live_modules_available
+
+    if not live_modules_available():
+        return []
     try:
         from navin.license_client import ManagedUsageHook
     except ImportError:
@@ -2115,7 +2119,11 @@ def _run_gateway(
     )
     # Pull plan limits from navin.live on a timer so Stripe renewals / upgrades
     # re-clamp the live AgentLoop without a manual Refresh or restart.
+    from navin.optional_live import live_modules_available
+
     try:
+        if not live_modules_available():
+            raise ImportError("live account disabled")
         from navin.license_sync import start_license_sync, stop_license_sync
 
         license_sync = start_license_sync(lambda: agent)
@@ -3965,7 +3973,10 @@ def status(
 # ============================================================================
 
 license_app = typer.Typer(help="Manage the navin.live subscription of this device")
-app.add_typer(license_app, name="license")
+from navin.optional_live import live_modules_available as _live_account_enabled
+
+if _live_account_enabled():
+    app.add_typer(license_app, name="license")
 
 
 @license_app.command("activate")

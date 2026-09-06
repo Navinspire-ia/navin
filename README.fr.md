@@ -1,12 +1,15 @@
 <div align="center">
 
-<h1 align="center"><img src="./assets/navin-mark.svg" alt="" width="48" height="48" valign="middle"> Navin</h1>
-
 <p align="center">
-  <img src="./assets/agi.gif" alt="Navin AGI" width="560">
+  <img src="./assets/navin-mark.svg" alt="" width="36" height="36" valign="middle">
+  <strong>Navin</strong>
+  &nbsp;&nbsp;
+  100% gratuit. Open source. Autonome. Conçu vers l'AGI.
 </p>
 
-**100% gratuit. Open source. Autonome. Conçu vers l'AGI.**
+<p align="center">
+  <img src="./assets/agi.gif" alt="Navin AGI" width="280">
+</p>
 
 [English](./README.md) - [Français](./README.fr.md)
 
@@ -30,7 +33,7 @@ Votre machine. Vos modèles. Votre agent.
 </div>
 
 <p align="center">
-  <img src="./assets/navin.png" alt="Navin Studio" width="900">
+  <img src="./assets/navin.gif" alt="Studio Marketing Navin: projet, campagne, loop, heartbeat" width="900">
 </p>
 
 ## Pourquoi Navin ?
@@ -40,10 +43,104 @@ La plupart des outils IA s'arrêtent après une réponse.
 Navin prend un objectif et continue de travailler.
 
 <p align="center">
-  <img src="./assets/loop-fr.png" alt="Objectif, Plan, Action, Verifier, Memoire, Apprendre, Continuer" width="900">
+  <img src="./assets/loop-fr.gif" alt="Objectif, Plan, Action, Verifier, Memoire, Apprendre, Continuer" width="900">
 </p>
 
 Navin tourne en application desktop et en CLI, fonctionne en local, accepte vos propres clés API et peut utiliser des centaines de modèles texte et multimodaux.
+
+## Conçu vers l'AGI
+
+Navin va au-delà des assistants statiques : des agents qui apprennent de l'expérience.
+
+<p align="center">
+  <img src="./assets/agi-caps.gif" alt="Memory, Skills, World, Policy, Eval" width="900">
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th align="left" width="220">Capacité</th>
+      <th align="left">Ce que ça fait</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><img src="https://img.shields.io/badge/Persistent%20Memory-0369ff?style=flat-square" alt="Persistent Memory"></td>
+      <td>Retenir l'expérience utile entre sessions, projets, code, notes et actions</td>
+    </tr>
+    <tr>
+      <td><img src="https://img.shields.io/badge/Auto--Skills-111111?style=flat-square" alt="Auto-Skills"></td>
+      <td>Créer, tester, réparer et améliorer des Skills réutilisables</td>
+    </tr>
+    <tr>
+      <td><img src="https://img.shields.io/badge/World%20Models-111111?style=flat-square" alt="World Models"></td>
+      <td>Anticiper ce qui risque d'arriver avant d'agir</td>
+    </tr>
+    <tr>
+      <td><img src="https://img.shields.io/badge/Policy%20Learning-111111?style=flat-square" alt="Policy Learning"></td>
+      <td>Apprendre quelle action ou quel outil est le meilleur prochain pas</td>
+    </tr>
+    <tr>
+      <td><img src="https://img.shields.io/badge/Evaluation-111111?style=flat-square" alt="Evaluation"></td>
+      <td>Chaque amélioration doit être mesurable, testable et réversible</td>
+    </tr>
+  </tbody>
+</table>
+
+Le but n'est pas seulement un agent qui marche. C'est un agent qui devient meilleur à travailler.
+
+Navin ne prétend pas être l'AGI aujourd'hui. Le projet construit les capacités nécessaires pour aller vers une intelligence autonome de plus en plus générale.
+
+## Self-Evolve
+
+Quand Navin échoue plusieurs fois de la même façon, il peut transformer ça en une meilleure Skill réutilisable.
+
+<p align="center">
+  <img src="./assets/self-evolve.gif" alt="Self-Evolve de l'échec jusqu'à promote ou rollback" width="900">
+</p>
+
+La règle est simple : mieux qu'avant. Rien d'important ne se dégrade.
+
+## Memory + Graph
+
+Navin n'a pas à repartir de zéro à chaque session.
+
+<p align="center">
+  <img src="./assets/memory-graph.gif" alt="Mémoires vers Project Brain puis Agent Loop" width="900">
+</p>
+
+## Un seul workspace IA
+
+Navin relie beaucoup de workflows au même agent, à la même mémoire et au même contexte projet.
+
+<p align="center">
+  <img src="./assets/workspace.gif" alt="Meeting vers Code, Research vers Campaign, Product vers Leads" width="900">
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th align="left" width="140">Module</th>
+      <th align="left">Ce que Navin peut faire</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><img src="https://img.shields.io/badge/Code-0369ff?style=flat-square" alt="Code"></td><td>Build, Debug, Review, Security, Git, Terminal</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Research-111111?style=flat-square" alt="Research"></td><td>Recherche web, recherche multi-agents, documents</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Scraping-111111?style=flat-square" alt="Scraping"></td><td>Crawl, extraction, structure, analyse</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Leads-111111?style=flat-square" alt="Leads"></td><td>Trouver, enrichir, scorer, qualifier</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Marketing-111111?style=flat-square" alt="Marketing"></td><td>Recherche, stratégie, contenu, campagnes</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Tenders-111111?style=flat-square" alt="Tenders"></td><td>Trouver des opportunités, analyser, préparer les réponses</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Career-111111?style=flat-square" alt="Career"></td><td>Trouver jobs et missions freelance, analyser les opportunités</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Meetings-111111?style=flat-square" alt="Meetings"></td><td>Enregistrer, transcrire, résumer, extraire les actions</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Notes-111111?style=flat-square" alt="Notes"></td><td>Écrire, chercher, demander, relier la connaissance</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Projects-111111?style=flat-square" alt="Projects"></td><td>Tâches, décisions, contexte, exécution agent</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/SEO-111111?style=flat-square" alt="SEO"></td><td>Audit, mots-clés, contenu, actions</td></tr>
+    <tr><td><img src="https://img.shields.io/badge/Media-111111?style=flat-square" alt="Media"></td><td>Image, vidéo, musique, voix, STT, TTS</td></tr>
+  </tbody>
+</table>
+
+Un contexte. Une mémoire. Un système d'agents.
 
 ## Installation
 
@@ -130,6 +227,14 @@ sh scripts/start.sh --install
 
 Cela démarre l'interface web locale. Configurez les providers et les modèles dans Settings, puis travaillez. Arrêt : `sh scripts/stop.sh`.
 
+Depuis le dossier `navin-agi`, vous pouvez lancer le CLI directement, sans activer le venv :
+
+```bash
+.venv/bin/navin-cli
+```
+
+Windows : `.venv\Scripts\navin-cli`
+
 ## Agents
 
 Navin change de mode selon le travail. Il peut aussi créer des sous-agents pour un travail parallèle et spécialisé.
@@ -197,109 +302,13 @@ Utile pour le code, la recherche, le monitoring, le scraping, les appels d'offre
 
 L'autonomie reste bornée par les permissions, les budgets, les checkpoints et les kill switches.
 
-## Conçu vers l'AGI
-
-Navin va au-delà des assistants statiques : des agents qui apprennent de l'expérience.
-
-<p align="center">
-  <img src="./assets/agi-caps.gif" alt="Memory, Skills, World, Policy, Eval" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="220">Capacité</th>
-      <th align="left">Ce que ça fait</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Persistent%20Memory-0369ff?style=flat-square" alt="Persistent Memory"></td>
-      <td>Retenir l'expérience utile entre sessions, projets, code, notes et actions</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Auto--Skills%20%2B%20Self--Evolve-111111?style=flat-square" alt="Auto-Skills"></td>
-      <td>Créer, tester, réparer et améliorer des Skills réutilisables</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/World%20Models-111111?style=flat-square" alt="World Models"></td>
-      <td>Anticiper ce qui risque d'arriver avant d'agir</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Policy%20Learning-111111?style=flat-square" alt="Policy Learning"></td>
-      <td>Apprendre quelle action ou quel outil est le meilleur prochain pas</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Eval%20%2B%20Rollback-111111?style=flat-square" alt="Evaluation"></td>
-      <td>Chaque amélioration doit être mesurable, testable et réversible</td>
-    </tr>
-  </tbody>
-</table>
-
-Le but n'est pas seulement un agent qui marche. C'est un agent qui devient meilleur à travailler.
-
-Navin ne prétend pas être l'AGI aujourd'hui. Le projet construit les capacités nécessaires pour aller vers une intelligence autonome de plus en plus générale.
-
-## Self-Evolve
-
-Quand Navin échoue plusieurs fois de la même façon, il peut transformer ça en une meilleure Skill réutilisable.
-
-<p align="center">
-  <img src="./assets/self-evolve.gif" alt="Self-Evolve de l'échec jusqu'à promote ou rollback" width="900">
-</p>
-
-La règle est simple : mieux qu'avant. Rien d'important ne se dégrade.
-
-## Memory + Graph
-
-Navin n'a pas à repartir de zéro à chaque session.
-
-<p align="center">
-  <img src="./assets/memory-graph.gif" alt="Mémoires vers Project Brain puis Agent Loop" width="900">
-</p>
-
-## Un seul workspace IA
-
-Navin relie beaucoup de workflows au même agent, à la même mémoire et au même contexte projet.
-
-<p align="center">
-  <img src="./assets/workspace.gif" alt="Meeting vers Code, Research vers Campaign, Product vers Leads" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="140">Module</th>
-      <th align="left">Ce que Navin peut faire</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td><img src="https://img.shields.io/badge/Code-0369ff?style=flat-square" alt="Code"></td><td>Build, Debug, Review, Security, Git, Terminal</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Research-111111?style=flat-square" alt="Research"></td><td>Recherche web, recherche multi-agents, documents</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Scraping-111111?style=flat-square" alt="Scraping"></td><td>Crawl, extraction, structure, analyse</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Leads-111111?style=flat-square" alt="Leads"></td><td>Trouver, enrichir, scorer, qualifier</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Marketing-111111?style=flat-square" alt="Marketing"></td><td>Recherche, stratégie, contenu, campagnes</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Tenders-111111?style=flat-square" alt="Tenders"></td><td>Trouver des opportunités, analyser, préparer les réponses</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Career-111111?style=flat-square" alt="Career"></td><td>Trouver jobs et missions freelance, analyser les opportunités</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Meetings-111111?style=flat-square" alt="Meetings"></td><td>Enregistrer, transcrire, résumer, extraire les actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Notes-111111?style=flat-square" alt="Notes"></td><td>Écrire, chercher, demander, relier la connaissance</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Projects-111111?style=flat-square" alt="Projects"></td><td>Tâches, décisions, contexte, exécution agent</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/SEO-111111?style=flat-square" alt="SEO"></td><td>Audit, mots-clés, contenu, actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Media-111111?style=flat-square" alt="Media"></td><td>Image, vidéo, musique, voix, STT, TTS</td></tr>
-  </tbody>
-</table>
-
-Un contexte. Une mémoire. Un système d'agents.
-
 ## Modèles
 
 Utilisez les modèles que vous voulez. Ajoutez vos clés et choisissez un modèle dans **Settings**.
 
 **Local :** Ollama - LM Studio - vLLM - serveurs compatibles OpenAI
 
-**BYOK :** vos propres clés API, 28+ providers.
-
-**Navin Providers :** 380+ modèles texte et multimodaux, dont OpenAI, Anthropic, Google, xAI, Qwen, Z.ai / GLM, Kimi, MiniMax, DeepSeek, Mistral, NVIDIA et d'autres.
+**BYOK :** vos propres clés API, 28+ providers et 380+ modèles texte et multimodaux, dont OpenAI, Anthropic, Google, xAI, Qwen, Z.ai / GLM, Kimi, MiniMax, DeepSeek, Mistral, NVIDIA et d'autres.
 
 Workflows multimodaux : Image - Vidéo - Musique - Vision - Voix - STT - TTS
 

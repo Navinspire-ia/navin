@@ -8,6 +8,8 @@ navin-cli
 navin-cli ~/code/app
 ```
 
+From a `navin-agi` clone: `.venv/bin/navin-cli`.
+
 Type a message and Enter. Shift+Enter inserts a newline. `/` completes slash commands. **Ctrl+P** is the command palette.
 
 ## Keys
@@ -40,4 +42,4 @@ Default is **agent**. `/mode` or **Ctrl+T** opens the list: chat, ask, plan, age
 
 ## Settings
 
-**Ctrl+G**: Providers, Models, Tools & MCP, Skills, Image, Video, Voice, Web, System, Security, Guardrails, Git, Browser, Rules, Account.
+**Ctrl+G**: Providers, Models, Tools & MCP, Skills, Image, Video, Voice, Web, System, Security, Guardrails, Git, Browser, Rules.

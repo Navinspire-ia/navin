@@ -98,8 +98,9 @@ Optional knobs; most users never set any of these.
 | `NAVIN_OPENAI_COMPAT_TIMEOUT_S` | Timeout override for OpenAI-compatible providers only. |
 | `NAVIN_STREAM_IDLE_TIMEOUT_S` | Kill a streaming response when no chunk arrives within this window. |
 | `NAVIN_MAX_CONCURRENT_REQUESTS` | Cap on concurrent model requests (default `200`, aligned with `max_concurrent_subagents`). `<=0` = unlimited. |
-| `NAVIN_MODEL_CATALOG_URL` | Override the managed model-catalog endpoint (default: navin.live). |
-| `NAVIN_LICENSE_SERVER_URL` | **Dev-only.** License endpoint for testing against a local site checkout. Must be HTTPS (plain HTTP is only accepted toward localhost); anything else is ignored and the official server is used. Spoofing it gains nothing: paid plans are enforced server-side through the provisioned, spend-capped API key. |
+| `NAVIN_LIVE_ACCOUNT` | **Off by default on this tree.** Set to `1` only to enable the navin.live account and the managed Navin provider. |
+| `NAVIN_MODEL_CATALOG_URL` | Override the managed model-catalog endpoint. Unused unless `NAVIN_LIVE_ACCOUNT=1`. |
+| `NAVIN_LICENSE_SERVER_URL` | **Dev-only.** License endpoint. Unused unless `NAVIN_LIVE_ACCOUNT=1`. |
 | `NAVIN_UPDATE_BASE_URL` | Override the desktop auto-update endpoint. Safe by construction: every update must still pass the bundled Ed25519 signature, size, SHA-256 and HTTPS checks. |
 | `NAVIN_UPDATE_PUBLIC_KEY` | **Dev-only, ignored in packaged builds.** Replaces the update-signature key when testing the pipeline from a source checkout. |
 | `NAVIN_UPDATE_ALLOW_HTTP` | **Dev-only, ignored in packaged builds.** Allows a localhost plain-HTTP update endpoint. |

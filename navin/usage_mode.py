@@ -561,7 +561,11 @@ def apply_usage_mode_to_runtime(
     """
     if uses_managed is None:
         try:
+            from navin.optional_live import live_modules_available
             from navin.license_client import uses_managed_key
+
+            if not live_modules_available():
+                return runtime
         except ImportError:
             return runtime
 

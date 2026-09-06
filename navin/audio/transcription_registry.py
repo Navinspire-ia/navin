@@ -92,6 +92,13 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     ),
 )
 
+from navin.optional_live import live_modules_available
+
+if not live_modules_available():
+    TRANSCRIPTION_PROVIDERS = tuple(
+        spec for spec in TRANSCRIPTION_PROVIDERS if spec.name != "navin"
+    )
+
 _BY_NAME = {spec.name: spec for spec in TRANSCRIPTION_PROVIDERS}
 _BY_ALIAS = {alias: spec for spec in TRANSCRIPTION_PROVIDERS for alias in spec.aliases}
 

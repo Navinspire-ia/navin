@@ -20,7 +20,13 @@ from navin.providers.registry import find_by_name
 
 TtsProviderName = str
 
-_DEFAULT_PROVIDER: TtsProviderName = "navin"
+def _default_tts_provider() -> TtsProviderName:
+    from navin.optional_live import live_modules_available
+
+    return "navin" if live_modules_available() else "openrouter"
+
+
+_DEFAULT_PROVIDER: TtsProviderName = _default_tts_provider()
 _REALTIME_VOICE_PLANS = frozenset({"pro", "ultra", "team"})
 
 

@@ -45,15 +45,22 @@ from navin.utils.document_templates import (
 )
 from navin.utils.media_templates import list_media_templates
 from navin.utils.subagent_channel_display import scrub_subagent_messages_for_channel
-try:
-    from navin.webui.account_api import (
-        AccountApiError,
-        WebUIAccountService,
-    )
-    from navin.webui.account_api import (
-        callback_html as account_callback_html,
-    )
-except ImportError:
+from navin.optional_live import live_modules_available
+
+if live_modules_available():
+    try:
+        from navin.webui.account_api import (
+            AccountApiError,
+            WebUIAccountService,
+        )
+        from navin.webui.account_api import (
+            callback_html as account_callback_html,
+        )
+    except ImportError:
+        AccountApiError = Exception  # type: ignore[misc,assignment]
+        WebUIAccountService = None  # type: ignore[misc,assignment]
+        account_callback_html = None
+else:
     AccountApiError = Exception  # type: ignore[misc,assignment]
     WebUIAccountService = None  # type: ignore[misc,assignment]
     account_callback_html = None
@@ -5117,7 +5124,24 @@ class GatewayHTTPHandler:
 
     async def _handle_webui_account(self, request: WsRequest) -> Response:
         if self.account is None:
-            return _http_error(404, "navin.live account is not available in this build")
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            return _http_json_response(
+                {
+                    "connected": False,
+                    "available": False,
+                    "plan": "",
+                    "plan_label": "",
+                    "plan_price_usd": None,
+                    "email": "",
+                    "name": "",
+                    "server_url": "",
+                    "managed_key_active": False,
+                    "org_id": None,
+                    "org_role": None,
+                    "seat_count": None,
+                }
+            )
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         query = _parse_query(request.path)

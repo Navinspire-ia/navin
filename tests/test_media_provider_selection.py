@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from navin.config.schema import Config, ProviderConfig
+from navin.optional_live import live_modules_available
 from navin.providers.managed_catalog import heal_managed_media_settings
 from navin.webui.settings_api import (
     _image_generation_provider_rows,
@@ -41,7 +42,19 @@ class MediaDefaultsTest(unittest.TestCase):
 
 
 class MediaProviderRowTest(unittest.TestCase):
+    def test_navin_row_is_hidden_on_public_tree(self) -> None:
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        config = Config()
+        for rows in (
+            _image_generation_provider_rows(config),
+            _video_generation_provider_rows(config),
+        ):
+            self.assertFalse(any(row["name"] == "navin" for row in rows))
+
     def test_navin_row_is_not_managed_without_a_plan(self) -> None:
+        if not live_modules_available():
+            self.skipTest("live account disabled")
         config = Config()
         for rows in (
             _image_generation_provider_rows(config),
@@ -52,6 +65,8 @@ class MediaProviderRowTest(unittest.TestCase):
             self.assertFalse(row["configured"])
 
     def test_navin_row_is_managed_on_a_paid_plan(self) -> None:
+        if not live_modules_available():
+            self.skipTest("live account disabled")
         config = _paid(Config())
         row = _navin_row(_image_generation_provider_rows(config))
         self.assertTrue(row["managed"])
@@ -125,12 +140,21 @@ class MediaProviderUpdateTest(unittest.TestCase):
 
 class MediaHealTest(unittest.TestCase):
     def test_paid_plan_gets_the_managed_slot(self) -> None:
+        if not live_modules_available():
+            self.skipTest("live account disabled")
         config = _paid(Config())
         self.assertTrue(heal_managed_media_settings(config))
         self.assertEqual(config.tools.image_generation.provider, "navin")
         self.assertEqual(config.tools.video_generation.provider, "navin")
         self.assertEqual(config.tools.music_generation.provider, "navin")
         self.assertFalse(heal_managed_media_settings(config))
+
+    def test_paid_plan_does_not_heal_without_live_account(self) -> None:
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        config = _paid(Config())
+        self.assertFalse(heal_managed_media_settings(config))
+        self.assertEqual(config.tools.image_generation.provider, "")
 
     def test_free_plan_is_left_unset(self) -> None:
         self.assertFalse(heal_managed_media_settings(Config()))

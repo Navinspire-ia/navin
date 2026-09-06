@@ -60,17 +60,17 @@ class ContextMeterTests(unittest.TestCase):
 
 
 class ProviderPanelLabelTests(unittest.TestCase):
-    def test_shows_navin_and_configured_count(self) -> None:
+    def test_shows_openai_and_configured_count(self) -> None:
         data = {
             "providers": {
-                "navin": {"apiKey": "sk-xxxxxxxxxxxxxxxx39dc"},
+                "openai": {"apiKey": "sk-xxxxxxxxxxxxxxxx39dc"},
                 "nvidia": {"apiKey": "nvapi-xxxxxxxxxxxxw0em"},
                 "ollama": {"apiBase": "http://localhost:11434/v1"},
                 "zai": {"apiKey": "zai-xxxxxxxxxxxxxxxxZdgf"},
             }
         }
-        label = provider_panel_label(data, "navin")
-        self.assertIn("Navin", label)
+        label = provider_panel_label(data, "openai")
+        self.assertIn("OpenAI", label)
         self.assertIn("4", label)
         self.assertNotIn("z-ai", label)
         self.assertNotIn("Z.AI", label)
@@ -100,7 +100,7 @@ class AccountTextTests(unittest.TestCase):
 
 
 class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
-    async def test_model_shows_context_and_account_keeps_money(self) -> None:
+    async def test_model_shows_context_without_account_card(self) -> None:
         from textual.app import App, ComposeResult
         from textual.widgets import Button, Static
 
@@ -141,7 +141,6 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             meter = side.query_one("#side-model").query_one(".card-meter", Static)
             workspace = side.query_one("#side-workspace").query_one(".card-body", Static)
             head = side.query_one("#side-workspace").query_one(".card-head", Static)
-            body = side.query_one("#side-account").query_one(".card-body", Static)
             self.assertIn("z-ai/glm-5.3-flash", model.content)
             self.assertIn("billed 47,808", model.content)
             self.assertNotIn("tools", model.content)
@@ -152,8 +151,7 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(side.query_one("#side-workspace").has_class("-boxed"))
             self.assertNotIn("Workspace", head.content)
             self.assertNotIn("ctrl+w", head.content)
-            self.assertIn("$69/month", body.content)
-            self.assertIn("$0.71 / $64.00", body.content)
+            self.assertEqual(list(side.query("#side-account")), [])
             self.assertGreaterEqual(side.query_one("#side-mode").size.height, 1)
             side.set_version("2.0.1")
             await pilot.pause()
@@ -161,7 +159,6 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(hide.label), "Hide panel  ctrl+b")
             version = side.query_one("#side-version", Static)
             self.assertGreaterEqual(version.size.height, 1)
-            self.assertGreaterEqual(side.query_one("#side-account").size.height, 1)
             self.assertGreaterEqual(side.query_one("#side-foot").size.height, 1)
             self.assertIn("navin", version.content)
             self.assertIn("v2.0.1", version.content)
@@ -187,10 +184,9 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             foot = side.query_one("#side-foot")
             version = side.query_one("#side-version", Static)
-            account = side.query_one("#side-account")
             self.assertGreaterEqual(foot.size.height, 4)
             self.assertGreaterEqual(version.size.height, 1)
-            self.assertGreaterEqual(account.size.height, 1)
+            self.assertEqual(list(side.query("#side-account")), [])
             self.assertIn("navin", version.content)
             self.assertIn("v2.0.1", version.content)
 

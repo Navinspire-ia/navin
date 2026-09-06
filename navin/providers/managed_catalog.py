@@ -1399,6 +1399,10 @@ def heal_managed_voice_settings(config: Config) -> bool:
     for subscribers: catalog sync can miss a heal (offline, throttle, old
     binary). This offline path runs on every Settings load.
     """
+    from navin.optional_live import live_modules_available
+
+    if not live_modules_available():
+        return False
     plan = (getattr(config.license, "plan", None) or "").strip().lower()
     from navin.config.secrets import unlocked_secret
 
@@ -1476,7 +1480,11 @@ def heal_managed_media_settings(config: Config) -> bool:
     even when the catalog sync is disabled or unreachable, so an empty pick is
     filled in here. An explicit BYOK choice is never touched.
     """
+    from navin.optional_live import live_modules_available
     from navin.config.secrets import unlocked_secret
+
+    if not live_modules_available():
+        return False
 
     plan = (getattr(config.license, "plan", None) or "").strip().lower()
     managed_key = unlocked_secret(getattr(config.license, "managed_api_key", None))

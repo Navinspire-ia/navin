@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -1910,7 +1911,10 @@ class Sidebar(Vertical):
         with Vertical(id="side-foot"):
             yield SideCard("", "", "pick_project", id="side-workspace", bare=True)
             yield Static("", id="side-split")
-            yield SideCard("ctrl+d", "Account", "open_account", id="side-account")
+            from navin.optional_live import live_modules_available
+
+            if live_modules_available():
+                yield SideCard("ctrl+d", "Account", "open_account", id="side-account")
             yield Static("[$text-muted]navin[/]", id="side-version", markup=True)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -2032,5 +2036,6 @@ class Sidebar(Vertical):
         self.query_one("#side-activity", SideAction).set_value(last.strip() or "idle")
 
     def set_account(self, text: str) -> None:
-        body = "" if text in {"", "Account", "not connected"} else escape(text)
-        self.query_one("#side-account", SideCard).set_body(body)
+        with contextlib.suppress(Exception):
+            body = "" if text in {"", "Account", "not connected"} else escape(text)
+            self.query_one("#side-account", SideCard).set_body(body)

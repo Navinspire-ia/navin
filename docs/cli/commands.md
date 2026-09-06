@@ -70,6 +70,8 @@ navin-cli ~/code/app
 navin-cli -s review
 ```
 
+From a `navin-agi` clone: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
+
 | Flag | Meaning |
 |---|---|
 | `[path]` | Project folder (default `.`) |
@@ -103,14 +105,6 @@ Put `navin` and `navin-cli` on PATH. `--force` replaces a stale shim.
 ## `navin cache`
 
 Cache sizes. `--clear` drops regenerable data. Never deletes config, chats, or workspaces.
-
-## `navin license`
-
-```bash
-navin license activate NAVIN-XXXX-XXXX-XXXX-XXXX --name "laptop"
-navin license status
-navin license deactivate
-```
 
 ## `navin provider`
 

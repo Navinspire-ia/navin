@@ -334,4 +334,7 @@ class NavinMusicGenerationClient(OpenRouterMusicGenerationClient):
 
 
 register_music_gen_provider(OpenRouterMusicGenerationClient)
-register_music_gen_provider(NavinMusicGenerationClient)
+from navin.optional_live import live_modules_available
+
+if live_modules_available():
+    register_music_gen_provider(NavinMusicGenerationClient)
