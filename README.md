@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="./assets/logo.png" alt="Navin" width="220">
-
-# Navin
+<h1>
+  <img src="./assets/navin-mark.svg" alt="" width="44" height="44" align="absmiddle">
+  Navin
+</h1>
 
 **100% Free. Open Source. Autonomous. Built toward AGI.**
 
