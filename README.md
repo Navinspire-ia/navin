@@ -1,11 +1,11 @@
 <div align="center">
 
-<p align="center">
-  <img src="./assets/navin-mark.svg" alt="" width="36" height="36" valign="middle">
-  <strong>NAVIN AGI</strong>
+<h2 align="center">
+  <img src="./assets/navin-mark.svg" alt="" width="42" height="42" valign="middle">
+  <strong>NAVIN <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
   &nbsp;&nbsp;
-  100% Free Open Source AGI
-</p>
+  <strong>100% Free Open Source <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
+</h2>
 
 <p align="center">
   <img src="./assets/agi.gif" alt="Navin AGI" width="280">
