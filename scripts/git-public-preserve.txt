@@ -11,7 +11,6 @@ windows/
 CONTRIBUTING.md
 SECURITY.md
 SUPPORT.md
-README.md
 docs/assets/
 docs/install/
 .github/ISSUE_TEMPLATE/

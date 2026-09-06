@@ -1,230 +1,311 @@
-<p align="center">
-  <img alt="Navin" src="./webui/public/logo/navin.png" width="120">
-</p>
+<div align="center">
 
-**Navin** is an open-source, ultra-lightweight personal AI agent you can truly own. It keeps the agent core small and readable while giving you the practical pieces for real long-running work: WebUI, chat channels, tools, memory, MCP, model routing, automation, and deployment.
+<img src="./assets/logo.png" alt="Navin" width="220">
 
-> GitHub: <https://github.com/EIAGEN/navin-claw>
+# Navin
 
-## Start Here
+**100% Free. Open Source. Autonomous. Built toward AGI.**
 
-| You want to... | Go to |
-|---|---|
-| Install navin with no terminal/config background | [Start Without Technical Background](./docs/start-without-technical-background.md) |
-| Install quickly and get one CLI reply | [Install](#-install) and [Quick Start](#-quick-start) |
-| Open the bundled browser UI | [WebUI](#-webui) |
-| Connect Telegram, Discord, Slack, Email, Mattermost, or another chat app | [Chat Apps](./docs/chat-apps.md) |
-| Configure providers, fallback models, Langfuse, MCP, web tools, or security | [Docs](./docs/README.md) and [Configuration](./docs/configuration.md) |
-| Understand or extend the internals | [Architecture](./docs/architecture.md) and [Development](./docs/development.md) |
+An AI Agent Harness that can remember, act, learn and evolve.
 
-## What can navin do?
+[English](./README.md) · [Français](./README.fr.md)
 
-navin is a self-hosted personal AI agent runtime. It can:
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/navinspire-ai/navin-agi?style=flat)](https://github.com/navinspire-ai/navin-agi)
 
-- run in a browser WebUI or terminal
-- connect to Telegram, Discord, Slack, Email, Mattermost, and other chat apps
-- use tools such as files, shell, web search, web fetch, MCP, cron, image and video generation, and subagents
-- keep session history and long-term memory through Dream
-- run long-horizon goals and scheduled automations
-- expose a Python SDK and OpenAI-compatible API for integrations
-- deploy as a long-running local or server-side agent gateway
+Navin combines **Persistent Memory**, **Auto-Skills**, **Self-Evolve**, **World Models**, **Policy Learning**, **Multi-Agent** systems, **Loops** and **Heartbeat** to move beyond static AI assistants toward agents that improve from experience.
 
-## 💡 Why navin
+Code · Research · Scrape · Automate · Create · Market · Learn · Evolve
 
-- **Persistent workflows**: goals, memory, tools, and chat context survive long-running work.
-- **Chat-native reach**: WebUI, API, Telegram, Slack, Discord, Teams, email, and Mattermost.
-- **Model freedom**: OpenAI-compatible APIs, local LLMs, image and video generation, search, and fallbacks.
-- **Small core**: readable internals with MCP, memory, deployment, and automation built in.
-- **Own your stack**: inspect, customize, self-host, and extend without a giant platform.
+Your machine. Your models. Your agent.
 
-## 📦 Install
+<br>
 
-Prerequisites: Python 3.11 or newer. A source install needs `bun` or `npm` to build the WebUI.
+[Download Navin](https://navin.live/download) · [Documentation](https://navin.live/en/docs) · [Contributing](./CONTRIBUTING.md)
 
-If terminals, API keys, or config files are new to you, use the guided zero-background walkthrough in [Start Without Technical Background](./docs/start-without-technical-background.md) instead of this compact README path.
+<br>
 
-**Install from this repository (recommended)**
+⭐ Star Navin if you want AI agents you can actually own.
 
-One command — installs what's missing, then starts the gateway (`:8765`) and the WebUI dev server (`:5173`) in the background:
-
-```bash
-sh scripts/start.sh            # everything (add --install to force reinstall)
-sh scripts/start.sh --backend  # gateway only
-sh scripts/stop.sh             # stop everything
-```
-
-Or step by step with Make, from the repository root:
-
-```bash
-# Backend: create .venv and install in editable mode
-make install
-
-# Frontend (dev server) — optional, the gateway can serve a bundled build
-cd webui && make install
-```
-
-Or with plain pip from an activated virtual environment:
-
-```bash
-python -m pip install .
-```
-
-On Windows, if pip reports that it cannot launch `npm`, run `cd webui`, `npm.cmd install --package-lock=false`, `npm.cmd run build`, and `cd ..` in order, then retry the install. Contributors who need an editable checkout should follow [`webui/README.md`](./webui/README.md) and [`AGENTS.md`](./AGENTS.md).
-
-Verify the install:
-
-```bash
-navin --version
-```
-
-If `navin` is not on `PATH`, use the executable from the environment where it was installed (e.g. `.venv/bin/navin`).
-
-**Windows — navin.exe (all-in-one)**
-
-Download `navin.exe` from the [releases](https://github.com/EIAGEN/navin-claw/releases) and double-click it: it installs Python if needed, sets up Navin in `~/.navin/venv`, then starts the gateway and opens the WebUI — everything else (provider, model, channels) is configured directly in the platform. `navin.exe --update` upgrades; `navin.exe <command>` proxies any CLI command. Standalone bundles with Python included (`navin-windows-x64.zip`, `navin-linux-x64.tar.gz`, `navin-macos-arm64.tar.gz`) are published alongside — build them locally with `make binary` (current OS) or `make exe` (Windows launcher, from WSL/Windows). See [`packaging/`](./packaging/README.md).
-
-## 🚀 Quick Start
-
-**1. Start the platform**
-
-```bash
-navin webui
-```
-
-This creates `~/.navin/config.json` and `~/.navin/workspace/` with safe local defaults, starts the gateway, and opens the WebUI. An alert at the top of the platform then guides you to **Settings → Providers** to add your API key and pick a model — no terminal wizard needed.
-
-**2. Configure manually (optional)** (`~/.navin/config.json`)
-
-Skip this step if you configured the provider and model in the platform (Settings → Providers).
-
-Configure these **two parts** in the config file. Add or merge the following blocks into the existing file instead of replacing the whole file.
-
-The example below uses a generic OpenAI-compatible `custom` provider so the compact path does not recommend one hosted service. Provider examples are recipes, not rankings or endorsements. For copyable provider-specific setup, see [Provider Cookbook](./docs/provider-cookbook.md).
-
-*Set your API key*:
-
-```json
-{
-  "providers": {
-    "custom": {
-      "apiKey": "your-api-key",
-      "apiBase": "https://api.example.com/v1"
-    }
-  }
-}
-```
-
-*Set a model preset and make it active*:
-
-```json
-{
-  "modelPresets": {
-    "primary": {
-      "label": "Primary",
-      "provider": "custom",
-      "model": "model-id-from-your-provider",
-      "maxTokens": 8192,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Direct `agents.defaults.provider` and `agents.defaults.model` still work for existing configs, but named presets are the recommended path because they also power `/model` switching and `fallbackModels`.
-
-For another provider, the same config shape still applies:
-
-| Replace | Where |
-|---|---|
-| Provider config key | `providers.<provider>` |
-| API key | `providers.<provider>.apiKey` |
-| Preset provider name | `modelPresets.primary.provider` |
-| Model ID | `modelPresets.primary.model` |
-| Endpoint URL, only when needed | `providers.<provider>.apiBase` |
-
-**3. Open the WebUI**
-
-```bash
-navin gateway
-```
-
-Leave the terminal open and visit `http://127.0.0.1:8765`. You can also use `navin webui`, which prepares the local WebSocket channel if needed, starts the gateway, and opens the browser automatically. The first-run WebUI binds to `127.0.0.1` by default, so it is not exposed to your LAN. Prefer not to keep a terminal open? Use `navin gateway --background`, then manage it with `navin gateway status`, `logs`, `restart`, and `stop`.
-
-For manual or terminal-only setup, test one CLI message:
-
-```bash
-navin status
-navin agent -m "Hello!"
-```
-
-In `navin status`, it is normal for most providers to say `not set`. The active preset's provider should be configured, and `Config` plus `Workspace` should show check marks.
-
-If that works, start an interactive chat:
-
-```bash
-navin agent
-```
-
-Need help with `PATH`, API keys, provider/model matching, or JSON errors? See the fuller [Install and Quick Start](./docs/quick-start.md) and [Troubleshooting](./docs/troubleshooting.md).
-
-- Want a pasteable provider setup? See [Provider Cookbook](./docs/provider-cookbook.md)
-- Want to understand provider/model matching? See [Providers and Models](./docs/providers.md)
-- Want web search, MCP, security settings, or more config options? See [Configuration](./docs/configuration.md)
-- Want to run locally? See [Ollama](./docs/providers.md#ollama), [vLLM or another local OpenAI-compatible server](./docs/providers.md#vllm-or-other-local-openai-compatible-server), and the full [provider reference](./docs/configuration.md#providers).
-- Want to run navin in chat apps like Telegram, Discord, or Slack? See [Chat Apps](./docs/chat-apps.md)
-- Want Docker or Linux service deployment? See [Deployment](./docs/deployment.md)
-
-## 🌐 WebUI
-
-The WebUI is the browser workbench for chat sessions, workspace controls, Apps, Skills, Automations, and settings. For the full user guide, see [`docs/webui.md`](./docs/webui.md).
-
-**Open it**
-
-```bash
-navin webui
-```
-
-The command enables the local WebSocket channel after confirmation, starts the gateway, and opens `http://127.0.0.1:8765`. If needed, run `navin gateway` and open that address manually. To open it from another device on your LAN, see [WebUI docs -> LAN access](./docs/webui.md#lan-access).
-
-The WebUI is served by the WebSocket channel on port `8765` by default. The gateway's `18790` port is for the health endpoint, not the browser UI.
-
-> [!TIP]
-> Working on the WebUI itself? Check out [`webui/README.md`](./webui/README.md) for the source-tree, Vite dev server, and build workflow.
-
-## 🏗️ Architecture
-
-navin stays lightweight by centering everything around a small agent loop: messages come in from chat apps, the LLM decides when tools are needed, and memory or skills are pulled in only as context instead of becoming a heavy orchestration layer. That keeps the core path readable and easy to extend, while still letting you add channels, tools, memory, and deployment options without turning the system into a monolith.
-
-For the source-level map, see [Architecture](./docs/architecture.md).
-
-## 📚 Docs
-
-Browse the [repo docs](./docs/README.md):
-
-- Use task-oriented guides: [Guides](./docs/guides/README.md)
-- Start with no technical background: [Start Without Technical Background](./docs/start-without-technical-background.md)
-- Start from zero with developer basics: [Install and Quick Start](./docs/quick-start.md)
-- Understand the runtime model: [Concepts](./docs/concepts.md)
-- Read the source-level map: [Architecture](./docs/architecture.md)
-- Choose a provider/model: [Providers and Models](./docs/providers.md)
-- Copy provider setup recipes: [Provider Cookbook](./docs/provider-cookbook.md)
-- Debug setup and runtime failures: [Troubleshooting](./docs/troubleshooting.md)
-- Talk to your navin with familiar chat apps: [Chat App AI Agent](./docs/guides/chat-app-ai-agent.md) · [Chat Apps](./docs/chat-apps.md)
-- Schedule or trigger agent work: [Automations](./docs/automations.md)
-- Configure providers, web search, MCP, and runtime behavior: [Configuration](./docs/configuration.md)
-- Integrate navin with local tools and automations: [OpenAI-Compatible API](./docs/openai-api.md) · [Python SDK](./docs/python-sdk.md)
-- Run navin with Docker or as a Linux service: [Deployment](./docs/deployment.md)
-
-## 🤝 Contribute
-
-The codebase is intentionally small and readable. See [AGENTS.md](./AGENTS.md) for local development guidance and [`.agent/design.md`](./.agent/design.md) for architectural constraints.
+</div>
 
 <p align="center">
-  <em>Thanks for visiting ✨ navin!</em>
+  <img src="./assets/navin.gif" alt="Navin Studio" width="900">
 </p>
+
+## Why Navin?
+
+Most AI tools stop after generating an answer.
+
+Navin is built to take a goal and keep working.
+
+```text
+Goal
+ ↓
+Plan
+ ↓
+Act
+ ↓
+Verify
+ ↓
+Remember
+ ↓
+Learn
+ ↓
+Continue
+ ↺
+```
+
+Navin runs as a desktop app and CLI, works locally, supports your own API keys and can use hundreds of text and multimodal models.
+
+## Installation
+
+### CLI
+
+```bash
+curl https://navin.live/install -fsS | bash
+cd your-project
+navin-cli
+```
+
+Windows PowerShell:
+
+```powershell
+irm 'https://navin.live/install?win32=true' | iex
+```
+
+`navin-cli` is the terminal agent. `navin .` opens the desktop on the current folder.
+
+After launch, open **Settings** to add your keys and pick a model. In `navin-cli`, press **Ctrl+G**. The web UI is where you configure everything. You do not edit JSON by hand.
+
+### Desktop
+
+Download from [navin.live/download](https://navin.live/download).
+
+| Platform | Download |
+| --- | --- |
+| macOS (Apple Silicon) | `Navin-Desktop-macos-arm64.dmg` |
+| macOS (Intel) | `Navin-Desktop-macos-x64.dmg` |
+| Windows | `Navin-Desktop-windows-x64-setup.exe` · `.msi` |
+| Linux | `.AppImage` · `.deb` · `.rpm` · `.pkg.tar.zst` |
+
+### From source
+
+```bash
+git clone https://github.com/navinspire-ai/navin-agi.git
+cd navin-agi
+sh scripts/start.sh --install
+```
+
+This starts the local web UI. Configure providers and models in Settings, then start working. Stop with `sh scripts/stop.sh`.
+
+## Agents
+
+| Mode | Role |
+| --- | --- |
+| Ask | Understand without modifying the project |
+| Plan | Create an execution plan |
+| Agent | Build, edit, run, test and iterate |
+| Review | Review code and propose fixes |
+| Security | Analyze and harden your application |
+| Debug | Reproduce, diagnose, fix and verify |
+
+Navin can also create sub-agents for parallel and specialized work.
+
+```text
+Ask → Plan → Agent → Review → Security → Debug → Agent
+```
+
+## Agent Loop
+
+Navin does not generate code and stop.
+
+It can use your repository, terminal, browser, files, tools and memory to continue until the work is done or genuinely blocked.
+
+```text
+MISSION
+   ↓
+PLAN
+   ↓
+ACT
+files · code · shell · git · browser · MCP
+   ↓
+VERIFY
+tests · lint · security · evidence
+   ↓
+CONTINUE / RETRY / REPLAN
+   ↺
+```
+
+## Loop + Heartbeat
+
+**Loop** keeps an agent working toward a goal across multiple execution cycles.
+
+**Heartbeat** lets autonomous tasks wake up and continue over time.
+
+Useful for coding, research, monitoring, scraping, tenders, lead generation, job search, recurring workflows and long-running tasks.
+
+Autonomy stays bounded by permissions, budgets, checkpoints and kill switches.
+
+## Built toward AGI
+
+Navin is moving beyond static assistants toward agents that can learn from experience and improve how they work.
+
+| Capability | What it does |
+| --- | --- |
+| Persistent Memory | Remember useful experience across sessions, projects, code, notes and actions |
+| Auto-Skills + Self-Evolve | Create, test, repair and improve reusable Skills automatically |
+| World Models | Learn to predict what is likely to happen before taking an action |
+| Policy Learning | Learn which tool or action is likely to be the best next step |
+| Evaluation + Rollback | Every improvement must be measurable, testable and reversible |
+
+The goal is not just an agent that works. It is an agent that gets better at working.
+
+Navin does not claim to be AGI today. The project is building the capabilities required to move toward increasingly general autonomous intelligence.
+
+## Self-Evolve
+
+When Navin repeatedly fails at something, it can turn experience into a better reusable capability.
+
+```text
+Repeated failure
+      ↓
+Create candidate Skill
+      ↓
+Sandbox
+      ↓
+Evaluate
+      ↓
+Improve
+      ↓
+Re-evaluate
+      ↓
+Promote or Rollback
+```
+
+The rule is simple: better than before. Nothing important gets worse.
+
+## Memory + Graph
+
+Navin does not have to start from zero every session.
+
+Session Memory · Project Brain · Long-term Memory · Dream Memory · Notes Memory · Code Graph · Knowledge Graph · Project Indexing · Execution History · Checkpoints
+
+```text
+Code · Notes · Meetings · Research · Tasks
+                  ↓
+             Project Brain
+                  ↓
+              Agent Loop
+```
+
+## One AI workspace
+
+Navin connects many workflows to the same agent, memory and project context.
+
+| Module | What Navin can do |
+| --- | --- |
+| Code | Build · Debug · Review · Security · Git · Terminal |
+| Research | Web research · Multi-agent research · Documents |
+| Scraping | Crawl · Extract · Structure · Analyze |
+| Leads | Find · Enrich · Score · Qualify |
+| Marketing | Research · Strategy · Content · Campaigns |
+| Tenders | Find opportunities · Analyze · Prepare responses |
+| Career | Find jobs and freelance missions · Analyze opportunities |
+| Meetings | Record · Transcribe · Summarize · Extract actions |
+| Notes | Write · Search · Ask · Connect knowledge |
+| Projects | Tasks · Decisions · Context · Agent execution |
+| SEO | Audit · Keywords · Content · Actions |
+| Media | Image · Video · Music · Speech · STT · TTS |
+
+```text
+Meeting → Decisions → Tasks → Code
+Research → Leads → Marketing → Campaign
+Product → Demo → SEO → Leads
+```
+
+One context. One memory. One agent system.
+
+## Models
+
+Use the models you want. Add keys and pick a model in **Settings**.
+
+**Local:** Ollama · LM Studio · vLLM · OpenAI-compatible servers
+
+**BYOK:** bring your own API keys across 28+ providers.
+
+**Navin Providers:** 380+ text and multimodal models, including OpenAI, Anthropic, Google, xAI, Qwen, Z.ai / GLM, Kimi, MiniMax, DeepSeek, Mistral, NVIDIA and more.
+
+Multimodal workflows: Image · Video · Music · Vision · Speech · STT · TTS
+
+## Tools and integrations
+
+Files · Code · Shell · Git · Browser · APIs · Databases · MCP · Plugins · SaaS
+
+Extend Navin with Skills, MCP servers, plugins, custom tools, agent packs, workflows and integrations.
+
+Channels: WhatsApp · Telegram · Slack · Discord · Email · Teams and more.
+
+## Local-first
+
+**Your machine. Your models. Your data.**
+
+Run local models. Bring your own API keys. Use managed models only if you want them.
+
+No mandatory cloud. No mandatory model provider.
+
+## Safety
+
+Sandbox execution · Checkpoints · Permissions · Human approvals · Isolated work · Resource limits · Rollback · Kill switches
+
+More autonomy does not automatically mean more permissions.
+
+## Documentation
+
+[navin.live/en/docs](https://navin.live/en/docs) · [Installation](./docs/Installation.md) · [Capabilities](./docs/capabilities.md)
+
+## Contributing
+
+Navin is open source and contributions are welcome: agent runtime, CLI, Skills, MCP, providers, memory, world models, policy learning, evaluations, integrations, UI, documentation and bug fixes.
+
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request.
+
+## Contributors
+
+Built by [Navinspire IA](https://navinspire.ai) and the Navin community.
+
+[@aymenghad](https://github.com/aymenghad) ·
+[@anisf](https://github.com/anisf) ·
+[@Amira-ben-henda-eiagen](https://github.com/Amira-ben-henda-eiagen) ·
+[@hasseniImen](https://github.com/hasseniImen) ·
+[@maryem955](https://github.com/maryem955) ·
+[@medkhalilklai](https://github.com/medkhalilklai) ·
+[@SkanderBS2024](https://github.com/SkanderBS2024) ·
+[@yosra-wanen](https://github.com/yosra-wanen) ·
+[@nabilmersni2](https://github.com/nabilmersni2)
+
+## License
+
+Navin is open source under the [MIT License](./LICENSE).
+
+<div align="center">
+
+100% Free. Open Source. Autonomous. Built toward AGI.
+
+Plan · Act · Verify · Remember · Learn · Evolve
+
+[Download Navin](https://navin.live/download) · [Documentation](https://navin.live/en/docs) · [Contribute](./CONTRIBUTING.md)
+
+<br>
+
+⭐ Star Navin if you want open-source agents that actually learn.
+
+<br>
+
+Your machine. Your models. Your agent.
+
+Made by [Navinspire IA](https://navinspire.ai) · Paris
+
+</div>
+
+<sub>A small early upstream from [nanobot](https://github.com/HKUDS/nanobot) (MIT) is listed with other third-party notices in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).</sub>
