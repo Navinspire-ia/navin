@@ -710,7 +710,10 @@ class NavinVideoGenerationClient(OpenRouterVideoGenerationClient):
 
 
 register_video_gen_provider(OpenRouterVideoGenerationClient)
-register_video_gen_provider(NavinVideoGenerationClient)
+from navin.optional_live import live_modules_available
+
+if live_modules_available():
+    register_video_gen_provider(NavinVideoGenerationClient)
 
 
 class LocalOpenAICompatibleVideoGenerationClient(OpenAIVideoGenerationClient):

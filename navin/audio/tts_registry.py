@@ -95,6 +95,11 @@ TTS_PROVIDERS: tuple[TtsProviderSpec, ...] = (
     ),
 )
 
+from navin.optional_live import live_modules_available
+
+if not live_modules_available():
+    TTS_PROVIDERS = tuple(spec for spec in TTS_PROVIDERS if spec.name != "navin")
+
 _BY_NAME = {spec.name: spec for spec in TTS_PROVIDERS}
 _BY_ALIAS = {alias: spec for spec in TTS_PROVIDERS for alias in spec.aliases}
 

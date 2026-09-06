@@ -99,6 +99,7 @@ interface SidebarProps {
   onCreateProjectFolder?: () => void;
   onOpenSettings: () => void;
   onOpenAccount: () => void;
+  liveAccount?: boolean;
   settingsActive?: boolean;
   onOpenSearch?: () => void;
   onOpenRisklensStudio: () => void;
@@ -464,9 +465,13 @@ export function Sidebar(props: SidebarProps) {
           collapsed && "w-14 flex-col px-0",
         )}
       >
-        <div className={cn("min-w-0", collapsed ? undefined : "flex-1")}>
-          <SidebarAccountCard collapsed={collapsed} onClick={props.onOpenAccount} />
-        </div>
+        {props.liveAccount !== false ? (
+          <div className={cn("min-w-0", collapsed ? undefined : "flex-1")}>
+            <SidebarAccountCard collapsed={collapsed} onClick={props.onOpenAccount} />
+          </div>
+        ) : (
+          <div className={cn("min-w-0", collapsed ? undefined : "flex-1")} />
+        )}
         <button
           type="button"
           aria-label={t("sidebar.settings")}

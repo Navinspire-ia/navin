@@ -28,6 +28,8 @@ export type FirstRunWizardProps = {
   onComplete: (state: OnboardingState) => void;
   onOpenAccount: () => void;
   onOpenProviders: () => void;
+  /** navin.live account path. Off on main / navin-agi. */
+  liveAccount?: boolean;
   onOpenDemo: () => void;
   /**
    * The Free paths connect an account or write a local provider inside the
@@ -56,6 +58,7 @@ export function FirstRunWizard({
   onComplete,
   onOpenAccount,
   onOpenProviders,
+  liveAccount = false,
   onOpenDemo,
   onFreeStageChange,
   onWorkspaceSynced,
@@ -131,12 +134,6 @@ export function FirstRunWizard({
       body: t("onboarding.wizard.byokBody"),
     },
     {
-      id: "free",
-      title: t("onboarding.wizard.freeTitle"),
-      body: t("onboarding.wizard.freeBody"),
-      badge: freeBadge,
-    },
-    {
       id: "omniroute",
       title: t("onboarding.wizard.omnirouteTitle"),
       body: t("onboarding.wizard.omnirouteBody"),
@@ -148,11 +145,21 @@ export function FirstRunWizard({
       body: t("onboarding.wizard.ollamaBody"),
       badge: freeBadge,
     },
-    {
-      id: "account",
-      title: t("onboarding.wizard.accountTitle"),
-      body: t("onboarding.wizard.accountBody"),
-    },
+    ...(liveAccount
+      ? [
+          {
+            id: "free" as const,
+            title: t("onboarding.wizard.freeTitle"),
+            body: t("onboarding.wizard.freeBody"),
+            badge: freeBadge,
+          },
+          {
+            id: "account" as const,
+            title: t("onboarding.wizard.accountTitle"),
+            body: t("onboarding.wizard.accountBody"),
+          },
+        ]
+      : []),
   ];
 
   const stageDone =

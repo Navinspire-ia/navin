@@ -1974,6 +1974,10 @@ class OpenAICompatProvider(LLMProvider):
         if status_code not in (401, 403, 402):
             return
         try:
+            from navin.optional_live import live_modules_available
+
+            if not live_modules_available():
+                return
             from navin.config.loader import load_config
             from navin.license_client import uses_managed_key
             from navin.license_sync import request_immediate_sync

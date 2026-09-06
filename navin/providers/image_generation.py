@@ -1846,4 +1846,7 @@ class NavinImageGenerationClient(OpenRouterImageGenerationClient):
     )
 
 
-register_image_gen_provider(NavinImageGenerationClient)
+from navin.optional_live import live_modules_available
+
+if live_modules_available():
+    register_image_gen_provider(NavinImageGenerationClient)

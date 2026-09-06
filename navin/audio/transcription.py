@@ -26,7 +26,13 @@ from navin.utils.media_decode import FileSizeExceeded, save_base64_data_url
 
 TranscriptionProviderName = str
 
-_DEFAULT_PROVIDER: TranscriptionProviderName = "navin"
+def _default_transcription_provider() -> TranscriptionProviderName:
+    from navin.optional_live import live_modules_available
+
+    return "navin" if live_modules_available() else "openrouter"
+
+
+_DEFAULT_PROVIDER: TranscriptionProviderName = _default_transcription_provider()
 _MAX_AUDIO_BYTES_FALLBACK = 25 * 1024 * 1024
 _AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
     "audio/aac",

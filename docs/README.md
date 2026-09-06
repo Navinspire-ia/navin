@@ -24,7 +24,6 @@ Same engine as the desktop app. [CLI](./cli/overview.md).
 | Tools | [Tools](./cli/tools.md) |
 | Providers and models | [Settings](./cli/settings.md) |
 | Triggers and local API | [Scripting](./cli/scripting.md) |
-| navin.live | [License](./cli/license.md) |
 | PATH, doctor, devices | [Troubleshooting](./cli/troubleshooting.md) |
 
 ## Start

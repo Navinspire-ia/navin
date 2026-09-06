@@ -15,6 +15,7 @@ from navin.providers.connection_presets import (
     resolve_connection_api_base,
 )
 from navin.providers.factory import make_provider
+from navin.optional_live import live_modules_available
 from navin.providers.registry import PROVIDERS, find_by_name
 from tests.provider_test_utils import isolated_provider_env
 
@@ -87,7 +88,8 @@ class RegistryParityTest(unittest.TestCase):
         schema_fields = set(ProvidersConfig.model_fields)
         registry_names = {spec.name for spec in PROVIDERS}
         self.assertEqual(registry_names - schema_fields, set())
-        self.assertEqual(schema_fields - registry_names, set())
+        missing = set() if live_modules_available() else {"navin"}
+        self.assertEqual(schema_fields - registry_names, missing)
 
 
 class FactoryConnectionTest(unittest.TestCase):

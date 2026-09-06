@@ -60,7 +60,18 @@ navin doctor
 navin status
 ```
 
-Providers: **Ctrl+G** in `navin-cli`.
+Providers: **Ctrl+G** in `navin-cli`. This tree is BYOK only (your keys or a local endpoint). There is no Navin managed provider and no Account sign-in.
+
+### From a `navin-agi` clone
+
+After `sh scripts/start.sh --install` (or `make install`), launch the CLI from the repo root:
+
+```bash
+cd /path/to/navin-agi
+.venv/bin/navin-cli
+```
+
+Windows: `.venv\Scripts\navin-cli`
 
 ## Uninstall
 

@@ -22,21 +22,22 @@ irm 'https://navin.live/install?win32=true' | iex
 
 Then `navin-cli` in a project, or `navin .` for the desktop window. [CLI](./cli/overview.md).
 
+From a `navin-agi` clone: `.venv/bin/navin-cli`.
+
 ## 2. First launch
 
 On first launch, Navin shows a short setup wizard:
 
 1. Choose the interface language.
-2. Add your own API key (BYOK). The product is free to use with your keys. You may optionally connect a **navin.live** account for paid managed credits later.
+2. Add your own API key (BYOK). The product is free to use with your keys.
 3. Open the demo workspace, or go to chat.
 
 ## 3. First prompt
 
 On an empty chat, use a suggested action (plan, analyze, brainstorm, code) or type your own request.
 
-## 4. Data and account sync
+## 4. Data
 
-- API keys, chats, files, and memory stay on your machine.
-- A navin.live account syncs plan, license, devices, and usage. It does not sync private chat history.
+API keys, chats, files, and memory stay on your machine.
 
 For a guided walkthrough with no terminal experience required, see [Start Without Technical Background](./start-without-technical-background.md).

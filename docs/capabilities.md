@@ -12,7 +12,7 @@ Config file: `~/.navin/config.json`. Same file for `navin-cli` and the desktop.
 | Desktop / workbench | `navin .` | Same engine, GUI |
 | Gateway | `navin gateway` | Long-running host, default WebUI `:8765` |
 | AGI switches | `navin agi status` | All off by default |
-| Settings | **Ctrl+G** | Providers, models, tools, safety, account |
+| Settings | **Ctrl+G** | Providers, models, tools, safety |
 | Mode | **Ctrl+T** | ask, plan, agent, review, security, debug |
 | Docs on the web | [navin.live/en/docs](https://navin.live/en/docs) | Same topics as this `docs/` tree |
 
@@ -192,12 +192,6 @@ Playwright: visible window vs headless, live view in the editor.
 ### Rules
 
 Project rules in `.navin/rules/*.md`.
-
-### Account
-
-Optional navin.live subscription, managed models and usage. Not required for BYOK.
-
-[cli/license](./cli/license.md)
 
 ### About
 

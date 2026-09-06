@@ -104,7 +104,7 @@ navin onboard
 
 Env keys (`OPENROUTER_API_KEY`, …) are honored and are not written to `config.json`.
 
-Optional navin.live account (managed catalog): **Ctrl+G → Account**, or [license](./cli/license.md). The CLI works with BYOK only.
+This tree is BYOK only. Add keys in **Ctrl+G → Providers**. There is no Navin managed provider and no navin.live account on `main`.
 
 Config file: `~/.navin/config.json`. Same file for `navin-cli` and the desktop.
 
@@ -191,6 +191,22 @@ NAVIN_API_URL=http://127.0.0.1:8766 npm run dev
 ```
 
 ### Use the source CLI
+
+From the `navin-agi` clone, after install, you can launch the CLI with the venv binary. No need to activate the venv:
+
+```bash
+cd /path/to/navin-agi
+.venv/bin/navin-cli
+```
+
+Windows:
+
+```powershell
+cd \path\to\navin-agi
+.venv\Scripts\navin-cli
+```
+
+Or activate the venv, then run it from any project folder:
 
 ```bash
 source .venv/bin/activate   # Windows: .venv\Scripts\activate

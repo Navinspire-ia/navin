@@ -32,11 +32,7 @@ Required misses exit 1. Optional tools only disable those features.
 navin status
 ```
 
-You need a provider key (Settings or env), a local endpoint, OAuth, or a paid managed key. Then an **Active** model in Settings. [License](./license.md).
-
-## `device_limit_reached`
-
-Revoke a device on navin.live. WSL and Windows count as two devices.
+You need a provider key (Settings or env), a local endpoint, or OAuth. Then an **Active** model in Settings.
 
 ## Port busy
 

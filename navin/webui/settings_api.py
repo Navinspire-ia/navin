@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from navin import __version__
+from navin.optional_live import live_modules_available
 from navin.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from navin.audio.transcription import resolve_transcription_config
 from navin.audio.transcription_registry import (
@@ -1722,7 +1723,8 @@ def settings_payload(
     sync_catalog: bool = False,
 ) -> dict[str, Any]:
     config = load_config()
-    if sync_catalog and config.model_catalog.enabled:
+    live_account = live_modules_available()
+    if live_account and sync_catalog and config.model_catalog.enabled:
         try:
             from navin.providers.managed_catalog import sync_managed_catalog
 
@@ -1732,48 +1734,49 @@ def settings_payload(
             pass
     # Paid plan: Groq/whisper leftovers must not stick on Settings → Voice.
     # Runs offline so an open Voice page always shows Navin + managed STT/TTS.
-    try:
-        from navin.providers.managed_catalog import heal_managed_voice_settings
+    if live_account:
+        try:
+            from navin.providers.managed_catalog import heal_managed_voice_settings
 
-        if heal_managed_voice_settings(config):
-            save_config(config)
-            config = load_config()
-    except Exception:
-        pass
-    # Same guarantee for image / video / music: an unset provider means "not
-    # chosen", which for a subscriber has to resolve to their managed slot.
-    try:
-        from navin.providers.managed_catalog import heal_managed_media_settings
-
-        if heal_managed_media_settings(config):
-            save_config(config)
-            config = load_config()
-    except Exception:
-        pass
-    # Lyria/Veo/etc. must never remain the chat default (stale modality=text).
-    try:
-        from navin.providers.managed_catalog import heal_media_chat_default
-
-        if heal_media_chat_default(config):
-            save_config(config)
-            config = load_config()
-    except Exception:
-        pass
-    # Dead catalog self-heal: without a managed key every "navin ·" preset is
-    # unusable (calls would 401) and only pollutes the picker - typically a
-    # leftover from a session that ended before disconnect cleanup existed.
-    # Removing them here makes the Settings view truthful immediately instead
-    # of waiting for the next license validate round-trip.
-    try:
-        if not (config.license.managed_api_key or "").strip() and any(
-            preset.provider == "navin" for preset in config.model_presets.values()
-        ):
-            from navin.license_client import reset_managed_model_state
-
-            if reset_managed_model_state(config):
+            if heal_managed_voice_settings(config):
                 save_config(config)
-    except Exception:
-        pass
+                config = load_config()
+        except Exception:
+            pass
+        # Same guarantee for image / video / music: an unset provider means "not
+        # chosen", which for a subscriber has to resolve to their managed slot.
+        try:
+            from navin.providers.managed_catalog import heal_managed_media_settings
+
+            if heal_managed_media_settings(config):
+                save_config(config)
+                config = load_config()
+        except Exception:
+            pass
+        # Lyria/Veo/etc. must never remain the chat default (stale modality=text).
+        try:
+            from navin.providers.managed_catalog import heal_media_chat_default
+
+            if heal_media_chat_default(config):
+                save_config(config)
+                config = load_config()
+        except Exception:
+            pass
+        # Dead catalog self-heal: without a managed key every "navin ·" preset is
+        # unusable (calls would 401) and only pollutes the picker - typically a
+        # leftover from a session that ended before disconnect cleanup existed.
+        # Removing them here makes the Settings view truthful immediately instead
+        # of waiting for the next license validate round-trip.
+        try:
+            if not (config.license.managed_api_key or "").strip() and any(
+                preset.provider == "navin" for preset in config.model_presets.values()
+            ):
+                from navin.license_client import reset_managed_model_state
+
+                if reset_managed_model_state(config):
+                    save_config(config)
+        except Exception:
+            pass
     # Free plan self-heal: while an OAuth-connected OpenRouter key is present,
     # the two default free presets must exist - whatever deleted them (manual
     # cleanup, an older catalog sync, a config edit), they come back on the
@@ -1888,14 +1891,15 @@ def settings_payload(
     )
     budget_percent = 0
     clamp_managed = False
-    try:
-        from navin.license_client import uses_managed_key
-        from navin.usage_mode import budget_used_percent
+    if live_account:
+        try:
+            from navin.license_client import uses_managed_key
+            from navin.usage_mode import budget_used_percent
 
-        clamp_managed = uses_managed_key(config)
-        budget_percent = budget_used_percent(config)
-    except Exception:
-        pass
+            clamp_managed = uses_managed_key(config)
+            budget_percent = budget_used_percent(config)
+        except Exception:
+            pass
 
     def _budget_allowed(provider: str | None, model: str | None, modality: str | None) -> bool:
         # Navin-subscription catalog only. BYOK / custom providers stay
@@ -1917,7 +1921,11 @@ def settings_payload(
             "active": active_preset_name == "default",
             "is_default": True,
             "model": defaults.model,
-            "provider": defaults.provider,
+            "provider": (
+                defaults.provider
+                if live_account or (defaults.provider or "").strip().lower() != "navin"
+                else ""
+            ),
             "max_tokens": defaults.max_tokens,
             "context_window_tokens": defaults.context_window_tokens,
             "temperature": defaults.temperature,
@@ -1938,6 +1946,8 @@ def settings_payload(
     ]
     for name, preset in config.model_presets.items():
         is_navin = (preset.provider or "").strip().lower() == "navin"
+        if is_navin and not live_account:
+            continue
         routing_only = name in TIERS
         # Only the router aliases (main / expert / …) stay identity-locked.
         # Imported and catalog chat rows can change model (e.g. Sonnet 5 → 4.5).
@@ -2219,6 +2229,7 @@ def settings_payload(
             "justInstalled": consume_completed_update(),
         },
         "docs": _docs_payload(),
+        "live_account": live_account,
     }
     return decorate_settings_payload(
         payload,

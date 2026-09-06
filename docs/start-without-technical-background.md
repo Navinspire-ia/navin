@@ -29,7 +29,7 @@ Select English or Français in the app. The marketing site also supports الع�
 Choose one of the following:
 
 - **Use my own API key (recommended)** - paste a key from OpenRouter, OpenAI, or another provider. Keys are stored only on your computer. The product remains free when you use your own keys.
-- **Connect navin.live (optional)** - sync plan, license, and devices. Paid plans provide managed model credits.
+- **Local models** - Ollama, LM Studio, or another local OpenAI-compatible server.
 
 ### Step 3 - Next action
 
@@ -42,9 +42,9 @@ On the empty chat screen, select a suggested action (for example “Create a pro
 
 ## Troubleshooting
 
-- No reply: open **Settings → Providers** and confirm a provider is configured, or reconnect under **Settings → Account**.
+- No reply: open **Settings → Providers** and confirm a provider is configured.
 - Installer blocked by Windows or macOS: see the install notes on [navin.live/docs/install](https://navin.live/docs/install).
 
 ## Privacy
 
-Chats, files, and memory stay on your computer. An optional navin.live account syncs plan, license, and device activations only.
+Chats, files, and memory stay on your computer.

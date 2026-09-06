@@ -6,7 +6,7 @@ Two commands after install. The AGI switches live under `navin agi` (first comma
 |---|---|
 | `navin agi` | Skills, world model, policy, transfer protocol, memory ([full page](./agi.md)) |
 | `navin-cli` | Terminal UI in the current folder |
-| `navin` | Everything else: `navin .`, status, license, providers |
+| `navin` | Everything else: `navin .`, status, providers |
 
 Config: `~/.navin/config.json`. Workspace and chats stay on the machine.
 
@@ -18,6 +18,12 @@ navin .
 navin --version
 navin status
 navin doctor
+```
+
+From a `navin-agi` clone, after install:
+
+```bash
+.venv/bin/navin-cli
 ```
 
 `navin .` opens the desktop window when it is installed, otherwise the local workbench.

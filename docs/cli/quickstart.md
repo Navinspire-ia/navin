@@ -28,19 +28,14 @@ navin .
 
 In `navin-cli`, **Ctrl+G → Providers**: pick a provider, paste the API key (and an API base for local servers). Then **Models**: add a configuration and set it active.
 
-Or **Account** in the same Settings: sign in on navin.live for a paid managed key.
-
 Or an environment variable (`OPENROUTER_API_KEY`, …). Env keys are not written to `config.json`.
+
+From a `navin-agi` source checkout:
+
+```bash
+.venv/bin/navin-cli
+```
 
 ## 4. First turn
 
 Type a request and press Enter. `/` lists commands. **Ctrl+P** is the palette. **?** is help.
-
-## 5. License (optional)
-
-```bash
-navin license activate NAVIN-XXXX-XXXX-XXXX-XXXX
-navin license status
-```
-
-Or **Account → Sign in** in `navin-cli`.

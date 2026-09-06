@@ -16,6 +16,7 @@ from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 
+from navin.optional_live import live_modules_available
 from navin.tui.agi import AgiScreen
 from navin.tui.evolve import EvolveScreen
 from navin.tui.graph import GraphScreen
@@ -133,11 +134,6 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "arg_hint": "[section]",
     },
     {
-        "command": "/account",
-        "title": "Account",
-        "description": "navin.live sign-in, plan and usage",
-    },
-    {
         "command": "/mode",
         "title": "Mode",
         "description": "ctrl+t. chat, ask, plan, agent, review, security, debug",
@@ -173,7 +169,6 @@ class NavinActions(Provider):
             ("Mode", "chat / ask / plan / agent / review / security / debug (ctrl+t)", "pick_mode"),
             ("Sessions", "Open or resume another session (ctrl+s)", "pick_session"),
             ("Project folder", "Change the project analysed by Graph and Evolve (ctrl+w)", "pick_project"),
-            ("Account (navin.live)", "Sign in, plan, usage, managed models (ctrl+d)", "open_account"),
             (
                 "Settings",
                 "Providers, models, MCP, skills, image, video, voice, web, security, git, rules...",
@@ -300,7 +295,6 @@ class NavinApp(App[None]):
         Binding("ctrl+t", "pick_mode", "Mode"),
         Binding("ctrl+s", "pick_session", "Sessions"),
         Binding("ctrl+w", "pick_project", "Workspace", priority=True),
-        Binding("ctrl+d", "open_account", "Account"),
         Binding("ctrl+b", "toggle_sidebar", "Sidebar"),
         Binding("ctrl+r", "toggle_reasoning", "Reasoning", show=False),
         Binding("ctrl+l", "clear_transcript", "Clear", show=False),
@@ -375,10 +369,11 @@ class NavinApp(App[None]):
         self.query_one(Sidebar).set_class(self.prefs.sidebar, "-visible")
         self._render_mode()
         self._set_status("starting engine…")
-        self._load_account(refresh=True)
         self.query_one(Composer).focus()
         self.set_interval(0.12, self._tick_spinner)
-        self.set_interval(60, self._load_account)
+        if live_modules_available():
+            self._load_account(refresh=True)
+            self.set_interval(60, self._load_account)
         self.run_worker(self._boot(), exclusive=True, name="boot")
 
     def _tick_spinner(self) -> None:
@@ -401,7 +396,8 @@ class NavinApp(App[None]):
         await self._render_history()
         self._refresh_side()
         self._set_status()
-        self._load_account(refresh=True)
+        if live_modules_available():
+            self._load_account(refresh=True)
         self.run_worker(self._check_updates, thread=True, name="update-notice", group="update-notice")
 
     def _check_updates(self) -> None:
@@ -549,6 +545,8 @@ class NavinApp(App[None]):
             self.query_one(Sidebar).set_git(body)
 
     def _ensure_account_service(self) -> Any:
+        if not live_modules_available():
+            return None
         if self._account_service is None:
             try:
                 from navin.webui.account_api import WebUIAccountService
@@ -703,7 +701,10 @@ class NavinApp(App[None]):
             await self.action_open_settings(head[1:])
             return True
         if head == "/account":
-            await self.action_open_account()
+            if live_modules_available():
+                await self.action_open_account()
+            else:
+                await self._note("Account is not part of this build. Use Settings → Providers.")
             return True
         if head == "/mode":
             if arg and any(m.id == arg for m in MODES):
@@ -1368,6 +1369,9 @@ class NavinApp(App[None]):
         await self.push_screen(ToolsScreen(self.runtime.tool_rows()))
 
     async def action_open_account(self) -> None:
+        if not live_modules_available():
+            await self._note("Account is not part of this build. Use Settings → Providers.")
+            return
         await self.push_screen(
             AccountScreen(
                 service=self._ensure_account_service(),
@@ -1438,12 +1442,18 @@ class NavinApp(App[None]):
                     title="Advanced settings",
                 )
             ),
-            open_account=lambda: self.push_screen(
-                AccountScreen(
-                    service=self._ensure_account_service(),
-                    on_applied=self._on_account_payload,
-                ),
-                self._after_account,
+            open_account=(
+                (
+                    lambda: self.push_screen(
+                        AccountScreen(
+                            service=self._ensure_account_service(),
+                            on_applied=self._on_account_payload,
+                        ),
+                        self._after_account,
+                    )
+                )
+                if live_modules_available()
+                else None
             ),
             apply_preset=self._apply_preset,
             start=root or "providers",
@@ -1454,7 +1464,8 @@ class NavinApp(App[None]):
         self.runtime.apply_account_from_disk(self.config_path)
         self.config = self.runtime.config
         self._refresh_side()
-        self._load_account(refresh=True)
+        if live_modules_available():
+            self._load_account(refresh=True)
         if changed:
             self.notify("Settings applied.", timeout=2)
 
@@ -1480,7 +1491,10 @@ class NavinApp(App[None]):
     async def action_open_domain(self, domain_id: str) -> None:
         section = self._DOMAIN_SECTION.get(domain_id)
         if section == "account":
-            await self.action_open_account()
+            if live_modules_available():
+                await self.action_open_account()
+            else:
+                await self.action_open_settings("providers")
             return
         if section:
             await self.action_open_settings(section)
