@@ -20,6 +20,7 @@ DEV_SCRIPTS = [
     SCRIPTS / "stop.sh",
     SCRIPTS / "restart.sh",
     SCRIPTS / "status.sh",
+    SCRIPTS / "build.sh",
 ]
 
 
@@ -35,7 +36,7 @@ def test_help_exits_zero() -> None:
     sh = shutil.which("sh")
     if sh is None:
         return
-    for name in ("install.sh", "start.sh", "stop.sh", "restart.sh", "status.sh"):
+    for name in ("install.sh", "start.sh", "stop.sh", "restart.sh", "status.sh", "build.sh"):
         proc = subprocess.run(
             [sh, str(SCRIPTS / name), "--help"],
             check=False,
@@ -72,6 +73,10 @@ def test_makefile_scopes_to_scripts() -> None:
         ("restart", "backend"): "sh scripts/restart.sh backend",
         ("install",): "sh scripts/install.sh all",
         ("install", "front"): "sh scripts/install.sh front",
+        ("build",): "sh scripts/build.sh all",
+        ("build", "front"): "sh scripts/build.sh front",
+        ("build", "backend"): "sh scripts/build.sh backend",
+        ("start-prod",): "sh scripts/start.sh --prod",
     }
     for goals, expected in cases.items():
         proc = subprocess.run(

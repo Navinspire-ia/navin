@@ -22,6 +22,8 @@ SCOPE="all"
 DO_INSTALL=0
 FG=0
 SKIP_SYSTEM=0
+PROD=0
+WEBUI_DIST="${ROOT}/navin/web/dist"
 
 info() { printf "%b%s%b\n" "$CYAN" "$*" "$NC"; }
 ok() { printf "%b%s%b\n" "$GREEN" "$*" "$NC"; }
@@ -33,6 +35,7 @@ parse_dev_args() {
     DO_INSTALL=0
     FG=0
     SKIP_SYSTEM=0
+    PROD=0
     want_front=0
     want_back=0
     want_all=0
@@ -43,6 +46,7 @@ parse_dev_args() {
             all|--all) want_all=1 ;;
             --fg|--foreground) FG=1 ;;
             --install) DO_INSTALL=1 ;;
+            --prod|--production) PROD=1 ;;
             --no-system|--skip-system) SKIP_SYSTEM=1 ;;
             -h|--help) return 2 ;;
             *) die "Option inconnue: $arg" ;;
@@ -299,6 +303,39 @@ install_frontend() {
     ok "Frontend installe"
 }
 
+build_frontend() {
+    if [ ! -d "${WEBUI_DIR}/node_modules" ]; then
+        install_frontend
+    fi
+    info "Build frontend prod (Vite) -> navin/web/dist ..."
+    if has_make; then
+        make -C "$WEBUI_DIR" build
+    else
+        (cd "$WEBUI_DIR" && npm run build)
+    fi
+    if [ ! -f "${WEBUI_DIST}/index.html" ]; then
+        die "Build front incomplet: ${WEBUI_DIST}/index.html manquant"
+    fi
+    ok "Build front pret: ${WEBUI_DIST}"
+}
+
+build_backend() {
+    if [ ! -x "$NAVIN" ] || [ ! -x "$NAVIN_CLI" ]; then
+        install_backend
+        return 0
+    fi
+    info "Build backend (pip install -e .)..."
+    "$VENV/bin/pip" install -e "${ROOT}[dev]"
+    if [ ! -x "$NAVIN" ] || [ ! -x "$NAVIN_CLI" ]; then
+        die "Build backend incomplet: navin / navin-cli absents"
+    fi
+    ok "Build backend pret ($VENV)"
+}
+
+webui_dist_ready() {
+    [ -f "${WEBUI_DIST}/index.html" ]
+}
+
 has_make() {
     need_cmd make && [ -f "${WEBUI_DIR}/Makefile" ]
 }
@@ -460,9 +497,13 @@ status_front() {
 
 print_urls() {
     wp="$(webui_api_port)"
-    printf "  Gateway / WebUI integree : %bhttp://127.0.0.1:%s%b\n" "$CYAN" "$wp" "$NC"
-    if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "front" ]; then
-        printf "  WebUI dev (hot reload)   : %bhttp://127.0.0.1:%s%b\n" "$CYAN" "$WEBUI_PORT_DEFAULT" "$NC"
+    if [ "$PROD" != "1" ] && { [ "$SCOPE" = "all" ] || [ "$SCOPE" = "front" ]; }; then
+        printf "  Dev  (Vite, hot reload)  : %bhttp://localhost:%s/%b\n" "$CYAN" "$WEBUI_PORT_DEFAULT" "$NC"
+    fi
+    printf "  Prod (build, gateway)    : %bhttp://localhost:%s/%b\n" "$CYAN" "$wp" "$NC"
+    printf "  Le gateway sert navin/web/dist. Vite (:5173) n'est que le mode dev.\n"
+    if [ "$PROD" = "1" ] && ! webui_dist_ready; then
+        warn "Pas de build WebUI. Lancez: make build front"
     fi
     printf "  CLI source               : %s\n" "$NAVIN_CLI"
     printf "  Logs backend             : make logs\n"

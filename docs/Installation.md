@@ -146,10 +146,10 @@ One shot (install + start):
 sh scripts/start.sh --install
 ```
 
-This starts:
+This is **dev**:
 
-- the gateway (WebUI + WebSocket, default `http://127.0.0.1:8765`)
-- the Vite dev server (`http://127.0.0.1:5173`)
+- Vite hot reload: `http://localhost:5173/`
+- the gateway (health + API). The same gateway serves the **production** WebUI from `navin/web/dist` at `http://localhost:8765/` (or `channels.websocket.port`)
 
 ```bash
 make stop
@@ -165,8 +165,12 @@ Make and scripts accept the same scopes:
 | `make install` / `sh scripts/install.sh` | System + backend + WebUI |
 | `make install backend` | Backend only (`.venv`) |
 | `make install front` | WebUI only (`npm ci`) |
-| `make start` / `sh scripts/start.sh` | Gateway + Vite (background) |
-| `make start backend` | Gateway only |
+| `make start` / `sh scripts/start.sh` | DEV: gateway + Vite `http://localhost:5173/` |
+| `make start-prod` / `sh scripts/start.sh --prod` | PROD: build if needed + gateway (no Vite) |
+| `make build` / `sh scripts/build.sh` | Front (`navin/web/dist`) + backend (pip editable) |
+| `make build front` | Vite production bundle only |
+| `make build backend` | Refresh `.venv` (`pip install -e .`) |
+| `make start backend` | Gateway only (serves the build on `:8765`) |
 | `make start front` | Vite only |
 | `make start-fg` / `sh scripts/start.sh --fg` | Gateway in the foreground |
 | `make stop` / `restart` / `status` | Same scopes: `front` or `backend` |

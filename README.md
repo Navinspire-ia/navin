@@ -4,7 +4,7 @@
   <img src="./assets/navin-mark.svg" alt="" width="36" height="36" valign="middle">
   <strong>Navin</strong>
   &nbsp;&nbsp;
-  100% Free. Open Source. Autonomous. Built toward AGI.
+  <a href="https://navin.live">navin.live</a>
 </p>
 
 <p align="center">
@@ -226,7 +226,14 @@ make install
 make start
 ```
 
-`make install` installs everything (system deps if needed, backend, WebUI). `make start` starts the gateway and the local web UI.
+`make install` installs everything (system deps if needed, backend, WebUI). `make start` is **dev**: Vite at [http://localhost:5173/](http://localhost:5173/) plus the gateway.
+
+```bash
+make build
+make start-prod
+```
+
+`make build` writes the production WebUI to `navin/web/dist`. `make start-prod` (or `make start backend`) serves that build on the gateway, usually [http://localhost:8765/](http://localhost:8765/).
 
 ```bash
 make stop
@@ -234,7 +241,7 @@ make stop
 
 Same thing with scripts: `sh scripts/install.sh` then `sh scripts/start.sh`. One shot: `sh scripts/start.sh --install`.
 
-`make start backend` is the gateway only. `make start front` is the Vite UI only. Restart: `make restart`.
+`make start front` is Vite only. `make build front` / `make build backend` build one side. Restart: `make restart`.
 
 From the repo: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
 
@@ -386,5 +393,3 @@ Your machine. Your models. Your agent.
 Made by [Navinspire IA](https://navinspire.ai) - Paris
 
 </div>
-
-<sub>A small early upstream from [nanobot](https://github.com/HKUDS/nanobot) (MIT) is listed with other third-party notices in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).</sub>

@@ -1,4 +1,4 @@
-.PHONY: help check doctor install uninstall start stop restart status start-fg
+.PHONY: help check doctor install uninstall start stop restart status start-fg start-prod build
 .PHONY: linux appimage appimage-release pacman electron-linux electron-appimage electron-appimage-release electron-dev macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
 .PHONY: publish-forgejo publish-github publish-github-dry publish-remotes
 .PHONY: start-bg stop-bg restart-bg logs logs-clear _ensure_navin set-version
@@ -57,18 +57,21 @@ help:
 	@echo ""
 	@echo "  Install / run (une commande suffit):"
 	@echo "    install          System + backend (.venv) + frontend (npm ci)"
-	@echo "    start            Gateway + WebUI dev (background)"
+	@echo "    start            DEV: gateway + Vite http://localhost:5173/"
+	@echo "    start-prod       PROD: build si besoin + gateway (sans Vite)"
+	@echo "    build            Front (navin/web/dist) + backend (pip -e)"
 	@echo "    stop             Tout arreter"
 	@echo "    restart          Tout relancer"
 	@echo "    status           Etat gateway + Vite"
-	@echo "    install|start|stop|restart|status front|backend"
+	@echo "    install|start|stop|restart|status|build front|backend"
 	@echo "    start-fg         Gateway seul, premier plan"
 	@echo "    uninstall        Supprimer .venv (+ node_modules si scope all/front)"
 	@echo "    doctor           Verifier les outils systeme"
 	@echo ""
 	@echo "  Scripts equivalents:"
 	@echo "    sh scripts/install.sh [front|backend]"
-	@echo "    sh scripts/start.sh [front|backend] [--install] [--fg]"
+	@echo "    sh scripts/start.sh [front|backend] [--install] [--fg] [--prod]"
+	@echo "    sh scripts/build.sh [front|backend]"
 	@echo "    sh scripts/stop.sh [front|backend]"
 	@echo "    sh scripts/restart.sh [front|backend]"
 	@echo ""
@@ -286,6 +289,12 @@ start:
 
 start-fg:
 	@sh scripts/start.sh backend --fg
+
+start-prod:
+	@sh scripts/start.sh --prod
+
+build:
+	@sh scripts/build.sh $(DEV_SCOPE)
 
 stop:
 	@sh scripts/stop.sh $(DEV_SCOPE)
