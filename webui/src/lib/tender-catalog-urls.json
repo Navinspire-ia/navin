@@ -1,0 +1,306 @@
+[
+  {
+    "id": "ted",
+    "url": "https://ted.europa.eu/"
+  },
+  {
+    "id": "place",
+    "url": "https://www.marches-publics.gouv.fr/"
+  },
+  {
+    "id": "boamp",
+    "url": "https://www.boamp.fr/"
+  },
+  {
+    "id": "find-a-tender",
+    "url": "https://www.find-tender.service.gov.uk/"
+  },
+  {
+    "id": "contracts-finder",
+    "url": "https://www.contractsfinder.service.gov.uk/"
+  },
+  {
+    "id": "sam-gov",
+    "url": "https://sam.gov/content/opportunities"
+  },
+  {
+    "id": "canadabuys",
+    "url": "https://canadabuys.canada.ca/"
+  },
+  {
+    "id": "etimad",
+    "url": "https://tenders.etimad.sa/"
+  },
+  {
+    "id": "uae-procurement",
+    "url": "https://www.mof.gov.ae/"
+  },
+  {
+    "id": "monaqasat",
+    "url": "https://monaqasat.mof.gov.qa/"
+  },
+  {
+    "id": "bahrain-tender-board",
+    "url": "https://www.tenderboard.gov.bh/"
+  },
+  {
+    "id": "oman-tender-board",
+    "url": "https://etendering.tenderboard.gov.om/"
+  },
+  {
+    "id": "capt-kuwait",
+    "url": "https://capt.gov.kw/"
+  },
+  {
+    "id": "haicop",
+    "url": "https://www.marchespublics.gov.tn/"
+  },
+  {
+    "id": "maroc-marches",
+    "url": "https://www.marchespublics.gov.ma/"
+  },
+  {
+    "id": "ungm",
+    "url": "https://www.ungm.org/Public/Notice"
+  },
+  {
+    "id": "world-bank",
+    "url": "https://projects.worldbank.org/en/projects-operations/procurement-search"
+  },
+  {
+    "id": "world-bank-business",
+    "url": "https://projects.worldbank.org/en/projects-operations/opportunities"
+  },
+  {
+    "id": "afdb",
+    "url": "https://www.afdb.org/en/projects-and-operations/procurement"
+  },
+  {
+    "id": "ebrd",
+    "url": "https://www.ebrd.com/work-with-us/procurement/notices.html"
+  },
+  {
+    "id": "adb",
+    "url": "https://www.adb.org/business/operational-procurement"
+  },
+  {
+    "id": "iadb",
+    "url": "https://www.iadb.org/en/how-we-can-work-together/procurement"
+  },
+  {
+    "id": "isdb",
+    "url": "https://www.isdb.org/project-procurement"
+  },
+  {
+    "id": "senegal-armds",
+    "url": "https://www.armp.sn/"
+  },
+  {
+    "id": "cote-ivoire-sigmap",
+    "url": "https://www.marchespublics.ci/"
+  },
+  {
+    "id": "sa-etenders",
+    "url": "https://www.etenders.gov.za/"
+  },
+  {
+    "id": "kenya-tenders",
+    "url": "https://tenders.go.ke/"
+  },
+  {
+    "id": "egypt-etenders",
+    "url": "https://etenders.gov.eg/"
+  },
+  {
+    "id": "rwanda-umucyo",
+    "url": "https://www.umucyo.gov.rw/"
+  },
+  {
+    "id": "australia-tenders",
+    "url": "https://www.tenders.gov.au/"
+  },
+  {
+    "id": "nz-gets",
+    "url": "https://www.gets.govt.nz/"
+  },
+  {
+    "id": "india-cppp",
+    "url": "https://eprocure.gov.in/"
+  },
+  {
+    "id": "singapore-gebiz",
+    "url": "https://www.gebiz.gov.sg/"
+  },
+  {
+    "id": "simap",
+    "url": "https://www.simap.ch/"
+  },
+  {
+    "id": "tenderned",
+    "url": "https://www.tenderned.nl/"
+  },
+  {
+    "id": "spain-pcsp",
+    "url": "https://contrataciondelsectorpublico.gob.es/"
+  },
+  {
+    "id": "germany-evergabe",
+    "url": "https://www.evergabe-online.de/"
+  },
+  {
+    "id": "italy-acquistinrete",
+    "url": "https://www.acquistinretepa.it/"
+  },
+  {
+    "id": "ireland-etenders",
+    "url": "https://www.etenders.gov.ie/"
+  },
+  {
+    "id": "portugal-base",
+    "url": "https://www.base.gov.pt/Base4/pt/"
+  },
+  {
+    "id": "norway-doffin",
+    "url": "https://www.doffin.no/"
+  },
+  {
+    "id": "belgium-eproc",
+    "url": "https://www.publicprocurement.be/"
+  },
+  {
+    "id": "brazil-compras",
+    "url": "https://www.gov.br/compras"
+  },
+  {
+    "id": "chile-mercadopublico",
+    "url": "https://www.mercadopublico.cl/"
+  },
+  {
+    "id": "mexico-compranet",
+    "url": "https://comprasmx.buengobierno.gob.mx/"
+  },
+  {
+    "id": "jordan-joneps",
+    "url": "https://www.joneps.gov.jo/"
+  },
+  {
+    "id": "luxembourg-pmp",
+    "url": "https://pmp.b2g.etat.lu/"
+  },
+  {
+    "id": "sweden-uhmynd",
+    "url": "https://www.upphandlingsmyndigheten.se/"
+  },
+  {
+    "id": "austria-usp",
+    "url": "https://www.usp.gv.at/"
+  },
+  {
+    "id": "poland-ezamowienia",
+    "url": "https://ezamowienia.gov.pl/"
+  },
+  {
+    "id": "czech-vvz",
+    "url": "https://www.vestnikverejnychzakazek.cz/"
+  },
+  {
+    "id": "romania-sicap",
+    "url": "https://www.e-licitatie.ro/"
+  },
+  {
+    "id": "greece-promitheus",
+    "url": "https://www.promitheus.gov.gr/"
+  },
+  {
+    "id": "croatia-eojn",
+    "url": "https://eojn.nn.hr/"
+  },
+  {
+    "id": "slovenia-enarocanje",
+    "url": "https://www.enarocanje.si/"
+  },
+  {
+    "id": "slovakia-uvo",
+    "url": "https://www.uvo.gov.sk/"
+  },
+  {
+    "id": "hungary-ekr",
+    "url": "https://ekr.gov.hu/"
+  },
+  {
+    "id": "bulgaria-eop",
+    "url": "https://app.eop.bg/"
+  },
+  {
+    "id": "denmark-udbud",
+    "url": "https://www.udbud.dk/"
+  },
+  {
+    "id": "finland-hilma",
+    "url": "https://www.hankintailmoitukset.fi/"
+  },
+  {
+    "id": "estonia-riigihanked",
+    "url": "https://riigihanked.riik.ee/"
+  },
+  {
+    "id": "latvia-eis",
+    "url": "https://www.iub.gov.lv/"
+  },
+  {
+    "id": "lithuania-cvpp",
+    "url": "https://viesiejipirkimai.lt/"
+  },
+  {
+    "id": "cyprus-eproc",
+    "url": "https://www.eprocurement.gov.cy/"
+  },
+  {
+    "id": "iceland-utbod",
+    "url": "https://www.utbodsvefur.is/"
+  },
+  {
+    "id": "italy-anac",
+    "url": "https://dati.anticorruzione.it/"
+  },
+  {
+    "id": "algeria-marches",
+    "url": "https://dgb.mf.gov.dz/?page_id=2515"
+  },
+  {
+    "id": "tuneps",
+    "url": "https://www.tuneps.tn/"
+  },
+  {
+    "id": "cameroon-armp",
+    "url": "https://www.armp.cm/"
+  },
+  {
+    "id": "benin-marches",
+    "url": "https://marches-publics.bj/"
+  },
+  {
+    "id": "cote-ivoire-sigomap",
+    "url": "https://sigomap.gouv.ci/"
+  },
+  {
+    "id": "mali-dgmp",
+    "url": "https://www.dgmp.gouv.ml/"
+  },
+  {
+    "id": "niger-marches",
+    "url": "https://www.marchespublics.ne/"
+  },
+  {
+    "id": "burkina-arcop",
+    "url": "https://www.arcop.bf/"
+  },
+  {
+    "id": "ghana-ghaneps",
+    "url": "https://www.ghaneps.gov.gh/"
+  },
+  {
+    "id": "nigeria-nocopo",
+    "url": "https://nocopo.bpp.gov.ng/"
+  }
+]

@@ -1,0 +1,514 @@
+[
+  {
+    "id": "adzuna",
+    "url": "https://developer.adzuna.com/"
+  },
+  {
+    "id": "jooble",
+    "url": "https://jooble.org/api/about"
+  },
+  {
+    "id": "france-travail",
+    "url": "https://francetravail.io/"
+  },
+  {
+    "id": "usajobs",
+    "url": "https://developer.usajobs.gov/"
+  },
+  {
+    "id": "remotive",
+    "url": "https://remotive.com/remote-jobs/api"
+  },
+  {
+    "id": "greenhouse",
+    "url": "https://developers.greenhouse.io/job-board.html"
+  },
+  {
+    "id": "lever",
+    "url": "https://github.com/lever/postings-api"
+  },
+  {
+    "id": "ashby",
+    "url": "https://developers.ashbyhq.com/docs/job-posting-api"
+  },
+  {
+    "id": "employers",
+    "url": "https://api.smartrecruiters.com/v1/companies"
+  },
+  {
+    "id": "eures",
+    "url": "https://eures.europa.eu/"
+  },
+  {
+    "id": "linkedin",
+    "url": "https://www.linkedin.com/jobs/"
+  },
+  {
+    "id": "web-job-search",
+    "url": "https://html.duckduckgo.com/html/"
+  },
+  {
+    "id": "web-search",
+    "url": "https://html.duckduckgo.com/html/"
+  },
+  {
+    "id": "free-work",
+    "url": "https://www.free-work.com/"
+  },
+  {
+    "id": "apec",
+    "url": "https://www.apec.fr/"
+  },
+  {
+    "id": "malt",
+    "url": "https://www.malt.fr/"
+  },
+  {
+    "id": "wttj",
+    "url": "https://www.welcometothejungle.com/"
+  },
+  {
+    "id": "ictjob",
+    "url": "https://www.ictjob.be/"
+  },
+  {
+    "id": "jobs-ch",
+    "url": "https://www.jobs.ch/"
+  },
+  {
+    "id": "jobserve",
+    "url": "https://www.jobserve.com/"
+  },
+  {
+    "id": "cwjobs",
+    "url": "https://www.cwjobs.co.uk/"
+  },
+  {
+    "id": "dice",
+    "url": "https://www.dice.com/"
+  },
+  {
+    "id": "wellfound",
+    "url": "https://wellfound.com/"
+  },
+  {
+    "id": "job-bank-ca",
+    "url": "https://www.jobbank.gc.ca/"
+  },
+  {
+    "id": "indeed",
+    "url": "https://www.indeed.com/"
+  },
+  {
+    "id": "chooseyourboss",
+    "url": "https://www.chooseyourboss.com/"
+  },
+  {
+    "id": "vdab",
+    "url": "https://www.vdab.be/"
+  },
+  {
+    "id": "le-forem",
+    "url": "https://www.leforem.be/"
+  },
+  {
+    "id": "actiris",
+    "url": "https://www.actiris.brussels/"
+  },
+  {
+    "id": "jobat",
+    "url": "https://www.jobat.be/"
+  },
+  {
+    "id": "stepstone-be",
+    "url": "https://www.stepstone.be/"
+  },
+  {
+    "id": "jobscout24",
+    "url": "https://www.jobscout24.ch/"
+  },
+  {
+    "id": "swissdevjobs",
+    "url": "https://swissdevjobs.ch/"
+  },
+  {
+    "id": "reed",
+    "url": "https://www.reed.co.uk/"
+  },
+  {
+    "id": "totaljobs",
+    "url": "https://www.totaljobs.com/"
+  },
+  {
+    "id": "technojobs",
+    "url": "https://www.technojobs.co.uk/"
+  },
+  {
+    "id": "govuk-find-a-job",
+    "url": "https://www.gov.uk/find-a-job"
+  },
+  {
+    "id": "builtin",
+    "url": "https://builtin.com/"
+  },
+  {
+    "id": "ziprecruiter",
+    "url": "https://www.ziprecruiter.com/"
+  },
+  {
+    "id": "jobillico",
+    "url": "https://www.jobillico.com/"
+  },
+  {
+    "id": "jobboom",
+    "url": "https://www.jobboom.com/"
+  },
+  {
+    "id": "eluta",
+    "url": "https://www.eluta.ca/"
+  },
+  {
+    "id": "arbeitsagentur",
+    "url": "https://www.arbeitsagentur.de/"
+  },
+  {
+    "id": "stepstone-de",
+    "url": "https://www.stepstone.de/"
+  },
+  {
+    "id": "werk-nl",
+    "url": "https://www.werk.nl/"
+  },
+  {
+    "id": "bayt",
+    "url": "https://www.bayt.com/"
+  },
+  {
+    "id": "gulftalent",
+    "url": "https://www.gulftalent.com/"
+  },
+  {
+    "id": "jadarat",
+    "url": "https://jadarat.sa/"
+  },
+  {
+    "id": "li-FR",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=France&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "remotive-search",
+    "url": "https://remotive.com/remote-jobs?search=Data+Engineer"
+  },
+  {
+    "id": "fr-freework",
+    "url": "https://www.free-work.com/fr/tech-it/jobs?query=Data+Engineer"
+  },
+  {
+    "id": "fr-ft",
+    "url": "https://candidat.francetravail.fr/offres/recherche?motsCles=Data+Engineer&offresPartenaires=true"
+  },
+  {
+    "id": "fr-apec",
+    "url": "https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=Data+Engineer"
+  },
+  {
+    "id": "fr-wttj",
+    "url": "https://www.welcometothejungle.com/fr/jobs?query=Data+Engineer"
+  },
+  {
+    "id": "fr-malt",
+    "url": "https://www.malt.fr/s?q=Data+Engineer"
+  },
+  {
+    "id": "fr-cyb",
+    "url": "https://www.chooseyourboss.com/offres?q=Data+Engineer"
+  },
+  {
+    "id": "fr-indeed",
+    "url": "https://fr.indeed.com/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "li-BE",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Belgium&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "be-ict",
+    "url": "https://www.ictjob.be/fr/search?q=Data+Engineer"
+  },
+  {
+    "id": "be-vdab",
+    "url": "https://www.vdab.be/vindeenjob/vacatures?trefwoord=Data+Engineer"
+  },
+  {
+    "id": "be-forem",
+    "url": "https://www.leforem.be/chercher-un-emploi.html?q=Data+Engineer"
+  },
+  {
+    "id": "be-actiris",
+    "url": "https://www.actiris.brussels/fr/citoyens/offres-d-emploi/?q=Data+Engineer"
+  },
+  {
+    "id": "be-jobat",
+    "url": "https://www.jobat.be/fr/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "be-step",
+    "url": "https://www.stepstone.be/jobs/Data+Engineer"
+  },
+  {
+    "id": "li-CH",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Switzerland&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "ch-jobs",
+    "url": "https://www.jobs.ch/en/vacancies/?term=Data+Engineer"
+  },
+  {
+    "id": "ch-scout",
+    "url": "https://www.jobscout24.ch/en?q=Data+Engineer"
+  },
+  {
+    "id": "ch-swissdev",
+    "url": "https://swissdevjobs.ch/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "li-GB",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=United+Kingdom&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "gb-jobserve",
+    "url": "https://www.jobserve.com/gb/en/JobSearch.aspx?shid=Data+Engineer"
+  },
+  {
+    "id": "gb-cw",
+    "url": "https://www.cwjobs.co.uk/jobs/Data+Engineer"
+  },
+  {
+    "id": "gb-reed",
+    "url": "https://www.reed.co.uk/jobs/Data+Engineer"
+  },
+  {
+    "id": "gb-total",
+    "url": "https://www.totaljobs.com/jobs/Data+Engineer"
+  },
+  {
+    "id": "gb-techno",
+    "url": "https://www.technojobs.co.uk/search.phtml?kw=Data+Engineer"
+  },
+  {
+    "id": "gb-gov",
+    "url": "https://findajob.dwp.gov.uk/search?q=Data+Engineer"
+  },
+  {
+    "id": "li-US",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=United+States&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "us-dice",
+    "url": "https://www.dice.com/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "us-wellfound",
+    "url": "https://wellfound.com/role/l/Data+Engineer"
+  },
+  {
+    "id": "us-builtin",
+    "url": "https://builtin.com/jobs?search=Data+Engineer"
+  },
+  {
+    "id": "us-usa",
+    "url": "https://www.usajobs.gov/Search/Results?k=Data+Engineer"
+  },
+  {
+    "id": "li-CA",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Canada&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "ca-bank",
+    "url": "https://www.jobbank.gc.ca/jobsearch/jobsearch?searchstring=Data+Engineer"
+  },
+  {
+    "id": "ca-jobillico",
+    "url": "https://www.jobillico.com/search-jobs?k=Data+Engineer"
+  },
+  {
+    "id": "ca-jobboom",
+    "url": "https://www.jobboom.com/en/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "ca-eluta",
+    "url": "https://www.eluta.ca/search?q=Data+Engineer"
+  },
+  {
+    "id": "li-DE",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Germany&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "de-ba",
+    "url": "https://www.arbeitsagentur.de/jobsuche/suche?angebotsart=1&was=Data+Engineer"
+  },
+  {
+    "id": "de-step",
+    "url": "https://www.stepstone.de/jobs/Data+Engineer"
+  },
+  {
+    "id": "li-NL",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Netherlands&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "nl-werk",
+    "url": "https://www.werk.nl/werkzoekenden/vacatures?zoekwoord=Data+Engineer"
+  },
+  {
+    "id": "li-AE",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=United+Arab+Emirates&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "ae-bayt",
+    "url": "https://www.bayt.com/en/uae/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "ae-gulf",
+    "url": "https://www.gulftalent.com/jobs?search=Data+Engineer"
+  },
+  {
+    "id": "ae-dubai",
+    "url": "https://dubaicareers.ae/"
+  },
+  {
+    "id": "li-SA",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Saudi+Arabia&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "sa-jadarat",
+    "url": "https://jadarat.sa/"
+  },
+  {
+    "id": "sa-bayt",
+    "url": "https://www.bayt.com/en/saudi-arabia/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-QA",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Qatar&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "qa-bayt",
+    "url": "https://www.bayt.com/en/qatar/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-KW",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Kuwait&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "kw-bayt",
+    "url": "https://www.bayt.com/en/kuwait/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-OM",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Oman&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "om-bayt",
+    "url": "https://www.bayt.com/en/oman/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-BH",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Bahrain&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "bh-bayt",
+    "url": "https://www.bayt.com/en/bahrain/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-view",
+    "url": "https://www.linkedin.com/jobs/view/4242"
+  },
+  {
+    "id": "remotive-job",
+    "url": "https://remotive.com/remote-jobs/software-dev/data-engineer"
+  },
+  {
+    "id": "greenhouse-job",
+    "url": "https://boards.greenhouse.io/acme/jobs/1"
+  },
+  {
+    "id": "lever-job",
+    "url": "https://jobs.lever.co/acme/abc"
+  },
+  {
+    "id": "ashby-job",
+    "url": "https://jobs.ashbyhq.com/acme/abc"
+  },
+  {
+    "id": "li-MA",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Morocco&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "ma-rekrute",
+    "url": "https://www.rekrute.com/offres.html?q=Data+Engineer"
+  },
+  {
+    "id": "ma-bayt",
+    "url": "https://www.bayt.com/en/morocco/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-TN",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Tunisia&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "tn-tanit",
+    "url": "https://www.tanitjobs.com/jobs/?q=Data+Engineer"
+  },
+  {
+    "id": "tn-bayt",
+    "url": "https://www.bayt.com/en/tunisia/jobs/q/Data+Engineer/"
+  },
+  {
+    "id": "li-ES",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Spain&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "es-infojobs",
+    "url": "https://www.infojobs.net/jobsearch/search-results/list.xhtml?keyword=Data+Engineer"
+  },
+  {
+    "id": "li-IT",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Italy&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "it-infojobs",
+    "url": "https://www.infojobs.it/jobsearch/search-results/list.xhtml?keyword=Data+Engineer"
+  },
+  {
+    "id": "li-PT",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Portugal&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "pt-netemp",
+    "url": "https://www.net-empregos.com/pesquisa-empregos.asp?chaves=Data+Engineer"
+  },
+  {
+    "id": "li-IE",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Ireland&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "ie-jobs",
+    "url": "https://www.jobs.ie/jobs?q=Data+Engineer"
+  },
+  {
+    "id": "li-SE",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Sweden&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "se-af",
+    "url": "https://arbetsformedlingen.se/platsbanken/annonser?q=Data+Engineer"
+  },
+  {
+    "id": "li-PL",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Poland&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "pl-pracuj",
+    "url": "https://www.pracuj.pl/praca/Data+Engineer"
+  }
+]

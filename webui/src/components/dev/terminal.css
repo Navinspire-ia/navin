@@ -1,0 +1,33 @@
+/* xterm.css hardcodes .xterm-viewport to #000 (needed on macOS so the
+   scrollbar track is opaque). That leaves a black slab in light mode. */
+.navin-terminal {
+  background-color: var(--navin-terminal-bg, #111318);
+}
+
+.navin-terminal .xterm {
+  height: 100%;
+  width: 100%;
+  cursor: text;
+}
+
+.navin-terminal .xterm-viewport {
+  background-color: var(--navin-terminal-bg, #111318) !important;
+}
+
+.navin-terminal .composition-view {
+  background: var(--navin-terminal-bg, #111318);
+  color: var(--navin-terminal-fg, #e6e8ee);
+}
+
+/* xterm parks .xterm-helper-textarea on the cell for IME. WebKit still paints
+   its native caret there: a second I-beam next to the bar cursor, obvious on
+   a light canvas, almost invisible in dark mode. */
+.navin-terminal .xterm-helper-textarea {
+  caret-color: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: transparent !important;
+  opacity: 0 !important;
+  font-size: 1px !important;
+  line-height: 1px !important;
+}

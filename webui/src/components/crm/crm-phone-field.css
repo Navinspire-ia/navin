@@ -1,0 +1,66 @@
+/* Dark-CRM overrides for react-phone-number-input/style.css */
+
+.crm-phone-field.PhoneInput,
+.crm-phone-field {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.crm-phone-field .PhoneInputCountry {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  margin-right: 0;
+}
+
+.crm-phone-field .crm-phone-country-select,
+.crm-phone-field .PhoneInputCountry button {
+  width: auto;
+  min-width: 7.25rem;
+  max-width: 10.5rem;
+  flex-shrink: 0;
+}
+
+.crm-phone-field .PhoneInputInput {
+  display: block;
+  flex: 1 1 0%;
+  min-width: 0;
+  width: auto;
+  height: 2.5rem;
+  margin: 0;
+  border: 1px solid hsl(var(--input));
+  border-radius: calc(var(--radius) - 2px);
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  outline: none;
+}
+
+.crm-phone-field .PhoneInputInput::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.crm-phone-field .PhoneInputInput:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+}
+
+.crm-phone-field .PhoneInputCountryIcon,
+.crm-phone-field .PhoneInputCountrySelectArrow {
+  display: none;
+}
+
+.crm-phone-field.PhoneInput--disabled .PhoneInputInput,
+.crm-phone-field.PhoneInput--disabled .crm-phone-country-select {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

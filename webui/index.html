@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en" data-navin-webui spellcheck="false">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="navin web UI - chat with your navin workspace."
+      data-i18n-meta="description"
+    />
+    <link rel="icon" type="image/svg+xml" href="/logo/navin-mark.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/logo/navin-mark-192.png" />
+    <link rel="apple-touch-icon" href="/logo/navin-mark-192.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Navin" />
+    <!-- Fonts are self-hosted (see public/fonts) so the desktop app looks
+         identical on macOS, Windows and Linux, online or offline.
+         No <link rel=preload>: fonts.css is already render-blocking, and
+         preloading IBM Plex before any code glyph exists (and DM Sans before
+         React applies font-sans) made Chromium spam
+         "preloaded but not used within a few seconds" on every /#/code load. -->
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <!-- Kept in sync with the theme the user is actually in, by the script
+         below and by useTheme. Bound to prefers-color-scheme instead, it told
+         the OS "light" while the app was dark, and the app window drew itself a
+         pale title bar above a dark UI. -->
+    <meta name="theme-color" content="#141414" />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+
+      /* Dark is the default, so it is what the page falls back to before the
+         theme script runs - and if it never runs. */
+      body {
+        margin: 0;
+        background: #141414;
+        color: #f5f5f5;
+        font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+      }
+
+      html:not(.dark) body {
+        background: #fcfcfc;
+        color: #1a1a1a;
+      }
+
+      .boot-splash {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at 20% 10%, rgba(3, 105, 255, 0.12), transparent 42%),
+          radial-gradient(circle at 80% 90%, rgba(84, 212, 205, 0.14), transparent 40%);
+      }
+
+      .boot-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        color: rgba(20, 32, 51, 0.72);
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+      }
+
+      html.dark .boot-splash-inner {
+        color: rgba(243, 246, 251, 0.72);
+      }
+
+      .boot-logo {
+        width: 44px;
+        height: 44px;
+      }
+
+      .boot-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: currentColor;
+        opacity: 0.85;
+        animation: boot-pulse 1s ease-in-out infinite;
+      }
+
+      @keyframes boot-pulse {
+        0%,
+        100% {
+          transform: scale(0.9);
+          opacity: 0.45;
+        }
+        50% {
+          transform: scale(1);
+          opacity: 0.95;
+        }
+      }
+    </style>
+    <script>
+      // Runs before the first paint, and before React, so the window is never
+      // seen in the wrong theme. Dark unless the user has chosen otherwise: the
+      // OS preference is deliberately not consulted, so that Navin looks the
+      // same on every machine it is installed on.
+      (function () {
+        var dark = true;
+        try {
+          if (localStorage.getItem("navin-webui.theme.v2") === "light") dark = false;
+        } catch {}
+        var root = document.documentElement;
+        if (dark) root.classList.add("dark");
+        // Both of these are what a Chromium app window reads to tint its own
+        // title bar and scrollbars, so they have to track the real theme.
+        root.style.colorScheme = dark ? "dark" : "light";
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute("content", dark ? "#141414" : "#fcfcfc");
+      })();
+    </script>
+    <title>Navin</title>
+  </head>
+  <body class="bg-background text-foreground antialiased">
+    <div id="root">
+      <div class="boot-splash">
+        <div class="boot-splash-inner">
+          <svg
+            class="boot-logo"
+            viewBox="0 0 64 64"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M18 44V20h7.2c1.4 0 2.5 1.1 2.5 2.5v14.2c0 0 4.4-9.1 9.6-10.5 5.4-1.4 8.3 2 8.3 2s-7.8-4-12.5 4.8C28.6 41.2 24.8 41.2 24.8 41.2V24.5c0-1.4-1.1-2.5-2.5-2.5H18z"
+              fill="currentColor"
+            />
+            <path
+              d="M46 20v24h-7.2c-1.4 0-2.5-1.1-2.5-2.5V27.3c0 0-4.4 9.1-9.6 10.5-5.4 1.4-8.3-2-8.3-2s7.8 4 12.5-4.8c4.5-8.5 8.3-8.5 8.3-8.5v16.7c0 1.4 1.1 2.5 2.5 2.5H46z"
+              fill="currentColor"
+              opacity="0.55"
+            />
+          </svg>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="boot-dot" aria-hidden="true"></span>
+            <span data-boot-copy>Loading Navin…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var localeKey = "navin.locale";
+        var copy = {
+          en: {
+            boot: "Loading Navin…",
+            description: "Navin web UI - chat with your Navin workspace."
+          },
+          fr: {
+            boot: "Chargement de Navin…",
+            description: "Interface web Navin - discutez avec votre espace de travail Navin."
+          }
+        };
+
+        function normalizeLocale(input) {
+          if (!input) return "en";
+          var raw = String(input).trim();
+          if (!raw) return "en";
+          if (copy[raw]) return raw;
+          var base = raw.toLowerCase().split("-")[0];
+          return copy[base] ? base : "en";
+        }
+
+        try {
+          var stored = localStorage.getItem(localeKey);
+          var detected =
+            stored ||
+            (navigator.languages && navigator.languages[0]) ||
+            navigator.language ||
+            "en";
+          var locale = normalizeLocale(detected);
+          var localized = copy[locale] || copy.en;
+          document.documentElement.lang = locale;
+          var description = document.querySelector('[data-i18n-meta=\"description\"]');
+          if (description) description.setAttribute("content", localized.description);
+          var boot = document.querySelector("[data-boot-copy]");
+          if (boot) boot.textContent = localized.boot;
+        } catch {}
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
