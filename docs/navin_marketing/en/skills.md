@@ -1,36 +1,45 @@
 # Marketing skills
 
-## Preloaded by `/campaign`
+## Preloaded on the Marketing module
+
+These load with `product_module=marketing` (Studio `#/marketing`) even without a slash command.
 
 | Skill | Purpose |
 | --- | --- |
-| `campaign-manager` | Orchestrates end-to-end campaigns: message, channels, deliverables, schedule. |
-| `ad-creative-generator` | Ad concepts, hooks, and creative variations. |
-| `social-media-manager` | Platform-native content, formats, and posting strategy. |
-| `copywriting-agent` | Persuasive copy: headlines, body, CTAs. |
-| `image-generation` | Generates images through the configured provider. |
-| `video-generation` | Scripts, storyboards, and video generation through the configured provider. |
-| `brand-voice-manager` | Keeps a consistent voice across all assets. |
-| `customer-persona-builder` | Builds data-backed personas. |
+| `marketing-strategist` | Wired to the `marketing` tool: status, brand, understand, loop start/stop/schedule. Source of truth is the desk store. |
+| `growth-marketing` | Experiments on the desk (`improve` / metrics). Weekly review = desk loop, never a chat cron. |
+| `digital-marketing` | Funnel and channel mix. Super render bar for pages vs PPT. |
+| `email-marketing` | Sequences and deliverability. Persist copy with `marketing action=content`. |
+| `marketing-analytics` | Measurement honesty. Write numbers with `marketing action=metrics`. |
 
-## Complementary skills
+## Preloaded by `/campaign` / `/montage`
 
 | Skill | Purpose |
 | --- | --- |
-| `digital-marketing` / `growth-marketing` | Channel playbooks and growth loops. |
-| `marketing-strategist` | Positioning and go-to-market strategy. |
-| `marketing-analytics` | Measuring campaign performance. |
-| `market-research` | Market sizing, trends, and insights. |
-| `paid-ads-manager` | Paid campaign structure and optimization. |
-| `email-marketing` | Sequences, deliverability, and automation. |
-| `content-generation` / `content-recycler` | Producing and repurposing content at scale. |
-| `blog-writer` | Long-form articles. |
-| `product-visuals` | Product photography direction and generation. |
-| `go-to-market-planner` | Launch plans. |
-| `conversion-rate-optimization` | Landing and funnel optimization. |
-| `lead-generation` / `lead-qualification` | Acquiring and scoring leads. |
-| `competitor-intelligence` | Monitoring competitor moves. |
-| `cold-email-writer` / `email-writer` | Outbound and transactional email copy. |
-| `fact-checker` / `proofreader` | Quality pass before publishing. |
+| `studio-expert-contract` | Senior desk contract: evidence, deliverables, PASS/WARN/BLOCK. Also on `/marketing`. |
+| `critic-reviewer` | Critical review before delivery. |
+| `campaign-manager` | Brief, message house, calendar, UTMs (`check_campaign_brief.py`). Persist with `plan`. |
+| `ui-ux-pro-max` | Page stack: Motion, Lenis, Embla, Lucide, three + R3F + drei. Designed 3D. |
+| `presentation-designer` | Decks: poster type, photos, native charts. No WebGL on a slide. |
+| `pptx-generator` | Editable PPTX. A screenshot slide is rejected. |
+| `ad-creative-generator` | Ad concepts and placements. Then `generate_image` / `generate_video` + Visual QA. |
+| `social-media-manager` | Platform-native formats and cadence. |
+| `copywriting-agent` | Headlines, body, CTAs. |
+| `image-generation` / `video-generation` | Configured providers. |
+| `product-visuals` | Packshots, lifestyle, 360. No fake 3D inside PowerPoint. |
+| `brand-voice-manager` | Voice consistency. |
+| `customer-persona-builder` | Data-backed personas. |
+| `montage-studio` | Live demo, exports under `marketing/montage/`. Never auto-publish. |
 
-Skills load automatically with `/campaign`; invoke any of them explicitly for a focused task ("use paid-ads-manager to structure the Google Ads campaign").
+## Complementary
+
+| Skill | Purpose |
+| --- | --- |
+| `market-research` / `competitor-intelligence` | Then `marketing action=competitor` or `research`. |
+| `paid-ads-manager` | Prefer the **Ads** studio `/ads` + MCP presets. |
+| `go-to-market-planner` | Launch plans. Pair with `marketing action=launch`. |
+| `conversion-rate-optimization` | Landing and funnel. |
+| `content-generation` / `content-recycler` / `blog-writer` | Scale and recycle. |
+| `fact-checker` / `proofreader` | Quality pass. Still no auto-publish. |
+
+Invoke a skill by name when you want a focused pass. Facts that the loop must see still go through the `marketing` tool.

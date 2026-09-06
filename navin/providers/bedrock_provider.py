@@ -21,7 +21,6 @@ from navin.providers.base import (
 
 _IMAGE_DATA_URL = re.compile(r"^data:image/([a-zA-Z0-9.+-]+);base64,(.*)$", re.DOTALL)
 _TEXT_BLOCK_TYPES = {"text", "input_text", "output_text"}
-_TEMPERATURE_UNSUPPORTED_MODEL_TOKENS = ("claude-opus-4-7",)
 _ADAPTIVE_THINKING_ONLY_MODEL_TOKENS = ("claude-opus-4-7",)
 _NOOP_TOOL_NAME = "navin_noop"
 
@@ -50,7 +49,8 @@ class BedrockProvider(LLMProvider):
         self,
         api_key: str | None = None,
         api_base: str | None = None,
-        default_model: str = "bedrock/global.anthropic.claude-opus-4-7",
+        # No vendor default on purpose: the factory always passes the model.
+        default_model: str = "",
         *,
         region: str | None = None,
         profile: str | None = None,
@@ -99,7 +99,11 @@ class BedrockProvider(LLMProvider):
 
     @classmethod
     def _supports_temperature(cls, model: str) -> bool:
-        return not cls._matches_model_token(model, _TEMPERATURE_UNSUPPORTED_MODEL_TOKENS)
+        # Version-based rule shared with the other providers: Claude 4.7+
+        # deprecated temperature, unknown/future Claude models fail safe.
+        from navin.providers.claude_capabilities import claude_supports_temperature
+
+        return claude_supports_temperature(model)
 
     @classmethod
     def _uses_adaptive_thinking_only(cls, model: str) -> bool:
@@ -373,6 +377,38 @@ class BedrockProvider(LLMProvider):
             thinking["effort"] = effort
         return thinking
 
+    def _thinking_request(
+        self,
+        model_id: str,
+        reasoning_effort: str | None,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any] | None, int]:
+        """Claude's ``thinking`` field for this effort, and the max_tokens it needs.
+
+        No effort configured means no field: the model keeps its default.
+        An explicit effort is always spelled out, "none" included - Claude's
+        default is off today, but a request that says so survives a model
+        whose default changes, and omission is how "none" became a full chain
+        of thought on other wires.
+        """
+        from navin.providers.claude_capabilities import (
+            claude_accepts_thinking_param,
+            claude_supports_adaptive_thinking,
+        )
+
+        if not reasoning_effort or not claude_accepts_thinking_param(model_id):
+            return None, max_tokens
+        effort = reasoning_effort.lower()
+        if effort in ("none", "minimal"):
+            return {"type": "disabled"}, max_tokens
+        if self._uses_adaptive_thinking_only(model_id):
+            return self._adaptive_thinking(reasoning_effort), max_tokens
+        if claude_supports_adaptive_thinking(model_id):
+            # 4.6 accepts adaptive thinking; the model picks its own budget.
+            return {"type": "adaptive"}, max_tokens
+        budget = {"low": 1024, "medium": 4096}.get(effort, max(8192, max_tokens))
+        return {"type": "enabled", "budget_tokens": budget}, max(max_tokens, budget + 4096)
+
     def _build_kwargs(
         self,
         messages: list[dict[str, Any]],
@@ -388,6 +424,7 @@ class BedrockProvider(LLMProvider):
         if not bedrock_messages:
             bedrock_messages = [{"role": "user", "content": [{"text": "(empty)"}]}]
 
+        thinking, max_tokens = self._thinking_request(model_id, reasoning_effort, max_tokens)
         kwargs: dict[str, Any] = {
             "modelId": model_id,
             "messages": bedrock_messages,
@@ -395,14 +432,14 @@ class BedrockProvider(LLMProvider):
         }
         if system:
             kwargs["system"] = system
+        thinking_on = bool(thinking) and thinking.get("type") != "disabled"
         if self._supports_temperature(model_id):
-            kwargs["inferenceConfig"]["temperature"] = temperature
+            # Extended thinking only runs at temperature 1.
+            kwargs["inferenceConfig"]["temperature"] = 1.0 if thinking_on else temperature
 
         additional: dict[str, Any] = {}
-        if self._uses_adaptive_thinking_only(model_id):
-            thinking = self._adaptive_thinking(reasoning_effort)
-            if thinking:
-                additional["thinking"] = thinking
+        if thinking:
+            additional["thinking"] = thinking
         if self._extra_body:
             additional = _deep_merge(additional, self._extra_body)
         if additional:

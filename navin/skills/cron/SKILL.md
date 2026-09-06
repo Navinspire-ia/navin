@@ -7,7 +7,7 @@ description: Schedule reminders and recurring tasks.
 
 Use the `cron` tool to schedule reminders or recurring tasks that should report back to the originating chat/session when they run.
 
-Do not use `cron` for periodic background checks that should stay quiet when there is nothing useful to report. For those, update `HEARTBEAT.md`; the protected heartbeat job runs those checks and only delivers results that pass the notification gate.
+Do not use `cron` for periodic background checks that should stay quiet when there is nothing useful to report. For those, update `.navin/HEARTBEAT.md`; the protected heartbeat job runs those checks and only delivers results that pass the notification gate.
 
 ## Three Modes
 
@@ -24,7 +24,7 @@ cron(action="add", message="Time to take a break!", every_seconds=1200)
 
 Dynamic task (agent executes each time):
 ```
-cron(action="add", message="Check EIAGEN/navin-claw GitHub stars and report", every_seconds=600)
+cron(action="add", message="Check navinspire-ai/navin-agi GitHub stars and report", every_seconds=600)
 ```
 
 One-time scheduled task (compute ISO datetime from current time):

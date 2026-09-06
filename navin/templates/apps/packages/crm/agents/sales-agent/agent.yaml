@@ -1,0 +1,13 @@
+id: sales-agent
+name: Sales Agent
+enabled: true
+permissions:
+  - deals.read
+  - deals.write
+  - contacts.read
+  - tasks.create
+tools:
+  - get_schema
+  - query
+  - mutate
+  - display_task_list

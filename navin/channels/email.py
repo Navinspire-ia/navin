@@ -67,7 +67,7 @@ class EmailConfig(Base):
     verify_dkim: bool = True   # Require Authentication-Results with dkim=pass
     verify_spf: bool = True    # Require Authentication-Results with spf=pass
 
-    # Attachment handling — set allowed types to enable (e.g. ["application/pdf", "image/*"], or ["*"] for all)
+    # Attachment handling - set allowed types to enable (e.g. ["application/pdf", "image/*"], or ["*"] for all)
     allowed_attachment_types: list[str] = Field(default_factory=list)
     max_attachment_size: int = 2_000_000  # 2MB per attachment
     max_attachments_per_email: int = 5
@@ -531,7 +531,7 @@ class EmailChannel(BaseChannel):
                     )
                     for p in saved:
                         attachment_paths.append(str(p))
-                        content += f"\n[attachment: {p.name} — saved to {p}]"
+                        content += f"\n[attachment: {p.name} - saved to {p}]"
 
                 metadata = {
                     "message_id": message_id,

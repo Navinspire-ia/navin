@@ -1,4 +1,4 @@
-# My Tool — Practical Examples
+# My Tool - Practical Examples
 
 Concrete scenarios showing when and how to use the my tool effectively.
 

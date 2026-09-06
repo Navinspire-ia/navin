@@ -1,6 +1,6 @@
 # Plugin packs
 
-Packs are self-contained bundles of **skills**, **MCP servers**, and configuration that extend Navin at runtime — no restart required.
+Packs are self-contained bundles of **skills**, **MCP servers**, and configuration that extend Navin at runtime - no restart required.
 
 ## Anatomy of a pack
 
@@ -23,7 +23,7 @@ my-pack/
 
 **Settings → Skills → Plugin packs**: install from a Git URL or a local path, enable/disable with a switch, remove with confirmation.
 
-### From chat — `/pack`
+### From chat - `/pack`
 
 | Subcommand | Effect |
 | --- | --- |

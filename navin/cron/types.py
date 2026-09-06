@@ -41,6 +41,19 @@ class CronRunRecord:
     status: Literal["ok", "error", "skipped"]
     duration_ms: int = 0
     error: str | None = None
+    # Tokens the run consumed, so the cost of a loop is visible per run and not
+    # only as a daily total.
+    tokens: int = 0
+
+
+@dataclass
+class CronLimits:
+    """Per-job guardrails for a job nobody is watching run."""
+    # 0 means unlimited. A job that reaches its budget skips its runs for the
+    # rest of the local day rather than being paused, so it resumes by itself.
+    daily_token_budget: int = 0
+    # 0 means "use the service default".
+    max_consecutive_failures: int = 0
 
 
 @dataclass
@@ -51,6 +64,14 @@ class CronJobState:
     last_status: Literal["ok", "error", "skipped"] | None = None
     last_error: str | None = None
     run_history: list[CronRunRecord] = field(default_factory=list)
+    # Drives the retry backoff and the automatic pause.
+    consecutive_failures: int = 0
+    # Set when the service paused the job itself, to tell that apart from a job
+    # the user turned off.
+    paused_reason: str | None = None
+    # Token spend for ``tokens_day``, the local date it was counted on.
+    tokens_today: int = 0
+    tokens_day: str | None = None
 
 
 @dataclass
@@ -62,6 +83,7 @@ class CronJob:
     schedule: CronSchedule = field(default_factory=lambda: CronSchedule(kind="every"))
     payload: CronPayload = field(default_factory=CronPayload)
     state: CronJobState = field(default_factory=CronJobState)
+    limits: CronLimits = field(default_factory=CronLimits)
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
@@ -76,6 +98,7 @@ class CronJob:
         kwargs["schedule"] = CronSchedule(**kwargs.get("schedule", {"kind": "every"}))
         kwargs["payload"] = CronPayload(**kwargs.get("payload", {}))
         kwargs["state"] = CronJobState(**state_kwargs)
+        kwargs["limits"] = CronLimits(**kwargs.get("limits", {}))
         return cls(**kwargs)
 
 

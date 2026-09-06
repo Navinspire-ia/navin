@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
+from navin.config.secrets import is_runtime_secret_path
 from navin.security.workspace_access import WorkspaceScope
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 
@@ -14,7 +16,7 @@ MAX_TREE_ENTRIES = 800
 # user can open them explicitly, but flagged for the UI.
 _HEAVY_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", ".ruff_cache",
-    ".pytest_cache", "dist", "build", ".next", ".cache", ".checkpoints",
+    ".pytest_cache", "dist", "build", ".next", ".cache", ".checkpoints", ".navin",
 }
 
 
@@ -31,7 +33,11 @@ def file_tree_payload(
     scope: WorkspaceScope,
     max_entries: int = MAX_TREE_ENTRIES,
 ) -> dict[str, Any]:
-    """List one directory inside the session workspace scope (lazy tree)."""
+    """List one directory inside the session workspace scope (lazy tree).
+
+    Keep this path cheap: expand clicks hit it often. Project scaffold belongs
+    on workspace bind (``persist_scope``), not on every folder listing.
+    """
 
     root = scope.project_path
     target = (raw_path or "").strip() or str(root)
@@ -53,32 +59,38 @@ def file_tree_payload(
     if not resolved.is_dir():
         raise WebUIFileTreeError(400, "path is not a directory")
 
-    entries: list[dict[str, Any]] = []
-    truncated = False
+    # os.scandir + d_type only. Do not stat() each file for size: on WSL / 9p
+    # / NFS that is one extra round-trip per entry and is what made expand
+    # sit on a spinner. The explorer does not show size on the row.
+    infos: list[tuple[bool, str, str]] = []
     try:
-        children = sorted(
-            resolved.iterdir(),
-            key=lambda p: (not p.is_dir(), p.name.lower()),
-        )
+        with os.scandir(resolved) as scan:
+            for dirent in scan:
+                try:
+                    is_dir = dirent.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_runtime_secret_path(dirent.path):
+                    continue
+                infos.append((is_dir, dirent.name, dirent.path))
     except OSError as e:
         raise WebUIFileTreeError(500, "failed to list directory") from e
 
-    for child in children:
+    infos.sort(key=lambda info: (not info[0], info[1].lower()))
+
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    for is_dir, name, child_path in infos:
         if len(entries) >= max_entries:
             truncated = True
             break
-        try:
-            is_dir = child.is_dir()
-            size = 0 if is_dir else child.stat().st_size
-        except OSError:
-            continue
         entry: dict[str, Any] = {
-            "name": child.name,
-            "path": str(child),
+            "name": name,
+            "path": child_path,
             "type": "dir" if is_dir else "file",
-            "size": size,
+            "size": 0,
         }
-        if is_dir and child.name in _HEAVY_DIRS:
+        if is_dir and name in _HEAVY_DIRS:
             entry["heavy"] = True
         entries.append(entry)
 

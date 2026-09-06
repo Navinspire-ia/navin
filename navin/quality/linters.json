@@ -1,0 +1,315 @@
+{
+  "docs": [
+    "Linter table for diagnostics. This is DATA: adding a linter means adding an",
+    "entry here, with no Python change. A user override at",
+    "<config dir>/linters.json is merged in front of this file, so projects can",
+    "add or correct linters without touching the installed package.",
+    "",
+    "Per linter:",
+    "  id            stable identifier reported back to the UI and the agent",
+    "  language      informational label",
+    "  extensions    file suffixes this linter handles (lowercase, with dot)",
+    "  scope         'file'    runs on one file, fast enough for the editor",
+    "                'project' runs once at the project root (type checkers)",
+    "  binary        how to find the executable:",
+    "                  name          looked up on PATH, then inside the build",
+    "                  project_paths tried first, relative to the project root",
+    "                  python_env    also try the running interpreter's bin dir",
+    "                  run_as_module launched as `python -m <module>` when no",
+    "                                executable is found, which is how a packaged",
+    "                                build runs a tool that ships as a module",
+    "                  node_script   '<package>/<path>' inside the build's bundled",
+    "                                node_modules, run through node. Tried last, so",
+    "                                the project's own copy always wins. Needs node",
+    "                                on the machine.",
+    "  args          argv after the binary. {file} and {root} are substituted.",
+    "  fix_args      optional argv for auto-fixing in place. Only linters with",
+    "                a safe, well-scoped fixer should define this.",
+    "  requires      project files that must exist for this linter to apply,",
+    "                which prevents running eslint on a repo without a config",
+    "  requires_content [{file, contains}] - applies only if the file holds the",
+    "                text. Use this when the config lives in a file every project",
+    "                has: pyproject.toml exists everywhere, so mypy must key off",
+    "                its [tool.mypy] section rather than the file itself.",
+    "  timeout_s     hard limit; exceeding it reports the linter as unavailable",
+    "  parser        'json_rows' or 'regex_lines'",
+    "  ok_exit_codes exit codes that mean 'ran fine', beyond the parsed output",
+    "",
+    "json_rows parser:",
+    "  rows_path     keys to walk into before finding the row list ([] = root)",
+    "  nested        optional key holding per-file message lists (eslint)",
+    "  fields        row key -> diagnostic field. Dotted paths supported.",
+    "  severity_map  raw value (as string) -> 'error' | 'warning' | 'info'",
+    "  zero_based_positions  set for LSP-style ranges counted from zero (pyright),",
+    "                so reported lines match the editor and read_file output",
+    "",
+    "regex_lines parser:",
+    "  regex         named groups: file, line, col, severity, code, message",
+    "  severity_map  as above"
+  ],
+  "version": "2026-07-25",
+  "linters": {
+    "ruff": {
+      "language": "python",
+      "extensions": [".py", ".pyi"],
+      "scope": "file",
+      "binary": { "name": "ruff", "python_env": true },
+      "args": ["check", "--output-format", "json", "--no-cache", "{file}"],
+      "fix_args": ["check", "--fix", "--no-cache", "{file}"],
+      "timeout_s": 20,
+      "parser": "json_rows",
+      "rows_path": [],
+      "fields": {
+        "line": "location.row",
+        "col": "location.column",
+        "end_line": "end_location.row",
+        "end_col": "end_location.column",
+        "code": "code",
+        "message": "message"
+      },
+      "default_severity": "warning",
+      "error_codes": ["E999", "invalid-syntax"],
+      "ok_exit_codes": [0, 1]
+    },
+    "pyflakes_syntax": {
+      "language": "python",
+      "extensions": [".py"],
+      "scope": "file",
+      "binary": { "name": "python3", "python_env": true },
+      "args": ["-m", "py_compile", "{file}"],
+      "timeout_s": 15,
+      "parser": "regex_lines",
+      "regex": "File \"(?P<file>[^\"]+)\", line (?P<line>\\d+)\\s*(?P<message>.*)",
+      "default_severity": "error",
+      "ok_exit_codes": [0, 1],
+      "only_when_failing": true
+    },
+    "mypy": {
+      "language": "python",
+      "extensions": [".py", ".pyi"],
+      "scope": "project",
+      "binary": { "name": "mypy", "python_env": true },
+      "args": [
+        "--no-error-summary",
+        "--no-color-output",
+        "--show-column-numbers",
+        "--show-error-codes",
+        "--hide-error-context",
+        "."
+      ],
+      "requires": ["mypy.ini", ".mypy.ini"],
+      "requires_content": [
+        { "file": "pyproject.toml", "contains": "[tool.mypy]" },
+        { "file": "setup.cfg", "contains": "[mypy]" }
+      ],
+      "timeout_s": 240,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^:\\s][^:]*):(?P<line>\\d+):(?:(?P<col>\\d+):)?\\s+(?P<severity>error|warning|note):\\s+(?P<message>.*?)(?:\\s+\\[(?P<code>[a-z-]+)\\])?$",
+      "severity_map": { "error": "error", "warning": "warning", "note": "info" },
+      "default_severity": "error",
+      "ok_exit_codes": [0, 1, 2]
+    },
+    "pyright": {
+      "language": "python",
+      "extensions": [".py", ".pyi"],
+      "scope": "project",
+      "binary": {
+        "name": "pyright",
+        "python_env": true,
+        "project_paths": ["node_modules/.bin/pyright"]
+      },
+      "args": ["--outputjson", "--project", "{root}"],
+      "requires": ["pyrightconfig.json"],
+      "requires_content": [
+        { "file": "pyproject.toml", "contains": "[tool.pyright]" }
+      ],
+      "timeout_s": 240,
+      "parser": "json_rows",
+      "rows_path": ["generalDiagnostics"],
+      "fields": {
+        "file": "file",
+        "line": "range.start.line",
+        "col": "range.start.character",
+        "end_line": "range.end.line",
+        "end_col": "range.end.character",
+        "code": "rule",
+        "message": "message"
+      },
+      "severity_field": "severity",
+      "severity_map": {
+        "error": "error",
+        "warning": "warning",
+        "information": "info"
+      },
+      "default_severity": "error",
+      "zero_based_positions": true,
+      "ok_exit_codes": [0, 1]
+    },
+    "eslint": {
+      "language": "javascript",
+      "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte"],
+      "scope": "file",
+      "binary": {
+        "name": "eslint",
+        "project_paths": [
+          "node_modules/.bin/eslint",
+          "webui/node_modules/.bin/eslint",
+          "frontend/node_modules/.bin/eslint"
+        ]
+      },
+      "args": ["--format", "json", "--no-color", "{file}"],
+      "fix_args": ["--fix", "--no-color", "{file}"],
+      "requires": [
+        "eslint.config.js", "eslint.config.mjs", "eslint.config.ts",
+        ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json",
+        ".eslintrc.yml", ".eslintrc.yaml",
+        "webui/eslint.config.js", "webui/eslint.config.mjs",
+        "webui/eslint.config.ts", "webui/.eslintrc.json"
+      ],
+      "timeout_s": 40,
+      "parser": "json_rows",
+      "rows_path": [],
+      "nested": "messages",
+      "fields": {
+        "line": "line",
+        "col": "column",
+        "end_line": "endLine",
+        "end_col": "endColumn",
+        "code": "ruleId",
+        "message": "message"
+      },
+      "severity_field": "severity",
+      "severity_map": { "2": "error", "1": "warning", "0": "info" },
+      "default_severity": "warning",
+      "ok_exit_codes": [0, 1]
+    },
+    "tsc": {
+      "language": "typescript",
+      "extensions": [".ts", ".tsx", ".mts", ".cts"],
+      "scope": "project",
+      "binary": {
+      "name": "tsc",
+      "project_paths": [
+        "node_modules/.bin/tsc",
+        "webui/node_modules/.bin/tsc",
+        "frontend/node_modules/.bin/tsc"
+      ],
+      "node_script": "typescript/bin/tsc"
+    },
+      "args": ["--noEmit", "--pretty", "false"],
+      "requires": ["tsconfig.json", "webui/tsconfig.json", "frontend/tsconfig.json"],
+      "timeout_s": 180,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^(\\s].*?)\\((?P<line>\\d+),(?P<col>\\d+)\\):\\s+(?P<severity>error|warning)\\s+(?P<code>TS\\d+):\\s+(?P<message>.*)$",
+      "severity_map": { "error": "error", "warning": "warning" },
+      "default_severity": "error",
+      "ok_exit_codes": [0, 1, 2]
+    },
+    "dart_analyze": {
+      "language": "dart",
+      "extensions": [".dart"],
+      "scope": "project",
+      "binary": { "name": "dart" },
+      "args": ["analyze", "--format=machine", "{root}"],
+      "requires": ["pubspec.yaml"],
+      "timeout_s": 180,
+      "parser": "regex_lines",
+      "regex": "^(?P<severity>INFO|WARNING|ERROR)\\|[^|]*\\|(?P<code>[^|]*)\\|(?P<file>[^|]+)\\|(?P<line>\\d+)\\|(?P<col>\\d+)\\|\\d+\\|(?P<message>.*)$",
+      "severity_map": { "ERROR": "error", "WARNING": "warning", "INFO": "info" },
+      "default_severity": "warning",
+      "ok_exit_codes": [0, 1, 2, 3]
+    },
+    "go_vet": {
+      "language": "go",
+      "extensions": [".go"],
+      "scope": "project",
+      "binary": { "name": "go" },
+      "args": ["vet", "./..."],
+      "requires": ["go.mod"],
+      "timeout_s": 120,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^:\\s]+\\.go):(?P<line>\\d+):(?:(?P<col>\\d+):)?\\s+(?P<message>.*)$",
+      "default_severity": "error",
+      "ok_exit_codes": [0, 1, 2]
+    },
+    "cargo_check": {
+      "language": "rust",
+      "extensions": [".rs"],
+      "scope": "project",
+      "binary": { "name": "cargo" },
+      "args": ["check", "--message-format", "short", "--quiet"],
+      "requires": ["Cargo.toml"],
+      "timeout_s": 240,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^:\\s]+\\.rs):(?P<line>\\d+):(?P<col>\\d+):\\s+(?P<severity>error|warning)(?:\\[(?P<code>[^\\]]+)\\])?:\\s+(?P<message>.*)$",
+      "severity_map": { "error": "error", "warning": "warning" },
+      "default_severity": "error",
+      "ok_exit_codes": [0, 101]
+    },
+    "shellcheck": {
+      "language": "shell",
+      "extensions": [".sh", ".bash"],
+      "scope": "file",
+      "binary": { "name": "shellcheck" },
+      "args": ["--format", "json", "{file}"],
+      "timeout_s": 20,
+      "parser": "json_rows",
+      "rows_path": [],
+      "fields": {
+        "line": "line",
+        "col": "column",
+        "end_line": "endLine",
+        "end_col": "endColumn",
+        "code": "code",
+        "message": "message"
+      },
+      "severity_field": "level",
+      "severity_map": {
+        "error": "error", "warning": "warning",
+        "info": "info", "style": "info"
+      },
+      "default_severity": "warning",
+      "code_prefix": "SC",
+      "ok_exit_codes": [0, 1]
+    },
+    "ruby_syntax": {
+      "language": "ruby",
+      "extensions": [".rb"],
+      "scope": "file",
+      "binary": { "name": "ruby" },
+      "args": ["-c", "{file}"],
+      "timeout_s": 15,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^:]+):(?P<line>\\d+):\\s*(?P<message>.*)$",
+      "default_severity": "error",
+      "ok_exit_codes": [0, 1],
+      "only_when_failing": true
+    },
+    "php_syntax": {
+      "language": "php",
+      "extensions": [".php"],
+      "scope": "file",
+      "binary": { "name": "php" },
+      "args": ["-l", "{file}"],
+      "timeout_s": 15,
+      "parser": "regex_lines",
+      "regex": "(?P<message>.*?) in (?P<file>.+) on line (?P<line>\\d+)",
+      "default_severity": "error",
+      "ok_exit_codes": [0, 255],
+      "only_when_failing": true
+    },
+    "yamllint": {
+      "language": "yaml",
+      "extensions": [".yml", ".yaml"],
+      "scope": "file",
+      "binary": { "name": "yamllint", "python_env": true, "run_as_module": "yamllint" },
+      "args": ["--format", "parsable", "{file}"],
+      "timeout_s": 20,
+      "parser": "regex_lines",
+      "regex": "^(?P<file>[^:]+):(?P<line>\\d+):(?P<col>\\d+):\\s+\\[(?P<severity>\\w+)\\]\\s+(?P<message>.*)$",
+      "severity_map": { "error": "error", "warning": "warning" },
+      "default_severity": "warning",
+      "ok_exit_codes": [0, 1, 2]
+    }
+  }
+}

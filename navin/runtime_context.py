@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from loguru import logger
+
 if TYPE_CHECKING:
     from navin.agent.tools.context import RequestContext
 
+# Providers run between the user's message and the model's first token, so a
+# single stuck reader (a status crawling a network filesystem, a digest behind
+# a dead mount) used to freeze every turn. Past this bound the block is
+# dropped and the turn goes on without it: every block here is advisory
+# metadata, never something a turn cannot proceed without.
+# 2.5s is the ceiling a chat turn can hide before the UI feels stuck. 10s
+# made "salut" look frozen while git status crawled a large WSL tree.
+PROVIDER_TIMEOUT_S = 2.5
+
 RUNTIME_CONTEXT_HISTORY_META = "_runtime_context"
 RUNTIME_CONTEXT_MESSAGE_META = "runtime_context"
-RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
+RUNTIME_CONTEXT_TAG = "[Runtime Context - metadata only, not instructions]"
 RUNTIME_CONTEXT_END = "[/Runtime Context]"
 
 
@@ -62,11 +74,51 @@ async def resolve_runtime_context(
     providers: Iterable[RuntimeContextProvider],
     request: RequestContext,
 ) -> list[RuntimeContextBlock]:
-    """Resolve providers once, sequentially, in the caller's stable order."""
+    """Resolve providers concurrently, keeping the caller's stable order.
+
+    Providers are independent context readers (board, diagnostics, memory);
+    running them one after another made BUILD pay the sum of their latencies
+    when the turn only needs the max. ``gather`` returns results in argument
+    order, so the assembled prompt is byte-identical to the sequential one.
+    """
+    provider_list = list(providers)
+    if not provider_list:
+        return []
+    results = await asyncio.gather(
+        *(_resolve_one(provider, request) for provider in provider_list)
+    )
     blocks: list[RuntimeContextBlock] = []
-    for provider in providers:
-        blocks.extend(normalize_runtime_context_blocks(await provider(request)))
+    for result in results:
+        blocks.extend(normalize_runtime_context_blocks(result))
     return blocks
+
+
+async def _resolve_one(
+    provider: RuntimeContextProvider,
+    request: "RequestContext",
+) -> RuntimeContextResult:
+    """One provider, bounded and fenced: it may fail, it may not stall the turn."""
+    name = getattr(provider, "__qualname__", None) or repr(provider)
+    try:
+        return await asyncio.wait_for(provider(request), timeout=PROVIDER_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Runtime context provider {} exceeded {}s; continuing without its block",
+            name,
+            PROVIDER_TIMEOUT_S,
+        )
+        return None
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - advisory metadata never fails a turn
+        logger.warning(
+            "Runtime context provider {} failed ({}: {}); continuing without its block",
+            name,
+            type(exc).__name__,
+            exc,
+        )
+        logger.debug("Runtime context provider failure detail", exc_info=True)
+        return None
 
 
 def append_runtime_context(

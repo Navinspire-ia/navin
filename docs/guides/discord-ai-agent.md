@@ -1,82 +1,35 @@
-# Build a Discord AI Agent with navin
+# Build a Discord AI Agent with Navin
 
-This guide connects navin to Discord so a Discord user or server channel can
-talk to your self-hosted AI agent through the navin gateway.
+This guide connects Navin to Discord so a Discord user or server channel can talk to your self-hosted AI agent through the Navin desktop app.
 
 ## What this guide builds
 
 - a Discord bot application
 - Message Content intent enabled
-- the `discord` channel enabled in navin
+- the Discord channel enabled in Navin Settings
 - one direct message or mention test
 
 ## Prerequisites
 
-- A working local navin reply:
+- Navin desktop app able to reply in local chat
+- Access to the Discord Developer Portal
+- A Discord server where you can invite a bot
 
-```bash
-navin agent -m "Hello!"
-```
+## Enable Discord in Settings
 
-- Access to the Discord Developer Portal.
-- A Discord server where you can invite a bot.
-
-## Install navin
-
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-```
-
-## Enable the Discord channel
-
-Install the optional channel dependency:
-
-```bash
-navin plugins enable discord
-```
-
-Create a Discord application, add a bot, copy the token, and enable
-`MESSAGE CONTENT INTENT` in the bot settings.
-
-Merge this snippet into `~/.navin/config.json`:
-
-```json
-{
-  "channels": {
-    "discord": {
-      "enabled": true,
-      "token": "YOUR_BOT_TOKEN",
-      "allowChannels": [],
-      "groupPolicy": "mention",
-      "streaming": true
-    }
-  }
-}
-```
-
-Omitting `allowFrom` enables pairing-only mode. A new user should DM the bot
-first, get a pairing code, and be approved before using the bot in servers.
-
-Invite the bot with permissions to read history and send messages.
-
-## Run navin gateway
-
-```bash
-navin channels status
-navin gateway
-```
+1. Create a Discord application, add a bot, copy the token, and enable **MESSAGE CONTENT INTENT** in the bot settings.
+2. Invite the bot with permissions to read history and send messages.
+3. In Navin, open **Settings → Channels → Discord**.
+4. Paste the bot token, enable the channel, and keep group policy on **mention** for first deployment.
+5. Optionally limit allowed server channels in the panel.
+6. Leave allowlists empty for pairing-only mode (recommended). A new user should DM the bot first, get a pairing code, and be approved before using the bot in servers.
+7. Save, restart when prompted, and keep Navin open.
 
 ## Test a message
 
-Send the bot a DM first. It should return a pairing code. Approve it from a
-trusted local surface:
-
-```bash
-navin agent -m "/pairing approve ABCD-EFGH"
-```
-
-After approval, mention it in an allowed server channel:
+1. Send the bot a DM first. It should return a pairing code.
+2. Approve it in Navin, or with `/pairing approve ABCD-EFGH` from a trusted chat.
+3. After approval, mention it in an allowed server channel:
 
 ```text
 @your-bot Hello from Discord
@@ -84,24 +37,20 @@ After approval, mention it in an allowed server channel:
 
 ## Security notes
 
-- Keep `groupPolicy` as `mention` for first deployment.
-- Use `allowChannels` for server channels where the bot should operate.
-- Prefer pairing-only mode for user access; add `allowFrom` only when you want a
-  static allowlist.
+- Keep group policy as mention-only for first deployment.
+- Limit allowed channels where the bot should operate.
+- Prefer pairing-only mode for user access; add a static allowlist only when intentional.
 - Avoid open group behavior in busy channels until session routing is clear.
 - Review tool access before inviting the bot into shared servers.
 
 ## Troubleshooting
 
-- If no messages arrive, confirm Message Content intent is enabled.
-- If a DM returns a pairing code, approve it before testing normal replies.
-- If server messages are ignored, check pairing approval, `allowChannels`, and
-  whether the bot was mentioned.
-- If the bot cannot reply, confirm the invite permissions and channel overrides.
+- No messages arrive: confirm Message Content intent is enabled and Navin is open.
+- DM returns a pairing code: approve it before testing normal replies.
+- Server messages ignored: check pairing approval, allowed channels, and whether the bot was mentioned.
+- Bot cannot reply: confirm invite permissions and channel overrides.
 
-## Next: memory, automations, MCP tools
+## Next
 
-- [Chat Apps reference](../chat-apps.md)
-- [Pairing](../configuration.md#pairing)
 - [AI Agent Memory](./ai-agent-memory.md)
 - [Configure MCP tools](./configure-mcp-tools.md)

@@ -8,13 +8,19 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from navin.gateway import GatewayStartOptions, build_gateway_command
 
-ServiceManagerKind = Literal["auto", "systemd", "launchd"]
+ServiceManagerKind = Literal["auto", "systemd", "launchd", "windows"]
+
+# Where Windows keeps per-user programs started at logon. A scheduled task would
+# also work, but it is created by a separate tool whose failure modes are its own,
+# while this is one value the same user can always write and remove.
+_WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 @dataclass(frozen=True)
@@ -42,7 +48,7 @@ class GatewayServiceResult:
 
 
 class GatewayServiceInstaller:
-    """Render and install systemd user services or macOS LaunchAgents."""
+    """Start the gateway at login: systemd user unit, LaunchAgent, or Run value."""
 
     def __init__(
         self,
@@ -61,6 +67,8 @@ class GatewayServiceInstaller:
             return self._install_systemd(options, dry_run=dry_run)
         if manager == "launchd":
             return self._install_launchd(options, dry_run=dry_run)
+        if manager == "windows":
+            return self._install_windows(options, dry_run=dry_run)
         return GatewayServiceResult(False, f"unsupported_service_manager:{manager}", manager, None)
 
     def uninstall(
@@ -75,6 +83,8 @@ class GatewayServiceInstaller:
             return self._uninstall_systemd(name=name, dry_run=dry_run)
         if resolved == "launchd":
             return self._uninstall_launchd(name=name, dry_run=dry_run)
+        if resolved == "windows":
+            return self._uninstall_windows(name=name, dry_run=dry_run)
         return GatewayServiceResult(False, f"unsupported_service_manager:{resolved}", resolved, None)
 
     def _install_systemd(
@@ -189,6 +199,72 @@ class GatewayServiceInstaller:
         path.unlink(missing_ok=True)
         return GatewayServiceResult(True, "service_uninstalled", "launchd", path, commands)
 
+    def _install_windows(
+        self,
+        options: GatewayServiceOptions,
+        *,
+        dry_run: bool,
+    ) -> GatewayServiceResult:
+        value_name = _windows_value_name(options.name)
+        command = _windows_logon_command(options)
+        content = subprocess.list2cmdline(command)
+        # No commands: nothing external is invoked, the value is the whole
+        # installation. Reported anyway so `--dry-run` shows what will be written.
+        commands: tuple[tuple[str, ...], ...] = ()
+        path = Path(f"HKCU:\\{_WINDOWS_RUN_KEY}\\{value_name}")
+        if dry_run:
+            return GatewayServiceResult(True, "service_install_dry_run", "windows", path, commands, content)
+
+        _working_directory(options.start).mkdir(parents=True, exist_ok=True)
+        try:
+            self._write_run_value(value_name, content if options.enable else None)
+        except OSError as exc:
+            return GatewayServiceResult(False, f"service_install_failed:{exc}", "windows", path, commands, content)
+        if options.start_now:
+            # Detached, so the gateway outlives the shell that asked for it, the
+            # same way the systemd and launchd paths start it immediately.
+            from navin.process_runtime import child_environment, detached_no_window_kwargs
+
+            with suppress(OSError):
+                subprocess.Popen(  # noqa: S603
+                    command,
+                    cwd=str(_working_directory(options.start)),
+                    env=child_environment(),
+                    **detached_no_window_kwargs(),
+                )
+        return GatewayServiceResult(True, "service_installed", "windows", path, commands, content)
+
+    def _uninstall_windows(
+        self,
+        *,
+        name: str,
+        dry_run: bool,
+    ) -> GatewayServiceResult:
+        value_name = _windows_value_name(name)
+        path = Path(f"HKCU:\\{_WINDOWS_RUN_KEY}\\{value_name}")
+        if dry_run:
+            return GatewayServiceResult(True, "service_uninstall_dry_run", "windows", path)
+        with suppress(OSError):
+            self._delete_run_value(value_name)
+        return GatewayServiceResult(True, "service_uninstalled", "windows", path)
+
+    def _write_run_value(self, value_name: str, command: str | None) -> None:
+        import winreg
+
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _WINDOWS_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if command is None:
+                with suppress(FileNotFoundError):
+                    winreg.DeleteValue(key, value_name)
+                return
+            winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
+
+    def _delete_run_value(self, value_name: str) -> None:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WINDOWS_RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            with suppress(FileNotFoundError):
+                winreg.DeleteValue(key, value_name)
+
     def _resolve_manager(self, manager: ServiceManagerKind) -> str:
         if manager != "auto":
             return manager
@@ -196,6 +272,8 @@ class GatewayServiceInstaller:
             return "launchd"
         if self.platform_name == "Linux":
             return "systemd"
+        if self.platform_name == "Windows":
+            return "windows"
         return self.platform_name.lower()
 
     def _run_best_effort(self, command_args: tuple[str, ...]) -> None:
@@ -241,6 +319,36 @@ def _safe_service_name(name: str) -> str:
     value = re.sub(r"[^a-z0-9_.-]+", "-", value)
     value = value.strip(".-")
     return value or "navin-gateway"
+
+
+def _windows_value_name(name: str) -> str:
+    """The Run value name. One per service name, so two instances can coexist."""
+    stem = _safe_service_name(name)
+    return "Navin" if stem == "navin-gateway" else f"Navin ({stem})"
+
+
+def _windows_logon_command(options: GatewayServiceOptions) -> list[str]:
+    """The logon command, preferring an executable that opens no window.
+
+    A console program in the Run key flashes a black window at every logon, and
+    on a packaged build it would keep one open for as long as the gateway runs.
+    Both shapes ship a windowless entry point: Navin.exe beside navin-cli.exe in
+    a packaged build, pythonw.exe beside python.exe in a source install.
+    """
+    command = build_gateway_command(options.python_executable, options.start)
+    launcher = Path(command[0])
+    for windowless in _WINDOWLESS_NAMES.get(launcher.name.lower(), ()):
+        candidate = launcher.with_name(windowless)
+        if candidate.is_file():
+            return [str(candidate), *command[1:]]
+    return command
+
+
+_WINDOWLESS_NAMES = {
+    "navin-cli.exe": ("Navin.exe",),
+    "navin.exe": ("Navin.exe",),
+    "python.exe": ("pythonw.exe",),
+}
 
 
 def _launchd_domain() -> str:

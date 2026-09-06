@@ -1,50 +1,66 @@
 ---
 name: pipeline-analyst
-description: Analyze the sales pipeline — stuck deals, forecast quality, conversion by stage, and next best actions. Use for weekly pipeline reviews and forecasting.
+description: Analyze the sales pipeline - stuck deals, forecast quality, conversion by stage, and next best actions. Use for weekly pipeline reviews and forecasting.
 metadata: {"navin":{"emoji":"📉","category":"sales"}}
 ---
 
 # Pipeline Analyst
 
-## Overview
+Read the pipeline like vitals: where deals stall, what the forecast is worth, what to do Monday morning. Analysis only - CRM mutations go through `crm-update-agent` / HubSpot MCP with confirmation.
 
-Read the pipeline like a doctor reads vitals: where deals stall, what the forecast is really worth, what to do Monday morning.
+## When to use
+
+- Weekly pipeline reviews
+- Forecast scrub before leadership commits a number
+
+## When not to use
+
+- Building net-new lead lists
+- Blind optimism forecasts without stage evidence
 
 ## Health checks
 
 | Check | Red flag |
 |-------|----------|
-| Stage age | deal in stage > 2× median for that stage |
-| Next steps | any open deal without a dated next step |
-| Coverage | pipeline < 3× target for the period |
-| Slippage | close dates pushed 2+ times |
-| Concentration | one deal > 40% of the forecast |
-| Stage conversion | a stage leaking well below historical rate |
+| Stage age | deal in stage > 2× median |
+| Next steps | open deal without dated next step |
+| Coverage | pipeline < 3× period target |
+| Slippage | close date pushed 2+ times |
+| Concentration | one deal > 40% of forecast |
+| Conversion | stage leak vs historical |
 
 ## Analyses
 
-1. **Stuck deal review** — for each: last buyer action, blocking objection (`objection-handler`), champion status → recommended move (re-engage angle, multithread, or kill honestly)
-2. **Forecast scrub** — per deal: commit/best-case/pipeline based on buyer evidence, not rep optimism; output a weighted number with assumptions listed
-3. **Funnel diagnosis** — conversion per stage over time; the weakest stage gets the process fix (discovery quality? proposal timing? pricing?)
+1. **Stuck deals** - last buyer action, objection, champion → re-engage, multithread, or kill
+2. **Forecast scrub** - commit / best-case / pipeline from buyer evidence, not hope
+3. **Funnel diagnosis** - weakest stage gets the process fix
 
 ## Workflow
 
-1. Source data: CRM export/API (`crm-update-agent` backends) or `sales/crm/` files; analyze with `exec` + Python for anything non-trivial.
-2. Run the health checks; build the review doc.
-3. Weekly cadence via `cron`: Monday pipeline brief — top risks, top opportunities, 5 recommended actions.
+1. Source: CRM export/API (`crm-update-agent`, HubSpot MCP) or `sales/crm/` files; analyze with `exec` + Python when non-trivial.
+2. Run health checks; build the review doc.
+3. Optional Monday `cron` brief: top risks, opportunities, 5 actions.
+4. Save `sales/pipeline-review-<date>.md` (+ chart/CSV if useful).
 
 ## Review format
 
 ```markdown
-## Pipeline review — <date>
-Total: X deals / Y € weighted
-### 🔴 At risk (action needed)
-### 🟡 Watch
-### Forecast: commit / best case
+## Pipeline review - <date>
+Total: X deals / Y weighted
+### At risk (action needed)
+### Watch
+### Forecast: commit / best case (assumptions)
 ### This week's 5 actions
+### Data gaps
 ```
 
 ## Rules
 
 - Every "at risk" call cites evidence (dates, silence, stage age).
-- Killing zombie deals is a recommendation the analyst must dare to make.
+- Dare to recommend killing zombies.
+- Label forecast confidence; never invent CRM amounts.
+
+## Anti-patterns
+
+- Sandbagging or hockey-stick without stage math
+- Reviews with no next actions

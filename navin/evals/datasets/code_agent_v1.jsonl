@@ -1,0 +1,58 @@
+{"id": "bugfix-01", "category": "bugfix", "prompt": "Fix the off-by-one in range loop that skips the last item.", "expect": {"tools_include": ["apply_patch", "verify"], "tools_exclude": ["scrape", "write_file"]}}
+{"id": "bugfix-02", "category": "bugfix", "prompt": "Null pointer when config is missing - add a safe default.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-03", "category": "bugfix", "prompt": "Race on shared counter - make the increment atomic.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-04", "category": "bugfix", "prompt": "Fix the crash when the input CSV has a BOM header.", "expect": {"tools_include": ["apply_patch", "verify"], "tools_exclude": ["scrape"]}}
+{"id": "bugfix-05", "category": "bugfix", "prompt": "Fix the memory leak: event listeners are never removed on unmount.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-06", "category": "bugfix", "prompt": "Fix the wrong timezone offset applied twice in the export bug.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-07", "category": "bugfix", "prompt": "Fix the pagination bug: last page repeats items from the previous page.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-08", "category": "bugfix", "prompt": "Fix the path traversal bug in the download handler with a minimal patch.", "expect": {"tools_include": ["apply_patch", "verify"], "tools_exclude": ["write_file"]}}
+{"id": "bugfix-09", "category": "bugfix", "prompt": "Fix the encoding bug: UTF-8 file names are mangled on Windows.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-10", "category": "bugfix", "prompt": "Fix the retry loop bug that hammers the API without backoff.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-11", "category": "bugfix", "prompt": "Fix the division by zero when the report period has no entries.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-12", "category": "bugfix", "prompt": "Fix the stale cache bug: settings changes only apply after restart.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-13", "category": "bugfix", "prompt": "Fix the double-submit bug on the form when the network is slow.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-14", "category": "bugfix", "prompt": "Fix the sorting bug: numeric columns sort lexicographically.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "bugfix-15", "category": "bugfix", "prompt": "Fix the deadlock bug when two workers grab locks in opposite order.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-01", "category": "refactor", "prompt": "Extract duplicate validation into a shared helper without behavior change.", "expect": {"tools_include": ["apply_patch", "verify"], "tools_exclude": ["write_file"]}}
+{"id": "refactor-02", "category": "refactor", "prompt": "Rename confusing variable across the module with LSP-safe edits.", "expect": {"tools_include": ["apply_patch"]}}
+{"id": "refactor-03", "category": "refactor", "prompt": "Refactor the god function into three focused functions, tests stay green.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-04", "category": "refactor", "prompt": "Extract the HTTP client setup into a reusable factory.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-05", "category": "refactor", "prompt": "Refactor: replace the boolean-flag parameters with an options object.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-06", "category": "refactor", "prompt": "Rename the misleading module and update every import site.", "expect": {"tools_include": ["apply_patch"]}}
+{"id": "refactor-07", "category": "refactor", "prompt": "Refactor duplicated SQL strings into named query constants.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-08", "category": "refactor", "prompt": "Extract the retry/backoff logic into a decorator used by all callers.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-09", "category": "refactor", "prompt": "Refactor the nested callbacks into async/await, no behavior change.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "refactor-10", "category": "refactor", "prompt": "Refactor: move the date helpers into a shared utils module with tests.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-01", "category": "feature", "prompt": "Add a --dry-run flag that prints actions without writing files.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-02", "category": "feature", "prompt": "Add a JSON export for the summary report next to the HTML one.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-03", "category": "feature", "prompt": "Add a --verbose flag that logs every processed file path.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-04", "category": "feature", "prompt": "Add a health endpoint feature returning version and uptime.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-05", "category": "feature", "prompt": "Add a CSV import feature with row-level error reporting.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-06", "category": "feature", "prompt": "Add a keyboard shortcut feature to toggle the sidebar.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-07", "category": "feature", "prompt": "Add a --max-retries flag with a sane default and validation.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-08", "category": "feature", "prompt": "Add a dark-mode feature persisted per user.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-09", "category": "feature", "prompt": "Add a rate-limit feature on the public endpoint with tests.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "feature-10", "category": "feature", "prompt": "Add a --config flag to load settings from a custom path.", "expect": {"tools_include": ["apply_patch", "verify"]}}
+{"id": "testfail-01", "category": "test_fail", "prompt": "A unit test fails on timezone parsing - fix production code, keep the test.", "expect": {"tools_include": ["verify"], "verify_must_pass": true}}
+{"id": "testfail-02", "category": "test_fail", "prompt": "Snapshot test drifted after label rename - update code or snapshot with evidence.", "expect": {"tools_include": ["verify"]}}
+{"id": "testfail-03", "category": "test_fail", "prompt": "A unit test fails intermittently on ordering - make the code deterministic.", "expect": {"tools_include": ["verify"], "verify_must_pass": true}}
+{"id": "testfail-04", "category": "test_fail", "prompt": "The integration unit test fails after the schema change - migrate the fixture.", "expect": {"tools_include": ["verify"]}}
+{"id": "testfail-05", "category": "test_fail", "prompt": "A unit test fails only on CI due to locale - pin the locale in code, not the test.", "expect": {"tools_include": ["verify"], "verify_must_pass": true}}
+{"id": "testfail-06", "category": "test_fail", "prompt": "The snapshot test fails after dependency bump - fix the regression, not the snapshot.", "expect": {"tools_include": ["verify"]}}
+{"id": "testfail-07", "category": "test_fail", "prompt": "A unit test fails with off-by-one date math - repair production code.", "expect": {"tools_include": ["verify"], "verify_must_pass": true}}
+{"id": "testfail-08", "category": "test_fail", "prompt": "The unit test fails because a mock leaks between tests - isolate state.", "expect": {"tools_include": ["verify"]}}
+{"id": "testfail-09", "category": "test_fail", "prompt": "A unit test fails on Windows path separators - normalize in code.", "expect": {"tools_include": ["verify"], "verify_must_pass": true}}
+{"id": "testfail-10", "category": "test_fail", "prompt": "The snapshot test fails after i18n keys moved - update with evidence and rerun.", "expect": {"tools_include": ["verify"]}}
+{"id": "debug-01", "category": "debug", "prompt": "Intermittent 500 on empty payload - find root cause, minimal patch, prove with verify.", "expect": {"tools_include": ["apply_patch", "verify"], "composer_mode": "debug"}}
+{"id": "debug-02", "category": "debug", "prompt": "Debug the intermittent login timeout - reproduce, find root cause, minimal patch.", "expect": {"tools_include": ["apply_patch", "verify"], "composer_mode": "debug"}}
+{"id": "debug-03", "category": "debug", "prompt": "Debug why the queue stalls under load - root cause first, then the smallest fix.", "expect": {"tools_include": ["apply_patch", "verify"], "composer_mode": "debug"}}
+{"id": "debug-04", "category": "debug", "prompt": "Debug the corrupted upload seen once a day - root cause with evidence before patching.", "expect": {"tools_include": ["apply_patch", "verify"], "composer_mode": "debug"}}
+{"id": "debug-05", "category": "debug", "prompt": "Debug the intermittent blank dashboard after deploy - trace root cause, patch, verify.", "expect": {"tools_include": ["apply_patch", "verify"], "composer_mode": "debug"}}
+{"id": "ask-01", "category": "ask", "prompt": "Explain how authentication tokens are refreshed. Do not edit files.", "expect": {"tools_exclude": ["apply_patch", "write_file", "edit_file", "exec"], "read_only": true}}
+{"id": "ask-02", "category": "ask", "prompt": "Where is the git blame API defined?", "expect": {"tools_exclude": ["apply_patch", "write_file"], "read_only": true}}
+{"id": "plan-01", "category": "plan", "prompt": "Plan mode: design the auth revamp and create the project board with milestones.", "expect": {"tools_include": ["board"], "composer_mode": "plan", "tools_exclude": ["apply_patch", "write_file"]}}
+{"id": "plan-02", "category": "plan", "prompt": "Plan mode: outline the data migration. Execution stays blocked - no edits, no commands.", "expect": {"read_only": true, "composer_mode": "plan", "tools_exclude": ["exec", "apply_patch", "write_file"]}}
+{"id": "plan-03", "category": "plan", "prompt": "Plan mode: the user approves mid-turn - hand off the approved plan to Build without losing board state.", "expect": {"tools_include": ["board"], "composer_mode": "plan", "tools_exclude": ["apply_patch"]}}
+{"id": "plan-04", "category": "plan", "prompt": "Plan mode: initialize the mission ledger for this plan before any step is allowed to run.", "expect": {"tools_include": ["ledger_init"], "composer_mode": "plan", "tools_exclude": ["apply_patch", "write_file"]}}
+{"id": "plan-05", "category": "plan", "prompt": "Plan mode: collect the finished research subagents via spawn results and fold their findings into the plan.", "expect": {"tools_include": ["spawn", "results"], "composer_mode": "plan", "tools_exclude": ["apply_patch"]}}
+{"id": "plan-06", "category": "plan", "prompt": "Plan mode: draft the plan with explicit acceptance_criteria and validation steps for every board task.", "expect": {"tools_include": ["board", "acceptance_criteria"], "composer_mode": "plan", "tools_exclude": ["apply_patch", "write_file"]}}

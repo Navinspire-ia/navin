@@ -1,4 +1,4 @@
-"""Anthropic provider — direct SDK integration for Claude models."""
+"""Anthropic provider - direct SDK integration for Claude models."""
 
 from __future__ import annotations
 
@@ -31,6 +31,36 @@ def _gen_tool_id() -> str:
 
 _VALID_TOOL_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# Models supporting adaptive thinking (thinking: {"type": "adaptive"}):
+# Claude 4.6 and every later generation.
+_ADAPTIVE_THINKING_MODELS = (
+    "opus-4-6", "sonnet-4-6",
+    "opus-4-7", "opus-4-8",
+    "opus-5", "sonnet-5", "haiku-5",
+    "fable", "mythos",
+)
+
+# Native effort control (output_config.effort) support per model family.
+# Opus 4.7/4.8 and the 5.x families accept the full ladder; Opus 4.6 adds
+# "max" only; Sonnet 4.6 and Opus 4.5 accept low/medium/high (4.5 behind the
+# effort-2025-11-24 beta header).
+_EFFORT_FULL_LADDER = (
+    "opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "haiku-5", "fable", "mythos",
+)
+_EFFORT_WITH_MAX = ("opus-4-6",)
+_EFFORT_BASE = ("sonnet-4-6", "opus-4-5")
+
+
+def _effort_levels_for(model_lower: str) -> frozenset[str]:
+    """Return the output_config.effort values this Claude model accepts."""
+    if any(p in model_lower for p in _EFFORT_FULL_LADDER):
+        return frozenset({"low", "medium", "high", "xhigh", "max"})
+    if any(p in model_lower for p in _EFFORT_WITH_MAX):
+        return frozenset({"low", "medium", "high", "max"})
+    if any(p in model_lower for p in _EFFORT_BASE):
+        return frozenset({"low", "medium", "high"})
+    return frozenset()
+
 
 def _sanitize_tool_id(tid: str) -> str:
     """Ensure tool_use/tool_result IDs match Anthropic's required pattern.
@@ -58,14 +88,14 @@ class AnthropicProvider(LLMProvider):
         self,
         api_key: str | None = None,
         api_base: str | None = None,
-        default_model: str = "claude-sonnet-4-6",
+        # No vendor default on purpose: the factory always passes the model the
+        # user chose, and nothing in the product may silently pick one.
+        default_model: str = "",
         extra_headers: dict[str, str] | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
-
-        from anthropic import AsyncAnthropic
 
         client_kw: dict[str, Any] = {}
         if api_key:
@@ -76,7 +106,22 @@ class AnthropicProvider(LLMProvider):
             client_kw["default_headers"] = extra_headers
         # Keep retries centralized in LLMProvider._run_with_retry to avoid retry amplification.
         client_kw["max_retries"] = 0
-        self._client = AsyncAnthropic(**client_kw)
+        self._client_kw = client_kw
+        self._client_instance: Any = None
+
+    @property
+    def _client(self) -> Any:
+        """The Anthropic SDK client, created on first use.
+
+        Importing the SDK costs ~0.9 s; the gateway builds a provider snapshot
+        during startup just to validate the configuration, so paying the import
+        there would delay the WebUI for every user on every launch.
+        """
+        if self._client_instance is None:
+            from anthropic import AsyncAnthropic
+
+            self._client_instance = AsyncAnthropic(**self._client_kw)
+        return self._client_instance
 
     @staticmethod
     def _normalize_base_url(api_base: str) -> str:
@@ -129,6 +174,7 @@ class AnthropicProvider(LLMProvider):
         elif "connection" in error_name:
             error_kind = "connection"
         error_type, error_code = LLMProvider._extract_error_type_code(payload)
+        from navin.providers.user_facing_errors import provider_error_detail
 
         return LLMResponse(
             content=msg,
@@ -140,6 +186,8 @@ class AnthropicProvider(LLMProvider):
             error_code=error_code,
             error_retry_after_s=retry_after,
             error_should_retry=should_retry,
+            error_detail=provider_error_detail(payload_text or str(e)),
+            error_provider="Anthropic",
         )
 
     @staticmethod
@@ -379,9 +427,9 @@ class AnthropicProvider(LLMProvider):
         Anthropic's contract is stricter than OpenAI's:
 
         1. Consecutive same-role turns must be collapsed into one.
-        2. The conversation cannot end with an ``assistant`` turn — Anthropic
+        2. The conversation cannot end with an ``assistant`` turn - Anthropic
            does not support assistant-message prefill and returns 400.
-        3. The conversation cannot start with an ``assistant`` turn — the
+        3. The conversation cannot start with an ``assistant`` turn - the
            first message must be ``user``.
 
         Rules 2 and 3 mirror ``LLMProvider._enforce_role_alternation`` in
@@ -407,7 +455,7 @@ class AnthropicProvider(LLMProvider):
             else:
                 merged.append(msg)
 
-        # Rule 2: strip trailing assistant turns — Anthropic rejects prefill.
+        # Rule 2: strip trailing assistant turns - Anthropic rejects prefill.
         last_popped: dict[str, Any] | None = None
         while merged and merged[-1].get("role") == "assistant":
             last_popped = merged.pop()
@@ -425,7 +473,7 @@ class AnthropicProvider(LLMProvider):
 
         # Rule 3: prepend a synthetic opener if the first surviving turn is an
         # assistant (e.g. upstream history truncation dropped the original
-        # user request).  ``tool_use``-carrying assistants are left alone —
+        # user request).  ``tool_use``-carrying assistants are left alone -
         # that message will still fail validation, but injecting an opener
         # before it would orphan the tool_use/tool_result pair that follows,
         # turning a recoverable 400 into a harder-to-diagnose one.
@@ -484,6 +532,33 @@ class AnthropicProvider(LLMProvider):
     # Prompt caching
     # ------------------------------------------------------------------
 
+    # Anthropic rejects cache_control on these, so a breakpoint that lands on
+    # one fails the whole request rather than merely missing the cache.
+    _UNCACHEABLE_BLOCK_TYPES: frozenset[str] = frozenset({"thinking", "redacted_thinking"})
+
+    @classmethod
+    def _cache_breakpoint_index(cls, blocks: list[dict[str, Any]]) -> int | None:
+        """Last block in ``blocks`` that may carry a breakpoint, if any.
+
+        An assistant turn puts its thinking first, so the final block is usually
+        text or a tool_use and is fine to mark. It is not always: a turn that
+        thought and then produced nothing - the model ran out of budget mid
+        thought - ends on a thinking block, and marking that one is a 400 for the
+        entire request. Walking back costs nothing and keeps the breakpoint.
+        """
+        for idx in range(len(blocks) - 1, -1, -1):
+            block = blocks[idx]
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") in cls._UNCACHEABLE_BLOCK_TYPES:
+                continue
+            # An empty text block is not cacheable either, and marking it would
+            # place the breakpoint on content the API discards.
+            if block.get("type") == "text" and not block.get("text"):
+                continue
+            return idx
+        return None
+
     @classmethod
     def _apply_cache_control(
         cls,
@@ -503,12 +578,14 @@ class AnthropicProvider(LLMProvider):
         if len(new_msgs) >= 3:
             m = new_msgs[-2]
             c = m.get("content")
-            if isinstance(c, str):
+            if isinstance(c, str) and c:
                 new_msgs[-2] = {**m, "content": [{"type": "text", "text": c, "cache_control": marker}]}
             elif isinstance(c, list) and c:
                 nc = list(c)
-                nc[-1] = {**nc[-1], "cache_control": marker}
-                new_msgs[-2] = {**m, "content": nc}
+                idx = cls._cache_breakpoint_index(nc)
+                if idx is not None:
+                    nc[idx] = {**nc[idx], "cache_control": marker}
+                    new_msgs[-2] = {**m, "content": nc}
 
         new_tools = tools
         if tools:
@@ -543,14 +620,21 @@ class AnthropicProvider(LLMProvider):
             )
 
         max_tokens = max(1, max_tokens)
-        thinking_enabled = bool(reasoning_effort) and reasoning_effort.lower() != "none"
+        effort = (reasoning_effort or "").lower()
+        # "minimal" has no Anthropic rung below "low"; it means no thinking.
+        thinking_off = bool(reasoning_effort) and effort in ("none", "minimal")
+        thinking_enabled = bool(reasoning_effort) and not thinking_off
 
-        # Several Anthropic models (opus-4-7, opus-4-8, sonnet-5, fable) deprecated the
-        # `temperature` parameter — the API returns 400 if it is present.
-        _model_lower = model_name.lower()
-        omit_temperature = any(
-            m in _model_lower for m in ("opus-4-7", "opus-4-8", "sonnet-5", "fable")
+        # Anthropic deprecated `temperature` from the Claude 4.7 generation
+        # onwards - the API returns 400 if it is present. Version-based rule
+        # so future models are covered without touching this file.
+        from navin.providers.claude_capabilities import (
+            claude_accepts_thinking_param,
+            claude_supports_temperature,
         )
+
+        _model_lower = model_name.lower()
+        omit_temperature = not claude_supports_temperature(_model_lower)
 
         kwargs: dict[str, Any] = {
             "model": model_name,
@@ -561,22 +645,55 @@ class AnthropicProvider(LLMProvider):
         if system:
             kwargs["system"] = system
 
-        if reasoning_effort == "adaptive":
+        supported_effort = _effort_levels_for(_model_lower)
+        adaptive_capable = any(p in _model_lower for p in _ADAPTIVE_THINKING_MODELS)
+
+        if effort == "adaptive" and adaptive_capable:
             # Adaptive thinking: model decides when and how much to think
-            # Supported on claude-sonnet-4-6 and claude-opus-4-6.
-            # Also auto-enables interleaved thinking between tool calls.
+            # (Sonnet 4.6, Opus 4.6 and later). Also auto-enables interleaved
+            # thinking between tool calls.
             kwargs["thinking"] = {"type": "adaptive"}
+            if not omit_temperature:
+                kwargs["temperature"] = 1.0
+        elif thinking_enabled and supported_effort:
+            # Native effort control (output_config.effort). Clamp levels the
+            # specific model does not accept (e.g. xhigh → high on Opus 4.6).
+            clamped = effort if effort in supported_effort else (
+                "high" if effort in ("xhigh", "max", "adaptive") else "medium"
+            )
+            kwargs["extra_body"] = {"output_config": {"effort": clamped}}
+            if adaptive_capable:
+                # On 4.6+ effort pairs with adaptive thinking (budget_tokens
+                # is deprecated there).
+                kwargs["thinking"] = {"type": "adaptive"}
+            else:
+                # Opus 4.5: extended-thinking-only; effort requires the beta
+                # header and works alongside a thinking budget.
+                budget_map = {"low": 1024, "medium": 4096, "high": max(8192, max_tokens)}
+                budget = budget_map.get(clamped, 4096)
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
+                kwargs["max_tokens"] = max(max_tokens, budget + 4096)
+                kwargs["extra_headers"] = {
+                    **(self.extra_headers or {}),
+                    "anthropic-beta": "effort-2025-11-24",
+                }
             if not omit_temperature:
                 kwargs["temperature"] = 1.0
         elif thinking_enabled:
             budget_map = {"low": 1024, "medium": 4096, "high": max(8192, max_tokens)}
-            budget = budget_map.get(reasoning_effort.lower(), 4096)
+            budget = budget_map.get(effort, 4096)
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget}
             kwargs["max_tokens"] = max(max_tokens, budget + 4096)
             if not omit_temperature:
                 kwargs["temperature"] = 1.0
-        elif not omit_temperature:
-            kwargs["temperature"] = temperature
+        else:
+            if thinking_off and claude_accepts_thinking_param(_model_lower):
+                # Anthropic's default is off today; saying so survives a model
+                # whose default changes. Omission is how "none" turned into a
+                # full chain of thought on other wires.
+                kwargs["thinking"] = {"type": "disabled"}
+            if not omit_temperature:
+                kwargs["temperature"] = temperature
 
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
@@ -585,7 +702,11 @@ class AnthropicProvider(LLMProvider):
                 kwargs["tool_choice"] = tc
 
         if self.extra_headers:
-            kwargs["extra_headers"] = self.extra_headers
+            # Preserve request-specific headers (e.g. the effort beta header).
+            kwargs["extra_headers"] = {
+                **self.extra_headers,
+                **kwargs.get("extra_headers", {}),
+            }
 
         return kwargs
 

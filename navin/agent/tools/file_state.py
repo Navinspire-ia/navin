@@ -18,9 +18,16 @@ class ReadState:
     can_dedup: bool
 
 
+_HASH_MAX_BYTES = 512 * 1024
+
+
 def _hash_file(p: str) -> str | None:
+    """Content hash for read-dedup. Skip large files (mtime is enough)."""
     try:
-        return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        path = Path(p)
+        if path.stat().st_size > _HASH_MAX_BYTES:
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
 

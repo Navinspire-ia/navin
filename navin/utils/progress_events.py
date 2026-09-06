@@ -27,15 +27,25 @@ def _on_progress_accepts(cb: Callable[..., Any], name: str) -> bool:
     return name in sig.parameters
 
 
+def on_progress_accepts_agent_ui(cb: Callable[..., Any]) -> bool:
+    return _on_progress_accepts(cb, "agent_ui")
+
+
 async def invoke_on_progress(
     on_progress: Callable[..., Awaitable[None]],
     content: str,
     *,
     tool_hint: bool = False,
     tool_events: list[dict[str, Any]] | None = None,
+    agent_ui: dict[str, Any] | None = None,
 ) -> None:
+    kwargs: dict[str, Any] = {"tool_hint": tool_hint}
     if tool_events and on_progress_accepts_tool_events(on_progress):
-        await on_progress(content, tool_hint=tool_hint, tool_events=tool_events)
+        kwargs["tool_events"] = tool_events
+    if agent_ui is not None and on_progress_accepts_agent_ui(on_progress):
+        kwargs["agent_ui"] = agent_ui
+    if "tool_events" in kwargs or "agent_ui" in kwargs:
+        await on_progress(content, **kwargs)
         return
     await on_progress(content, tool_hint=tool_hint)
 

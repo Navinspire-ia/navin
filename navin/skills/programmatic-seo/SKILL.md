@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"🏭","category":"seo"}}
 
 ## Overview
 
-Data × template = long-tail coverage. Only works when each generated page has real unique value — thin duplicates get penalized.
+Data × template = long-tail coverage. Only works when each generated page has real unique value - thin duplicates get penalized.
 
 ## Good pSEO patterns
 
@@ -20,11 +20,11 @@ Data × template = long-tail coverage. Only works when each generated page has r
 
 ## Workflow
 
-1. Validate the pattern: search 5 sample queries — is there long-tail demand and weak competition?
+1. Validate the pattern: search 5 sample queries - is there long-tail demand and weak competition?
 2. Build the dataset (CSV/JSON): one row per page with enough fields for uniqueness (≥40% unique content per page).
 3. Design the template: title formula, H1, intro variables, data tables, FAQ, internal links to hub pages.
-4. Generate with a script (`exec` + Python/Jinja or the site's SSG) — never hand-write 300 pages.
-5. Ship in batches (50–100), monitor indexation before scaling.
+4. Generate with a script (`exec` + Python/Jinja or the site's SSG) - never hand-write 300 pages.
+5. Ship in batches (50-100), monitor indexation before scaling.
 6. Add hub/index pages linking to all generated pages.
 
 ## Anti-patterns

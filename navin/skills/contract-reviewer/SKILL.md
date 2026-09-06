@@ -1,6 +1,6 @@
 ---
 name: contract-reviewer
-description: Review commercial contracts — flag risky clauses, missing protections, and negotiation points. Use before signing or sending any agreement. Not a substitute for a lawyer.
+description: Review commercial contracts - flag risky clauses, missing protections, and negotiation points. Use before signing or sending any agreement. Not a substitute for a lawyer.
 metadata: {"navin":{"emoji":"📜","category":"sales"}}
 ---
 
@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"📜","category":"sales"}}
 
 ## Overview
 
-Systematic first-pass review of commercial agreements: what's risky, what's missing, what to negotiate. Final review of significant contracts belongs to a qualified lawyer — say so every time.
+Systematic first-pass review of commercial agreements: what's risky, what's missing, what to negotiate. Final review of significant contracts belongs to a qualified lawyer - say so every time.
 
 ## Clause checklist
 
@@ -21,7 +21,7 @@ Systematic first-pass review of commercial agreements: what's risky, what's miss
 | Termination | exit rights for both sides, notice period, kill fees |
 | Confidentiality/NDA | mutual, reasonable duration, standard carve-outs |
 | Data | GDPR/local law compliance, hosting location, subprocessors |
-| Non-compete/exclusivity | scope, duration, geography — proportionate? |
+| Non-compete/exclusivity | scope, duration, geography - proportionate? |
 | Penalties/SLA | achievable? cap on penalties? force majeure? |
 | Law & disputes | governing law, jurisdiction/arbitration (critical cross-border DZ/Gulf/EU) |
 
@@ -35,7 +35,7 @@ Systematic first-pass review of commercial agreements: what's risky, what's miss
 ## Review memo format
 
 ```markdown
-## Contract review — <name> (<our role>)
+## Contract review - <name> (<our role>)
 Verdict: sign / negotiate first / lawyer required
 ### 🔴 Blockers
 ### 🟡 Negotiation points (with proposed wording)
@@ -45,5 +45,5 @@ Verdict: sign / negotiate first / lawyer required
 ## Rules
 
 - Always state this is analysis, not legal advice.
-- Quote exact clause text — never paraphrase a risk.
+- Quote exact clause text - never paraphrase a risk.
 - Cross-border contracts always get the "lawyer required" flag.

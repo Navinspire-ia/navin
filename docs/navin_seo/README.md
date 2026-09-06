@@ -1,8 +1,8 @@
-# Navin SEO — Documentation
+# Navin SEO - Documentation
 
-Documentation for the **SEO** module (`#/seo`): a complete SEO agency in a panel — technical audits, keyword research, optimized content, link strategy — powered by the `/seo` command.
+Documentation for the **SEO** module (`#/seo`): a complete SEO agency in a panel - technical audits, keyword research, optimized content, link strategy - powered by the `/seo` command.
 
-Documentation du module **SEO** (`#/seo`) : une agence SEO complète dans un panneau — audits techniques, recherche de mots-clés, contenu optimisé, stratégie de liens — propulsée par la commande `/seo`.
+Documentation du module **SEO** (`#/seo`) : une agence SEO complète dans un panneau - audits techniques, recherche de mots-clés, contenu optimisé, stratégie de liens - propulsée par la commande `/seo`.
 
 ## English
 

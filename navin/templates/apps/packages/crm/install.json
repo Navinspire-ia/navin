@@ -1,0 +1,265 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "crm",
+  "name": "CRM / Sales",
+  "kind": "business",
+  "category": "crm",
+  "source_github": "https://github.com/marmelab/atomic-crm",
+  "source_name": "Atomic CRM",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Supabase",
+    "shadcn"
+  ],
+  "studied_from": "curated+templates_apps/crm",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 6,
+    "package_count": 1,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/",
+      "doc/"
+    ],
+    "summary": "Atomic CRM A full-featured CRM built with React, shadcn-admin-kit, and Supabase. Atomic CRM is free and open-source. You can test it online at <https://marmelab.com/atomic-crm-demo>. Features - \ud83d\udcc7 **Organize Contacts**: Keep all your contacts in one easily accessible place. - \u23f0 **Create Tasks & Set Reminders**: Never miss a follow-up or deadline. - \ud83d\udcdd **Take Notes**: Capture important details and insights effortlessly. - \u2709\ufe0f **Capture Emails**: CC Atomic CRM to automatically save communications as notes."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": true,
+    "prisma": false,
+    "supabase_cli": true
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "make",
+      "why": "Project Makefile (start / install / seed)"
+    },
+    {
+      "id": "supabase",
+      "why": "Local Supabase (`npx supabase start`)"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "atomic-crm",
+        "scripts": {
+          "test:unit:app": "vitest --config vitest.config.ts",
+          "test:unit:claude": "vitest --config vitest.config.ts --project claude",
+          "test:unit:functions": "vitest --config vitest.config.ts --project functions",
+          "dev": "vite --force",
+          "dev:demo": "vite --config vite.demo.config --force",
+          "build": "tsc && vite build",
+          "build:e2e": "vite build --mode e2e",
+          "build:demo": "tsc && vite build --config vite.demo.config",
+          "lint:apply": "eslint **/*.{mjs,ts,tsx} --fix",
+          "lint": "eslint **/*.{mjs,ts,tsx}",
+          "registry:build": "npx shadcn build",
+          "build-storybook": "storybook build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "atomic-crm",
+        "scripts": {
+          "test:unit:app": "vitest --config vitest.config.ts",
+          "test:unit:claude": "vitest --config vitest.config.ts --project claude",
+          "test:unit:functions": "vitest --config vitest.config.ts --project functions",
+          "dev": "vite --force",
+          "dev:demo": "vite --config vite.demo.config --force",
+          "build": "tsc && vite build",
+          "build:e2e": "vite build --mode e2e",
+          "build:demo": "tsc && vite build --config vite.demo.config",
+          "lint:apply": "eslint **/*.{mjs,ts,tsx} --fix",
+          "lint": "eslint **/*.{mjs,ts,tsx}",
+          "registry:build": "npx shadcn build",
+          "build-storybook": "storybook build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "supabase",
+      "required": true,
+      "docker_image": "supabase/postgres",
+      "port": 54321,
+      "env_url": "VITE_SUPABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "make start  (or npx supabase start). Do not start a bare Postgres container; Atomic CRM needs local Supabase.",
+        "Demo without local Supabase: npm run dev:demo"
+      ]
+    }
+  ],
+  "ports": [
+    5174,
+    5173,
+    54321
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "VITE_SUPABASE_URL",
+      "default": "http://127.0.0.1:54321",
+      "required": false,
+      "secret": false,
+      "purpose": "Supabase API URL (Vite)",
+      "from": "curated"
+    },
+    {
+      "key": "VITE_SB_PUBLISHABLE_KEY",
+      "default": "",
+      "required": false,
+      "secret": false,
+      "purpose": "Supabase publishable key (Vite)",
+      "from": "curated"
+    },
+    {
+      "key": "CRM_BASE_URL",
+      "default": "http://localhost:5174",
+      "required": false,
+      "secret": false,
+      "purpose": "App URL",
+      "from": "curated"
+    },
+    {
+      "key": "POSTMARK_WEBHOOK_USER",
+      "default": "",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "curated"
+    },
+    {
+      "key": "POSTMARK_WEBHOOK_PASSWORD",
+      "default": "",
+      "required": false,
+      "secret": true,
+      "purpose": "Email / SMTP",
+      "from": "curated"
+    },
+    {
+      "key": "VITE_INBOUND_EMAIL",
+      "default": "",
+      "required": false,
+      "secret": false,
+      "purpose": "Inbound email",
+      "from": "curated"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [
+      {
+        "name": "supabase",
+        "image": "supabase/postgres",
+        "ports": [
+          "54321:54321"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "Supabase CLI starts Postgres + Auth + Storage. Prefer `make start` or `npm run dev:demo`."
+  },
+  "launch": {
+    "dev": "npm run dev:demo",
+    "build": "npm run build",
+    "start": "make start"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/crm/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env. Demo mode does not need real Supabase keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "npm install at the project root."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev:demo (Vite on :5174, no local Supabase). For full stack: make start."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/crm/overlay.json (agents, prompts, extra env)."
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/crm/overlay.json",
+    "agents": ".navin/apps/crm/agents/",
+    "env": ".env.example -> .env",
+    "frontend": "package.json (Vite + React root)",
+    "backend": "supabase/ (migrations, functions, seed.sql)",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "sales-agent",
+      "lead-qualification-agent",
+      "follow-up-agent",
+      "account-manager-agent",
+      "sales-forecast-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

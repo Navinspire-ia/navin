@@ -63,6 +63,15 @@ def cron_run_id(metadata: Mapping[str, Any] | None) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def cron_job_id(metadata: Mapping[str, Any] | None) -> str | None:
+    """Return the job whose schedule triggered this turn, if any."""
+    trigger = cron_trigger(metadata)
+    if not trigger:
+        return None
+    value = trigger.get("job_id")
+    return value if isinstance(value, str) and value else None
+
+
 def cron_history_overrides(metadata: Mapping[str, Any] | None) -> tuple[str | None, dict[str, Any]]:
     """Return session-history text/metadata overrides for a cron turn."""
     return automation_history_overrides_for_spec(metadata, CRON_AUTOMATION_SPEC)

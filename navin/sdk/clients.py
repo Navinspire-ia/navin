@@ -158,15 +158,15 @@ class MemoryClient:
         self._loop = loop
 
     def read(self) -> str:
-        """Read ``memory/MEMORY.md``."""
+        """Read ``.navin/memory/MEMORY.md``."""
         return self._loop.context.memory.read_memory()
 
     def write(self, text: str) -> None:
-        """Overwrite ``memory/MEMORY.md``."""
+        """Overwrite ``.navin/memory/MEMORY.md``."""
         self._loop.context.memory.write_memory(text)
 
     def append_history(self, text: str, *, session_key: str | None = None) -> int:
-        """Append one entry to ``memory/history.jsonl`` and return its cursor."""
+        """Append one entry to ``.navin/memory/history.jsonl`` and return its cursor."""
         return self._loop.context.memory.append_history(text, session_key=session_key)
 
     def read_history(self, *, session_key: str | None = None) -> list[dict[str, Any]]:

@@ -1,0 +1,428 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "stock-pilot",
+  "name": "Commercial / Sales & Purchases",
+  "kind": "business",
+  "category": "commerce",
+  "source_github": "https://github.com/zacktam12/StockPilot",
+  "source_name": "StockPilot",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node.js",
+    "PostgreSQL"
+  ],
+  "studied_from": "curated-github",
+  "completeness": {
+    "studied": false,
+    "missing": [],
+    "env_count": 18,
+    "package_count": 4,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "StockPilot: React 19 + Vite frontend (:5173), Express 5 + Prisma + PostgreSQL backend (:5000), optional Redis and Next.js landing. JWT auth, POS, purchases, invoices, RBAC."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone https://github.com/zacktam12/StockPilot"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend/ and backend/ separately"
+    },
+    {
+      "id": "node",
+      "why": "Node 18+ for Vite and Express"
+    },
+    {
+      "id": "docker",
+      "why": "Postgres 14+ and optional Redis"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma generate / migrate deploy / db seed in backend/"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "StockPilot",
+        "scripts": {
+          "dev": "vite",
+          "build": "vite build",
+          "preview": "vite preview"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react",
+          "vite",
+          "antd",
+          "axios"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "backend",
+        "scripts": {
+          "dev": "nodemon src/server.js",
+          "start": "node src/server.js"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "@prisma/client",
+          "pg",
+          "redis",
+          "jsonwebtoken"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "stockpilot-root",
+        "scripts": {},
+        "node_engine": ">=18",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "StockPilot",
+        "scripts": {
+          "dev": "vite",
+          "build": "vite build"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "backend",
+        "scripts": {
+          "dev": "nodemon src/server.js",
+          "start": "node src/server.js"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "prisma",
+          "pg"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "stockLandingPage/package.json",
+        "name": "stock-landing",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-stockpilot-pg -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=stockpilot -p 5432:5432 postgres:16-alpine",
+        "cd backend && npx prisma generate && npx prisma migrate deploy && npx prisma db seed"
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-stockpilot-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    5000,
+    5173,
+    3000,
+    5432,
+    6379
+  ],
+  "env_files": [
+    "backend/.env.example",
+    "frontend/.env.example"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://navin:navin@127.0.0.1:5432/stockpilot",
+      "required": true,
+      "secret": false,
+      "purpose": "Prisma Postgres URL",
+      "from": "backend/.env"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "change-me-jwt",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "backend/.env"
+    },
+    {
+      "key": "JWT_EXPIRE",
+      "default": "7d",
+      "required": false,
+      "secret": false,
+      "purpose": "JWT expiry",
+      "from": "backend/.env"
+    },
+    {
+      "key": "PORT",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "Express API port",
+      "from": "backend/.env"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "backend/.env"
+    },
+    {
+      "key": "EMAIL_HOST",
+      "default": "smtp.gmail.com",
+      "required": false,
+      "secret": false,
+      "purpose": "SMTP host",
+      "from": "backend/.env"
+    },
+    {
+      "key": "EMAIL_PORT",
+      "default": "587",
+      "required": false,
+      "secret": false,
+      "purpose": "SMTP port",
+      "from": "backend/.env"
+    },
+    {
+      "key": "EMAIL_USER",
+      "default": "",
+      "required": false,
+      "secret": false,
+      "purpose": "SMTP user",
+      "from": "backend/.env"
+    },
+    {
+      "key": "EMAIL_PASSWORD",
+      "default": "",
+      "required": false,
+      "secret": true,
+      "purpose": "SMTP password",
+      "from": "backend/.env"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis cache",
+      "from": "backend/.env"
+    },
+    {
+      "key": "MAX_FILE_SIZE",
+      "default": "5242880",
+      "required": false,
+      "secret": false,
+      "purpose": "Upload size bytes",
+      "from": "backend/.env"
+    },
+    {
+      "key": "UPLOAD_DIR",
+      "default": "uploads",
+      "required": false,
+      "secret": false,
+      "purpose": "Upload directory",
+      "from": "backend/.env"
+    },
+    {
+      "key": "CORS_ORIGIN",
+      "default": "http://localhost:5173",
+      "required": false,
+      "secret": false,
+      "purpose": "Frontend origin",
+      "from": "backend/.env"
+    },
+    {
+      "key": "RATE_LIMIT_WINDOW_MS",
+      "default": "900000",
+      "required": false,
+      "secret": false,
+      "purpose": "Rate limit window",
+      "from": "backend/.env"
+    },
+    {
+      "key": "RATE_LIMIT_MAX_REQUESTS",
+      "default": "100",
+      "required": false,
+      "secret": false,
+      "purpose": "Rate limit max",
+      "from": "backend/.env"
+    },
+    {
+      "key": "VITE_API_URL",
+      "default": "http://localhost:5000/api",
+      "required": true,
+      "secret": false,
+      "purpose": "API base URL",
+      "from": "frontend/.env"
+    },
+    {
+      "key": "VITE_APP_NAME",
+      "default": "StockPilot",
+      "required": false,
+      "secret": false,
+      "purpose": "App title",
+      "from": "frontend/.env"
+    },
+    {
+      "key": "VITE_SOCKET_URL",
+      "default": "http://localhost:5000",
+      "required": false,
+      "secret": false,
+      "purpose": "Socket.io URL",
+      "from": "frontend/.env"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [
+      {
+        "name": "postgres",
+        "image": "postgres:16-alpine",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:7-alpine",
+        "ports": [
+          "6379:6379"
+        ]
+      }
+    ],
+    "dockerfile": false,
+    "note": "No official compose. Start Postgres (required) and Redis (optional)."
+  },
+  "launch": {
+    "dev": "cd backend && npm run dev  (and  cd frontend && npm run dev)",
+    "build": "cd frontend && npm run build",
+    "migrate": "cd backend && npx prisma migrate deploy",
+    "seed": "cd backend && npx prisma db seed"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/stock-pilot/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "clone",
+        "run": "git clone https://github.com/zacktam12/StockPilot.git . (or extract the S3 pack)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "Start Postgres 16, db stockpilot, user/password navin."
+      },
+      {
+        "id": "env-backend",
+        "run": "cd backend && cp .env.example .env and set DATABASE_URL, JWT_SECRET, PORT=5000, CORS_ORIGIN=http://localhost:5173."
+      },
+      {
+        "id": "env-frontend",
+        "run": "cd frontend && set VITE_API_URL=http://localhost:5000/api and VITE_SOCKET_URL=http://localhost:5000."
+      },
+      {
+        "id": "node-backend",
+        "run": "cd backend && npm install && npx prisma generate && npx prisma migrate deploy && npx prisma db seed"
+      },
+      {
+        "id": "node-frontend",
+        "run": "cd frontend && npm install"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/stock-pilot/overlay.json."
+      },
+      {
+        "id": "dev",
+        "run": "Terminal 1: cd backend && npm run dev (:5000). Terminal 2: cd frontend && npm run dev (:5173)."
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/stock-pilot/overlay.json",
+    "agents": ".navin/apps/stock-pilot/agents/",
+    "env": "backend/.env and frontend/.env",
+    "frontend": "frontend/package.json (Vite + React + Ant Design)",
+    "backend": "backend/package.json (Express + Prisma). Schema: backend/prisma/schema.prisma",
+    "theme": "Frontend Tailwind + Ant Design. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "sales-agent",
+      "purchase-agent",
+      "supplier-agent",
+      "invoice-agent",
+      "stock-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

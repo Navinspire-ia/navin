@@ -13,6 +13,7 @@ Skills préchargés par `/studio` et compléments disponibles pour l'agent.
 | `presentation-designer` | Principes de design de slides : arc narratif, hiérarchie visuelle, une idée par slide. |
 | `professional-writer` | Écriture professionnelle : clarté, ton, structure. |
 | `document-templates` | 8 thèmes visuels intégrés (palettes exactes, polices, règles de mise en page) + adaptation de fichiers templates fournis par l'utilisateur. |
+| `archify` | Diagrammes d'architecture / séquence / workflow par défaut (HTML + export SVG sur les slides). |
 
 ## Skills complémentaires
 
@@ -27,6 +28,7 @@ Skills préchargés par `/studio` et compléments disponibles pour l'agent.
 | `translation-localization` | Production de documents multilingues. |
 | `pdf-ocr-extractor` | Extraction de contenu de PDF existants à réutiliser. |
 | `invoice-reader` / `contract-extractor` | Extraction structurée de documents métier. |
+| `contract-reviewer` | Revue de clauses en première passe. Préchargé seulement sur les 25 cartes juridiques `/studio`, jamais sur un pitch ou un rapport. |
 | `fact-checker` | Vérification des affirmations avant qu'elles n'entrent dans un livrable. |
 | `image-generation` | Illustrations et images de couverture pour decks et rapports. |
 

@@ -1,6 +1,8 @@
 # Long-term Memory
 
 This file stores important information that should persist across sessions.
+Shared by every module on this project (Code, Documents, Marketing, SEO, …):
+one project brain, not one memory per studio.
 
 ## User Information
 
@@ -13,6 +15,14 @@ This file stores important information that should persist across sessions.
 ## Project Context
 
 (Information about ongoing projects)
+
+## Decisions
+
+(Why we chose X over Y - keep durable product and architecture decisions here)
+
+## Constraints
+
+(Hard rules the agent must not violate. Replace this paragraph with a bullet list.)
 
 ## Important Notes
 

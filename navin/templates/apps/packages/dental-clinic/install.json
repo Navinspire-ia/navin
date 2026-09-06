@@ -1,0 +1,210 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "dental-clinic",
+  "name": "Dental Clinic",
+  "kind": "business",
+  "category": "healthcare",
+  "source_github": "https://github.com/clawnify/open-dentist",
+  "source_name": "Open Dentist",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Vite",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/dental-clinic",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 1,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Open Dentist [![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/open-dentist) Open-source dental practice management \u2014 an alternative to CareStack and Archy for solo practices, group practices, and DSOs. > Built on the [Clawnify](https://clawnify.com) template format. Deploy your own copy in minutes, customize freely, own the data. Features Agenda - **Multi-room day view** \u2014 operatories as columns, 15-minute time slots, drag-friendly card geometry"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "@clawnify/open-dentist",
+        "scripts": {
+          "dev": "pnpm db:migrate && concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
+          "db:migrate": "wrangler d1 execute open-dentist-db --local --file=src/server/schema.sql",
+          "build": "vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "hono",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "@clawnify/open-dentist",
+        "scripts": {
+          "dev": "pnpm db:migrate && concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
+          "db:migrate": "wrangler d1 execute open-dentist-db --local --file=src/server/schema.sql",
+          "build": "vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "hono",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "@clawnify/open-dentist",
+        "scripts": {
+          "dev": "pnpm db:migrate && concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
+          "db:migrate": "wrangler d1 execute open-dentist-db --local --file=src/server/schema.sql",
+          "build": "vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "hono",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "sqlite",
+      "required": true,
+      "docker_image": "",
+      "port": 0,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "No Docker. File DB is created on first migrate / start."
+      ]
+    }
+  ],
+  "ports": [
+    3000
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/dental-clinic/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-sqlite",
+        "run": "No Docker. File DB is created on first migrate / start."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/dental-clinic/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/dental-clinic/overlay.json",
+    "agents": ".navin/apps/dental-clinic/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "dental-admin-agent",
+      "appointment-agent",
+      "charting-agent",
+      "billing-agent",
+      "follow-up-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -8,11 +8,16 @@ import http
 import ipaddress
 import json
 import re
+import socket
+import subprocess
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from websockets.datastructures import Headers
 from websockets.http11 import Response
+
+from navin.utils.proc import no_window_kwargs
 
 QueryParams = dict[str, list[str]]
 
@@ -116,6 +121,10 @@ def query_first(query: QueryParams, key: str) -> str | None:
     return values[0] if values else None
 
 
+def query_all(query: QueryParams, key: str) -> list[str]:
+    return [value for value in (query.get(key) or []) if value]
+
+
 def is_localhost(connection: Any) -> bool:
     addr = getattr(connection, "remote_address", None)
     if not addr:
@@ -126,6 +135,112 @@ def is_localhost(connection: Any) -> bool:
     if host.startswith("::ffff:"):
         host = host[7:]
     return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _probe_local_ipv4_networks() -> list[ipaddress.IPv4Network]:
+    """Networks attached to this machine (used to recognize the WSL host)."""
+    networks: list[ipaddress.IPv4Network] = []
+    seen: set[str] = set()
+
+    def add(cidr: str) -> None:
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            return
+        if not isinstance(net, ipaddress.IPv4Network) or net.is_loopback:
+            return
+        key = str(net)
+        if key in seen:
+            return
+        seen.add(key)
+        networks.append(net)
+
+    try:
+        out = subprocess.check_output(
+            ["ip", "-o", "-4", "addr", "show"],
+            text=True,
+            timeout=1.0,
+            stderr=subprocess.DEVNULL,
+            **no_window_kwargs(),
+        )
+        for line in out.splitlines():
+            parts = line.split()
+            if "inet" not in parts:
+                continue
+            add(parts[parts.index("inet") + 1])
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    if networks:
+        return networks
+
+    candidates: set[str] = set()
+    try:
+        candidates.add(socket.gethostbyname(socket.gethostname()))
+    except OSError:
+        pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(("1.1.1.1", 80))
+            candidates.add(probe.getsockname()[0])
+        finally:
+            probe.close()
+    except OSError:
+        pass
+    for ip in candidates:
+        if ip.startswith("127."):
+            continue
+        add(f"{ip}/24")
+    return networks
+
+
+_LOCAL_NETWORKS_TTL_S = 60.0
+_local_networks_cache: tuple[float, list[ipaddress.IPv4Network]] | None = None
+
+
+def _iter_local_ipv4_networks() -> list[ipaddress.IPv4Network]:
+    """Cached view of the local networks.
+
+    The probe shells out to ``ip addr`` and this runs on the event loop for
+    every workspace-control request, so it must not be paid per call: under
+    WSL2 no peer is loopback and the UI polls several of these routes.
+    """
+    global _local_networks_cache
+
+    now = time.monotonic()
+    cached = _local_networks_cache
+    if cached is not None and now - cached[0] < _LOCAL_NETWORKS_TTL_S:
+        return cached[1]
+    networks = _probe_local_ipv4_networks()
+    _local_networks_cache = (now, networks)
+    return networks
+
+
+def is_same_machine_client(connection: Any) -> bool:
+    """True for loopback or a peer on this host's own interfaces.
+
+    Under WSL2 the Windows browser often talks to the WSL IP (or the Windows
+    vEthernet address), not 127.0.0.1. Those peers are still this machine:
+    Preview Publish and other workspace controls must work for them.
+    """
+    if is_localhost(connection):
+        return True
+    addr = getattr(connection, "remote_address", None)
+    if not addr:
+        return False
+    host = addr[0] if isinstance(addr, tuple) else addr
+    if not isinstance(host, str):
+        return False
+    if host.startswith("::ffff:"):
+        host = host[7:]
+    try:
+        remote = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if remote.version != 4 or not remote.is_private:
+        return False
+    return any(remote in net for net in _iter_local_ipv4_networks())
 
 
 def _host_without_port(value: str) -> str:

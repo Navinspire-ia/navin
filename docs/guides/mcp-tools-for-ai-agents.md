@@ -1,75 +1,49 @@
-# How to Add MCP Tools to an AI Agent with navin
+# MCP tools for AI agents in Navin
 
-navin can connect MCP servers and expose their tools to the agent alongside
-built-in file, shell, web, cron, image generation, and subagent tools.
+Navin can connect MCP servers and expose their tools to the agent alongside built-in file, shell, web, schedule, image generation, and subagent tools.
 
-## What you will build
+Everything below happens in the **Navin desktop app**. Prefer **Settings → MCP** (or Apps / MCP presets) over hand-editing files.
 
-- a working navin agent
-- one MCP server configured in `config.json`
-- a restricted set of tools available to the model
+## What you will set up
+
+- Navin open with a provider and model configured
+- one MCP server added from Settings
+- only the tools you choose enabled for the agent
 
 ## When to use this
 
-Use MCP when a tool already exists as an MCP server, when another application
-publishes an MCP adapter, or when you want a clean boundary between navin and
-external tool logic.
+Use MCP when a tool already exists as an MCP server, when another application publishes an MCP adapter, or when you want a clean boundary between Navin and external tool logic.
 
-## Install
+## Add an MCP server in the app
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin agent -m "Hello!"
-```
+1. Open Navin from [navin.live/download](https://navin.live/download) if you have not already.
+2. Confirm a provider under **Settings → Providers** and a model under **Settings → Models**.
+3. Open **Settings → MCP** (or the Apps / MCP area in the workbench).
+4. Add a server: local process (stdio) or trusted remote HTTP endpoint, depending on what the MCP package documents.
+5. Enable only the tools the agent should see.
+6. Save, then ask in chat for something that needs that tool.
 
-Install the MCP server's own runtime separately. For example, many local MCP
-servers use `npx` or `uvx`.
+Install any MCP server runtime the way that package recommends (separate from Navin). Navin only needs the connection details you enter in Settings.
 
-## Minimal working example
+## Everyday tips
 
-Add a stdio MCP server to `~/.navin/config.json`:
-
-```json
-{
-  "tools": {
-    "mcpServers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
-        "enabledTools": ["read_file"]
-      }
-    }
-  }
-}
-```
-
-Restart navin, then ask a question that needs the MCP tool.
-
-## Production notes
-
-- Use `enabledTools` to expose only the tools the agent actually needs.
-- Set `toolTimeout` for slow MCP servers.
-- Prefer stdio MCP for local tools and HTTP MCP for trusted remote services.
-- Keep MCP server install/update steps outside navin config when possible.
+- Expose only the tools the agent actually needs.
+- Prefer local (stdio) MCP for tools on your machine; use HTTP MCP only for services you trust.
+- Keep secrets in Settings fields meant for keys or environment values - not pasted into chat.
 
 ## Security notes
 
-- HTTP/SSE MCP URLs use the same SSRF guard as web fetch.
-- Local/private HTTP endpoints require an explicit `tools.ssrfWhitelist` entry.
-- Stdio MCP servers run local processes; review their command and arguments.
-- Do not pass secrets in command-line args when environment variables or headers
-  are available.
+- Remote MCP URLs follow the same network safeguards as other web tools.
+- Local private endpoints may need an explicit allow entry in Settings before Navin can reach them.
+- Stdio MCP starts a local process; review the command and arguments the server docs ask you to use.
 
 ## Troubleshooting
 
-- Start `navin gateway --verbose` and check MCP startup logs.
-- Confirm the MCP command works by itself before debugging navin.
-- If an HTTP MCP server is blocked, review the SSRF whitelist and use a narrow
-  host CIDR.
+- Server does not appear: reopen Settings, confirm it is enabled, and restart Navin once.
+- Tools missing in chat: check the enabled-tools list for that server.
+- HTTP MCP blocked: review network / allowlist options in Settings and use a narrow host range.
 
-## Related navin docs
+## Related
 
 - [Configure MCP tools](./configure-mcp-tools.md)
-- [Configuration: MCP](../configuration.md#mcp-model-context-protocol)
-- [Security](../configuration.md#security)
+- [Desktop app interface](./ai-agent-webui.md)

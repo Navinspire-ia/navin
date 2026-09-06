@@ -17,12 +17,31 @@ def _read_pyproject_version() -> str | None:
     return data.get("project", {}).get("version")
 
 
+def _read_stamped_version() -> str | None:
+    """Version written into the tree by ``set-version.sh``.
+
+    Frozen builds often lose ``navin-ai`` dist-info. Reading a file that ships
+    inside the package is the only way the AppImage / DMG / EXE can report
+    the version they were built as, instead of the hard-coded 1.0.0 fallback
+    that made every launch offer an update that was already installed.
+    """
+    try:
+        from navin._version import __version__ as stamped
+    except Exception:
+        return None
+    value = str(stamped or "").strip()
+    return value or None
+
+
 def _resolve_version() -> str:
+    stamped = _read_stamped_version()
+    if stamped:
+        return stamped
     try:
         return _pkg_version("navin-ai")
     except PackageNotFoundError:
         # Source checkouts often import navin without installed dist-info.
-        return _read_pyproject_version() or "0.2.2"
+        return _read_pyproject_version() or "0.0.0"
 
 
 __version__ = _resolve_version()

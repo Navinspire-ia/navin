@@ -31,12 +31,12 @@ Technical docs succeed when the reader completes their task without asking anyon
 ## Workflow
 
 1. Identify the reader (dev? admin? end user?) and their task.
-2. Do the task yourself if possible (`exec`, `read_file` on the codebase) — write from experience, not imagination.
+2. Do the task yourself if possible (`exec`, `read_file` on the codebase) - write from experience, not imagination.
 3. Draft in the right Diátaxis type; don't mix tutorial and reference.
 4. Review: a step-by-step walkthrough by a "cold" reader mindset; fix every ambiguity.
-5. Output: Markdown in the repo, or `docx-generator`/`pdf-generator` for deliverables.
+5. Output: Markdown in the repo (architecture pictures via `archify`, not a Mermaid dump), or `docx-generator`/`pdf-generator` for deliverables.
 
 ## Rules
 
-- Consistent terminology — one name per concept, maintained in a glossary.
+- Consistent terminology - one name per concept, maintained in a glossary.
 - No marketing language in technical docs.

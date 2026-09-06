@@ -36,11 +36,29 @@ def _usage_from_response_obj(response: Any) -> dict[str, int]:
         usage_raw.get("output_tokens") or usage_raw.get("completion_tokens") or 0
     )
     total_tokens = int(usage_raw.get("total_tokens") or prompt_tokens + completion_tokens)
-    return {
+    usage = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
     }
+    reasoning_tokens = _reasoning_tokens(usage_raw.get("output_tokens_details"))
+    if reasoning_tokens:
+        usage["reasoning_tokens"] = reasoning_tokens
+    return usage
+
+
+def _reasoning_tokens(details: Any) -> int:
+    """Reasoning tokens from ``output_tokens_details``, dict or SDK object."""
+    if details is None:
+        return 0
+    if isinstance(details, dict):
+        value = details.get("reasoning_tokens")
+    else:
+        value = getattr(details, "reasoning_tokens", None)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_tool_call_arguments(args_raw: Any, name: str | None) -> Any:
@@ -428,6 +446,11 @@ async def consume_sdk_stream(
                         "completion_tokens": int(getattr(usage_obj, "output_tokens", 0) or 0),
                         "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0),
                     }
+                    reasoning_tokens = _reasoning_tokens(
+                        getattr(usage_obj, "output_tokens_details", None)
+                    )
+                    if reasoning_tokens:
+                        usage["reasoning_tokens"] = reasoning_tokens
                 for out_item in getattr(resp, "output", None) or []:
                     if getattr(out_item, "type", None) == "reasoning":
                         for s in getattr(out_item, "summary", None) or []:

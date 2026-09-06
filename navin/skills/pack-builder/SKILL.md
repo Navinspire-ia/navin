@@ -1,6 +1,6 @@
 ---
 name: pack-builder
-description: Create, audit, install, and manage Navin plugin packs — self-contained bundles of skills and MCP servers (npx/uvx/docker). Use when the user wants to package capabilities, install a pack from git or a folder, or extend Navin with external MCP tooling.
+description: Create, audit, install, and manage Navin plugin packs - self-contained bundles of skills and MCP servers (npx/uvx/docker). Use when the user wants to package capabilities, install a pack from git or a folder, or extend Navin with external MCP tooling.
 metadata: {"navin":{"emoji":"📦","category":"devops"}}
 ---
 
@@ -38,7 +38,7 @@ my-pack/
 }
 ```
 
-`mcp.json` — same schema as `tools.mcpServers` in the Navin config. Commands may
+`mcp.json` - same schema as `tools.mcpServers` in the Navin config. Commands may
 use `npx`, `uvx`, `docker`, or any binary on the host:
 
 ```json
@@ -56,25 +56,25 @@ use `npx`, `uvx`, `docker`, or any binary on the host:
 }
 ```
 
-`${VAR}` values are resolved from the host environment at connect time — never
+`${VAR}` values are resolved from the host environment at connect time - never
 hardcode secrets in a pack.
 
 ## Managing packs
 
 Use the `/pack` command (or the Skills page in the WebUI):
 
-- `/pack list` — installed packs with their components and state
-- `/pack install <git-url>` — shallow-clone and install (https://, git@, ssh://)
-- `/pack install /absolute/path` — copy a local directory
-- `/pack enable <name>` / `/pack disable <name>` — toggle without uninstalling
-- `/pack remove <name>` — uninstall and unregister its MCP servers
+- `/pack list` - installed packs with their components and state
+- `/pack install <git-url>` - shallow-clone and install (https://, git@, ssh://)
+- `/pack install /absolute/path` - copy a local directory
+- `/pack enable <name>` / `/pack disable <name>` - toggle without uninstalling
+- `/pack remove <name>` - uninstall and unregister its MCP servers
 
 Precedence when skill names collide: workspace skills > pack skills > builtin.
 
 ## Workflow: build a pack for the user
 
 1. Scaffold the directory in the workspace (e.g. `workspace/packs/<name>/`).
-2. Write each `SKILL.md` with precise frontmatter — the `description` decides
+2. Write each `SKILL.md` with precise frontmatter - the `description` decides
    when the skill triggers, so make it specific. Add
    `metadata: {"navin":{"category":"...","requires":{"bins":[...],"env":[...]}}}`
    when the skill needs CLIs or env vars.
@@ -82,7 +82,7 @@ Precedence when skill names collide: workspace skills > pack skills > builtin.
    `uvx` so users don't pre-install anything.
 4. Validate: every skill folder has `SKILL.md`, `mcp.json` parses, manifest name
    is kebab-case.
-5. Install it: `/pack install <path>` — then confirm with `/pack list` and check
+5. Install it: `/pack install <path>` - then confirm with `/pack list` and check
    the new skills appear in `/skill`.
 
 ## Audit checklist (before installing third-party packs)
@@ -95,7 +95,7 @@ Precedence when skill names collide: workspace skills > pack skills > builtin.
 
 ## Anti-patterns
 
-- Don't bundle secrets or `.env` files in a pack — use `${VAR}` references.
+- Don't bundle secrets or `.env` files in a pack - use `${VAR}` references.
 - Don't create one giant pack for everything; split by domain so users can
   enable only what they need.
 - Don't duplicate builtin skill names unless you intend to shadow them.

@@ -1,0 +1,224 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-search",
+  "name": "AI Search",
+  "kind": "ai-product",
+  "category": "search",
+  "source_github": "https://github.com/ItzCrazyKns/Perplexica",
+  "source_name": "Perplexica",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/ai-search",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 4,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Vane \ud83d\udd0d Vane is a **privacy-focused AI answering engine** that runs entirely on your own hardware. It combines knowledge from the vast internet with support for **local LLMs** (Ollama) and cloud providers (OpenAI, Claude, Groq), delivering accurate answers with **cited sources** while keeping your searches completely private. Want to know more about its architecture and how it works? You can read it [here](https://github.com/ItzCrazyKns/Vane/tree/master/docs/architecture/README.md)."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "yarn",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "yarn",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "vane",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build --webpack",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "better-sqlite3",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "vane",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build --webpack",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "better-sqlite3",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "sqlite",
+      "required": true,
+      "docker_image": "",
+      "port": 0,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "No Docker. File DB is created on first migrate / start."
+      ]
+    }
+  ],
+  "ports": [
+    3000
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "NEXT_PUBLIC_VERSION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/components/Settings/SettingsDialogue.tsx"
+    },
+    {
+      "key": "NEXT_RUNTIME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/instrumentation.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:src/lib/session.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yaml"
+    ],
+    "services": [
+      {
+        "name": "vane",
+        "image": "itzcrazykns1337/vane:latest",
+        "ports": [
+          "3000:3000"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-search/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: yarn."
+      },
+      {
+        "id": "db-sqlite",
+        "run": "No Docker. File DB is created on first migrate / start."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-search/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-search/overlay.json",
+    "agents": ".navin/apps/ai-search/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "search-agent",
+      "citation-agent",
+      "follow-up-agent",
+      "brief-agent",
+      "source-ranker"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

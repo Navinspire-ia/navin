@@ -25,6 +25,11 @@ class GatewayTokenStore:
         token = bearer_token(request.headers) or query_first(
             parse_query(request.path), "token"
         )
+        return self.check_api_token_value(token)
+
+    def check_api_token_value(self, token: str | None) -> bool:
+        """Validate one raw API token value (e.g. extracted from a Referer)."""
+        self._purge_expired_api_tokens()
         if not token:
             return False
         expiry = self.api_tokens.get(token)

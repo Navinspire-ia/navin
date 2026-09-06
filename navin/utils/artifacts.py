@@ -26,6 +26,16 @@ _VIDEO_MIME_EXTENSIONS = {
     "video/webm": ".webm",
     "video/quicktime": ".mov",
 }
+_AUDIO_MIME_EXTENSIONS = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/ogg": ".ogg",
+    "audio/flac": ".flac",
+    "audio/mp4": ".m4a",
+    "audio/aac": ".aac",
+}
 
 class ArtifactError(ValueError):
     """Raised when an artifact cannot be safely decoded or stored."""
@@ -61,7 +71,8 @@ def _safe_relative_dir(save_dir: str) -> Path:
     return Path(*rel.parts)
 
 
-def _artifact_root(save_dir: str) -> Path:
+def artifact_directory(save_dir: str) -> Path:
+    """Resolve a configured subfolder inside the media dir, refusing escapes."""
     media_root = get_media_dir().resolve()
     root = (media_root / _safe_relative_dir(save_dir)).resolve()
     try:
@@ -88,7 +99,7 @@ def store_generated_image_artifact(
         raise ArtifactError(f"unsupported image MIME type: {mime}")
 
     now = created_at or datetime.now().astimezone()
-    day_dir = ensure_dir(_artifact_root(save_dir) / now.strftime("%Y-%m-%d"))
+    day_dir = ensure_dir(artifact_directory(save_dir) / now.strftime("%Y-%m-%d"))
     artifact_id = f"img_{uuid.uuid4().hex[:12]}"
     image_path = day_dir / f"{artifact_id}{ext}"
     metadata_path = day_dir / f"{artifact_id}.json"
@@ -130,7 +141,7 @@ def store_generated_video_artifact(
         raise ArtifactError(f"unsupported video MIME type: {mime}")
 
     now = created_at or datetime.now().astimezone()
-    day_dir = ensure_dir(_artifact_root(save_dir) / now.strftime("%Y-%m-%d"))
+    day_dir = ensure_dir(artifact_directory(save_dir) / now.strftime("%Y-%m-%d"))
     artifact_id = f"vid_{uuid.uuid4().hex[:12]}"
     video_path = day_dir / f"{artifact_id}{ext}"
     metadata_path = day_dir / f"{artifact_id}.json"
@@ -163,6 +174,137 @@ def generated_video_tool_result(artifacts: list[dict[str, Any]]) -> str:
                 "Call the message tool with the artifact paths in the media parameter "
                 "to deliver the video to the user. Keep raw paths internal unless the "
                 "user asks for debug details."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def store_generated_music_artifact(
+    audio: bytes,
+    *,
+    mime: str,
+    prompt: str,
+    model: str,
+    source_images: list[str] | None = None,
+    save_dir: str = "generated-music",
+    provider: str = "openrouter",
+    transcript: str | None = None,
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a generated music clip and sidecar metadata under the media root."""
+    if not audio:
+        raise ArtifactError("generated music payload is empty")
+    ext = _AUDIO_MIME_EXTENSIONS.get(mime) or _AUDIO_MIME_EXTENSIONS.get(mime.lower())
+    if ext is None:
+        # Lyria defaults to MP3; keep a usable artifact rather than failing hard.
+        ext = ".mp3"
+        mime = "audio/mpeg"
+
+    now = created_at or datetime.now().astimezone()
+    day_dir = ensure_dir(artifact_directory(save_dir) / now.strftime("%Y-%m-%d"))
+    artifact_id = f"mus_{uuid.uuid4().hex[:12]}"
+    audio_path = day_dir / f"{artifact_id}{ext}"
+    metadata_path = day_dir / f"{artifact_id}.json"
+
+    audio_path.write_bytes(audio)
+    metadata: dict[str, Any] = {
+        "id": artifact_id,
+        "path": str(audio_path),
+        "mime": mime,
+        "prompt": prompt,
+        "model": model,
+        "provider": provider,
+        "source_images": list(source_images or []),
+        "created_at": now.isoformat(),
+        "size_bytes": len(audio),
+    }
+    if transcript:
+        metadata["transcript"] = transcript
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return metadata
+
+
+def generated_music_tool_result(artifacts: list[dict[str, Any]]) -> str:
+    """Return the compact structured result exposed to the LLM."""
+    return json.dumps(
+        {
+            "artifacts": artifacts,
+            "next_step": (
+                "Call the message tool with the artifact paths in the media parameter "
+                "to deliver the music to the user. Keep raw paths internal unless the "
+                "user asks for debug details."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def store_generated_speech_artifact(
+    audio: bytes,
+    *,
+    mime: str,
+    text: str,
+    model: str,
+    voice: str,
+    save_dir: str = "generated-speech",
+    provider: str = "navin",
+    language: str | None = None,
+    created_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist a synthesized voice track and sidecar metadata under the media root.
+
+    Narration is kept apart from music so the montage step can pick the spoken
+    track for ducking without guessing from filenames.
+    """
+    if not audio:
+        raise ArtifactError("generated speech payload is empty")
+    ext = _AUDIO_MIME_EXTENSIONS.get(mime) or _AUDIO_MIME_EXTENSIONS.get(mime.lower())
+    if ext is None:
+        ext = ".mp3"
+        mime = "audio/mpeg"
+
+    now = created_at or datetime.now().astimezone()
+    day_dir = ensure_dir(artifact_directory(save_dir) / now.strftime("%Y-%m-%d"))
+    artifact_id = f"spk_{uuid.uuid4().hex[:12]}"
+    audio_path = day_dir / f"{artifact_id}{ext}"
+    metadata_path = day_dir / f"{artifact_id}.json"
+
+    audio_path.write_bytes(audio)
+    metadata: dict[str, Any] = {
+        "id": artifact_id,
+        "path": str(audio_path),
+        "mime": mime,
+        "kind": "speech",
+        "text": text,
+        "model": model,
+        "voice": voice,
+        "provider": provider,
+        "created_at": now.isoformat(),
+        "size_bytes": len(audio),
+    }
+    if language:
+        metadata["language"] = language
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return metadata
+
+
+def generated_speech_tool_result(artifacts: list[dict[str, Any]]) -> str:
+    """Return the compact structured result exposed to the LLM."""
+    return json.dumps(
+        {
+            "artifacts": artifacts,
+            "next_step": (
+                "Call the message tool with the artifact paths in the media parameter "
+                "to deliver the voice track to the user. For a full video, pass these "
+                "paths as the voice track of the montage assemble step. Keep raw paths "
+                "internal unless the user asks for debug details."
             ),
         },
         ensure_ascii=False,

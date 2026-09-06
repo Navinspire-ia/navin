@@ -31,7 +31,25 @@ _MIME_EXTENSION_OVERRIDES = {
     "audio/x-m4a": ".m4a",
     "audio/x-wav": ".wav",
     "audio/vnd.wave": ".wav",
+    # Chat audio attachments are recognized by extension downstream, so every
+    # accepted MIME needs a canonical one (``audio/mp3`` and ``audio/wave``
+    # have none in the stdlib table).
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/m4a": ".m4a",
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/wave": ".wav",
+    "audio/x-flac": ".flac",
+    # Video extensions are load-bearing: frame extraction recognizes a video
+    # attachment by extension, and ``mimetypes.guess_extension`` answers from
+    # the host mime database (or the Windows registry), so it cannot be
+    # trusted to return the canonical container extension everywhere.
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
     "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
     "application/json": ".json",
     "application/pdf": ".pdf",
     "application/toml": ".toml",

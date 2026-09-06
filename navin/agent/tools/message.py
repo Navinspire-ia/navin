@@ -8,7 +8,7 @@ from loguru import logger
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.context import current_request_context
-from navin.agent.tools.path_utils import resolve_workspace_path
+from navin.agent.tools.path_utils import project_rooted_path, resolve_workspace_path
 from navin.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
 from navin.bus.events import OutboundMessage
 from navin.config.paths import get_workspace_path
@@ -141,7 +141,7 @@ class MessageTool(Tool):
             "When generate_image creates images in the current chat, use the message tool "
             "with the artifact paths in the media parameter to deliver the images to the user. "
             "For proactive attachment delivery, use the 'media' parameter with file paths. "
-            "Do NOT use read_file to send files — that only reads content for your own analysis."
+            "Do NOT use read_file to send files - that only reads content for your own analysis."
         )
 
     def _resolve_media(self, media: list[str]) -> list[str]:
@@ -156,8 +156,8 @@ class MessageTool(Tool):
             if p.startswith(("http://", "https://")):
                 resolved.append(p)
             elif not access.restrict_to_workspace:
-                path = Path(p).expanduser()
-                resolved.append(p if path.is_absolute() else str(workspace / path))
+                path = Path(project_rooted_path(p, workspace)).expanduser()
+                resolved.append(str(path if path.is_absolute() else workspace / path))
             else:
                 resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
         return resolved
@@ -211,7 +211,7 @@ class MessageTool(Tool):
             return ToolResult.error(
                 "Error: chat_id does not match the active WebSocket conversation. "
                 "Omit chat_id (and usually channel) so delivery uses the current "
-                "conversation id from context — WebSocket client_id strings "
+                "conversation id from context - WebSocket client_id strings "
                 "(e.g. anon-…) are not chat ids."
             )
         chat_id = chat_id or default_chat_id

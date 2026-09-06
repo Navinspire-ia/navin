@@ -16,9 +16,10 @@ from loguru import logger
 from navin.agent.hook import AgentHook, AgentHookContext
 from navin.config.paths import get_webui_dir
 
-TOKEN_USAGE_SCHEMA_VERSION = 1
-_MAX_STATE_FILE_BYTES = 512 * 1024
+TOKEN_USAGE_SCHEMA_VERSION = 2
+_MAX_STATE_FILE_BYTES = 768 * 1024
 _MAX_DAYS_RETAINED = 400
+_MAX_MODEL_KEY_LEN = 120
 _USAGE_KEYS = (
     "prompt_tokens",
     "completion_tokens",
@@ -64,6 +65,11 @@ def _local_day(now: datetime | None = None, *, timezone_name: str | None = None)
     return dt.astimezone(_zone(timezone_name)).date().isoformat()
 
 
+def _local_month_key(now: datetime | None = None, *, timezone_name: str | None = None) -> str:
+    """Calendar month ``YYYY-MM`` in the agent timezone."""
+    return _local_day(now, timezone_name=timezone_name)[:7]
+
+
 def _clean_int(value: Any) -> int:
     try:
         return max(0, int(value or 0))
@@ -73,6 +79,15 @@ def _clean_int(value: Any) -> int:
 
 def _clean_source(value: str | None) -> str:
     return value if value in _SOURCE_KEYS else "system"
+
+
+def _clean_model(value: str | None) -> str:
+    raw = " ".join(str(value or "").split()).strip()
+    if not raw:
+        return "unknown"
+    if len(raw) > _MAX_MODEL_KEY_LEN:
+        raw = raw[:_MAX_MODEL_KEY_LEN]
+    return raw
 
 
 def _source_from_session_key(session_key: str | None) -> str:
@@ -123,25 +138,57 @@ def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int]:
     return {**cleaned, **requests}
 
 
-def _normalize_sources(raw: Any, fallback: dict[str, int]) -> dict[str, dict[str, int]]:
-    sources: dict[str, dict[str, int]] = {}
+def _empty_usage_row() -> dict[str, int]:
+    return {key: 0 for key in (*_USAGE_KEYS, *_REQUEST_KEYS)}
+
+
+def _add_usage_row(target: dict[str, int], delta: dict[str, int]) -> None:
+    for key in (*_USAGE_KEYS, *_REQUEST_KEYS):
+        target[key] = _clean_int(target.get(key)) + _clean_int(delta.get(key))
+
+
+def _normalize_bucket_map(
+    raw: Any,
+    *,
+    clean_key,
+    fallback: dict[str, int] | None = None,
+    fallback_key: str | None = None,
+) -> dict[str, dict[str, int]]:
+    buckets: dict[str, dict[str, int]] = {}
     if isinstance(raw, dict):
-        for source, row in raw.items():
+        for key, row in raw.items():
             if not isinstance(row, dict):
                 continue
             normalized = _normalize_usage_row(row)
             if normalized["total_tokens"] <= 0 and normalized["requests"] <= 0:
                 continue
-            source_key = _clean_source(str(source))
-            current = sources.get(source_key)
+            bucket_key = clean_key(str(key))
+            current = buckets.get(bucket_key)
             if current is None:
-                sources[source_key] = normalized
+                buckets[bucket_key] = normalized
             else:
-                for key in (*_USAGE_KEYS, *_REQUEST_KEYS):
-                    current[key] = _clean_int(current.get(key)) + normalized[key]
-    if not sources and (fallback["total_tokens"] > 0 or fallback["requests"] > 0):
-        sources["user"] = {key: fallback[key] for key in (*_USAGE_KEYS, *_REQUEST_KEYS)}
-    return sources
+                _add_usage_row(current, normalized)
+    if (
+        not buckets
+        and fallback is not None
+        and fallback_key is not None
+        and (fallback["total_tokens"] > 0 or fallback["requests"] > 0)
+    ):
+        buckets[fallback_key] = {key: fallback[key] for key in (*_USAGE_KEYS, *_REQUEST_KEYS)}
+    return buckets
+
+
+def _normalize_sources(raw: Any, fallback: dict[str, int]) -> dict[str, dict[str, int]]:
+    return _normalize_bucket_map(
+        raw,
+        clean_key=_clean_source,
+        fallback=fallback,
+        fallback_key="user",
+    )
+
+
+def _normalize_models(raw: Any) -> dict[str, dict[str, int]]:
+    return _normalize_bucket_map(raw, clean_key=_clean_model)
 
 
 def normalize_token_usage_state(raw: Any) -> dict[str, Any]:
@@ -163,6 +210,7 @@ def normalize_token_usage_state(raw: Any) -> dict[str, Any]:
             "date": date,
             **normalized,
             "sources": _normalize_sources(row.get("sources"), normalized),
+            "models": _normalize_models(row.get("models")),
         }
 
     state["days"] = days
@@ -219,10 +267,25 @@ def write_token_usage_state(raw: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+def _apply_usage_delta(
+    row: dict[str, Any],
+    normalized: dict[str, int],
+) -> dict[str, Any]:
+    for key in _USAGE_KEYS:
+        row[key] = _clean_int(row.get(key)) + normalized.get(key, 0)
+    row["requests"] = _clean_int(row.get("requests")) + 1
+    if normalized.get("estimated_tokens", 0) > 0 and normalized.get("provider_tokens", 0) <= 0:
+        row["estimated_requests"] = _clean_int(row.get("estimated_requests")) + 1
+    else:
+        row["provider_requests"] = _clean_int(row.get("provider_requests")) + 1
+    return row
+
+
 def record_token_usage(
     usage: dict[str, Any] | None,
     *,
     source: str = "user",
+    model: str | None = None,
     timezone_name: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -234,26 +297,23 @@ def record_token_usage(
         state = read_token_usage_state()
         day = _local_day(now, timezone_name=timezone_name)
         row = dict(state["days"].get(day) or {"date": day, "requests": 0})
-        for key in _USAGE_KEYS:
-            row[key] = _clean_int(row.get(key)) + normalized.get(key, 0)
-        row["requests"] = _clean_int(row.get("requests")) + 1
-        if normalized.get("estimated_tokens", 0) > 0 and normalized.get("provider_tokens", 0) <= 0:
-            row["estimated_requests"] = _clean_int(row.get("estimated_requests")) + 1
-        else:
-            row["provider_requests"] = _clean_int(row.get("provider_requests")) + 1
+        _apply_usage_delta(row, normalized)
 
         source_key = _clean_source(source)
         sources = dict(row.get("sources") or {})
         source_row = dict(sources.get(source_key) or {"requests": 0})
-        for key in _USAGE_KEYS:
-            source_row[key] = _clean_int(source_row.get(key)) + normalized.get(key, 0)
-        source_row["requests"] = _clean_int(source_row.get("requests")) + 1
-        if normalized.get("estimated_tokens", 0) > 0 and normalized.get("provider_tokens", 0) <= 0:
-            source_row["estimated_requests"] = _clean_int(source_row.get("estimated_requests")) + 1
-        else:
-            source_row["provider_requests"] = _clean_int(source_row.get("provider_requests")) + 1
+        _apply_usage_delta(source_row, normalized)
         sources[source_key] = source_row
         row["sources"] = sources
+
+        # Only attribute to a real model id - never invent an "unknown" bucket.
+        model_key = _clean_model(model) if (model or "").strip() else ""
+        if model_key and model_key != "unknown":
+            models = dict(row.get("models") or {})
+            model_row = dict(models.get(model_key) or {"requests": 0})
+            _apply_usage_delta(model_row, normalized)
+            models[model_key] = model_row
+            row["models"] = models
 
         state["days"][day] = row
         if len(state["days"]) > _MAX_DAYS_RETAINED:
@@ -266,16 +326,85 @@ def record_response_token_usage(
     response: Any,
     *,
     source: str,
+    model: str | None = None,
     timezone_name: str | None = None,
 ) -> None:
     try:
         record_token_usage(
             getattr(response, "usage", None),
             source=source,
+            model=model,
             timezone_name=timezone_name,
         )
     except Exception:
         logger.exception("failed to record {} token usage", source)
+
+
+def _aggregate_models_for_dates(
+    state: dict[str, Any],
+    *,
+    start_day: str,
+    end_day: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Build per-model rows + month totals for ``[start_day, end_day]``.
+
+    Month totals always come from day-level counters (heatmap-aligned).
+    ``models_month`` only includes buckets that were recorded with a model id -
+    legacy days without a ``models`` map are not invented as ``unknown``.
+    """
+    totals = _empty_usage_row()
+    by_model: dict[str, dict[str, int]] = {}
+    for date, row in state["days"].items():
+        if date < start_day or date > end_day or not isinstance(row, dict):
+            continue
+        day_row = _normalize_usage_row(row)
+        if day_row["total_tokens"] > 0 or day_row["requests"] > 0:
+            _add_usage_row(totals, day_row)
+        models = row.get("models")
+        if not isinstance(models, dict):
+            continue
+        for model, model_row in models.items():
+            if not isinstance(model_row, dict):
+                continue
+            normalized = _normalize_usage_row(model_row)
+            if normalized["total_tokens"] <= 0 and normalized["requests"] <= 0:
+                continue
+            key = _clean_model(str(model))
+            if key == "unknown":
+                # Skip empty/missing labels - they are not a real model id.
+                continue
+            current = by_model.get(key)
+            if current is None:
+                by_model[key] = dict(normalized)
+            else:
+                _add_usage_row(current, normalized)
+
+    models_month = [
+        {
+            "model": model,
+            "requests": _clean_int(row.get("requests")),
+            "prompt_tokens": _clean_int(row.get("prompt_tokens")),
+            "completion_tokens": _clean_int(row.get("completion_tokens")),
+            "cached_tokens": _clean_int(row.get("cached_tokens")),
+            "total_tokens": _clean_int(row.get("total_tokens")),
+        }
+        for model, row in sorted(
+            by_model.items(),
+            key=lambda item: (
+                -_clean_int(item[1].get("total_tokens")),
+                -_clean_int(item[1].get("requests")),
+                item[0],
+            ),
+        )
+    ]
+    month_total = {
+        "requests": _clean_int(totals.get("requests")),
+        "prompt_tokens": _clean_int(totals.get("prompt_tokens")),
+        "completion_tokens": _clean_int(totals.get("completion_tokens")),
+        "cached_tokens": _clean_int(totals.get("cached_tokens")),
+        "total_tokens": _clean_int(totals.get("total_tokens")),
+    }
+    return models_month, month_total
 
 
 def token_usage_payload(
@@ -325,6 +454,13 @@ def token_usage_payload(
         longest_streak = max(longest_streak, running_streak)
 
     all_rows = list(state["days"].values())
+    month_key = _local_month_key(now, timezone_name=timezone_name)
+    month_start = f"{month_key}-01"
+    models_month, month_total = _aggregate_models_for_dates(
+        state,
+        start_day=month_start,
+        end_day=today.isoformat(),
+    )
     return {
         "days": day_rows,
         "total_tokens": sum(_clean_int(row.get("total_tokens")) for row in all_rows),
@@ -335,6 +471,9 @@ def token_usage_payload(
         "longest_streak_days": longest_streak,
         "active_days_30d": sum(1 for row in last_30 if _clean_int(row.get("total_tokens")) > 0),
         "requests_30d": sum(_clean_int(row.get("requests")) for row in last_30),
+        "month": month_key,
+        "models_month": models_month,
+        "month_total": month_total,
         "updated_at": state.get("updated_at"),
     }
 
@@ -342,15 +481,24 @@ def token_usage_payload(
 class TokenUsageHook(AgentHook):
     """Persist provider-reported token usage without coupling it to chat messages."""
 
+    accounts_for_usage = True
+
     def __init__(self, *, timezone_name: str | None = None) -> None:
         super().__init__()
         self._timezone_name = timezone_name
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         try:
+            usage = context.usage if isinstance(context.usage, dict) else {}
+            model = context.model or usage.get("model") or usage.get("model_name")
+            if isinstance(model, str):
+                model = model.strip() or None
+            else:
+                model = None
             record_token_usage(
-                context.usage,
+                usage,
                 source=_source_from_session_key(context.session_key),
+                model=model,
                 timezone_name=self._timezone_name,
             )
         except Exception:

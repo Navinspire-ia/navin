@@ -1,22 +1,27 @@
 """Project insight helpers for the Dev status bar: git status and file diagnostics.
 
 Git information is read with the ``git`` CLI (porcelain v2, stable output).
-Diagnostics use fast local tools only: ruff for Python (bundled as a navin
-dev dependency and commonly on PATH) and the stdlib JSON parser for JSON.
+Diagnostics are delegated to :mod:`navin.quality.linters`, which runs whichever
+linters the project actually has (ruff, ESLint, shellcheck, yamllint, language
+syntax checks…) from a declarative table, and normalizes their output into one
+shape for the editor gutter.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
-_GIT_TIMEOUT_S = 5
+from navin.utils.git_argv import git_argv
+from navin.utils.proc import no_window_kwargs
+
+# Generous enough for wsl.exe to wake a cold distribution service; a plain
+# local git answers in milliseconds either way.
+_GIT_TIMEOUT_S = 10
 _RUFF_TIMEOUT_S = 20
 _MAX_DIAGNOSTICS = 200
+_MAX_WORKSPACE_DIAGNOSTICS = 500
 
 
 class ProjectInsightsError(Exception):
@@ -38,18 +43,30 @@ def _check_dir(raw_path: str) -> Path:
     return path
 
 
+def _git_argv(path: Path) -> list[str] | None:
+    """The argv prefix that runs git *where the project lives*.
+
+    Thin alias over :func:`navin.utils.git_argv.git_argv`, kept because tests
+    and callers in this module reach for the private name.
+    """
+    return git_argv(path)
+
+
 def git_status_payload(raw_path: str) -> dict[str, Any]:
     """Branch / dirty / ahead-behind summary for the project root."""
     path = _check_dir(raw_path)
-    git = shutil.which("git")
-    if git is None:
+    argv = _git_argv(path)
+    if argv is None:
         return {"available": False, "is_repo": False}
     try:
         out = subprocess.run(  # noqa: S603
-            [git, "-C", str(path), "status", "--porcelain=v2", "--branch"],
+            [*argv, "status", "--porcelain=v2", "--branch"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_GIT_TIMEOUT_S,
+            **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return {"available": True, "is_repo": False}
@@ -93,102 +110,279 @@ def git_status_payload(raw_path: str) -> dict[str, Any]:
     }
 
 
-def _ruff_binary() -> str | None:
-    candidate = Path(sys.executable).parent / "ruff"
-    if candidate.is_file():
-        return str(candidate)
-    return shutil.which("ruff")
+_ROOT_MARKERS = (
+    ".git", "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
+    "setup.py", "setup.cfg", "Gemfile", "composer.json",
+)
 
 
-def _python_diagnostics(path: Path) -> tuple[bool, str, list[dict[str, Any]]]:
-    ruff = _ruff_binary()
-    if ruff is None:
-        return False, "", []
+def project_root_for(path: Path) -> Path:
+    """Nearest ancestor that looks like a project root.
+
+    Linters need this: ESLint and type checkers resolve their configuration
+    relative to the project, and diagnostics are reported project-relative.
+    """
+    start = path if path.is_dir() else path.parent
+    for candidate in [start, *start.parents]:
+        if any((candidate / marker).exists() for marker in _ROOT_MARKERS):
+            return candidate
+    return start
+
+
+def _semantic_diagnostics(root: Path, rel: str) -> tuple[list[dict[str, Any]], str]:
+    """Language-server diagnostics, when a server is installed for this file.
+
+    These are the errors a linter cannot see: wrong types, unknown attributes,
+    bad call signatures. Absence of a server is normal, not a failure, so any
+    problem here degrades to "no semantic diagnostics" rather than an error.
+    """
     try:
-        out = subprocess.run(  # noqa: S603
-            [ruff, "check", "--output-format", "json", "--no-cache", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=_RUFF_TIMEOUT_S,
+        from navin.lsp import LspManager
+        from navin.lsp.manager import servers_for
+        from navin.quality.linters import tool_argv
+
+        suffix = Path(rel).suffix.lower()
+        if not any(tool_argv(spec, root) for _, spec in servers_for(suffix)):
+            return [], ""
+        rows = LspManager.for_root(root).diagnostics(rel, wait_s=2.5)
+    except Exception:
+        return [], ""
+    out: list[dict[str, Any]] = []
+    tool = ""
+    for row in rows:
+        tool = tool or str(row.get("tool", ""))
+        out.append(
+            {
+                "line": int(row.get("line", 1)),
+                "col": int(row.get("col", 1)),
+                "end_line": int(row.get("end_line", 1)),
+                "end_col": int(row.get("end_col", 1)),
+                "severity": str(row.get("severity", "error")),
+                "code": str(row.get("code", "")),
+                "message": str(row.get("message", "")),
+                "tool": str(row.get("tool", "lsp")),
+            }
         )
-        rows = json.loads(out.stdout or "[]")
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-        return False, "ruff", []
-    diagnostics: list[dict[str, Any]] = []
-    for row in rows[:_MAX_DIAGNOSTICS]:
-        if not isinstance(row, dict):
+    return out, tool
+
+
+_SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2, "hint": 3}
+
+
+def _deduplicate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the same problem reported by several tools.
+
+    A language server and a linter routinely flag one issue at the same spot
+    (an undefined name, say). Showing it twice in the gutter is noise, so keep
+    the most severe report per position and wording.
+    """
+    best: dict[tuple[int, int, str], dict[str, Any]] = {}
+    for row in rows:
+        # Tools word the same finding differently in case and punctuation.
+        fingerprint = "".join(
+            ch for ch in str(row.get("message", "")).lower() if ch.isalnum()
+        )
+        key = (int(row.get("line", 0)), int(row.get("col", 0)), fingerprint)
+        current = best.get(key)
+        if current is None:
+            best[key] = row
             continue
-        loc = row.get("location") or {}
-        end = row.get("end_location") or {}
-        code = str(row.get("code") or "")
-        # Syntax errors block execution; everything else is a lint warning.
-        severity = (
-            "error"
-            if code in {"E999", "invalid-syntax", ""} or "syntax" in code
-            else "warning"
-        )
-        diagnostics.append(
-            {
-                "line": int(loc.get("row") or 1),
-                "col": int(loc.get("column") or 1),
-                "end_line": int(end.get("row") or loc.get("row") or 1),
-                "end_col": int(end.get("column") or loc.get("column") or 1),
-                "severity": severity,
-                "code": code,
-                "message": str(row.get("message") or ""),
-            }
-        )
-    return True, "ruff", diagnostics
+        if _SEVERITY_RANK.get(row["severity"], 9) < _SEVERITY_RANK.get(
+            current["severity"], 9
+        ):
+            best[key] = row
+    return list(best.values())
 
 
-def _json_diagnostics(path: Path) -> tuple[bool, str, list[dict[str, Any]]]:
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as exc:
-        raise ProjectInsightsError(f"cannot read file: {exc}", status=404) from exc
-    try:
-        json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return True, "json", [
-            {
-                "line": exc.lineno,
-                "col": exc.colno,
-                "end_line": exc.lineno,
-                "end_col": exc.colno + 1,
-                "severity": "error",
-                "code": "json",
-                "message": exc.msg,
-            }
-        ]
-    return True, "json", []
+def file_diagnostics_payload(raw_path: str, *, raw_root: str = "") -> dict[str, Any]:
+    """Linter diagnostics for one file, from every applicable local linter.
 
-
-def file_diagnostics_payload(raw_path: str) -> dict[str, Any]:
-    """Fast linter diagnostics for one file, selected by extension."""
+    ``raw_path`` may be relative: editor panes address files by their
+    tree-relative path, so a bare name is resolved against ``raw_root`` (the
+    project root the caller is browsing) instead of being rejected.
+    """
     cleaned = (raw_path or "").strip()
     if not cleaned:
         raise ProjectInsightsError("missing path")
     path = Path(cleaned).expanduser()
     if not path.is_absolute():
-        raise ProjectInsightsError("path must be absolute")
+        root_cleaned = (raw_root or "").strip()
+        root = Path(root_cleaned).expanduser() if root_cleaned else None
+        if root is None or not root.is_absolute():
+            raise ProjectInsightsError(
+                "relative path needs a root query parameter"
+            )
+        path = root / path
     if not path.is_file():
         raise ProjectInsightsError("not a file", status=404)
 
-    suffix = path.suffix.lower()
-    if suffix in {".py", ".pyi"}:
-        supported, tool, diagnostics = _python_diagnostics(path)
-    elif suffix == ".json":
-        supported, tool, diagnostics = _json_diagnostics(path)
-    else:
-        supported, tool, diagnostics = False, "", []
+    from navin.quality.linters import lint_file
+
+    root = project_root_for(path)
+    try:
+        rel = path.resolve(strict=False).relative_to(root).as_posix()
+    except ValueError:
+        rel = path.name
+
+    results = lint_file(root, rel)
+    diagnostics: list[dict[str, Any]] = []
+    tools_ran: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    semantic, semantic_tool = _semantic_diagnostics(root, rel)
+    if semantic_tool:
+        tools_ran.append(semantic_tool)
+    diagnostics.extend(semantic)
+    for result in results:
+        if result.ran:
+            tools_ran.append(result.linter)
+        elif result.skipped_reason:
+            skipped.append({"linter": result.linter, "reason": result.skipped_reason})
+        for diagnostic in result.diagnostics:
+            # The editor addresses the open buffer, so only this file's
+            # diagnostics are relevant even when a linter reports on others.
+            if diagnostic.path not in (rel, path.name):
+                continue
+            diagnostics.append(
+                {
+                    "line": diagnostic.line,
+                    "col": diagnostic.col,
+                    "end_line": diagnostic.end_line,
+                    "end_col": diagnostic.end_col,
+                    "severity": diagnostic.severity,
+                    "code": diagnostic.code,
+                    "message": diagnostic.message,
+                    "tool": diagnostic.tool,
+                }
+            )
+    diagnostics = _deduplicate(diagnostics)
+    diagnostics.sort(key=lambda d: (d["line"], d["col"]))
+    del diagnostics[_MAX_DIAGNOSTICS:]
 
     errors = sum(1 for d in diagnostics if d["severity"] == "error")
-    warnings = len(diagnostics) - errors
+    warnings = sum(1 for d in diagnostics if d["severity"] == "warning")
     return {
         "path": str(path),
-        "supported": supported,
-        "tool": tool,
+        "supported": bool(tools_ran),
+        "tool": ", ".join(tools_ran),
+        "tools": tools_ran,
+        "skipped": skipped,
         "errors": errors,
         "warnings": warnings,
         "diagnostics": diagnostics,
+    }
+
+
+def workspace_diagnostics_payload(
+    raw_root: str,
+    *,
+    seed_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Project-wide diagnostics from workspace-mode language servers.
+
+    Unlike :func:`file_diagnostics_payload`, this surfaces errors in files the
+    editor never opened (the case pyright already computes when
+    ``diagnosticMode`` is ``workspace``).
+    """
+    root = _check_dir(raw_root)
+    seed_rels: list[str] = []
+    for raw in seed_paths or []:
+        cleaned = (raw or "").strip()
+        if not cleaned:
+            continue
+        candidate = Path(cleaned).expanduser()
+        try:
+            if candidate.is_absolute():
+                seed_rels.append(
+                    candidate.resolve(strict=False).relative_to(root).as_posix()
+                )
+            else:
+                seed_rels.append(candidate.as_posix().lstrip("./"))
+        except ValueError:
+            continue
+
+    rows: list[dict[str, Any]] = []
+    try:
+        from navin.lsp import LspManager
+
+        rows = LspManager.for_root(root).workspace_diagnostics(
+            seed_rels=seed_rels or None,
+            wait_s=2.5,
+        )
+    except Exception:
+        rows = []
+
+    files: dict[str, dict[str, Any]] = {}
+    flat: list[dict[str, Any]] = []
+    for row in rows:
+        message = str(row.get("message") or "").strip()
+        if not message:
+            continue
+        abs_path = str(row.get("abs_path") or (root / str(row.get("path") or "")).resolve())
+        entry = {
+            "line": int(row.get("line", 1) or 1),
+            "col": int(row.get("col", 1) or 1),
+            "end_line": int(row.get("end_line", 1) or 1),
+            "end_col": int(row.get("end_col", 1) or 1),
+            "severity": str(row.get("severity") or "error"),
+            "code": str(row.get("code") or ""),
+            "message": message,
+            "tool": str(row.get("tool") or "lsp"),
+        }
+        bucket = files.setdefault(
+            abs_path,
+            {
+                "path": abs_path,
+                "supported": True,
+                "tool": entry["tool"],
+                "tools": [entry["tool"]] if entry["tool"] else [],
+                "skipped": [],
+                "errors": 0,
+                "warnings": 0,
+                "diagnostics": [],
+            },
+        )
+        bucket["diagnostics"].append(entry)
+        flat.append({**entry, "path": abs_path})
+
+    for bucket in files.values():
+        bucket["diagnostics"] = _deduplicate(bucket["diagnostics"])
+        bucket["diagnostics"].sort(key=lambda d: (d["line"], d["col"]))
+        del bucket["diagnostics"][_MAX_DIAGNOSTICS:]
+        bucket["errors"] = sum(
+            1 for d in bucket["diagnostics"] if d["severity"] == "error"
+        )
+        bucket["warnings"] = sum(
+            1 for d in bucket["diagnostics"] if d["severity"] == "warning"
+        )
+        tools = sorted(
+            {
+                str(d.get("tool") or "")
+                for d in bucket["diagnostics"]
+                if d.get("tool")
+            }
+        )
+        bucket["tools"] = tools
+        bucket["tool"] = ", ".join(tools)
+
+    flat.sort(
+        key=lambda d: (
+            0 if d["severity"] == "error" else 1,
+            str(d.get("path") or ""),
+            int(d.get("line") or 0),
+            int(d.get("col") or 0),
+        )
+    )
+    del flat[_MAX_WORKSPACE_DIAGNOSTICS:]
+
+    errors = sum(1 for d in flat if d["severity"] == "error")
+    warnings = sum(1 for d in flat if d["severity"] == "warning")
+    return {
+        "root": str(root),
+        "supported": bool(files),
+        "errors": errors,
+        "warnings": warnings,
+        "file_count": len(files),
+        "files": files,
+        "diagnostics": flat,
     }

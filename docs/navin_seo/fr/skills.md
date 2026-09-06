@@ -4,14 +4,18 @@
 
 | Skill | Rôle |
 | --- | --- |
-| `seo-technical-auditor` | Audits techniques : crawlabilité, indexabilité, données structurées, signaux de performance. |
-| `keyword-research` | Découverte de mots-clés, cartographie d'intention, estimation de difficulté, clustering. |
-| `on-page-seo-optimizer` | Optimisation au niveau page : meta, titres, contenu, liens internes. |
-| `seo-content-writer` | Articles et briefs optimisés SEO avec couverture des entités. |
-| `backlink-strategy` | Plans d'acquisition de liens et outreach. |
-| `competitor-seo-analysis` | Analyse d'écarts concurrentiels. |
-| `local-seo` | Pack local, fiche d'établissement, citations, pages localisées. |
+| `studio-expert-contract` | Contrat senior : preuves, livrables, gate PASS/WARN/BLOCK. |
+| `critic-reviewer` | Revue critique avant livraison. |
+| `seo-technical-auditor` | Audits techniques grounded (+ script `audit_score.py`). |
+| `keyword-research` | Intention, difficulté qualitative, clustering (volumes via API seulement). |
+| `on-page-seo-optimizer` | Optimisation page : meta, titres, contenu, liens. |
+| `seo-content-writer` | Articles/briefs SEO + schema + visuels. |
+| `backlink-strategy` | Maillage interne et acquisition réaliste. |
+| `competitor-seo-analysis` | Gaps SERP sourcés. |
+| `local-seo` | Pack local, NAP, citations, pages localisées. |
 | `geo-ai-search-optimizer` | Optimisation pour les moteurs de réponse IA (GEO). |
+| `seo-data-provider` | Volumes/KD/backlinks via DataForSEO ou Semrush si clés env. |
+| `image-generation` | Visuels hero / sections pour les articles SEO complets (ou prompts listés si les outils image sont absents). |
 
 ## Skills complémentaires
 

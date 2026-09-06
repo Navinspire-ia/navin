@@ -1,6 +1,6 @@
 # Packs de plugins
 
-Les packs sont des paquets autonomes de **skills**, **serveurs MCP** et configuration qui étendent Navin à chaud — sans redémarrage.
+Les packs sont des paquets autonomes de **skills**, **serveurs MCP** et configuration qui étendent Navin à chaud - sans redémarrage.
 
 ## Anatomie d'un pack
 
@@ -23,7 +23,7 @@ mon-pack/
 
 **Réglages → Skills → Packs de plugins** : installation depuis une URL Git ou un chemin local, activation/désactivation par interrupteur, suppression avec confirmation.
 
-### Depuis le chat — `/pack`
+### Depuis le chat - `/pack`
 
 | Sous-commande | Effet |
 | --- | --- |

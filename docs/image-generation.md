@@ -1,17 +1,17 @@
 # Image Generation
 
-navin can generate and edit images through the `generate_image` tool. Enable the tool in WebUI Settings, then ask for an image normally in chat; the agent decides when to call it and can keep iterating on generated images in the same conversation.
+Navin can generate and edit images from chat. Enable the feature in **Settings → Image**, then ask for an image normally; the agent decides when to generate and can keep iterating in the same conversation.
 
-The feature is disabled by default. Open **Settings → Image**, choose a configured provider and model, enable image generation, save, and restart when prompted. If that screen is not available in your installed version, use the manual config below.
+The feature is disabled by default. Open **Settings → Image**, choose a configured provider and model, enable image generation, save, and restart when prompted. If that screen is not available in your installed version, use the optional manual config below.
 
-## Quick Setup
+## Quick setup
 
-**WebUI**
+**Desktop Settings**
 
-1. Add the image provider credential under **Settings → Models** if it is not already configured.
+1. Add the image provider credential under **Settings → Providers** / **Models** if it is not already configured.
 2. Open **Settings → Image**.
 3. Select the provider and image model, then enable image generation.
-4. Save, restart when prompted, and ask for a simple test image.
+4. Save, restart when prompted, and ask for a simple test image in chat.
 
 **Manual config**
 
@@ -39,7 +39,7 @@ See [Provider Notes](#provider-notes) for Custom, AIHubMix, MiniMax, Gemini, Oll
 > [!TIP]
 > Prefer environment variables for API keys. navin resolves `${VAR_NAME}` values from the environment at startup.
 
-## WebUI Usage
+## Chat usage
 
 1. Open Settings and enable **Image Generation** with a configured provider and model.
 2. Describe the image or edit you want in chat.
@@ -48,13 +48,13 @@ See [Provider Notes](#provider-notes) for Custom, AIHubMix, MiniMax, Gemini, Oll
 
 Generated images are rendered as assistant media in the chat. Follow-up prompts such as "make it warmer", "change the background", or "try a 16:9 version" can reuse the most recent generated artifact.
 
-The WebUI hides provider storage details from the user. The agent sees the saved artifact path internally and can pass it back to `generate_image` as `reference_images` for iterative edits.
+The app hides provider storage details from the user. The agent keeps the saved artifact path internal and can reuse it for iterative edits.
 
 ## Configuration Reference
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `tools.imageGeneration.enabled` | boolean | `false` | Register the `generate_image` tool |
+| `tools.imageGeneration.enabled` | boolean | unset | Register the `generate_image` tool. Unset means "on as soon as `tools.imageGeneration.provider` holds a usable credential"; set `false` to keep it off anyway, `true` to force it on (required for the OAuth provider `openai_codex`) |
 | `tools.imageGeneration.provider` | string | `"openrouter"` | Current built-in image provider default. Supported values: `openrouter`, `openai`, `openai_codex`, `custom`, `aihubmix`, `minimax`, `gemini`, `ollama`, `stepfun`, `zhipu` |
 | `tools.imageGeneration.model` | string | `"openai/gpt-5.4-image-2"` | Provider model name |
 | `tools.imageGeneration.defaultAspectRatio` | string | `"1:1"` | Default ratio when the prompt/tool call does not specify one |
@@ -272,7 +272,7 @@ Supported aspect ratios: `1:1`, `16:9`, `9:16`, `3:4`, `4:3`.  Sizes are specifi
 
 #### StepPlan (Subscription)
 
-StepPlan is StepFun's subscription tier and uses a different API base URL. The image generation endpoint path is the same — just override `apiBase`:
+StepPlan is StepFun's subscription tier and uses a different API base URL. The image generation endpoint path is the same - just override `apiBase`:
 
 ```json
 {
@@ -292,7 +292,7 @@ StepPlan is StepFun's subscription tier and uses a different API base URL. The i
 }
 ```
 
-`apiBase` takes precedence over the registry default, so with the StepPlan base URL configured, image requests are sent to `https://api.stepfun.ai/step_plan/v1/images/generations` — the same path prefix used for LLM calls. The API key is shared with the standard StepFun provider.
+`apiBase` takes precedence over the registry default, so with the StepPlan base URL configured, image requests are sent to `https://api.stepfun.ai/step_plan/v1/images/generations` - the same path prefix used for LLM calls. The API key is shared with the standard StepFun provider.
 
 ### Zhipu
 
@@ -321,14 +321,14 @@ Other supported models: `cogview-4`, `cogview-4-250304`, `cogview-3-flash`. Refe
 
 ## Artifacts
 
-Generated images are stored under the active navin instance's media directory:
+Generated images are stored under Navin's local media directory on your machine, typically:
 
 ```text
 ~/.navin/media/generated/YYYY-MM-DD/img_<id>.<ext>
 ~/.navin/media/generated/YYYY-MM-DD/img_<id>.json
 ```
 
-For non-default config locations, the media directory is relative to the active config file's directory.
+Everyday use stays in chat; you normally do not need these paths.
 
 The JSON sidecar stores:
 
@@ -371,9 +371,9 @@ Use the reference image. Keep the same robot and composition, change the palette
 
 | Symptom | Check |
 |---------|-------|
-| `generate_image` is not available | Set `tools.imageGeneration.enabled` to `true` and restart the gateway |
-| Missing API key error | Configure `providers.<provider>.apiKey`; if using `${VAR_NAME}`, confirm the environment variable is visible to the gateway process |
-| `unsupported image generation provider` | Use `openrouter`, `openai`, `openai_codex`, `custom`, `aihubmix`, `minimax`, `gemini`, `ollama`, `stepfun`, or `zhipu` |
-| AIHubMix says `Incorrect model ID` | Use `model: "gpt-image-2-free"`; navin expands it to the required `openai/gpt-image-2-free` model path internally |
-| Generation times out | Try a smaller/default image size, set AIHubMix `extraBody.quality` to `"low"`, or retry later |
-| Reference image rejected | Reference image paths must be inside the workspace or navin media directory and must be valid image files |
+| Image generation not available | Enable it under **Settings → Image** with a provider that has a key, then restart when prompted |
+| Missing API key error | Add the key under **Settings → Providers** for the selected image provider |
+| Unsupported image generation provider | Use a supported option in Settings: OpenRouter, OpenAI, OpenAI Codex, Custom, AIHubMix, MiniMax, Gemini, Ollama, StepFun, or Zhipu |
+| AIHubMix says incorrect model ID | Use `gpt-image-2-free` in Settings; Navin expands it to the required model path internally |
+| Generation times out | Try a smaller/default image size, lower AIHubMix quality if offered, or retry later |
+| Reference image rejected | Attach a valid image from the project or a recently generated chat image |

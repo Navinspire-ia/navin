@@ -3,18 +3,32 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
 import subprocess
+import tarfile
+import tempfile
+import zipfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from navin.utils.proc import no_window_kwargs
+
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_NPX_SPEC_RE = re.compile(
+    r"^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+(@[A-Za-z0-9._-]+)?$"
+)
 _STATE_FILE = "state.json"
 _GIT_CLONE_TIMEOUT_S = 120
+_NPX_PACK_TIMEOUT_S = 180
 _MAX_SKILLS_PER_PLUGIN = 200
+_MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+_SKIP_UPLOAD_DIRS = {".git", "node_modules", "__pycache__", ".venv", "dist"}
 
 
 class PluginError(ValueError):
@@ -36,6 +50,90 @@ def _normalize_name(value: str) -> str:
     if not name or not _NAME_RE.match(name):
         raise PluginError(f"invalid plugin name: {value!r}")
     return name
+
+
+def _normalize_npx_spec(value: str) -> str:
+    spec = value.strip()
+    if spec.lower().startswith("npx "):
+        spec = spec[4:].strip()
+    if spec.lower().startswith("npm "):
+        raise PluginError("use a package name such as @org/my-skill, not an npm command")
+    if not spec or not _NPX_SPEC_RE.match(spec):
+        raise PluginError("npx package must look like name, @scope/name or name@version")
+    return spec
+
+
+def _safe_relpath(value: str) -> str | None:
+    cleaned = value.replace("\\", "/").strip().lstrip("/")
+    if not cleaned:
+        return None
+    parts = Path(cleaned).parts
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    return "/".join(parts)
+
+
+def _bundle_root(extracted: Path) -> Path:
+    """If the archive has a single top-level folder, use that as the pack root."""
+    visible = [p for p in extracted.iterdir() if not p.name.startswith(".")]
+    if (
+        len(visible) == 1
+        and visible[0].is_dir()
+        and visible[0].name not in {"skills"}
+    ):
+        return visible[0]
+    return extracted
+
+
+def _extract_archive(archive: Path, dest: Path) -> None:
+    name = archive.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                rel = _safe_relpath(info.filename)
+                if rel is None or info.is_dir():
+                    continue
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(zf.read(info))
+        return
+    if name.endswith(".tgz") or name.endswith(".tar.gz") or name.endswith(".tar"):
+        mode = "r:gz" if name.endswith((".tgz", ".tar.gz")) else "r"
+        with tarfile.open(archive, mode) as tf:
+            for member in tf.getmembers():
+                if not member.isfile():
+                    continue
+                rel = _safe_relpath(member.name)
+                if rel is None:
+                    continue
+                extracted = tf.extractfile(member)
+                if extracted is None:
+                    continue
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(extracted.read())
+        return
+    raise PluginError("upload a .zip, .tgz or a folder of skills")
+
+
+def _rmtree_force(path: Path, *, ignore_errors: bool = True) -> None:
+    """Delete a tree that may contain read-only files.
+
+    Git for Windows marks everything under ``.git/objects`` read-only, and
+    ``os.unlink`` refuses those, so a plugin cloned from a repository could be
+    installed but never removed.
+    """
+
+    def _clear_readonly(func: Any, target: str, _exc: BaseException) -> None:
+        with suppress(OSError):
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+
+    try:
+        shutil.rmtree(path, onexc=_clear_readonly)
+    except OSError:
+        if not ignore_errors:
+            raise
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -178,6 +276,13 @@ class PluginManager:
                 return row
         raise PluginError(f"plugin not found: {name}")
 
+    def _reuse_if_installed(self, plugin_name: str) -> dict[str, Any] | None:
+        """Same pack, other project: skip a second clone and just republish."""
+        target = self.root / plugin_name
+        if target.is_dir():
+            return self.get(plugin_name)
+        return None
+
     # -- install / uninstall ---------------------------------------------------
 
     def install_from_path(self, source: str | Path, *, name: str | None = None) -> dict[str, Any]:
@@ -187,12 +292,14 @@ class PluginManager:
             raise PluginError(f"not a directory: {src}")
         manifest = self._manifest(src)
         plugin_name = _normalize_name(name or str(manifest.get("name") or src.name))
-        self._validate_bundle(src)
+        reused = self._reuse_if_installed(plugin_name)
+        if reused is not None:
+            return reused
         target = self.root / plugin_name
-        if target.exists():
-            raise PluginError(f"plugin already installed: {plugin_name}")
         self.root.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, target, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"))
+        self._coerce_skill_bundle(target)
+        self._validate_bundle(target)
         self._set_state(plugin_name, enabled=True, source=str(src))
         logger.info("Plugin installed: {} (from {})", plugin_name, src)
         return self.get(plugin_name)
@@ -203,9 +310,10 @@ class PluginManager:
         if not re.match(r"^(https://|git@|ssh://)", url):
             raise PluginError("git url must start with https://, git@ or ssh://")
         plugin_name = _normalize_name(name or url.rstrip("/").rsplit("/", 1)[-1])
+        reused = self._reuse_if_installed(plugin_name)
+        if reused is not None:
+            return reused
         target = self.root / plugin_name
-        if target.exists():
-            raise PluginError(f"plugin already installed: {plugin_name}")
         self.root.mkdir(parents=True, exist_ok=True)
         tmp = self.root / f".clone-{plugin_name}"
         if tmp.exists():
@@ -215,23 +323,127 @@ class PluginManager:
                 ["git", "clone", "--depth", "1", url, str(tmp)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=_GIT_CLONE_TIMEOUT_S,
                 check=False,
+                **no_window_kwargs(),
             )
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()[-400:]
                 raise PluginError(f"git clone failed: {detail}")
+            self._coerce_skill_bundle(tmp)
             self._validate_bundle(tmp)
-            shutil.rmtree(tmp / ".git", ignore_errors=True)
+            _rmtree_force(tmp / ".git")
             tmp.rename(target)
         except (OSError, subprocess.SubprocessError) as exc:
             raise PluginError(f"install failed: {exc}") from exc
         finally:
             if tmp.exists():
-                shutil.rmtree(tmp, ignore_errors=True)
+                _rmtree_force(tmp)
         self._set_state(plugin_name, enabled=True, source=url)
         logger.info("Plugin installed: {} (from {})", plugin_name, url)
         return self.get(plugin_name)
+
+    def install_from_npx(self, spec: str, *, name: str | None = None) -> dict[str, Any]:
+        """Install a skill pack published as an npm package (``npm pack``, no exec)."""
+        package = _normalize_npx_spec(spec)
+        plugin_name = _normalize_name(name or package.split("/")[-1].split("@")[0] or package)
+        reused = self._reuse_if_installed(plugin_name)
+        if reused is not None:
+            return reused
+        target = self.root / plugin_name
+        tmp = Path(tempfile.mkdtemp(prefix="navin-npx-", dir=str(self.root) if self.root.is_dir() else None))
+        try:
+            proc = subprocess.run(  # noqa: S603
+                ["npm", "pack", package, "--pack-destination", str(tmp)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_NPX_PACK_TIMEOUT_S,
+                check=False,
+                **no_window_kwargs(),
+            )
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+                raise PluginError(f"npm pack failed: {detail or package}")
+            archives = sorted(tmp.glob("*.tgz")) + sorted(tmp.glob("*.tar.gz"))
+            if not archives:
+                raise PluginError(f"npm pack produced no archive for {package}")
+            extracted = tmp / "extracted"
+            extracted.mkdir()
+            _extract_archive(archives[0], extracted)
+            inner = _bundle_root(extracted)
+            return self.install_from_path(inner, name=plugin_name)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PluginError(f"npx install failed: {exc}") from exc
+        finally:
+            _rmtree_force(tmp)
+
+    def install_from_archive(
+        self,
+        data: bytes,
+        *,
+        filename: str = "pack.zip",
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Install a skill pack from a zip or tarball uploaded by the user."""
+        if not data:
+            raise PluginError("uploaded archive is empty")
+        if len(data) > _MAX_UPLOAD_BYTES:
+            raise PluginError("uploaded archive is too large (max 8 MB)")
+        tmp = Path(tempfile.mkdtemp(prefix="navin-upload-"))
+        try:
+            archive = tmp / Path(filename or "pack.zip").name
+            archive.write_bytes(data)
+            extracted = tmp / "extracted"
+            extracted.mkdir()
+            _extract_archive(archive, extracted)
+            inner = _bundle_root(extracted)
+            return self.install_from_path(inner, name=name)
+        finally:
+            _rmtree_force(tmp)
+
+    def install_from_files(
+        self,
+        files: list[tuple[str, bytes]],
+        *,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Install a skill pack from a folder picker (relative paths + bytes)."""
+        if not files:
+            raise PluginError("no files in the uploaded folder")
+        total = 0
+        tmp = Path(tempfile.mkdtemp(prefix="navin-folder-"))
+        try:
+            for raw_path, payload in files:
+                rel = _safe_relpath(raw_path)
+                if rel is None:
+                    continue
+                if any(part in _SKIP_UPLOAD_DIRS for part in Path(rel).parts):
+                    continue
+                total += len(payload)
+                if total > _MAX_UPLOAD_BYTES:
+                    raise PluginError("uploaded folder is too large (max 8 MB)")
+                dest = tmp / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(payload)
+            inner = _bundle_root(tmp)
+            return self.install_from_path(inner, name=name)
+        finally:
+            _rmtree_force(tmp)
+
+    @staticmethod
+    def _coerce_skill_bundle(plugin_dir: Path) -> None:
+        """A folder with SKILL.md at the root is a single skill, wrap it."""
+        skill_md = plugin_dir / "SKILL.md"
+        skills_dir = plugin_dir / "skills"
+        if not skill_md.is_file() or skills_dir.is_dir():
+            return
+        dest = plugin_dir / "skills" / _normalize_name(plugin_dir.name)
+        dest.mkdir(parents=True, exist_ok=True)
+        skill_md.rename(dest / "SKILL.md")
 
     def _validate_bundle(self, plugin_dir: Path) -> None:
         """A plugin must ship at least one component and parse cleanly."""
@@ -247,7 +459,10 @@ class PluginManager:
         target = self.root / name
         if not target.is_dir():
             raise PluginError(f"plugin not found: {name}")
-        shutil.rmtree(target)
+        try:
+            _rmtree_force(target, ignore_errors=False)
+        except OSError as exc:
+            raise PluginError(f"uninstall failed: {exc}") from exc
         state = self._load_state()
         state.pop(name, None)
         self._save_state(state)

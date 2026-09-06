@@ -13,6 +13,7 @@ Skills preloaded by `/studio` and related helpers available to the agent.
 | `presentation-designer` | Slide design principles: narrative arc, visual hierarchy, one idea per slide. |
 | `professional-writer` | Business writing: clarity, tone, structure. |
 | `document-templates` | 8 built-in visual themes (exact palettes, fonts, layout rules) + adapting user-provided template files. |
+| `archify` | Default architecture / sequence / workflow diagrams (HTML + SVG export onto slides). |
 
 ## Complementary skills
 
@@ -27,6 +28,7 @@ Skills preloaded by `/studio` and related helpers available to the agent.
 | `translation-localization` | Producing documents in multiple languages. |
 | `pdf-ocr-extractor` | Extracting content from existing PDFs to reuse. |
 | `invoice-reader` / `contract-extractor` | Structured extraction from business documents. |
+| `contract-reviewer` | First-pass clause review. Preloaded only on the 25 legal `/studio` cards, never on pitch or report cards. |
 | `fact-checker` | Verifying claims before they land in a deliverable. |
 | `image-generation` | Illustrations and cover images for decks and reports. |
 

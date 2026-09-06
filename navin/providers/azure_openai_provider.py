@@ -8,9 +8,9 @@ Authentication
 --------------
 Two modes are supported, selected automatically:
 
-1. **Static API key** — when ``api_key`` is non-empty it is sent as the
+1. **Static API key** - when ``api_key`` is non-empty it is sent as the
    ``api-key`` / ``Authorization: Bearer`` header (existing behavior).
-2. **Microsoft Entra ID (AAD)** — when ``api_key`` is empty the provider
+2. **Microsoft Entra ID (AAD)** - when ``api_key`` is empty the provider
    falls back to :class:`azure.identity.aio.DefaultAzureCredential` and
    acquires a bearer token scoped to
    ``https://cognitiveservices.azure.com/.default``.  ``azure-identity``
@@ -31,6 +31,12 @@ from navin.providers.openai_responses import (
     convert_messages,
     convert_tools,
     parse_response_output,
+)
+from navin.providers.reasoning_control import (
+    WIRE_RESPONSES,
+    ReasoningOffNegotiator,
+    apply_shape,
+    off_shapes,
 )
 
 _AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
@@ -93,7 +99,7 @@ class AzureOpenAIProvider(LLMProvider):
         self,
         api_key: str = "",
         api_base: str = "",
-        default_model: str = "gpt-5.2-chat",
+        default_model: str = "",
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
@@ -126,6 +132,8 @@ class AzureOpenAIProvider(LLMProvider):
             default_headers={"x-session-affinity": uuid.uuid4().hex},
             max_retries=0,
         )
+        # Per deployment: how far down the "no reasoning" ladder it pushed us.
+        self._reasoning_off = ReasoningOffNegotiator(scope=base_url)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -168,7 +176,15 @@ class AzureOpenAIProvider(LLMProvider):
         if self._supports_temperature(deployment, reasoning_effort):
             body["temperature"] = temperature
 
-        if reasoning_effort and reasoning_effort.lower() != "none":
+        effort = reasoning_effort.lower() if isinstance(reasoning_effort, str) else ""
+        if effort == "none":
+            # GPT-5 deployments default to effort "medium" when the field is
+            # missing; "none" has to be spelled out (or its floor, learned
+            # from the deployment's refusals).
+            off = self._reasoning_off.shape(deployment, self._off_shapes(deployment))
+            if off:
+                apply_shape(body, off)
+        elif reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
             body["include"] = ["reasoning.encrypted_content"]
 
@@ -177,6 +193,21 @@ class AzureOpenAIProvider(LLMProvider):
             body["tool_choice"] = tool_choice or "auto"
 
         return body
+
+    @staticmethod
+    def _off_shapes(deployment: str) -> list[dict[str, Any]]:
+        return off_shapes(deployment, spec_name="azure_openai", wire=WIRE_RESPONSES)
+
+    def _register_reasoning_rejection(
+        self, deployment: str, error: Exception, reasoning_effort: str | None
+    ) -> bool:
+        if not isinstance(reasoning_effort, str) or reasoning_effort.lower() != "none":
+            return False
+        # Deployment names hide the model, so "unsupported parameter" is a
+        # real signal here (a GPT-4o deployment): stop on it, do not walk floors.
+        return self._reasoning_off.register_rejection(
+            deployment, error, self._off_shapes(deployment)
+        )
 
     @staticmethod
     def _handle_error(e: Exception) -> LLMResponse:
@@ -211,6 +242,11 @@ class AzureOpenAIProvider(LLMProvider):
             response = await self._client.responses.create(**body)
             return parse_response_output(response)
         except Exception as e:
+            if self._register_reasoning_rejection(body["model"], e, reasoning_effort):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
             return self._handle_error(e)
 
     async def chat_stream(
@@ -246,6 +282,14 @@ class AzureOpenAIProvider(LLMProvider):
                 reasoning_content=reasoning_content,
             )
         except Exception as e:
+            if self._register_reasoning_rejection(body["model"], e, reasoning_effort):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
             return self._handle_error(e)
 
     def get_default_model(self) -> str:

@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
+from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+from oauth_cli_kit.storage import FileTokenStorage
 
 from navin.providers.base import (
     LLMProvider,
@@ -28,6 +30,21 @@ DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "navin"
 
 
+def codex_token_storage() -> FileTokenStorage:
+    """Navin's own Codex OAuth token store.
+
+    ``import_codex_cli=False`` is the whole point: by default oauth_cli_kit
+    silently adopts ``~/.codex/auth.json`` from the official Codex CLI, which
+    made a fresh Navin install claim "Signed in" (and copy that token) when
+    the user had never configured anything here. Navin only trusts tokens
+    obtained through its own login flow.
+    """
+    return FileTokenStorage(
+        token_filename=OPENAI_CODEX_PROVIDER.token_filename,
+        import_codex_cli=False,
+    )
+
+
 class OpenAICodexProvider(LLMProvider):
     """Use Codex OAuth to call the Responses API."""
 
@@ -35,12 +52,14 @@ class OpenAICodexProvider(LLMProvider):
 
     def __init__(
         self,
-        default_model: str = "openai-codex/gpt-5.6-sol",
+        default_model: str = "",
         proxy: str | None = None,
+        extra_body: dict[str, Any] | None = None,
     ):
         super().__init__(api_key=None, api_base=None)
         self.default_model = default_model
         self.proxy = proxy or None
+        self._extra_body = dict(extra_body or {})
 
     async def _call_codex(
         self,
@@ -74,10 +93,15 @@ class OpenAICodexProvider(LLMProvider):
             body["reasoning"] = reasoning_options
         if tools:
             body["tools"] = convert_tools(tools)
+        if self._extra_body:
+            # Apply explicit provider overrides last, matching other provider backends.
+            body.update(self._extra_body)
 
         stage = "oauth_token"
         try:
-            token = await asyncio.to_thread(get_codex_token, proxy=self.proxy)
+            token = await asyncio.to_thread(
+                get_codex_token, storage=codex_token_storage(), proxy=self.proxy
+            )
             headers = _build_headers(token.account_id, token.access)
 
             stage = "codex_request"

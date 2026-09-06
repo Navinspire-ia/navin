@@ -12,11 +12,11 @@ Fix errors, tighten sentences, preserve the voice. Correction is not rewriting.
 
 ## Pass order
 
-1. **Accuracy** — names, numbers, dates, titles (a wrong name is the worst error)
-2. **Grammar & spelling** — agreements, conjugation, homophones (FR: a/à, ces/ses, -er/-é)
-3. **Punctuation & typography** — FR: espaces insécables avant `: ; ! ?`, guillemets « », capitales accentuées; EN: serial commas consistent
-4. **Clarity** — ambiguous pronouns, double negatives, 40+ word sentences split
-5. **Consistency** — tense, register (tu/vous), terminology, formatting of numbers/dates
+1. **Accuracy** - names, numbers, dates, titles (a wrong name is the worst error)
+2. **Grammar & spelling** - agreements, conjugation, homophones (FR: a/à, ces/ses, -er/-é)
+3. **Punctuation & typography** - FR: espaces insécables avant `: ; ! ?`, guillemets « », capitales accentuées; EN: serial commas consistent
+4. **Clarity** - ambiguous pronouns, double negatives, 40+ word sentences split
+5. **Consistency** - tense, register (tu/vous), terminology, formatting of numbers/dates
 
 ## Severity levels
 
@@ -35,6 +35,6 @@ Fix errors, tighten sentences, preserve the voice. Correction is not rewriting.
 
 ## Rules
 
-- Never alter quotes — flag errors inside quotes with [sic] or a note.
+- Never alter quotes - flag errors inside quotes with [sic] or a note.
 - If a sentence is correct but you'd write it differently: leave it.
 - Legal/contractual text: flag issues, don't silently rewrite (`contract-reviewer`).

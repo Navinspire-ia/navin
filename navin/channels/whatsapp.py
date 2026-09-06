@@ -8,7 +8,9 @@ import re
 import secrets
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -51,6 +53,13 @@ class _MediaInfo(NamedTuple):
 _NEONIZE_API: _NeonizeAPI | None = None
 _JID_RE = re.compile(r"^(?P<user>[^@]+)@(?P<server>[^@]+)$")
 _LEGACY_BRIDGE_CONFIG_FIELDS = ("bridgeUrl", "bridgeToken", "bridge_url", "bridge_token")
+_WHATSAPP_SUPPORT_MISSING = (
+    "WhatsApp support is not installed. Click Install support on the WhatsApp tool, then connect again."
+)
+_WHATSAPP_PROTOBUF_MISMATCH = (
+    "WhatsApp support does not match this Protobuf runtime. "
+    "Click Install support on the WhatsApp tool, then connect again."
+)
 
 
 def _default_database_path() -> Path:
@@ -59,6 +68,11 @@ def _default_database_path() -> Path:
 
 def _legacy_bridge_config_fields(config: dict[str, Any]) -> list[str]:
     return [field for field in _LEGACY_BRIDGE_CONFIG_FIELDS if field in config]
+
+
+def _is_protobuf_runtime_mismatch(exc: BaseException) -> bool:
+    message = str(exc)
+    return type(exc).__name__ == "VersionError" and "Protobuf" in message
 
 
 def _load_neonize() -> _NeonizeAPI:
@@ -71,9 +85,11 @@ def _load_neonize() -> _NeonizeAPI:
         from neonize.aioze.events import ConnectedEv, DisconnectedEv, MessageEv, PairStatusEv
         from neonize.utils.jid import build_jid
     except ImportError as exc:
-        raise RuntimeError(
-            "WhatsApp dependencies not installed. Run: navin plugins enable whatsapp"
-        ) from exc
+        raise RuntimeError(_WHATSAPP_SUPPORT_MISSING) from exc
+    except Exception as exc:
+        if _is_protobuf_runtime_mismatch(exc):
+            raise RuntimeError(_WHATSAPP_PROTOBUF_MISMATCH) from exc
+        raise
 
     _NEONIZE_API = _NeonizeAPI(
         NewAClient=NewAClient,
@@ -284,7 +300,7 @@ class WhatsAppChannel(BaseChannel):
         if legacy_bridge_fields:
             self.logger.warning(
                 "Ignoring deprecated WhatsApp bridge config fields: {}. "
-                "Run 'navin channels login whatsapp' to create a neonize session.",
+                "Connect WhatsApp from Tools in the workbench to create a session.",
                 ", ".join(legacy_bridge_fields),
             )
         self._client: Any | None = None
@@ -312,14 +328,23 @@ class WhatsAppChannel(BaseChannel):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return api.NewAClient(str(db_path))
 
-    async def login(self, force: bool = False) -> bool:
+    async def login(
+        self,
+        force: bool = False,
+        on_qr: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> bool:
         db_path = self._database_path()
         if force:
             self._reset_database(db_path)
 
         client = self._new_client()
         login_result = asyncio.get_running_loop().create_future()
-        self._register_handlers(client, login_result=login_result, handle_messages=False)
+        self._register_handlers(
+            client,
+            login_result=login_result,
+            handle_messages=False,
+            on_qr=on_qr,
+        )
 
         try:
             self.logger.info("Starting WhatsApp login with neonize...")
@@ -435,14 +460,20 @@ class WhatsAppChannel(BaseChannel):
         *,
         login_result: asyncio.Future[None] | None = None,
         handle_messages: bool,
+        on_qr: Callable[[bytes], Awaitable[None] | None] | None = None,
     ) -> None:
         api = _load_neonize()
 
         @client.qr
         async def _on_qr(_: Any, qr_data: bytes) -> None:
+            self.logger.info("Scan the WhatsApp QR code with Linked Devices")
+            if on_qr is not None:
+                result = on_qr(qr_data)
+                if isawaitable(result):
+                    await result
+                return
             import segno
 
-            self.logger.info("Scan the WhatsApp QR code with Linked Devices")
             segno.make_qr(qr_data).terminal(compact=True)
 
         @client.event(api.ConnectedEv)

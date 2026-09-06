@@ -1,93 +1,50 @@
-# Build an Email AI Agent with navin
+# Build an Email AI Agent with Navin
 
-This guide turns navin into an email AI agent that polls IMAP for accepted
-messages and replies through SMTP.
+This guide turns Navin into an email AI agent that polls IMAP for accepted messages and replies through SMTP - configured from Settings in the desktop app.
 
 ## What this guide builds
 
-- a dedicated mailbox for navin
-- IMAP and SMTP credentials in `config.json`
+- a dedicated mailbox for Navin
+- IMAP and SMTP credentials in **Settings → Channels → Email**
 - an allowed sender list
-- a gateway process that polls and replies
+- Navin left open so it can poll and reply
 
 ## Prerequisites
 
-- A working local navin reply:
+- Navin desktop app able to reply in local chat
+- A mailbox for the bot
+- IMAP and SMTP access (for Gmail, use an app password rather than your account password)
 
-```bash
-navin agent -m "Hello!"
-```
+## Enable Email in Settings
 
-- A mailbox for the bot.
-- IMAP and SMTP access. For Gmail, use an app password rather than your account
-  password.
+1. Open **Settings → Channels → Email**.
+2. Enable the channel and grant mailbox consent when prompted.
+3. Fill IMAP host/port/username/password and SMTP host/port/username/password.
+4. Set the from-address and a narrow **allow from** list (your real email first).
+5. Enable auto-reply when you want Navin to answer accepted mail.
+6. Save, restart when prompted, and keep Navin open long enough for the poll interval.
 
-## Install navin
-
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-```
-
-## Enable the Email channel
-
-Merge this snippet into `~/.navin/config.json` and replace the addresses and
-passwords:
-
-```json
-{
-  "channels": {
-    "email": {
-      "enabled": true,
-      "consentGranted": true,
-      "imapHost": "imap.gmail.com",
-      "imapPort": 993,
-      "imapUsername": "my-navin@gmail.com",
-      "imapPassword": "your-app-password",
-      "smtpHost": "smtp.gmail.com",
-      "smtpPort": 587,
-      "smtpUsername": "my-navin@gmail.com",
-      "smtpPassword": "your-app-password",
-      "fromAddress": "my-navin@gmail.com",
-      "allowFrom": ["your-real-email@gmail.com"],
-      "autoReplyEnabled": true
-    }
-  }
-}
-```
-
-## Run navin gateway
-
-```bash
-navin channels status
-navin gateway
-```
+Typical Gmail values: IMAP `imap.gmail.com:993`, SMTP `smtp.gmail.com:587`, plus an app password.
 
 ## Test a message
 
-Send an email from an address in `allowFrom` to the bot mailbox. Keep the
-gateway running long enough for the polling interval to receive it.
+Send an email from an address in the allow list to the bot mailbox. Keep Navin open until the poll cycle receives it.
 
 ## Security notes
 
 - Use a dedicated mailbox, not your primary personal inbox.
-- Set `consentGranted` to `false` to fully disable mailbox access.
-- Email does not use DM pairing. Keep `allowFrom` narrow; `["*"]` accepts mail
-  from anyone.
-- Use environment variables for mailbox passwords.
+- Clear consent / disable the channel to fully stop mailbox access.
+- Email does not use DM pairing. Keep the allow list narrow; allowing everyone accepts mail from anyone.
+- Prefer Settings fields or OS secrets for mailbox passwords - do not commit them.
 - Enable attachment types only when the agent needs them.
 
 ## Troubleshooting
 
-- If login fails, confirm IMAP/SMTP access and app-password setup.
-- If the bot reads but does not reply, check `autoReplyEnabled`, SMTP settings,
-  and allowed sender addresses.
-- If attachments are missing, review `allowedAttachmentTypes`, size limits, and
-  gateway logs.
+- Login fails: confirm IMAP/SMTP access and app-password setup.
+- Bot reads but does not reply: check auto-reply, SMTP settings, and allowed sender addresses.
+- Attachments missing: review allowed attachment types and size limits in the channel panel.
 
-## Next: memory, automations, MCP tools
+## Next
 
-- [Chat Apps reference](../chat-apps.md)
 - [Secure local AI agent](./secure-local-ai-agent.md)
 - [AI Agent Memory](./ai-agent-memory.md)
-- [OpenAI-compatible agent API](./openai-compatible-agent-api.md)

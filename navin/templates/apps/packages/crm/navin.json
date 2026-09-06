@@ -1,0 +1,75 @@
+{
+  "schema": "navin.json.v1",
+  "slug": "crm",
+  "name": "Navin CRM",
+  "version": "0.1.0-audit",
+  "license": "MIT",
+  "source_github": "https://github.com/marmelab/atomic-crm",
+  "stack": ["React", "Vite", "Supabase", "shadcn"],
+  "launch": "npm run dev:demo",
+  "launch_full": "make start",
+  "permissions": [
+    "contacts.read",
+    "contacts.write",
+    "companies.read",
+    "companies.write",
+    "deals.read",
+    "deals.write",
+    "tasks.read",
+    "tasks.write",
+    "notes.read",
+    "notes.write"
+  ],
+  "rag_collections": ["sales-playbook", "products", "pricing"],
+  "docker": true,
+  "seed": true,
+  "status": "source",
+  "audit_status": "in_review",
+  "mcp": {
+    "endpoint": "/functions/v1/mcp",
+    "tools": [
+      "get_schema",
+      "query",
+      "mutate",
+      "display_task_list",
+      "complete_task"
+    ]
+  },
+  "agents": [
+    {
+      "id": "sales-agent",
+      "name": "Sales Agent",
+      "description": "Pipeline, deals et prochaine action commerciale.",
+      "enabled": true,
+      "tools": ["get_schema", "query", "mutate", "display_task_list"]
+    },
+    {
+      "id": "lead-qualification-agent",
+      "name": "Lead Qualification Agent",
+      "description": "Qualifie les contacts et met a jour le statut (cold/warm/hot).",
+      "enabled": true,
+      "tools": ["get_schema", "query", "mutate"]
+    },
+    {
+      "id": "follow-up-agent",
+      "name": "Follow-up Agent",
+      "description": "Relances et taches a partir des vrais tasks CRM.",
+      "enabled": true,
+      "tools": ["query", "mutate", "display_task_list", "complete_task"]
+    },
+    {
+      "id": "account-manager-agent",
+      "name": "Account Manager Agent",
+      "description": "Comptes, notes et historique d activite.",
+      "enabled": true,
+      "tools": ["get_schema", "query", "mutate"]
+    },
+    {
+      "id": "sales-forecast-agent",
+      "name": "Sales Forecast Agent",
+      "description": "Forecast a partir des deals (montant, stage, closing).",
+      "enabled": true,
+      "tools": ["get_schema", "query"]
+    }
+  ]
+}

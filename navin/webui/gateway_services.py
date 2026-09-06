@@ -50,6 +50,7 @@ def build_gateway_services(
     cron_pending_job_ids: Callable[[str], set[str]] | None = None,
     local_trigger_pending_ids: Callable[[str], set[str]] | None = None,
     channel_feature_action: Callable[..., Any] | None = None,
+    tool_registry: Callable[[], Any] | None = None,
     logger: Any = default_logger,
 ) -> GatewayServices:
     tokens = GatewayTokenStore()
@@ -92,6 +93,7 @@ def build_gateway_services(
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
         channel_feature_action=channel_feature_action,
+        tool_registry=tool_registry,
         log=logger,
     )
     return GatewayServices(

@@ -54,8 +54,8 @@ def convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str
 
         if role == "tool":
             call_id, _ = split_tool_call_id(msg.get("tool_call_id"))
-            output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-            input_items.append({"type": "function_call_output", "call_id": call_id, "output": output_text})
+            output = convert_tool_output(content)
+            input_items.append({"type": "function_call_output", "call_id": call_id, "output": output})
 
     return system_prompt, input_items
 
@@ -82,6 +82,78 @@ def convert_user_message(content: Any) -> dict[str, Any]:
         if converted:
             return {"role": "user", "content": converted}
     return {"role": "user", "content": [{"type": "input_text", "text": ""}]}
+
+
+def convert_tool_output(content: Any) -> str | list[dict[str, Any]]:
+    """Convert a tool result to Responses API function-call output content.
+
+    The Responses API accepts text, image, and file blocks as function tool
+    output. Navin's file tools use Chat Completions-style ``text`` and
+    ``image_url`` blocks for image reads; serializing those blocks as JSON
+    turns the image into inert text and can make the request unnecessarily
+    large. Preserve supported multimodal blocks and strip internal metadata.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        converted: list[dict[str, Any]] = []
+        for item in content:
+            if not isinstance(item, dict):
+                break
+            item_type = item.get("type")
+            if item_type in {"text", "input_text"}:
+                if set(item) - {"type", "text", "_meta"}:
+                    break
+                text = item.get("text")
+                if not isinstance(text, str):
+                    break
+                converted.append({"type": "input_text", "text": text})
+            elif item_type in {"image_url", "input_image"}:
+                image = item.get("image_url")
+                if isinstance(image, dict) and set(image) - {"url", "detail"}:
+                    break
+                if set(item) - {"type", "image_url", "file_id", "detail", "_meta"}:
+                    break
+                url = image.get("url") if isinstance(image, dict) else image
+                file_id = item.get("file_id")
+                detail = item.get(
+                    "detail",
+                    image.get("detail", "auto") if isinstance(image, dict) else "auto",
+                )
+                if detail not in {"low", "high", "auto", "original"}:
+                    break
+                block = {"type": "input_image", "detail": detail}
+                if isinstance(url, str) and url:
+                    block["image_url"] = url
+                elif isinstance(file_id, str) and file_id:
+                    block["file_id"] = file_id
+                else:
+                    break
+                converted.append(block)
+            elif item_type in {"file", "input_file"}:
+                if set(item) - {
+                    "type",
+                    "file_data",
+                    "file_id",
+                    "file_url",
+                    "filename",
+                    "_meta",
+                }:
+                    break
+                block = {"type": "input_file"}
+                for key in ("file_data", "file_id", "file_url", "filename"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value:
+                        block[key] = value
+                if not any(key in block for key in ("file_data", "file_id", "file_url")):
+                    break
+                converted.append(block)
+            else:
+                break
+        else:
+            if converted:
+                return converted
+    return json.dumps(content, ensure_ascii=False)
 
 
 def convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

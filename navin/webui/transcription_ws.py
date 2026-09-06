@@ -35,12 +35,18 @@ async def webui_transcription_event(envelope: dict[str, Any]) -> tuple[str, dict
     if not valid_request_id:
         return error("invalid_request")
 
+    partials: list[str] = []
     try:
         text = await transcribe_audio_data_url(
             envelope.get("data_url"),
             resolve_transcription_config(load_config()),
             duration_ms=envelope.get("duration_ms"),
+            partials=partials,
         )
     except TranscriptionIngressError as exc:
         return error(exc.detail, **exc.extra)
-    return "transcription_result", {"request_id": request_id, "text": text}
+    payload: dict[str, Any] = {"request_id": request_id, "text": text}
+    if partials:
+        # Additive field: older clients keep consuming text unchanged.
+        payload["partials"] = partials
+    return "transcription_result", payload

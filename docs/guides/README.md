@@ -1,46 +1,40 @@
-# navin Task Guides
+# Navin task guides
 
-Start with [Install and Quick Start](../quick-start.md) and get one reply before using a guide below. Each guide targets one outcome; linked reference pages hold the complete option tables and edge cases.
+Install the desktop app from [navin.live/download](https://navin.live/download), send a first message in chat, then use a guide below. Each guide targets one outcome inside the Navin app (Settings, chat, workbench). You do not need a terminal.
 
-## Start and Use
+## Start and use
 
 | Goal | Guide |
 |---|---|
 | Build a personal AI agent | [Build a personal AI agent](./build-a-personal-ai-agent.md) |
-| Use the browser workbench | [AI agent WebUI](./ai-agent-webui.md) |
-| Run a self-hosted AI agent | [Self-hosted AI agent](./self-hosted-ai-agent.md) |
-| Run a sustained goal | [Long-running AI agent](./long-running-ai-agent.md) |
+| Learn the desktop interface | [Desktop app interface](./ai-agent-webui.md) |
+| Keep Navin on your computer | [Keep Navin on your computer](./self-hosted-ai-agent.md) |
+| Leave Navin running for background work | [Leave Navin running](./long-running-ai-agent.md) |
 | Add long-term memory | [AI agent memory](./ai-agent-memory.md) |
 
-## Connect a Chat App
+## Connect a chat app
 
-Use **Settings → Channels** in the WebUI for guided setup. These guides explain the account, bot, token, permission, and test-message steps on each platform.
-
-| Goal | Guide |
-|---|---|
-| Connect chat apps | [Chat app AI agent](./chat-app-ai-agent.md) |
-| Connect Telegram | [Telegram AI agent](./telegram-ai-agent.md) |
-| Connect Discord | [Discord AI agent](./discord-ai-agent.md) |
-| Connect Slack | [Slack AI agent](./slack-ai-agent.md) |
-| Connect WhatsApp | [WhatsApp AI agent](./whatsapp-ai-agent.md) |
-| Connect Email | [Email AI agent](./email-ai-agent.md) |
-| Connect Mattermost | [Mattermost AI agent](./mattermost-ai-agent.md) |
-
-## Integrate from Code
+Use **Settings → Channels** for guided setup. These guides explain the account, bot, token, permission, and test-message steps on each platform.
 
 | Goal | Guide |
 |---|---|
-| Run from Python | [Python AI agent SDK](./python-ai-agent-sdk.md) |
-| Expose `/v1/chat/completions` | [OpenAI-compatible agent API](./openai-compatible-agent-api.md) |
+| Connect chat apps | [Chat apps and channels](./chat-app-ai-agent.md) |
+| Connect Telegram | [Telegram](./telegram-ai-agent.md) |
+| Connect Discord | [Discord](./discord-ai-agent.md) |
+| Connect Slack | [Slack](./slack-ai-agent.md) |
+| Connect WhatsApp | [WhatsApp](./whatsapp-ai-agent.md) |
+| Connect Email | [Email](./email-ai-agent.md) |
+| Connect Mattermost | [Mattermost](./mattermost-ai-agent.md) |
 
-## Configure and Operate
+## Configure
 
 | Goal | Guide |
 |---|---|
+| Providers, models, and routing | [Configuration](../configuration.md) |
 | Add MCP tools | [Configure MCP tools](./configure-mcp-tools.md) |
+| MCP tools overview | [MCP tools overview](./mcp-tools-for-ai-agents.md) |
 | Enable web search | [Configure web search](./configure-web-search.md) |
 | Add model fallback | [Configure model fallback](./configure-model-fallback.md) |
-| Add an OpenAI-compatible provider | [Configure an OpenAI-compatible provider](./configure-openai-compatible-provider.md) |
-| Add Langfuse tracing | [Configure Langfuse observability](./configure-langfuse-observability.md) |
+| Custom or local provider | [Custom / local provider](./configure-openai-compatible-provider.md) |
+| Install and configure Ollama | [Configure Ollama locally](./configure-ollama-local.md) |
 | Secure local tools | [Secure a local AI agent](./secure-local-ai-agent.md) |
-| Deploy the gateway | [Deploy navin gateway](./deploy-navin-gateway.md) |

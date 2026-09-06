@@ -1,30 +1,81 @@
-# Marketing actions — 12 cards
+# Marketing actions - 17 cards
 
-Each card sends `/campaign` with a precise specification; your brief is appended.
+Studio `#/marketing` has two surfaces and one book. Prefer the desk tool for anything the loop must measure.
 
-## Creative
+## Desk tool / HTTP / CLI
+
+`POST /api/marketing?action=` or `marketing` tool or `navin marketing <action>`.
+
+Heartbeat may only run the first three.
+
+| Action | Role |
+| --- | --- |
+| `status` / `snapshot` | Full desk: brand, product, campaigns, content, creatives, analytics, loop (`peek_loop`), journal, KPIs, armed |
+| `watch` | Silent winner / competitor pass. Deduped. Optional notify |
+| `brand` | Brand Memory (company, tone, audience, colors, ...) |
+| `settings` | `execution_mode`, `auto_publish` (stored, never auto-publishes), `winner_multiple`, optional notify channels |
+| `understand` / `product` | Scan workspace or accept a product brief. A live `site` URL still harvests. |
+| `harvest` | Fetch a live URL, parse title / one-liner / headings / CTAs / colors / fonts / images / social links, apply to brand + creatives, then `fill_from_site` |
+| `position` | Positioning + ICP from the product |
+| `research` | Competitive map. Accepts injected `hits`. Does not invent live traffic |
+| `competitor` | Upsert a named competitor |
+| `plan` / `campaign` | 30-day (or `days`) campaign for a signup target. Upserts a matching draft / planned row |
+| `approve` | Approve campaign `id`, then fill content + creatives |
+| `content` | Channel variants (harvest headings / CTAs + brand). Upserts per channel + campaign. Optional `hook` |
+| `creative` | Image / video / audio / banner briefs (`status=brief`) |
+| `produce` / `generate` | Write real assets. Optional `pack=brand` / `pack=posts` or `creative_id`. Skips video / speech without a provider |
+| `seo` | Build keywords / pages from harvest + research. Optional measured ranking (`keyword`, `url`, `position`) via `ingest_ranking` |
+| `vision` | Human PASS / WARN / BLOCK on a creative `id` |
+| `metrics` / `analytics` | Ingest traffic, leads, signups, revenue, `by_content` |
+| `improve` | Scoreboard, winners, variants |
+| `launch` | Launch kit: JSON plus Markdown files under `launch/` |
+| `pipeline` | Understand → position → research → plan → content → creative → launch |
+| `start` | Arm the growth loop. Optional `schedule`, `run_now`, `tz` |
+| `stop` | Pause |
+| `schedule` | Change hours |
+| `tick` | One cycle (`force` default true on HTTP) |
+
+Unknown actions return `MarketingError`. Invalid `days` / `score` return 400.
+
+## Chat cards (`/campaign`)
+
+Each card still seeds `/campaign` with a precise spec. Persist the result with `marketing action=plan` / `content` / `creative` when the loop should own it.
+
+### Creative
 
 | Action | Delivers |
 | --- | --- |
-| Product images | Professional product visuals: studio packshot, lifestyle scene, and social-ready variants — generated with the image tools, 3 visual directions proposed first. |
-| Ad video | Complete advertising video: hook-driven 15-30s script, scene-by-scene storyboard with shot descriptions and on-screen text, voiceover lines, then the generated video when a video provider is configured. |
-| Social media visuals | A branded image set: square (feed), vertical (story/reel cover), and landscape (link post) variants with consistent branding. |
-| Brand kit | 3 logo concept directions (generated), color palette with hex codes, typography pairing, tone-of-voice guide, usage examples. |
+| Product images | Studio packshot, lifestyle, social variants via image tools. Visual QA after generation. |
+| Ad video | 15-30s script, storyboard, voiceover, generated video when a provider is set. |
+| Open Montage studio | Bridge to `#/montage`. Never auto-publish. |
+| Social media visuals | Square / vertical / landscape set. |
+| Brand kit | Logo directions, palette, type, voice. |
 
-## Content
-
-| Action | Delivers |
-| --- | --- |
-| Social media posts | A batch of posts adapted per platform (LinkedIn, X, Instagram, TikTok script): strong hooks, native tone, hashtags, CTA, suggested posting time. |
-| Blog article | Title options, H2/H3 outline, engaging intro, actionable body with examples, conclusion with CTA, plus meta description and 3 promo snippets. |
-| Email sequence | 5 emails (nurture or launch): A/B subject lines, preview text, persuasive body with one CTA each, recommended send timing. |
-| Landing page copy | Hero headline/subheadline variants, benefit blocks, social proof section, objection-handling FAQ, CTA copy — section by section. |
-
-## Strategy
+### Design
 
 | Action | Delivers |
 | --- | --- |
-| 360° campaign | The full stack: key message and creative concept, channel plan, then every deliverable (copy, posts, visuals, video script, email, landing) generated and saved, with a final summary table. |
-| Customer persona | Detailed personas: demographics, goals, pains, objections, buying triggers, preferred channels, messaging angles — researched with web tools when useful. |
-| 30-day content plan | Weekly themes, one post per day with channel/format/hook/CTA, mapped to funnel stages — delivered as a structured table and saved as a file. |
-| Competitor analysis | Positioning, messaging, channels, content strategy, and offers of competitors — fetched from their public pages, with a comparison table and differentiation angles. |
+| Poster / key visual | 4:5 hero plus 9:16 and 1:1 crops, gated by `visual_qa`. |
+| Display banner pack | Master declined into six ad-network sizes. |
+| 3D product page | Interactive orbit page with a still fallback. |
+| Carousel design | 5-7 slide 1080x1350 narrative. |
+
+### Content
+
+| Action | Delivers |
+| --- | --- |
+| Social posts | LinkedIn, X, Instagram, TikTok script: hooks, hashtags, CTA. |
+| Blog article | Outline, body, meta, promo snippets. |
+| Email sequence | 5 emails with A/B subjects. |
+| Landing page copy | Hero, benefits, proof, FAQ, CTA. Super render uses `ui-ux-pro-max` (designed 3D, not wallpaper). |
+
+### Strategy
+
+| Action | Delivers |
+| --- | --- |
+| 360 campaign | Message house, channel plan, then every deliverable. |
+| Customer persona | ICP with sourced claims. |
+| 30-day content plan | Weekly themes mapped to funnel stages. |
+| Competitor analysis | Public pages only. Store names with `marketing action=competitor`. |
+
+Never invent ROAS / CPC. Label estimates. Paid-account reads go to `#/ads`.

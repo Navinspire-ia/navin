@@ -77,7 +77,7 @@ class MSTeamsConfig(Base):
     path: str = "/api/messages"
     allow_from: list[str] = Field(default_factory=list)
     reply_in_thread: bool = True
-    mention_only_response: str = "Hi — what can I help with?"
+    mention_only_response: str = "Hi - what can I help with?"
     validate_inbound_auth: bool = True
     ref_ttl_days: int = Field(default=MSTEAMS_REF_TTL_DAYS, ge=1)
     prune_web_chat_refs: bool = True
@@ -142,7 +142,7 @@ class MSTeamsChannel(BaseChannel):
     async def start(self) -> None:
         """Start the Teams webhook listener."""
         if not MSTEAMS_AVAILABLE:
-            self.logger.error("PyJWT not installed. Run: navin plugins enable msteams")
+            self.logger.error("PyJWT not installed. Click Install support on the Teams tool.")
             return
 
         if not self.config.app_id or not self.config.app_password:
@@ -458,7 +458,7 @@ class MSTeamsChannel(BaseChannel):
     async def _validate_inbound_auth(self, auth_header: str, activity: dict[str, Any]) -> None:
         """Validate inbound Bot Framework bearer token."""
         if not MSTEAMS_AVAILABLE:
-            raise RuntimeError("PyJWT not installed. Run: navin plugins enable msteams")
+            raise RuntimeError("PyJWT not installed. Click Install support on the Teams tool.")
 
         if not auth_header.lower().startswith("bearer "):
             raise ValueError("missing bearer token")

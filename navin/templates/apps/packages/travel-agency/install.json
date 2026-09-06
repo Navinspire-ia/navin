@@ -1,0 +1,293 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "travel-agency",
+  "name": "Travel Agency",
+  "kind": "business",
+  "category": "travel",
+  "source_github": "https://github.com/Minato95-ayu/travel-os",
+  "source_name": "TravelOS",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Firebase",
+    "Vercel AI SDK"
+  ],
+  "studied_from": "templates_apps/travel-agency",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 14,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "\u2708\ufe0f TravelOS **The Next-Generation AI Operating System for Travel Agencies** [Vision](#-the-vision) \u2022 [Architecture](#-system-architecture) \u2022 [Security](#-enterprise-security-features) \u2022 [Tech Stack](#-tech-stack) \u2022 [About Founder](#-about-the-founder) \u2022 [Quick Start](#-quick-start) --- \ud83d\ude80 The Vision TravelOS is not just a CRM; it is a **Legendary, Competition-Level AI-powered Operating System** designed to scale travel agencies to 10x revenue. Built with state-of-the-art Next.js App Router, Firebase, and Vercel AI SDK, TravelOS automates the busywork\u2014allo"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "travelos",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "travelos",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "FIREBASE_PROJECT_ID",
+      "default": "your_project_id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "FIREBASE_CLIENT_EMAIL",
+      "default": "your_client_email",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "README.md"
+    },
+    {
+      "key": "FIREBASE_PRIVATE_KEY",
+      "default": "your_private_key",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "sk-proj-your_openai_key",
+      "required": false,
+      "secret": false,
+      "purpose": "OpenAI API key",
+      "from": "README.md"
+    },
+    {
+      "key": "CRON_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "source:src/app/api/cron/payment-reminder/route.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_APP_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "source:src/lib/firebase/client.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:src/app/api/cron/payment-reminder/route.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/travel-agency/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/travel-agency/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/travel-agency/overlay.json",
+    "agents": ".navin/apps/travel-agency/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "travel-advisor",
+      "itinerary-agent",
+      "quote-agent",
+      "booking-agent",
+      "follow-up-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

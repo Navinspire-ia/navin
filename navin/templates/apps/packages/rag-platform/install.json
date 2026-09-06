@@ -1,0 +1,540 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "rag-platform",
+  "name": "RAG / Knowledge Platform",
+  "kind": "ai-product",
+  "category": "rag",
+  "source_github": "https://github.com/infiniflow/ragflow",
+  "source_name": "RAGFlow",
+  "license": "Apache-2.0",
+  "stack": [
+    "Python",
+    "Web frontend"
+  ],
+  "studied_from": "curated+templates_apps/rag-platform",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 23,
+    "package_count": 3,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "RAGFlow: Python backend + Vite web UI. Official path is Docker Compose (MySQL, Elasticsearch or OpenSearch, Redis, MinIO). See docker/docker-compose.yml."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18.20.4",
+    "python": true,
+    "docker": true,
+    "package_manager": "uv",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "uv",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "uv",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "web/package.json",
+        "name": "web",
+        "scripts": {
+          "build": "vite build --mode production",
+          "build-storybook": "storybook build",
+          "dev": "vite --host",
+          "lint": "oxlint src",
+          "test": "jest --no-cache --coverage"
+        },
+        "node_engine": ">=18.20.4",
+        "deps_hint": [
+          "axios",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "api/channels/whatsapp/gateway-node/package.json",
+        "name": "ragflow-whatsapp-gateway",
+        "scripts": {
+          "start": "node index.js"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "agent/sandbox/pyproject.toml",
+          "admin/client/pyproject.toml",
+          "tools/es-to-oceanbase-migration/pyproject.toml",
+          "deepdoc/server/pyproject.toml",
+          "sdk/python/pyproject.toml",
+          "agent/sandbox/executor_manager/requirements.txt",
+          "agent/sandbox/sandbox_base_image/python/requirements.txt",
+          "tools/firecrawl/requirements.txt",
+          "tools/chatgpt-on-wechat/plugins/requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "web/package.json",
+        "name": "web",
+        "scripts": {
+          "build": "vite build --mode production",
+          "build-storybook": "storybook build",
+          "dev": "vite --host",
+          "lint": "oxlint src",
+          "test": "jest --no-cache --coverage"
+        },
+        "node_engine": ">=18.20.4",
+        "deps_hint": [
+          "axios",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "api/channels/whatsapp/gateway-node/package.json",
+        "name": "ragflow-whatsapp-gateway",
+        "scripts": {
+          "start": "node index.js"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "agent/sandbox/pyproject.toml",
+          "admin/client/pyproject.toml",
+          "tools/es-to-oceanbase-migration/pyproject.toml",
+          "deepdoc/server/pyproject.toml",
+          "sdk/python/pyproject.toml",
+          "agent/sandbox/executor_manager/requirements.txt",
+          "agent/sandbox/sandbox_base_image/python/requirements.txt",
+          "tools/firecrawl/requirements.txt",
+          "tools/chatgpt-on-wechat/plugins/requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mysql",
+      "required": true,
+      "docker_image": "mysql:8",
+      "port": 3306,
+      "env_url": "MYSQL_PASSWORD",
+      "compose": [
+        "docker/docker-compose.yml",
+        "docker/docker-compose-base.yml"
+      ],
+      "bootstrap": [
+        "cd docker && docker compose -f docker-compose-base.yml -f docker-compose.yml --profile elasticsearch --profile cpu up -d"
+      ]
+    },
+    {
+      "engine": "elasticsearch",
+      "required": true,
+      "docker_image": "elasticsearch:8",
+      "port": 9200,
+      "env_url": "ELASTIC_PASSWORD",
+      "compose": [
+        "docker/docker-compose-base.yml"
+      ],
+      "bootstrap": [
+        "Use compose profile elasticsearch (es01). Do not invent a sqlite file DB."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": true,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_PASSWORD",
+      "compose": [
+        "docker/docker-compose-base.yml"
+      ],
+      "bootstrap": [
+        "Started by docker-compose-base.yml"
+      ]
+    },
+    {
+      "engine": "minio",
+      "required": true,
+      "docker_image": "minio/minio",
+      "port": 9000,
+      "env_url": "MINIO_PASSWORD",
+      "compose": [
+        "docker/docker-compose-base.yml"
+      ],
+      "bootstrap": [
+        "Object store for documents. Started by docker-compose-base.yml"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    3306,
+    5432,
+    6379,
+    9000,
+    9200,
+    9385
+  ],
+  "env_files": [
+    "agent/sandbox/.env.example",
+    "docker/.env.single-bucket-example"
+  ],
+  "env": [
+    {
+      "key": "SANDBOX_EXECUTOR_MANAGER_POOL_SIZE",
+      "default": "5",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_BASE_PYTHON_IMAGE",
+      "default": "sandbox-base-python:latest",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_BASE_NODEJS_IMAGE",
+      "default": "sandbox-base-nodejs:latest",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_EXECUTOR_MANAGER_PORT",
+      "default": "9385",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_ENABLE_SECCOMP",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_MAX_MEMORY",
+      "default": "256m # b, k, m, g",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "SANDBOX_TIMEOUT",
+      "default": "10s # s, m, 1m30s",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "agent/sandbox/.env.example"
+    },
+    {
+      "key": "MINIO_HOST",
+      "default": "minio.example.com:443",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "MINIO_USER",
+      "default": "your-access-key",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "MINIO_PASSWORD",
+      "default": "your-secret-password-here",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "MINIO_BUCKET",
+      "default": "ragflow-bucket",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "MINIO_PREFIX_PATH",
+      "default": "ragflow",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "STORAGE_IMPL",
+      "default": "MINIO",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.single-bucket-example"
+    },
+    {
+      "key": "HF_ENDPOINT",
+      "default": "https://hf-mirror.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "PYTHONPATH",
+      "default": "$(pwd)",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "COMPONENT_EXEC_TIMEOUT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:agent/tools/retrieval.py"
+    },
+    {
+      "key": "ES_INDEX_PREFIX",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:memory/services/messages.py"
+    },
+    {
+      "key": "KEENABLE_API_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:agent/tools/keenable.py"
+    },
+    {
+      "key": "RAGFLOW_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:example/sdk/chunk_example.py"
+    },
+    {
+      "key": "RAGFLOW_HOST_ADDRESS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:example/sdk/chunk_example.py"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker/docker-compose.yml",
+      "docker/docker-compose-base.yml"
+    ],
+    "services": [
+      {
+        "name": "mysql",
+        "image": "mysql:8",
+        "ports": [
+          "3306:3306"
+        ]
+      },
+      {
+        "name": "es01",
+        "image": "elasticsearch",
+        "ports": [
+          "9200:9200"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "minio",
+        "image": "minio/minio",
+        "ports": [
+          "9000:9000"
+        ]
+      },
+      {
+        "name": "ragflow-cpu",
+        "image": "infiniflow/ragflow",
+        "ports": [
+          "80:80",
+          "9380:9380"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "Copy docker/.env.single-bucket-example to docker/.env then compose up. Do not use sqlite."
+  },
+  "launch": {
+    "dev": "cd docker && docker compose --profile elasticsearch --profile cpu up -d",
+    "build": "npm run build",
+    "frontend": "cd web && npm run dev"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/rag-platform/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy agent/sandbox/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mysql",
+        "run": "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      },
+      {
+        "id": "db-elasticsearch",
+        "run": "Start via docker compose profile elasticsearch (do not invent a local sqlite file)."
+      },
+      {
+        "id": "db-minio",
+        "run": "Start MinIO via the project docker compose (object store for documents)."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/rag-platform/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/rag-platform/overlay.json",
+    "agents": ".navin/apps/rag-platform/agents/",
+    "env": "docker/.env (from docker/.env.single-bucket-example)",
+    "frontend": "web/package.json",
+    "backend": "pyproject.toml",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "knowledge-agent",
+      "document-ingestion-agent",
+      "research-agent",
+      "qa-agent",
+      "knowledge-curator"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

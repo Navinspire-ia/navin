@@ -44,6 +44,16 @@ class TranscriptionProviderSpec:
 
 TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     TranscriptionProviderSpec(
+        name="navin",
+        default_model="nvidia/parakeet-tdt-0.6b-v3",
+        adapter="navin.providers.transcription:NavinTranscriptionProvider",
+    ),
+    TranscriptionProviderSpec(
+        name="openrouter",
+        default_model="nvidia/parakeet-tdt-0.6b-v3",
+        adapter="navin.providers.transcription:OpenRouterTranscriptionProvider",
+    ),
+    TranscriptionProviderSpec(
         name="groq",
         default_model="whisper-large-v3",
         adapter="navin.providers.transcription:GroqTranscriptionProvider",
@@ -52,11 +62,6 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         name="openai",
         default_model="whisper-1",
         adapter="navin.providers.transcription:OpenAITranscriptionProvider",
-    ),
-    TranscriptionProviderSpec(
-        name="openrouter",
-        default_model="openai/whisper-1",
-        adapter="navin.providers.transcription:OpenRouterTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="assemblyai",
@@ -68,6 +73,22 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         default_model="FunAudioLLM/SenseVoiceSmall",
         adapter="navin.providers.transcription:OpenAITranscriptionProvider",
         aliases=("silicon",),
+    ),
+    TranscriptionProviderSpec(
+        name="ollama",
+        default_model="whisper",
+        adapter="navin.providers.transcription:OllamaTranscriptionProvider",
+    ),
+    TranscriptionProviderSpec(
+        name="vllm",
+        default_model="whisper-large-v3",
+        adapter="navin.providers.transcription:VllmTranscriptionProvider",
+    ),
+    TranscriptionProviderSpec(
+        name="lm_studio",
+        default_model="whisper",
+        adapter="navin.providers.transcription:LmStudioTranscriptionProvider",
+        aliases=("lm-studio", "lmstudio"),
     ),
 )
 

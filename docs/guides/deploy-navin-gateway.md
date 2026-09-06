@@ -55,6 +55,8 @@ navin gateway logs
 
 - Plan ports before exposing services. Gateway health defaults to `18790`,
   WebUI/WebSocket defaults to `8765`, and `navin serve` defaults to `8900`.
+  See the full registry and `navin ports` / `navin ports check` in
+  [Ports](../ports.md).
 - Bind externally only when you have configured tokens or API keys.
 - Keep chat access control intentional before deploying.
 - Use Docker or Linux sandboxing when shell tools are enabled for unattended
@@ -71,6 +73,4 @@ navin gateway logs
 
 ## Related navin docs
 
-- [Deployment](../deployment.md)
 - [Multiple Instances](../multiple-instances.md)
-- [Configuration](../configuration.md)

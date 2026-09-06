@@ -1,0 +1,279 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "email-marketing",
+  "name": "Email Marketing",
+  "kind": "business",
+  "category": "marketing",
+  "source_github": "https://github.com/createdbymax/Loopletter-Open-source-email-marketing-platform",
+  "source_name": "Loopletter",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Supabase",
+    "AWS SES"
+  ],
+  "studied_from": "templates_apps/email-marketing",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 6,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Loopletter > Open-source email marketing platform for independent artists and creators. Built with Next.js, Supabase, and AWS SES. Loopletter helps artists own their audience, automate campaigns, and understand performance without relying on walled-garden social platforms. This repo contains the full web application, infrastructure scripts, and documentation needed to self-host or extend the product. > **Quick links:** [Docs](docs/README.md) \u00b7 [Self-hosting guide](docs/SERVICES.md) \u00b7 [Code of Conduct](CODE_OF_CONDUCT.md) \u00b7 [Contributing](CONTRIBUTING.md)"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": true
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "supabase",
+      "why": "Local Supabase (`npx supabase start`)"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "loopletter",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint",
+          "test-aws": "node scripts/test-aws-credentials.js",
+          "test-ses": "npx tsx scripts/test-ses-config.ts",
+          "test-redis": "npx tsx scripts/test-redis.ts",
+          "test-queue-simple": "npx tsx scripts/test-queue-simple.ts",
+          "test-queue": "npx tsx scripts/test-queue.ts",
+          "test-system": "npx tsx scripts/test-complete-system.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "ioredis",
+          "next",
+          "react",
+          "redis"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "loopletter",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint",
+          "test-aws": "node scripts/test-aws-credentials.js",
+          "test-ses": "npx tsx scripts/test-ses-config.ts",
+          "test-redis": "npx tsx scripts/test-redis.ts",
+          "test-queue-simple": "npx tsx scripts/test-queue-simple.ts",
+          "test-queue": "npx tsx scripts/test-queue.ts",
+          "test-system": "npx tsx scripts/test-complete-system.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "ioredis",
+          "next",
+          "react",
+          "redis"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    },
+    {
+      "engine": "supabase",
+      "required": true,
+      "docker_image": "supabase/postgres",
+      "port": 54321,
+      "env_url": "VITE_SUPABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379,
+    54321
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "NEXT_PUBLIC_ENABLE_POSTHOG",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:instrumentation-client.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_POSTHOG_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:instrumentation-client.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/email-marketing/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-supabase",
+        "run": "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/email-marketing/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/email-marketing/overlay.json",
+    "agents": ".navin/apps/email-marketing/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "campaign-agent",
+      "audience-agent",
+      "copy-agent",
+      "deliverability-agent",
+      "analytics-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

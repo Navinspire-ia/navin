@@ -14,12 +14,12 @@ Discovery quality determines everything downstream: qualification accuracy, prop
 
 1. `account-research` sheet: company, news, tech, likely pains
 2. Call goal: what must be true after 30 minutes to advance the deal?
-3. Question set (pick 8–10, ordered):
+3. Question set (pick 8-10, ordered):
 
 | Theme | Example questions |
 |-------|-------------------|
 | Trigger | "Qu'est-ce qui fait que vous regardez ça maintenant ?" |
-| Pain & cost | "Que se passe-t-il si rien ne change ?" — chiffrer |
+| Pain & cost | "Que se passe-t-il si rien ne change ?" - chiffrer |
 | Current state | "Comment faites-vous aujourd'hui ? Qu'est-ce qui coince ?" |
 | Decision | "Qui d'autre est impliqué ? Comment se décide un projet comme ça chez vous ?" |
 | Budget/timing | "Une enveloppe est-elle définie ? Quelle échéance ?" |
@@ -28,7 +28,7 @@ Discovery quality determines everything downstream: qualification accuracy, prop
 ## Post-call summary (within 2 hours)
 
 ```markdown
-## Discovery — <company> <date>
+## Discovery - <company> <date>
 - Participants & roles
 - Pain (their words, verbatim quotes)
 - Cost of the problem: ...
@@ -46,4 +46,4 @@ Store in `sales/accounts/<company>/`; sync to CRM (`crm-update-agent`).
 
 - 70/30 listening ratio: the question list is a map, not a script.
 - Never leave a call without a dated next step agreed aloud.
-- Verbatim beats paraphrase — proposals reuse their exact words.
+- Verbatim beats paraphrase - proposals reuse their exact words.

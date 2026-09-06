@@ -7,12 +7,14 @@ mutate an existing session history list in place.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from navin.config.schema import ToolResultClearing
 from navin.utils.helpers import (
     estimate_message_tokens,
     estimate_prompt_tokens_chain,
@@ -26,19 +28,77 @@ if TYPE_CHECKING:
     from navin.providers.base import LLMProvider
 
 SNIP_SAFETY_BUFFER = 1024
-MICROCOMPACT_KEEP_RECENT = 10
-MICROCOMPACT_MIN_CHARS = 500
-INFLIGHT_COMPACT_TARGET_RATIO = 0.85
-COMPACTABLE_TOOLS = frozenset({
-    "read_file", "exec", "grep", "find_files",
-    "web_search", "web_fetch", "list_dir", "list_exec_sessions",
-})
+# After a hard overflow pass, leave more headroom so the next tool turns do not
+# immediately overflow again (better than sitting at 0.85 forever).
+INFLIGHT_COMPACT_TARGET_RATIO = 0.70
 # read_file is the recovery path for persisted results; exempting it prevents persist->read->persist loops.
 TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
-BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
+BACKFILL_CONTENT = "[Tool result unavailable - call was interrupted or lost]"
 PLACEHOLDER_TEXTS = frozenset({
     "[Previous assistant message omitted.]",
 })
+
+# Paths the model actually touched in the dropped turns. Enough to re-open
+# files after a snip; not a full parser of every tool payload.
+_SNIP_PATH_RE = re.compile(
+    r"(?:^|[\s\"'`=])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,8})",
+)
+_SNIP_BRIEF_MAX_FILES = 8
+_SNIP_BRIEF_MAX_ERRORS = 3
+_SNIP_BRIEF_MAX_CHARS = 900
+
+
+def deterministic_snip_brief(dropped: list[dict[str, Any]]) -> str:
+    """A mid-turn stand-in for the LLM handoff that cannot run here.
+
+    The dropped turns still exist on disk; this only names what the model
+    must re-read so it does not invent files, test results or a next step
+    from a window that is gone.
+    """
+    files: list[str] = []
+    seen_files: set[str] = set()
+    errors: list[str] = []
+    last_user = ""
+
+    for message in dropped:
+        role = str(message.get("role") or "")
+        content = message.get("content")
+        text = content if isinstance(content, str) else ""
+        if role == "user" and text.strip():
+            last_user = text.strip().splitlines()[0][:160]
+        name = str(message.get("name") or "")
+        if role == "tool" and (
+            str(message.get("status") or "").lower() == "error"
+            or text.lower().startswith("error")
+            or "fail" in text.lower()[:80]
+        ):
+            label = name or "tool"
+            snippet = text.strip().replace("\n", " ")[:120]
+            if snippet:
+                errors.append(f"{label}: {snippet}")
+        for match in _SNIP_PATH_RE.finditer(text):
+            path = match.group(1)
+            if path not in seen_files and len(files) < _SNIP_BRIEF_MAX_FILES:
+                seen_files.add(path)
+                files.append(path)
+
+    lines = [
+        "[Context notice] Older turns of this conversation were snipped "
+        "mid-run to fit the context window. Re-read the files and the "
+        "board before editing; do not rely on remembered content.",
+    ]
+    if last_user:
+        lines.append(f"Last user ask still in scope: {last_user}")
+    if files:
+        lines.append("Files touched in the dropped turns: " + ", ".join(files))
+    if errors:
+        lines.append(
+            "Recent tool failures: " + " | ".join(errors[:_SNIP_BRIEF_MAX_ERRORS])
+        )
+    brief = "\n".join(lines)
+    if len(brief) > _SNIP_BRIEF_MAX_CHARS:
+        return brief[:_SNIP_BRIEF_MAX_CHARS].rstrip() + "…"
+    return brief
 
 
 def _tool_call_name_is_valid(tool_call: Any) -> bool:
@@ -67,6 +127,13 @@ class ContextGovernanceConfig:
     context_block_limit: int | None = None
     max_tokens: int | None = None
     inflight_start_index: int = 0
+    clearing: ToolResultClearing = field(default_factory=ToolResultClearing)
+
+
+# Identity-keyed memo of full-prompt estimates: (messages_object, (tokens, source)).
+# Holding the object reference keeps it alive, so an id can never be recycled
+# into a false hit while the memo is in scope.
+_EstimateMemo = list[tuple[list[dict[str, Any]], tuple[int, str]]]
 
 
 class ContextGovernor:
@@ -82,11 +149,38 @@ class ContextGovernor:
         updated = self.strip_malformed_tool_calls(updated)
         updated = self.drop_orphan_tool_results(updated)
         updated = self.backfill_missing_tool_results(updated)
+        updated = self.clear_stale_turn_tool_results(config, updated)
         updated = self.apply_tool_result_budget(config, updated)
-        updated = self.compact_inflight_overflow(config, updated, compacted_tool_call_ids)
-        updated = self.snip_history(config, updated)
+        # In the common under-budget case, compact and snip estimate the very
+        # same list; the memo halves the tokenizer work of every iteration.
+        memo: _EstimateMemo = []
+        updated = self.compact_inflight_overflow(
+            config, updated, compacted_tool_call_ids, _estimate_memo=memo
+        )
+        updated = self.snip_history(config, updated, _estimate_memo=memo)
         updated = self.drop_orphan_tool_results(updated)
         return self.backfill_missing_tool_results(updated)
+
+    @staticmethod
+    def _estimate_with_memo(
+        config: ContextGovernanceConfig,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        memo: _EstimateMemo | None,
+    ) -> tuple[int, str]:
+        if memo is not None:
+            for obj, cached in memo:
+                if obj is messages:
+                    return cached
+        result = estimate_prompt_tokens_chain(
+            config.provider,
+            config.model,
+            messages,
+            tools,
+        )
+        if memo is not None:
+            memo.append((messages, result))
+        return result
 
     @staticmethod
     def input_budget(config: ContextGovernanceConfig) -> int:
@@ -316,71 +410,174 @@ class ContextGovernor:
                 updated[idx]["content"] = normalized
         return updated
 
+    @staticmethod
+    def _stale_summary_for(message: dict[str, Any]) -> str:
+        name = message.get("name", "tool")
+        return (
+            f"[Prior {name} result from an earlier turn was cleared from the "
+            f"replayed context; the call completed. Re-run {name} if its "
+            "output is needed again.]"
+        )
+
+    def clear_stale_turn_tool_results(
+        self,
+        config: ContextGovernanceConfig,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Blank bulky tool results from turns older than the last N user turns.
+
+        This runs on every request, independent of context pressure: replayed
+        tool dumps from finished turns are the main source of dead input
+        tokens, and the model can always re-run the tool. The rule is
+        deterministic and monotone - once a result ages past the boundary it
+        renders as the same stub on every later turn, so the prompt prefix in
+        front of it never changes again and the provider prompt cache stays
+        warm there. Each new turn only re-caches the region of the turn that
+        just aged out.
+        """
+        policy = config.clearing
+        stale_turns = int(getattr(policy, "stale_after_user_turns", 0) or 0)
+        if stale_turns <= 0:
+            return messages
+        user_indexes = [
+            i for i, m in enumerate(messages) if m.get("role") == "user"
+        ]
+        # Keep the current turn plus the last `stale_turns` completed turns.
+        if len(user_indexes) <= stale_turns:
+            return messages
+        cutoff = user_indexes[-(stale_turns + 1)]
+
+        excluded = frozenset(policy.exclude_tools)
+        updated: list[dict[str, Any]] | None = None
+        for idx, msg in enumerate(messages):
+            if idx >= cutoff:
+                break
+            if msg.get("role") != "tool" or msg.get("name") in excluded:
+                continue
+            content = msg.get("content")
+            if not isinstance(content, str) or len(content) < policy.min_chars:
+                continue
+            summary = self._stale_summary_for(msg)
+            if content == summary:
+                continue
+            if updated is None:
+                updated = [dict(m) for m in messages]
+            updated[idx]["content"] = summary
+        if updated is None:
+            return messages
+        logger.debug(
+            "Cleared stale prior-turn tool results for {} (cutoff idx {})",
+            config.session_key or "default",
+            cutoff,
+        )
+        return updated
+
     def compact_inflight_overflow(
         self,
         config: ContextGovernanceConfig,
         messages: list[dict[str, Any]],
         compacted_tool_call_ids: set[str],
+        *,
+        _estimate_memo: _EstimateMemo | None = None,
     ) -> list[dict[str, Any]]:
-        """Compact in-flight tool results only when the request would overflow."""
+        """Compact in-flight tool results on soft pressure or hard overflow."""
         budget = self.input_budget(config)
         if budget <= 0:
             return messages
 
         tools = config.tools.get_definitions()
         updated = self._apply_recorded_compactions(messages, compacted_tool_call_ids)
-        estimate, source = estimate_prompt_tokens_chain(
-            config.provider,
-            config.model,
-            updated,
-            tools,
+        estimate, source = self._estimate_with_memo(
+            config, updated, tools, _estimate_memo
         )
-        if estimate <= budget:
+        soft_ratio = float(getattr(config.clearing, "soft_clear_ratio", 0.0) or 0.0)
+        soft_limit = int(budget * soft_ratio) if soft_ratio > 0 else 0
+        hard_overflow = estimate > budget
+        if not hard_overflow and (soft_limit <= 0 or estimate <= soft_limit):
             return updated
 
-        target = int(budget * INFLIGHT_COMPACT_TARGET_RATIO)
+        target = (
+            int(budget * INFLIGHT_COMPACT_TARGET_RATIO)
+            if hard_overflow
+            else soft_limit
+        )
         candidates = self._inflight_compaction_candidates(
             config,
             updated,
             compacted_tool_call_ids,
+            allow_recent_fallback=hard_overflow,
         )
         if not candidates:
             return updated
 
+        # The loop below mutates ``updated`` in place, so any estimate the
+        # memo holds for that object is about to describe stale contents.
+        if _estimate_memo is not None:
+            _estimate_memo[:] = [
+                entry for entry in _estimate_memo if entry[0] is not updated
+            ]
+
+        # Stopping the moment the target is met leaves the prompt sitting just under
+        # it, so the next turn overflows again and rewrites the prefix again, and the
+        # provider's cache is cold on every single turn of a long run. clear_at_least
+        # buys several turns of headroom for the one break already being paid for.
+        start_estimate = estimate
+        floor = config.clearing.clear_at_least
         for candidate_idx, (idx, tool_call_id) in enumerate(candidates):
             is_newest_candidate = candidate_idx == len(candidates) - 1
-            if is_newest_candidate and estimate <= budget:
+            if is_newest_candidate and estimate <= budget and hard_overflow:
+                break
+            if is_newest_candidate and not hard_overflow:
+                # Soft clear never touches the newest reclaimable result.
                 break
             if tool_call_id in compacted_tool_call_ids:
                 continue
             if updated is messages:
                 updated = [dict(m) for m in messages]
             compacted_tool_call_ids.add(tool_call_id)
-            self._compact_tool_result_at(updated, idx)
-            estimate, source = estimate_prompt_tokens_chain(
-                config.provider,
-                config.model,
-                updated,
-                tools,
-            )
-            if estimate <= target:
+            if source == "tiktoken":
+                # Only this one message changed, so re-encoding the whole
+                # prompt (150k tokens, once per blanked result, every step)
+                # is replaced by the difference on the message itself.
+                before = estimate_message_tokens(updated[idx])
+                self._compact_tool_result_at(updated, idx)
+                estimate = max(0, estimate - before + estimate_message_tokens(updated[idx]))
+            else:
+                # A provider counter has its own scale; keep asking it.
+                self._compact_tool_result_at(updated, idx)
+                estimate, source = estimate_prompt_tokens_chain(
+                    config.provider,
+                    config.model,
+                    updated,
+                    tools,
+                )
+            if estimate <= target and (
+                floor <= 0 or start_estimate - estimate >= floor or not hard_overflow
+            ):
                 break
 
         logger.debug(
-            "In-flight context compaction for {}: prompt={} budget={} target={} via {}, ids={}",
+            "In-flight context compaction for {}: prompt={} budget={} target={} "
+            "freed={} via {}, hard={}, ids={}",
             config.session_key or "default",
             estimate,
             budget,
             target,
+            start_estimate - estimate,
             source,
+            hard_overflow,
             len(compacted_tool_call_ids),
         )
+        if _estimate_memo is not None:
+            _estimate_memo.append((updated, (estimate, source)))
         return updated
 
     def snip_history(
         self,
         config: ContextGovernanceConfig,
         messages: list[dict[str, Any]],
+        *,
+        _estimate_memo: _EstimateMemo | None = None,
     ) -> list[dict[str, Any]]:
         if not messages or not config.context_window_tokens:
             return messages
@@ -390,11 +587,8 @@ class ContextGovernor:
             return messages
 
         tools = config.tools.get_definitions()
-        estimate, _ = estimate_prompt_tokens_chain(
-            config.provider,
-            config.model,
-            messages,
-            tools,
+        estimate, _ = self._estimate_with_memo(
+            config, messages, tools, _estimate_memo
         )
         if estimate <= budget:
             return messages
@@ -422,7 +616,18 @@ class ContextGovernor:
             kept_tokens += msg_tokens
         kept.reverse()
 
-        return system_messages + self._legal_history_tail(kept, non_system)
+        tail = self._legal_history_tail(kept, non_system)
+        if len(tail) < len(non_system):
+            # No LLM handoff mid-turn (that would stall the request). A
+            # deterministic brief of what just dropped is still cheap and
+            # stops the model from inventing files, tests and decisions that
+            # lived only in the snipped turns.
+            dropped = non_system[: len(non_system) - len(tail)]
+            system_messages.append({
+                "role": "system",
+                "content": deterministic_snip_brief(dropped),
+            })
+        return system_messages + tail
 
     @staticmethod
     def _summary_for(message: dict[str, Any]) -> str:
@@ -475,25 +680,38 @@ class ContextGovernor:
         config: ContextGovernanceConfig,
         messages: list[dict[str, Any]],
         compacted_tool_call_ids: set[str],
+        *,
+        allow_recent_fallback: bool = True,
     ) -> list[tuple[int, str]]:
+        """Blankable tool results, stalest first.
+
+        Eligibility is a denylist rather than a roster of known-safe tools: a
+        roster silently protects everything it has not heard of, which meant every
+        MCP tool result stayed in the window no matter how large, and every tool
+        added since had to be remembered here to be reclaimable.
+        """
+        policy = config.clearing
+        excluded = frozenset(policy.exclude_tools)
         compactable: list[tuple[int, str]] = []
         for idx, msg in enumerate(messages):
             if idx < config.inflight_start_index:
                 continue
-            if msg.get("role") != "tool" or msg.get("name") not in COMPACTABLE_TOOLS:
+            if msg.get("role") != "tool" or msg.get("name") in excluded:
                 continue
             tool_call_id = msg.get("tool_call_id")
             if not tool_call_id or str(tool_call_id) in compacted_tool_call_ids:
                 continue
             content = msg.get("content")
-            if not isinstance(content, str) or len(content) < MICROCOMPACT_MIN_CHARS:
+            if not isinstance(content, str) or len(content) < policy.min_chars:
                 continue
             compactable.append((idx, str(tool_call_id)))
 
         if not compactable:
             return []
-        primary_count = max(0, len(compactable) - MICROCOMPACT_KEEP_RECENT)
+        primary_count = max(0, len(compactable) - policy.keep_recent)
         primary = compactable[:primary_count]
+        if not allow_recent_fallback:
+            return primary
         # Hard overflow beats the keep-recent preference. Return recent results
         # after stale ones so the newest result is naturally last.
         fallback = compactable[primary_count:]

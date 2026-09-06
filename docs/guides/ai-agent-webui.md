@@ -1,73 +1,57 @@
-# How to Use an AI Agent WebUI with navin
+# How to Use the Navin Desktop App Interface
 
-navin includes a browser WebUI for persistent chat sessions, visible agent
-activity, workspace controls, Apps, MCP presets, Skills, settings, and
-Automations.
+Navin is a desktop application with a full workbench: persistent chat, visible agent activity, project controls, Apps, MCP presets, Skills, Settings, and Automations.
 
-## What you will build
+## What you will use
 
-- a local browser workbench
-- one persistent chat session
-- a visible timeline of agent messages, tool calls, and file edit diffs
-- a gateway-backed WebSocket connection
+- the Navin desktop window (Windows, macOS, or Linux)
+- one or more persistent chat sessions
+- a live timeline of agent messages, tool calls, and file edit diffs
+- Settings panels for providers, models, channels, and tools
 
 ## When to use this
 
-Use the WebUI when you want a local AI agent interface that is easier to operate
-than a terminal, especially for project work, file attachments, model switching,
-workspace selection, Apps, Skills, and scheduled automations.
+Use the desktop UI for everyday agent work: project chat, file attachments, model switching, project selection, Apps, Skills, and scheduled automations. You do not need a terminal.
 
-## Install
+## Open Navin
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin agent -m "Hello!"
-```
+1. Install Navin from [navin.live/download](https://navin.live/download).
+2. Open the app and complete the setup wizard if prompted.
+3. Confirm a provider under **Settings → Providers**, then a model under **Settings → Models**.
+4. Open a project (or the demo workspace) and send a message in chat.
 
-The published wheel already includes the WebUI bundle. You only need the
-`webui/` source directory when changing the frontend.
+## What you see while the agent works
 
-## Minimal working example
+When Navin edits a file, the activity timeline can show changed line counts, a unified diff, and an **Open file** action for a read-only preview. File previews follow the chat's current workspace access mode: restricted access stays inside the selected project; Full Access can preview files outside the project when Settings allow it.
 
-```bash
-navin webui
-```
+Use the Dev workbench for explorer, editor, terminals, preview, and agent chat side by side. Details: [`../navin_dev/en/workbench.md`](../navin_dev/en/workbench.md).
 
-The launcher checks setup, enables the local WebSocket channel after
-confirmation, starts the gateway, and opens the browser.
+## Everyday surfaces
 
-When navin edits a file, the WebUI activity timeline can show the changed
-line counts, a unified diff, and an **Open file** action for a read-only
-preview. File previews use the chat's current workspace access mode: restricted
-access stays inside the selected workspace, while Full Access can preview files
-outside the workspace when the gateway allows it.
-
-## Production notes
-
-- Use `navin webui --background` when you do not want to keep a terminal open.
-- Use `navin gateway status`, `logs`, `restart`, and `stop` to manage a
-  background gateway.
-- If you expose the WebUI beyond localhost, set a token issue secret and review
-  workspace/tool access.
+| Area | What it is for |
+|---|---|
+| Chat | Persistent sessions, attachments, composer actions (`/dream`, `/goal`, …) |
+| Settings → Providers / Models | API keys, local endpoints, active model, task routing |
+| Settings → Channels | Telegram, Discord, Slack, and other chat apps |
+| Apps / MCP | External tools via Model Context Protocol |
+| Skills | Install and enable skill packs |
+| Automations | Scheduled jobs and system heartbeat inspection |
+| Memory | Durable project memory and Dream (see [`../memory.md`](../memory.md)) |
 
 ## Security notes
 
-- The first-run WebUI path binds to `127.0.0.1` by default.
-- Do not expose the WebUI on a LAN or public host without an intentional access
-  model.
-- Keep file and shell tools scoped to the workspace before inviting other users.
+- The desktop app stays on your computer by default.
+- Do not expose Navin to a LAN or public network without an intentional access model.
+- Keep file and shell tools scoped to the project before inviting other users through chat channels.
 
 ## Troubleshooting
 
-- The WebUI is served by the WebSocket channel on port `8765` by default.
-- The gateway health endpoint is separate from the browser UI.
-- If the page opens but messages fail, check provider setup with
-  `navin agent -m "Hello!"`.
+- Chat opens but messages fail: check **Settings → Providers** and **Settings → Models**, then send a short test message.
+- No project files: pick a folder with the project selector in the workbench.
+- Automations idle: leave Navin open and confirm the job is linked to a chat (see [`../automations.md`](../automations.md)).
 
-## Related navin docs
+## Related docs
 
-- [Navin WebUI](../webui.md)
-- [Quick Start](../quick-start.md)
-- [WebSocket protocol](../websocket.md)
-- [Configuration](../configuration.md)
+- [`build-a-personal-ai-agent.md`](./build-a-personal-ai-agent.md)
+- [`../configuration.md`](../configuration.md)
+- [`../start-without-technical-background.md`](../start-without-technical-background.md)

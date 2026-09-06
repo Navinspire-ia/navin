@@ -1,12 +1,14 @@
 ---
 name: github
 description: "Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries."
-metadata: {"navin":{"emoji":"🐙","requires":{"bins":["gh"]},"install":[{"id":"brew","kind":"brew","formula":"gh","bins":["gh"],"label":"Install GitHub CLI (brew)"},{"id":"apt","kind":"apt","package":"gh","bins":["gh"],"label":"Install GitHub CLI (apt)"}]}}
+metadata: {"navin":{"emoji":"🐙","requires":{"bins":["gh"]},"install":[{"id":"brew","kind":"brew","formula":"gh","bins":["gh"],"label":"Install GitHub CLI (brew)"},{"id":"apt","kind":"apt","package":"gh","bins":["gh"],"label":"Install GitHub CLI (apt)"},{"id":"dnf","kind":"dnf","package":"gh","bins":["gh"],"label":"Install GitHub CLI (dnf)"},{"id":"pacman","kind":"pacman","package":"github-cli","bins":["gh"],"label":"Install GitHub CLI (pacman)"},{"id":"winget","kind":"winget","package":"GitHub.cli","bins":["gh"],"label":"Install GitHub CLI (winget)"}]}}
 ---
 
 # GitHub Skill
 
 Use the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.
+
+`gh` is only for the GitHub API surface (PRs, issues, CI runs, releases). For plain version-control work - commits, branches, merges, rebases, history - use the `git` skill instead.
 
 ## Pull Requests
 

@@ -1,0 +1,437 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "fleet-management",
+  "name": "Fleet Management",
+  "kind": "business",
+  "category": "logistics",
+  "source_github": "https://github.com/DigitalHerencia/FleetFusion",
+  "source_name": "FleetFusion",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Prisma",
+    "PostgreSQL"
+  ],
+  "studied_from": "templates_apps/fleet-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 25,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "--- > **FleetFusion** is a next-gen SaaS platform for trucking companies to manage vehicles, drivers, > loads, compliance, and analytics. Built with the latest Next.js, React Server Components, Prisma > ORM, and Neon Postgres. \ud83d\ude80 --- \u2728 Features - **\ud83d\udea6 Dispatch Board:** Drag-and-drop load assignment, real-time status, and notifications - **\ud83d\ude9a Vehicle Management:** Maintenance, inspections, compliance docs, and analytics - **\ud83e\uddd1\u200d\u2708\ufe0f Driver Management:** Licensing, HOS, performance, and alerts"
+  },
+  "system": {
+    "node": true,
+    "node_engine": "24.12.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "fleetfusion",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint",
+          "test": "vitest",
+          "test:coverage": "vitest run --coverage",
+          "test:e2e": "playwright test",
+          "prisma:migrate": "prisma migrate dev"
+        },
+        "node_engine": "24.12.0",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "fleetfusion",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint",
+          "test": "vitest",
+          "test:coverage": "vitest run --coverage",
+          "test:e2e": "playwright test",
+          "prisma:migrate": "prisma migrate dev"
+        },
+        "node_engine": "24.12.0",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "fleetfusion",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint",
+          "test": "vitest",
+          "test:coverage": "vitest run --coverage",
+          "test:e2e": "playwright test",
+          "prisma:migrate": "prisma migrate dev"
+        },
+        "node_engine": "24.12.0",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://user:password@host-pooler.region.aws.neon.tech/database?sslmode=require",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "DIRECT_URL",
+      "default": "postgresql://user:password@host.region.aws.neon.tech/database?sslmode=require",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_MAX_CONNECTIONS",
+      "default": "20",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_CONNECTION_TIMEOUT",
+      "default": "30000",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_IDLE_TIMEOUT",
+      "default": "10000",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      "default": "pk_test_...",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLERK_SECRET_KEY",
+      "default": "sk_test_...",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLERK_WEBHOOK_SECRET",
+      "default": "whsec_...",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_SIGN_IN_URL",
+      "default": "/sign-in",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_SIGN_UP_URL",
+      "default": "/sign-up",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL",
+      "default": "/onboarding",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL",
+      "default": "/onboarding",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "BLOB_READ_WRITE_TOKEN",
+      "default": "vercel_blob_...",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_MAPS_API_KEY",
+      "default": "AIza...",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_ENABLE_AUTH",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_ENABLE_ANALYTICS",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_ENABLE_REAL_TIME",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATADOG_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATADOG_LOG_URL",
+      "default": "https://http-intake.logs.datadoghq.com/v1/input",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "UPSTASH_REDIS_REST_URL",
+      "default": "https://...",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "UPSTASH_REDIS_REST_TOKEN",
+      "default": "...",
+      "required": true,
+      "secret": true,
+      "purpose": "Redis setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run prisma:migrate",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/fleet-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run prisma:migrate"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/fleet-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/fleet-management/overlay.json",
+    "agents": ".navin/apps/fleet-management/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "dispatch-agent",
+      "driver-agent",
+      "maintenance-agent",
+      "compliance-agent",
+      "route-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

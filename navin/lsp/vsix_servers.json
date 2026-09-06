@@ -1,0 +1,144 @@
+{
+  "docs": [
+    "Catalogue of VS Code extensions that carry a usable language server.",
+    "DATA, not code: supporting another extension means adding an entry here.",
+    "",
+    "A .vsix is a zip. An extension implementing a language feature ships the",
+    "language server inside it, and that server speaks LSP over stdio like any",
+    "other one: it needs no VS Code API and no extension host. So installing it",
+    "is a download plus an entry in lsp_servers.json, and the LSP layer itself",
+    "is untouched.",
+    "",
+    "Only entries whose handshake was actually verified belong here. An",
+    "extension that merely contains a file named *server.js is not enough:",
+    "several bundle a server that never answers 'initialize' outside VS Code,",
+    "or that needs a module (typically 'typescript') the editor normally",
+    "supplies. Those are left out on purpose - see docs/ for the survey.",
+    "",
+    "Extensions that only draw UI (themes, GitLens, Vim, Prettier) carry no",
+    "server at all and can never be supported this way.",
+    "",
+    "Per entry:",
+    "  marketplace       Open VSX '<namespace>/<name>' identifier",
+    "  display_name      what to show a human",
+    "  runtime           'node' (run through node) or 'native' (executable)",
+    "  platform_specific the server is a compiled program, so the download must",
+    "                    ask for this machine's build; the default universal",
+    "                    archive carries no binary at all",
+    "  entrypoint        path of the server inside the extracted vsix, spelled",
+    "                    the way the Unix build does ('.exe' is tried too)",
+    "  verified_version  the version this entry was actually handshaked against",
+    "  notes             caveats worth surfacing at install time",
+    "  lsp               the servers.json entry, minus 'binary' and the server",
+    "                    path, which the installer fills in once it knows where",
+    "                    the extension landed on disk"
+  ],
+  "version": "2026-08-14",
+  "extensions": {
+    "svelte": {
+      "marketplace": "svelte/svelte-vscode",
+      "display_name": "Svelte",
+      "runtime": "node",
+      "entrypoint": "extension/node_modules/svelte-language-server/bin/server.js",
+      "verified_version": "110.3.1",
+      "notes": "",
+      "lsp": {
+        "languages": ["svelte"],
+        "extensions": [".svelte"],
+        "args": ["--stdio"],
+        "root_markers": ["svelte.config.js", "svelte.config.mjs", "package.json", ".git"],
+        "language_ids": { ".svelte": "svelte" },
+        "priority": 10
+      }
+    },
+    "prisma": {
+      "marketplace": "prisma/prisma",
+      "display_name": "Prisma",
+      "runtime": "node",
+      "entrypoint": "extension/dist/prisma6-language-server/bin.js",
+      "verified_version": "31.11.0",
+      "notes": "",
+      "lsp": {
+        "languages": ["prisma"],
+        "extensions": [".prisma"],
+        "args": ["--stdio"],
+        "root_markers": ["schema.prisma", "package.json", ".git"],
+        "language_ids": { ".prisma": "prisma" },
+        "priority": 10
+      }
+    },
+    "graphql": {
+      "marketplace": "graphql/vscode-graphql",
+      "display_name": "GraphQL",
+      "runtime": "node",
+      "entrypoint": "extension/out/serverStdio/index.js",
+      "verified_version": "0.13.6-alpha.0",
+      "notes": "",
+      "lsp": {
+        "languages": ["graphql"],
+        "extensions": [".graphql", ".gql"],
+        "args": ["--stdio"],
+        "root_markers": [
+          "graphql.config.js",
+          "graphql.config.json",
+          ".graphqlrc",
+          ".graphqlrc.yml",
+          "package.json",
+          ".git"
+        ],
+        "language_ids": { ".graphql": "graphql", ".gql": "graphql" },
+        "priority": 10
+      }
+    },
+    "lua": {
+      "marketplace": "sumneko/lua",
+      "display_name": "Lua",
+      "runtime": "native",
+      "platform_specific": true,
+      "entrypoint": "extension/server/bin/lua-language-server",
+      "verified_version": "3.19.1",
+      "notes": "",
+      "lsp": {
+        "languages": ["lua"],
+        "extensions": [".lua"],
+        "args": [],
+        "root_markers": [".luarc.json", ".luacheckrc", "stylua.toml", ".git"],
+        "language_ids": { ".lua": "lua" },
+        "priority": 10
+      }
+    },
+    "terraform": {
+      "marketplace": "hashicorp/terraform",
+      "display_name": "Terraform",
+      "runtime": "native",
+      "platform_specific": true,
+      "entrypoint": "extension/bin/terraform-ls",
+      "verified_version": "2.40.0",
+      "notes": "",
+      "lsp": {
+        "languages": ["terraform"],
+        "extensions": [".tf", ".tfvars"],
+        "args": ["serve"],
+        "root_markers": [".terraform", "main.tf", "versions.tf", ".git"],
+        "language_ids": { ".tf": "terraform", ".tfvars": "terraform-vars" },
+        "priority": 10
+      }
+    },
+    "tailwindcss": {
+      "marketplace": "bradlc/vscode-tailwindcss",
+      "display_name": "Tailwind CSS",
+      "runtime": "node",
+      "entrypoint": "extension/dist/tailwindServer.js",
+      "verified_version": "0.16.0",
+      "notes": "Completion and hover only. Ranked below vscode_css, which navin routes .css files to first when it is installed; this one takes over otherwise.",
+      "lsp": {
+        "languages": ["css"],
+        "extensions": [".css"],
+        "args": ["--stdio"],
+        "root_markers": ["tailwind.config.js", "tailwind.config.ts", "package.json", ".git"],
+        "language_ids": { ".css": "css" },
+        "priority": 20
+      }
+    }
+  }
+}

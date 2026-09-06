@@ -1,0 +1,224 @@
+{
+  "docs": [
+    "Language server table. DATA, not code: supporting a new language server",
+    "means adding an entry here. A user override at <config dir>/lsp_servers.json",
+    "is merged in front of this file, which is also how a user points navin at a",
+    "server installed somewhere unusual.",
+    "",
+    "Per server:",
+    "  languages     navin index language names this server handles",
+    "  extensions    file suffixes routed to this server",
+    "  binary        name / project_paths / python_env, resolved like linters",
+    "  args          argv after the binary (stdio transport is required)",
+    "  root_markers  files that identify the project root for this server",
+    "  language_ids  suffix -> LSP languageId, per the LSP specification",
+    "  settings      initializationOptions sent during the handshake",
+    "  priority      lower wins when several servers match a file",
+    "",
+    "Servers are started lazily on first request and reused afterwards."
+  ],
+  "version": "2026-08-10",
+  "servers": {
+    "pyright": {
+      "languages": ["python"],
+      "extensions": [".py", ".pyi"],
+      "binary": {
+        "name": "pyright-langserver",
+        "project_paths": ["node_modules/.bin/pyright-langserver"],
+        "python_env": true
+      },
+      "args": ["--stdio"],
+      "root_markers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", ".git"],
+      "language_ids": { ".py": "python", ".pyi": "python" },
+      "settings": {
+        "python": {
+          "analysis": {
+            "diagnosticMode": "workspace",
+            "useLibraryCodeForTypes": true
+          }
+        }
+      },
+      "priority": 10
+    },
+    "pylsp": {
+      "languages": ["python"],
+      "extensions": [".py", ".pyi"],
+      "binary": { "name": "pylsp", "python_env": true, "run_as_module": "pylsp" },
+      "args": [],
+      "root_markers": ["pyproject.toml", "setup.py", "setup.cfg", ".git"],
+      "language_ids": { ".py": "python", ".pyi": "python" },
+      "priority": 20
+    },
+    "typescript": {
+      "languages": ["typescript", "javascript"],
+      "extensions": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+      "binary": {
+        "name": "typescript-language-server",
+        "project_paths": [
+          "node_modules/.bin/typescript-language-server",
+          "webui/node_modules/.bin/typescript-language-server",
+          "frontend/node_modules/.bin/typescript-language-server"
+        ]
+      },
+      "args": ["--stdio"],
+      "root_markers": ["tsconfig.json", "jsconfig.json", "package.json", ".git"],
+      "language_ids": {
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascriptreact",
+        ".mjs": "javascript",
+        ".cjs": "javascript"
+      },
+      "priority": 10
+    },
+    "dart": {
+      "languages": ["dart"],
+      "extensions": [".dart"],
+      "binary": { "name": "dart" },
+      "args": ["language-server", "--protocol=lsp"],
+      "root_markers": ["pubspec.yaml", ".git"],
+      "language_ids": { ".dart": "dart" },
+      "priority": 10
+    },
+    "gopls": {
+      "languages": ["go"],
+      "extensions": [".go"],
+      "binary": { "name": "gopls" },
+      "args": ["serve"],
+      "root_markers": ["go.mod", ".git"],
+      "language_ids": { ".go": "go" },
+      "priority": 10
+    },
+    "rust_analyzer": {
+      "languages": ["rust"],
+      "extensions": [".rs"],
+      "binary": { "name": "rust-analyzer" },
+      "args": [],
+      "root_markers": ["Cargo.toml", ".git"],
+      "language_ids": { ".rs": "rust" },
+      "priority": 10
+    },
+    "clangd": {
+      "languages": ["c", "cpp"],
+      "extensions": [".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hxx", ".hh", ".m", ".mm"],
+      "binary": { "name": "clangd" },
+      "args": ["--background-index"],
+      "root_markers": [
+        "compile_commands.json",
+        "compile_flags.txt",
+        "CMakeLists.txt",
+        ".clangd",
+        ".git"
+      ],
+      "language_ids": {
+        ".c": "c",
+        ".h": "c",
+        ".cc": "cpp",
+        ".cpp": "cpp",
+        ".cxx": "cpp",
+        ".hpp": "cpp",
+        ".hxx": "cpp",
+        ".hh": "cpp",
+        ".m": "objective-c",
+        ".mm": "objective-cpp"
+      },
+      "priority": 10
+    },
+    "jdtls": {
+      "languages": ["java"],
+      "extensions": [".java"],
+      "binary": { "name": "jdtls" },
+      "args": [],
+      "root_markers": [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        ".git"
+      ],
+      "language_ids": { ".java": "java" },
+      "priority": 10
+    },
+    "bashls": {
+      "languages": ["bash", "shell"],
+      "extensions": [".sh", ".bash", ".zsh"],
+      "binary": { "name": "bash-language-server" },
+      "args": ["start"],
+      "root_markers": [".git"],
+      "language_ids": {
+        ".sh": "shellscript",
+        ".bash": "shellscript",
+        ".zsh": "shellscript"
+      },
+      "priority": 10
+    },
+    "yamlls": {
+      "languages": ["yaml"],
+      "extensions": [".yaml", ".yml"],
+      "binary": {
+        "name": "yaml-language-server",
+        "project_paths": [
+          "node_modules/.bin/yaml-language-server",
+          "webui/node_modules/.bin/yaml-language-server"
+        ]
+      },
+      "args": ["--stdio"],
+      "root_markers": [".git", "package.json"],
+      "language_ids": { ".yaml": "yaml", ".yml": "yaml" },
+      "priority": 10
+    },
+    "vscode_json": {
+      "languages": ["json"],
+      "extensions": [".json", ".jsonc"],
+      "binary": {
+        "name": "vscode-json-language-server",
+        "project_paths": [
+          "node_modules/.bin/vscode-json-language-server",
+          "webui/node_modules/.bin/vscode-json-language-server"
+        ]
+      },
+      "args": ["--stdio"],
+      "root_markers": ["package.json", ".git"],
+      "language_ids": { ".json": "json", ".jsonc": "jsonc" },
+      "priority": 10
+    },
+    "vscode_html": {
+      "languages": ["html"],
+      "extensions": [".html", ".htm"],
+      "binary": {
+        "name": "vscode-html-language-server",
+        "project_paths": [
+          "node_modules/.bin/vscode-html-language-server",
+          "webui/node_modules/.bin/vscode-html-language-server"
+        ]
+      },
+      "args": ["--stdio"],
+      "root_markers": ["package.json", ".git"],
+      "language_ids": { ".html": "html", ".htm": "html" },
+      "priority": 10
+    },
+    "vscode_css": {
+      "languages": ["css", "scss", "less"],
+      "extensions": [".css", ".scss", ".less"],
+      "binary": {
+        "name": "vscode-css-language-server",
+        "project_paths": [
+          "node_modules/.bin/vscode-css-language-server",
+          "webui/node_modules/.bin/vscode-css-language-server"
+        ]
+      },
+      "args": ["--stdio"],
+      "root_markers": ["package.json", ".git"],
+      "language_ids": {
+        ".css": "css",
+        ".scss": "scss",
+        ".less": "less"
+      },
+      "priority": 10
+    }
+  }
+}

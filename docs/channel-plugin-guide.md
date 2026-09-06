@@ -50,13 +50,11 @@ from navin.bus.events import OutboundMessage
 from navin.bus.queue import MessageBus
 from navin.config.schema import Base
 
-
 class WebhookConfig(Base):
     """Webhook channel configuration."""
     enabled: bool = False
     port: int = 9000
     allow_from: list[str] = Field(default_factory=list)
-
 
 class WebhookChannel(BaseChannel):
     name = "webhook"
@@ -100,11 +98,11 @@ class WebhookChannel(BaseChannel):
     async def send(self, msg: OutboundMessage) -> None:
         """Deliver an outbound message.
 
-        msg.content  — markdown text (convert to platform format as needed)
-        msg.media    — list of local file paths to attach
-        msg.chat_id  — the recipient (same chat_id you passed to _handle_message)
-        msg.metadata — channel routing context such as message/thread ids
-        msg.event    — typed runtime event for progress/status messages
+        msg.content  - markdown text (convert to platform format as needed)
+        msg.media    - list of local file paths to attach
+        msg.chat_id  - the recipient (same chat_id you passed to _handle_message)
+        msg.metadata - channel routing context such as message/thread ids
+        msg.event    - typed runtime event for progress/status messages
         """
         logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
         # In a real plugin: POST to a callback URL, send via SDK, etc.
@@ -268,7 +266,7 @@ navin channels login <channel_name> --force  # re-authenticate
 class OutboundMessage:
     channel: str        # your channel name
     chat_id: str        # recipient (same value you passed to _handle_message)
-    content: str        # markdown text — convert to platform format as needed
+    content: str        # markdown text - convert to platform format as needed
     media: list[str]    # local file paths to attach (images, audio, docs)
     metadata: dict      # channel routing context, e.g. "message_id" for threading
     event: object | None # typed runtime/UI event; usually inspect with isinstance()
@@ -278,7 +276,7 @@ Runtime/UI semantics live on `msg.event`. Plugin-authored outbound messages shou
 
 ## Streaming Support
 
-Channels can opt into real-time streaming — the agent sends content token-by-token instead of one final message. This is entirely optional; channels work fine without it.
+Channels can opt into real-time streaming - the agent sends content token-by-token instead of one final message. This is entirely optional; channels work fine without it.
 
 ### How It Works
 
@@ -306,10 +304,10 @@ async def send_delta(
 ) -> None:
     buffer_key = stream_id or chat_id
     if stream_end:
-        # Streaming finished — do final formatting, cleanup, etc.
+        # Streaming finished - do final formatting, cleanup, etc.
         return
 
-    # Regular delta — append text, update the message on screen
+    # Regular delta - append text, update the message on screen
     # delta contains a small chunk of text (a few tokens)
 ```
 
@@ -341,17 +339,17 @@ class WebhookChannel(BaseChannel):
         buffer_key = stream_id or chat_id
         if stream_end:
             text = self._buffers.pop(buffer_key, "")
-            # Final delivery — format and send the complete message
+            # Final delivery - format and send the complete message
             await self._deliver(chat_id, text, final=True)
             return
 
         self._buffers.setdefault(buffer_key, "")
         self._buffers[buffer_key] += delta
-        # Incremental update — push partial text to the client
+        # Incremental update - push partial text to the client
         await self._deliver(chat_id, self._buffers[buffer_key], final=False)
 
     async def send(self, msg: OutboundMessage) -> None:
-        # Non-streaming path — unchanged
+        # Non-streaming path - unchanged
         await self._deliver(msg.chat_id, msg.content, final=True)
 ```
 
@@ -371,7 +369,7 @@ Enable streaming per channel:
 }
 ```
 
-When `streaming` is `false` (default) or omitted, only `send()` is called — no streaming overhead.
+When `streaming` is `false` (default) or omitted, only `send()` is called - no streaming overhead.
 
 ### BaseChannel Streaming API
 
@@ -493,7 +491,7 @@ Recommended rendering:
 
 ### Why Pydantic model is required
 
-`BaseChannel.is_allowed()` reads the permission list via `getattr(self.config, "allow_from", [])`. This works for Pydantic models where `allow_from` is a real Python attribute, but **fails silently for plain `dict`** — `dict` has no `allow_from` attribute, so `getattr` always returns the default `[]`, causing all messages to be denied.
+`BaseChannel.is_allowed()` reads the permission list via `getattr(self.config, "allow_from", [])`. This works for Pydantic models where `allow_from` is a real Python attribute, but **fails silently for plain `dict`** - `dict` has no `allow_from` attribute, so `getattr` always returns the default `[]`, causing all messages to be denied.
 
 Built-in channels use Pydantic config models (subclassing `Base` from `navin.config.schema`). Plugin channels **must do the same**.
 
@@ -535,7 +533,7 @@ async def start(self) -> None:
     token = self.config.token
 ```
 
-`allowFrom` is handled automatically by `_handle_message()` — you don't need to check it yourself.
+`allowFrom` is handled automatically by `_handle_message()` - you don't need to check it yourself.
 
 Override `default_config()` so `navin onboard` auto-populates `config.json`:
 
@@ -545,7 +543,7 @@ def default_config(cls) -> dict[str, Any]:
     return WebhookConfig().model_dump(by_alias=True)
 ```
 
-> **Note:** `default_config()` returns a plain `dict` (not a Pydantic model) because it's used to serialize into `config.json`. The recommended way is to instantiate your config model and call `model_dump(by_alias=True)` — this automatically uses camelCase keys (`allowFrom`) and keeps defaults in a single source of truth.
+> **Note:** `default_config()` returns a plain `dict` (not a Pydantic model) because it's used to serialize into `config.json`. The recommended way is to instantiate your config model and call `model_dump(by_alias=True)` - this automatically uses camelCase keys (`allowFrom`) and keeps defaults in a single source of truth.
 
 If not overridden, the base class returns `{"enabled": false}`.
 

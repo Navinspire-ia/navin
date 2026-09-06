@@ -59,7 +59,7 @@ SLACK_MAX_MESSAGE_LEN = 39_000  # Slack API allows ~40k; leave margin
 SLACK_DOWNLOAD_TIMEOUT = 30.0
 # Abort Socket Mode WSS handshake after this many seconds. REST auth_test can still
 # succeed while WSS blocks (firewall / region). slack-sdk does not apply HTTP(S)_PROXY
-# to websockets.connect — see slack_sdk.socket_mode.websockets.SocketModeClient.connect.
+# to websockets.connect - see slack_sdk.socket_mode.websockets.SocketModeClient.connect.
 SLACK_SOCKET_CONNECT_TIMEOUT_S = 45.0
 _HTML_DOWNLOAD_PREFIXES = (b"<!doctype html", b"<html")
 

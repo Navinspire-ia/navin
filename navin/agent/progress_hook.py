@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from navin.agent.hook import AgentHook, AgentHookContext
+from navin.agent.tool_output import bind_tool_call_meta, bind_tool_output_emitter
 from navin.utils.helpers import IncrementalThinkExtractor, strip_think
 from navin.utils.progress_events import (
     build_tool_event_finish_payloads,
@@ -16,6 +17,7 @@ from navin.utils.progress_events import (
     invoke_on_progress,
     on_progress_accepts_tool_events,
 )
+from navin.utils.task_progress import bind_task_progress_emitter, build_agent_ui_blob
 from navin.utils.tool_hints import format_tool_hints
 
 
@@ -29,7 +31,7 @@ class AgentProgressHook(AgentHook):
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         *,
         session_key: str | None = None,
-        tool_hint_max_length: int = 40,
+        tool_hint_max_length: int = 120,
         on_iteration: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(reraise=True)
@@ -111,9 +113,71 @@ class AgentProgressHook(AgentHook):
                 tool_hint=True,
                 tool_events=tool_events,
             )
+            # Let long-running tools (shell builds/installs) stream their
+            # output live into the same activity card as the start/end events.
+            if on_progress_accepts_tool_events(self._on_progress):
+                bind_tool_output_emitter(self._emit_tool_output_event)
+            bind_task_progress_emitter(self._emit_task_progress)
         for tc in context.tool_calls:
             args_str = json.dumps(tc.arguments, ensure_ascii=False)
             logger.info("Tool call: {}({})", tc.name, args_str[:200])
+
+    async def before_execute_tool(
+        self,
+        context: AgentHookContext,
+        tool_call: Any,
+        tool: Any,
+        params: Any,
+    ) -> None:
+        arguments = getattr(tool_call, "arguments", {}) or {}
+        bind_tool_call_meta(
+            call_id=str(getattr(tool_call, "id", "") or ""),
+            name=str(getattr(tool_call, "name", "") or ""),
+            arguments=arguments if isinstance(arguments, dict) else {},
+        )
+
+    async def _emit_tool_output_event(self, payload: dict[str, Any]) -> None:
+        if not self._on_progress:
+            return
+        agent_ui = None
+        if any(key in payload for key in ("percent", "eta_s", "label", "indeterminate")):
+            agent_ui = build_agent_ui_blob(
+                {
+                    "call_id": payload.get("call_id"),
+                    "label": payload.get("label") or "Running…",
+                    **(
+                        {"percent": payload["percent"]}
+                        if payload.get("percent") is not None
+                        else {}
+                    ),
+                    **(
+                        {"eta_s": payload["eta_s"]}
+                        if payload.get("eta_s") is not None
+                        else {}
+                    ),
+                    "indeterminate": bool(
+                        payload.get("indeterminate", payload.get("percent") is None)
+                    ),
+                }
+            )
+        await invoke_on_progress(
+            self._on_progress,
+            "",
+            tool_hint=False,
+            tool_events=[payload],
+            agent_ui=agent_ui,
+        )
+
+    async def _emit_task_progress(self, data: dict[str, Any]) -> None:
+        if not self._on_progress:
+            return
+        await invoke_on_progress(
+            self._on_progress,
+            "",
+            tool_hint=False,
+            agent_ui=build_agent_ui_blob(data),
+        )
+
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
         """Publish a reasoning chunk; channel plugins decide whether to render."""
         if (

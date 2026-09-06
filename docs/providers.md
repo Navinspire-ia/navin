@@ -1,8 +1,8 @@
 # Providers and Models
 
-Use this page when the first reply fails because of provider/model mismatch, or when you want to adapt the concrete setup example to a different provider. If you already know which provider you want and only need a pasteable setup, use [`provider-cookbook.md`](./provider-cookbook.md).
+Use this page when the first reply fails because of provider/model mismatch, or when you want to adapt a setup to a different provider. If you already know which provider you want and only need a short Settings recipe, use [`provider-cookbook.md`](./provider-cookbook.md).
 
-For normal local setup, open **Settings → Models** in the WebUI to add provider credentials, create a model preset, and select the active model. Use the JSON below for manual deployments, local endpoints, provider-specific fields, or diagnosis.
+For normal setup in the Navin desktop app, open **Settings → Providers** and **Settings → Models** to add credentials, create a model configuration, and select the active model. Use the JSON below only for advanced edits, local endpoints, provider-specific fields, or diagnosis.
 
 For every setup, answer three questions:
 
@@ -21,9 +21,9 @@ The docs show concrete provider names so the JSON is copyable, not because navin
 | An API key from a hosted provider or gateway | That provider's `providers.<name>.apiKey`, then a preset with that provider name and a model ID from that service. |
 | An OpenCode Zen or Go key | `providers.opencodeZen.apiKey` or `providers.opencodeGo.apiKey`, then a preset with `provider: "opencode_zen"` or `provider: "opencode_go"`. |
 | A company proxy or regional endpoint | The matching provider block plus `apiBase` if the proxy gives you a URL. |
-| A local OpenAI-compatible server | A local provider block such as `ollama`, `vllm`, `lmStudio`, or `custom`, usually with `apiBase`. |
-| An OAuth-based account | Run the matching `navin provider login ...` command, then select that provider explicitly in a preset. |
-| No provider yet | Pick one outside navin based on account access, pricing, regional availability, privacy requirements, and the model IDs you need. Then come back with its key and model ID. |
+| A local OpenAI-compatible server | A local provider block such as `ollama`, `vllm`, `lmStudio`, or `custom`, usually with `apiBase`. For Ollama, prefer Settings → Providers → Ollama ([guide](./guides/configure-ollama-local.md)). |
+| An OAuth-based account | Use the provider sign-in flow in **Settings → Providers** when offered, then select that provider explicitly in a model configuration. |
+| No provider yet | Pick one outside Navin based on account access, pricing, regional availability, privacy requirements, and the model IDs you need. Then paste its key and model ID in Settings. |
 
 ## Minimal Shape
 
@@ -231,6 +231,119 @@ Arbitrary custom provider names are OpenAI-compatible only; they do not use the 
 
 `providers.openai.apiType` may be set when you need to force a specific OpenAI API surface. Other providers reject `apiType`; leave it unset outside `providers.openai`. Replace the model with a model ID available to your OpenAI account.
 
+### Mistral
+
+```json
+{
+  "providers": {
+    "mistral": {
+      "apiKey": "${MISTRAL_API_KEY}"
+    }
+  },
+  "modelPresets": {
+    "primary": {
+      "provider": "mistral",
+      "model": "mistral-large-latest",
+      "maxTokens": 8192,
+      "contextWindowTokens": 128000
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "primary"
+    }
+  }
+}
+```
+
+Codestral, Ministral, Devstral, and Magistral model ids also match this
+provider. Magistral reasoning models reject `reasoningEffort` on the wire;
+navin remaps ordinary effort values for other Mistral models.
+
+### Groq
+
+```json
+{
+  "providers": {
+    "groq": {
+      "apiKey": "${GROQ_API_KEY}"
+    }
+  },
+  "modelPresets": {
+    "primary": {
+      "provider": "groq",
+      "model": "llama-3.3-70b-versatile",
+      "maxTokens": 8192,
+      "contextWindowTokens": 128000
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "primary"
+    }
+  }
+}
+```
+
+Pin `provider: "groq"` for Groq model ids. The same key can also power
+Whisper-style transcription under Settings → Voice.
+
+### Hugging Face Inference
+
+```json
+{
+  "providers": {
+    "huggingface": {
+      "apiKey": "${HF_TOKEN}"
+    }
+  },
+  "modelPresets": {
+    "primary": {
+      "provider": "huggingface",
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "maxTokens": 8192,
+      "contextWindowTokens": 128000
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "primary"
+    }
+  }
+}
+```
+
+Default base is `https://router.huggingface.co/v1`. Env aliases:
+`HF_TOKEN`, `HUGGINGFACE_TOKEN`, `HUGGING_FACE_HUB_TOKEN`.
+
+### NVIDIA NIM
+
+```json
+{
+  "providers": {
+    "nvidia": {
+      "apiKey": "${NVIDIA_NIM_API_KEY}"
+    }
+  },
+  "modelPresets": {
+    "primary": {
+      "provider": "nvidia",
+      "model": "nvidia/llama-3.1-nemotron-70b-instruct",
+      "maxTokens": 8192,
+      "contextWindowTokens": 128000
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "primary"
+    }
+  }
+}
+```
+
+Keys usually start with `nvapi-`. Alias: `NVIDIA_API_KEY`. Cloud Nemotron
+ids route here, not to local Ollama.
+
 ### Custom OpenAI-Compatible Endpoint
 
 The `custom` provider fits one OpenAI-compatible endpoint that is not represented by a named provider.
@@ -304,7 +417,12 @@ This named custom provider path is not for Anthropic-compatible endpoints. For A
 
 ### Ollama
 
-Start Ollama separately, then point navin at the OpenAI-compatible endpoint.
+Prefer **Settings → Providers → Ollama** and the Local Ollama setup panel
+(Detect → Install → Pull → Configure). Full walkthrough:
+[Configure Ollama locally](./guides/configure-ollama-local.md).
+
+Manual equivalent: start Ollama, pull a model, then point navin at the
+OpenAI-compatible endpoint.
 
 ```json
 {
@@ -329,9 +447,15 @@ Start Ollama separately, then point navin at the OpenAI-compatible endpoint.
 }
 ```
 
-Most Ollama setups do not require an API key.
+Most Ollama setups do not require an API key. An empty `providers.ollama`
+block is not enough for auto-routing of bare model names such as `llama3.2`;
+set `apiBase` or pin `provider: "ollama"`.
 
 ### vLLM or Other Local OpenAI-Compatible Server
+
+`apiBase` is required for vLLM (there is no safe default port). Without it,
+navin refuses to build the provider so requests cannot accidentally hit a
+cloud endpoint.
 
 ```json
 {
@@ -386,6 +510,48 @@ Some OpenAI-compatible local servers require any non-empty API key even when the
 
 Config keys may be camelCase or snake_case. Provider names in model presets should use the registry name, such as `lm_studio`.
 
+### OmniRoute (local free AI gateway)
+
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) is an MIT-licensed gateway that runs on
+your machine (`npm install -g omniroute && omniroute`) and exposes 350+ upstream providers,
+including 150+ free tiers, behind one OpenAI-compatible endpoint at
+`http://localhost:20128/v1`. A fresh install answers without any key: the model id `auto`
+builds a virtual combo from the connected providers and fails over on quota or errors.
+
+```json
+{
+  "providers": {
+    "omniroute": {
+      "apiBase": "http://localhost:20128/v1"
+    }
+  },
+  "modelPresets": {
+    "free": {
+      "provider": "omniroute",
+      "model": "auto",
+      "maxTokens": 8192,
+      "contextWindowTokens": 128000
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "free"
+    }
+  }
+}
+```
+
+- `auto` is the balanced default. `auto/coding`, `auto/fast`, `auto/cheap`, `auto/offline` and
+  `auto/smart` weight the routing differently. Any upstream id listed by OmniRoute works too,
+  for example `oc/kimi-k2.5` or `openai/gpt-5.4`: keep the prefix, OmniRoute routes on it.
+- `omniroute/auto` also works as a model id without a preset; the `omniroute/` routing prefix
+  is stripped before the request leaves Navin.
+- No key is needed while OmniRoute keeps `REQUIRE_API_KEY` off (its default). If you turn it
+  on, paste a key from the OmniRoute dashboard (Endpoints) in **Settings → Providers →
+  OmniRoute** with Auth set to Bearer, or export `OMNIROUTE_API_KEY`.
+- **Settings → Providers → OmniRoute → Test connection** probes `GET /v1/models`; the model
+  picker searches that list on demand because the catalog holds 1000+ ids.
+
 ### AWS Bedrock
 
 Bedrock can use the AWS credential chain, profile, region, or Bedrock bearer token depending on your AWS setup.
@@ -414,25 +580,13 @@ Bedrock can use the AWS credential chain, profile, region, or Bedrock bearer tok
 }
 ```
 
-See [`configuration.md#providers`](./configuration.md#providers) for Bedrock-specific notes.
+See `configuration.md#providers` for Bedrock-specific notes.
 
 ### OAuth Providers
 
-Some providers do not use API keys in `config.json`.
+Some providers do not use a pasted API key. In the desktop app, open **Settings → Providers** and use the sign-in / connect flow for OpenAI Codex or GitHub Copilot when those panels offer it. After login, create or select a model configuration that pins that provider.
 
-For OpenAI Codex:
-
-```bash
-navin provider login openai-codex --set-main
-```
-
-For GitHub Copilot:
-
-```bash
-navin provider login github-copilot --set-main
-```
-
-Each command authenticates the selected provider and makes its current default model active. OAuth providers are not valid automatic fallbacks. See [`troubleshooting.md`](./troubleshooting.md#provider-and-model-problems) for proxy, headless-login, model-name, and config-key errors.
+OAuth providers are not valid automatic fallbacks. If login fails, check network/proxy settings and the exact provider name in Settings.
 
 ## Provider Resolution
 
@@ -447,6 +601,8 @@ Provider selection follows this practical rule:
 - `provider: "auto"` tries model-name keywords, configured keys, local base URLs, and gateway providers.
 - Gateway providers such as OpenRouter and AiHubMix can route many model families, so the model name must be valid for that gateway.
 - Local providers should normally be explicit because generic local model names such as `llama3.2` do not always contain provider keywords.
+- Local providers match in auto mode only when opted in (`apiBase` set), except explicit prefixes such as `ollama/<model>` which may use the registry default base.
+- Pin `provider` for gateway catalog IDs (`anthropic/claude-…` on OpenRouter) so they do not route to the direct Anthropic provider when both keys exist.
 
 ### Model Name Prefixes
 
@@ -494,7 +650,9 @@ The preset name `default` is reserved for the implicit `agents.defaults` setting
 
 ## Fallback Models
 
-Fallbacks are useful for transient provider failures, rate limits, or model availability issues. Keep fallbacks compatible with the task size and tool use. Prefer fallback presets so each candidate has a name and a complete provider, model, generation, and context-window configuration.
+A model that blocks hands the step to the next model of the list instead of ending the turn. The chosen model is retried at most twice, only for failures that clear in seconds (busy, 5xx, dropped connection, empty body, unclassified glitch), each wait capped at 10 seconds; a definitive refusal (4xx, bad or expired key, dropped slug, content filter, exhausted account) or a timeout switches immediately. Every switch is announced in the chat with both model names. A model whose provider named a longer wait (`Retry-After`) or ran out of credit is skipped for that long (at most a minute) so the following steps do not pay the same refusal.
+
+When `fallbackModels` is empty, the list of configured presets is the fallback list: enabled text presets whose provider holds credentials, ordered as the default preset, then the presets named by task routes, then the rest of the catalog alternating vendors, free-tier slugs last, five candidates at most. Each automatic candidate runs with the active preset's `maxTokens`, `contextWindowTokens` and `temperature`, so the chain never shrinks the context the turn was planned against. Set `fallbackModels` to pin an explicit order instead. Keep fallbacks compatible with the task size and tool use. Prefer fallback presets so each candidate has a name and a complete provider, model, generation, and context-window configuration.
 
 ```json
 {
@@ -563,25 +721,22 @@ Use inline fallback objects only when a model is not worth naming as a preset:
 }
 ```
 
-`fallbackModels` belongs under `agents.defaults`, not inside each preset. If fallback candidates use smaller context windows, navin builds context using the smallest window in the active chain so every candidate can receive the same prompt. See [`configuration.md#model-fallbacks`](./configuration.md#model-fallbacks) for failure conditions.
+`fallbackModels` belongs under `agents.defaults`, not inside each preset. If fallback candidates use smaller context windows, navin builds context using the smallest window in the active chain so every candidate can receive the same prompt. See `configuration.md#model-fallbacks` for failure conditions.
 
-## Quick Checks
+## Quick checks
 
-Run these before debugging a chat app:
+Before debugging a chat channel, verify the desktop chat:
 
-```bash
-navin status
-navin agent -m "Hello!"
-```
-
-If `navin agent -m "Hello!"` fails:
+1. Open **Settings → Providers** and confirm the key or base URL.
+2. Open **Settings → Models** and confirm a configuration is **Active**.
+3. Send a short message in the Navin chat window.
 
 | Symptom | Likely cause |
 |---|---|
 | 401, unauthorized, invalid API key | Key is missing, expired, copied with whitespace, or stored under the wrong provider |
 | model not found | Model ID does not exist for the selected provider or gateway |
-| connection refused | Local provider server is not running or `apiBase` points to the wrong port |
-| provider not found | The active preset uses a misspelled provider; use registry names such as `openrouter`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
-| works in CLI but not chat app | Provider is fine; debug gateway/channel setup in [`chat-apps.md`](./chat-apps.md) or [`troubleshooting.md`](./troubleshooting.md) |
+| connection refused | Local provider server is not running or the base URL points to the wrong port |
+| provider not found | The active configuration uses a misspelled provider; use registry names such as `openrouter`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
+| works in desktop chat but not a channel | Provider is fine; debug **Settings → Channels** and keep Navin open |
 
-For the complete provider table and advanced provider-specific notes, see [`configuration.md#providers`](./configuration.md#providers).
+For Settings-first configuration and advanced notes, see [`configuration.md`](./configuration.md).

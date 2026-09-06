@@ -20,6 +20,7 @@ from navin.config.loader import load_config, save_config
 
 MAX_RULES = 100
 MAX_RULE_LENGTH = 300
+APPROVAL_MODES = frozenset({"autonomous", "risky", "always"})
 
 _REGEX_HINT_CHARS = set("\\^$.|?*+()[]{}")
 
@@ -72,6 +73,35 @@ def _clean_rules(value: Any, *, kind: str) -> list[str]:
     return out
 
 
+def read_approval_mode(config: Any) -> str:
+    """Map stored knobs to the Settings > Security confirmation control."""
+    if not config.tools.approvals.enabled:
+        return "autonomous"
+    if getattr(config.tools.approvals, "exec_ask", "destructive") == "always":
+        return "always"
+    return "risky"
+
+
+def apply_approval_mode(config: Any, mode: str) -> None:
+    """Persist the confirmation posture without wiping custom allow/deny lists."""
+    if mode not in APPROVAL_MODES:
+        raise ExecPolicyError("approval_mode must be autonomous, risky, or always")
+    if mode == "autonomous":
+        config.tools.approvals.enabled = False
+        config.tools.approvals.exec_ask = "destructive"
+        config.tools.security_profile = "autonomous"
+        return
+    config.tools.approvals.enabled = True
+    config.tools.approvals.remember = True
+    if mode == "always":
+        config.tools.approvals.exec_ask = "always"
+    else:
+        config.tools.approvals.exec_ask = "destructive"
+        config.tools.exec.builtin_deny_rules = True
+    if config.tools.security_profile in (None, "autonomous"):
+        config.tools.security_profile = "assisted"
+
+
 def exec_policy_payload(config: Any | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     return {
@@ -80,6 +110,10 @@ def exec_policy_payload(config: Any | None = None) -> dict[str, Any]:
         "allow_patterns": list(cfg.tools.exec.allow_patterns),
         "deny_patterns": list(cfg.tools.exec.deny_patterns),
         "builtin_deny": [dict(rule) for rule in BUILTIN_DENY_RULES],
+        # The ready-made set is off unless asked for, so the panel needs the
+        # switch and not just the list of what the switch would turn on.
+        "builtin_deny_enabled": bool(cfg.tools.exec.builtin_deny_rules),
+        "approval_mode": read_approval_mode(cfg),
     }
 
 
@@ -99,6 +133,14 @@ def update_exec_policy(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(data["exec_enabled"], bool):
             raise ExecPolicyError("exec_enabled must be a boolean")
         config.tools.exec.enable = data["exec_enabled"]
+    if "builtin_deny_enabled" in data:
+        if not isinstance(data["builtin_deny_enabled"], bool):
+            raise ExecPolicyError("builtin_deny_enabled must be a boolean")
+        config.tools.exec.builtin_deny_rules = data["builtin_deny_enabled"]
+    if "approval_mode" in data:
+        if not isinstance(data["approval_mode"], str):
+            raise ExecPolicyError("approval_mode must be a string")
+        apply_approval_mode(config, data["approval_mode"].strip().lower())
 
     save_config(config)
     return exec_policy_payload(config)

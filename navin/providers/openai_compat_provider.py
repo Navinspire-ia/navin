@@ -35,13 +35,24 @@ from navin.providers.openai_responses import (
     convert_tools,
     parse_response_output,
 )
+from navin.providers.reasoning_control import (
+    REJECT_UNSUPPORTED,
+    WIRE_CHAT,
+    WIRE_RESPONSES,
+    ReasoningOffNegotiator,
+    always_reasons,
+    apply_shape,
+    classify_rejection,
+    off_shapes,
+)
+from navin.providers.session_affinity import current_session_id
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI as AsyncOpenAIType
 
     from navin.providers.registry import ProviderSpec
 
-# Module-level placeholder — set lazily by _ensure_client on first real
+# Module-level placeholder - set lazily by _ensure_client on first real
 # use, or replaced by tests via ``patch(...)``.  Kept as a plain name so
 # that ``unittest.mock.patch`` can find and replace it.
 AsyncOpenAI: Any = None
@@ -53,10 +64,16 @@ _ALLOWED_MSG_KEYS = frozenset({
 _ALNUM = string.ascii_letters + string.digits
 
 _STANDARD_TC_KEYS = frozenset({"id", "type", "index", "function"})
+
+# OpenRouter 404s non-OpenAI hosts when a function tool is literally named
+# "apply_patch" ("Try disabling apply_patch"). Wire it as file_patch outbound
+# and map the name back inbound so Agent/Review keep working on Muse, etc.
+_OR_APPLY_PATCH_LOCAL = "apply_patch"
+_OR_APPLY_PATCH_WIRE = "file_patch"
 _STANDARD_FN_KEYS = frozenset({"name", "arguments"})
 _DEFAULT_OPENROUTER_HEADERS = {
-    "HTTP-Referer": "https://github.com/EIAGEN/navin-claw",
-    "X-OpenRouter-Title": "navin",
+    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "X-OpenRouter-Title": "Navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }
 _KIMI_THINKING_MODELS: frozenset[str] = frozenset({
@@ -82,6 +99,10 @@ _MIMO_THINKING_MODELS: frozenset[str] = frozenset({
     "mimo-v2-omni",
 })
 _OPENAI_COMPAT_REQUEST_TIMEOUT_S = 120.0
+# GLM is served from two hosts with two key namespaces - open.bigmodel.cn for
+# mainland China and api.z.ai elsewhere - but it is one API, so quirks keyed on
+# the provider have to name both.
+_GLM_PROVIDERS = frozenset({"zai", "zhipu"})
 
 # Maps ProviderSpec.thinking_style → extra_body builder.
 # Each builder takes a bool (thinking_enabled) and returns the dict to
@@ -94,9 +115,22 @@ _THINKING_STYLE_MAP: dict[str, Any] = {
 _GATEWAY_REASONING_STYLE_MAP: dict[str, Any] = {
     "reasoning_effort": lambda effort: {"reasoning": {"effort": effort}},
 }
+# Thinking-capable Qwen models keyed by model rather than by provider, so the
+# right toggle also reaches them through gateways instead of only DashScope.
+_QWEN_THINKING_MODELS: frozenset[str] = frozenset({
+    "qwen3.8-max",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-max-preview",
+    "qwen3.6-plus",
+    "qwen3.6-flash",
+    "qwen3.5-plus",
+    "qwen3.5-flash",
+})
 _MODEL_THINKING_STYLES: dict[str, str] = {
     **dict.fromkeys(_KIMI_THINKING_MODELS, "thinking_type"),
     **dict.fromkeys(_MIMO_THINKING_MODELS, "thinking_type"),
+    **dict.fromkeys(_QWEN_THINKING_MODELS, "enable_thinking"),
 }
 
 
@@ -402,7 +436,7 @@ def _merge_responses_extra_body(
 class OpenAICompatProvider(LLMProvider):
     """Unified provider for all OpenAI-compatible APIs.
 
-    Receives a resolved ``ProviderSpec`` from the caller — no internal
+    Receives a resolved ``ProviderSpec`` from the caller - no internal
     registry lookups needed.
     """
 
@@ -410,7 +444,8 @@ class OpenAICompatProvider(LLMProvider):
         self,
         api_key: str | None = None,
         api_base: str | None = None,
-        default_model: str = "gpt-4o",
+        # No vendor default on purpose: the factory always passes the model.
+        default_model: str = "",
         extra_headers: dict[str, str] | None = None,
         spec: ProviderSpec | None = None,
         extra_body: dict[str, Any] | None = None,
@@ -433,7 +468,8 @@ class OpenAICompatProvider(LLMProvider):
         effective_base = api_base or (spec.default_api_base if spec else None) or None
         self._effective_base = effective_base
         self._default_headers = {"x-session-affinity": uuid.uuid4().hex}
-        if _uses_openrouter_attribution(spec, effective_base):
+        self._is_openrouter = _uses_openrouter_attribution(spec, effective_base)
+        if self._is_openrouter:
             self._default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
         if extra_headers:
             self._default_headers.update(extra_headers)
@@ -450,15 +486,38 @@ class OpenAICompatProvider(LLMProvider):
         self._responses_failures: dict[str, int] = {}
         self._responses_tripped_at: dict[str, float] = {}
 
+        # Models observed rejecting the temperature parameter at runtime
+        # (e.g. Anthropic "temperature is deprecated", OpenRouter 404 with
+        # require_parameters). One retry without it, then remembered here.
+        self._no_temperature_models: set[str] = set()
+        # Models where require_parameters=true found no tool-capable endpoint.
+        # Retry once without that filter (still keep the apply_patch wire alias).
+        self._no_require_parameters_models: set[str] = set()
+        # How far down the "no thinking" ladder each model pushed us, learned
+        # from its refusals; see reasoning_control for why omission is not
+        # an option.
+        self._reasoning_off = ReasoningOffNegotiator(
+            scope=effective_base or self.api_base or self.__class__.__name__
+        )
+        # Models that rejected the reasoning_effort parameter itself, at any
+        # level. They reason (or not) on their own terms; stop sending it.
+        self._reasoning_knob_rejected: set[str] = set()
+
     def _build_client(self) -> None:
         """Create the OpenAI client using the current module-level AsyncOpenAI."""
         import httpx
 
         timeout_s = _openai_compat_timeout_s()
+        request_timeout = httpx.Timeout(
+            connect=min(30.0, timeout_s),
+            read=timeout_s,
+            write=timeout_s,
+            pool=30.0,
+        )
         http_client: httpx.AsyncClient | None = None
         if self._proxy:
             http_client = httpx.AsyncClient(
-                timeout=timeout_s,
+                timeout=request_timeout,
                 proxy=self._proxy,
                 trust_env=False,
                 follow_redirects=True,
@@ -481,21 +540,46 @@ class OpenAICompatProvider(LLMProvider):
             _local_limits = httpx.Limits(keepalive_expiry=0)
             http_client = httpx.AsyncClient(
                 limits=_local_limits,
-                timeout=timeout_s,
+                timeout=request_timeout,
                 transport=httpx.AsyncHTTPTransport(proxy=None, limits=_local_limits),
             )
-        # else: http_client stays None → SDK creates DefaultAsyncHttpxClient
-        # which already reads proxy env vars via trust_env=True, has proper
-        # connection limits, and follows redirects.
+        else:
+            # Cloud providers: never reuse a pooled socket. A stale keepalive
+            # is what surfaces as "Error calling LLM: Connection error." on
+            # the first turn of a session; switching models "fixes" it only
+            # because that rebuilds the client. Five seconds was still long
+            # enough for OpenRouter / a WSL NAT to close the socket under us.
+            _cloud_limits = httpx.Limits(keepalive_expiry=0, max_keepalive_connections=0)
+            http_client = httpx.AsyncClient(
+                limits=_cloud_limits,
+                timeout=request_timeout,
+                follow_redirects=True,
+            )
         self._client = AsyncOpenAI(
             api_key=self._api_key_for_client,
             base_url=self._effective_base,
             default_headers=self._default_headers,
             default_query=self._extra_query or None,
             max_retries=0,
-            timeout=timeout_s,
+            timeout=request_timeout,
             http_client=http_client,
         )
+
+    async def _reset_client(self) -> None:
+        """Drop a dead HTTP pool so the next call opens a fresh connection."""
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if not callable(close):
+            return
+        try:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.debug("openai-compat client close after connection error failed", exc_info=True)
 
     async def _ensure_client(self):
         """Return the shared OpenAI client, creating it on first call."""
@@ -714,11 +798,263 @@ class OpenAICompatProvider(LLMProvider):
 
         GPT-5 family and reasoning models (o1/o3/o4) reject temperature
         when reasoning_effort is set to anything other than ``"none"``.
+        Anthropic deprecated temperature starting with the Claude 4.7/5
+        generation: their endpoints 400 on it, and OpenRouter routing with
+        ``require_parameters`` finds no endpoint at all (404). The Claude
+        rule is version-based (see claude_capabilities) so future models
+        are covered automatically.
         """
         if reasoning_effort and reasoning_effort.lower() != "none":
             return False
         name = model_name.lower()
-        return not any(token in name for token in ("gpt-5", "o1", "o3", "o4"))
+        if any(token in name for token in ("gpt-5", "o1", "o3", "o4")):
+            return False
+        from navin.providers.claude_capabilities import claude_supports_temperature
+
+        return claude_supports_temperature(name)
+
+    def _temperature_model_key(self, model: str | None) -> str:
+        return (model or self.default_model).lower()
+
+    _TEMPERATURE_REJECTION_MARKERS = (
+        "temperature` is deprecated",
+        "temperature is deprecated",
+        "does not support temperature",
+        "no endpoints found that can handle the requested parameters",
+    )
+
+    def _register_temperature_rejection(
+        self,
+        model: str | None,
+        e: Exception,
+    ) -> bool:
+        """Detect a temperature rejection and remember it for this model.
+
+        Returns True when the caller should retry once without temperature.
+        The set membership check makes the retry loop-free: a second failure
+        for the same model falls through to normal error handling.
+        """
+        body = getattr(e, "body", None)
+        text = f"{body} {e}".lower()
+        if not any(marker in text for marker in self._TEMPERATURE_REJECTION_MARKERS):
+            return False
+        key = self._temperature_model_key(model)
+        if key in self._no_temperature_models:
+            return False
+        self._no_temperature_models.add(key)
+        logger.info(
+            "Model {} rejected the temperature parameter; retrying without it",
+            key,
+        )
+        return True
+
+    def _is_openrouter_wire(self) -> bool:
+        """True when the endpoint speaks OpenRouter's reasoning vocabulary."""
+        base = (self._effective_base or "").lower()
+        return "openrouter" in base
+
+    def _reasoning_off_shapes(self, model_name: str, wire: str) -> list[dict[str, Any]]:
+        """The "no thinking" requests this endpoint understands, strongest first.
+
+        Saying nothing is not saying no: measured 2026-09-02 on
+        ``z-ai/glm-5.3-flash``, an omitted reasoning parameter yields 726
+        reasoning tokens and an answer truncated to nothing, while the same
+        call with the floor effort spends 209 and answers. Reasoning tokens are
+        generated at normal speed and are invisible to the loop, so that
+        omission bought several seconds of silence per step, on every step.
+
+        Providers with a native toggle (DeepSeek, Z.ai, DashScope, MiniMax,
+        Volcengine, Kimi, MiMo) already say it in their own words in
+        _build_kwargs; nothing to add for them.
+        """
+        if wire == WIRE_CHAT and _thinking_styles_for(self._spec, model_name):
+            return []
+        return off_shapes(
+            model_name,
+            spec_name=self._spec.name if self._spec else "",
+            base_url=self._effective_base or "",
+            wire=wire,
+        )
+
+    def _reasoning_knob_documented(self, model_name: str) -> bool:
+        """True when the endpoint documents reasoning_effort for this model.
+
+        A refusal there can only be about the value, so the negotiator keeps
+        walking the floors instead of giving up on "not supported" wording.
+        """
+        if self._is_openrouter_wire():
+            return True
+        spec = self._spec.name if self._spec else ""
+        if spec in ("gemini", "groq", "ollama", "mistral", "openai", "azure_openai"):
+            return True
+        slug = _model_slug(model_name)
+        return "gpt-5" in slug or "gpt-oss" in slug or _requires_max_completion_tokens(model_name)
+
+    def _reasoning_off_patch(
+        self, model: str | None, model_name: str, wire: str
+    ) -> dict[str, Any] | None:
+        key = self._temperature_model_key(model)
+        return self._reasoning_off.shape(key, self._reasoning_off_shapes(model_name, wire))
+
+    def _register_reasoning_rejection(
+        self,
+        model: str | None,
+        e: Exception,
+        reasoning_effort: str | None = None,
+    ) -> bool:
+        """Learn from an endpoint refusing the reasoning request.
+
+        Two lessons are possible. A refused "off" steps down to the next floor
+        (off, minimal, low, then the endpoint's default). A parameter the
+        endpoint does not know at all is remembered so it is never sent to
+        that model again, whatever the effort. Returns True when the caller
+        should retry with the corrected request.
+        """
+        key = self._temperature_model_key(model)
+        model_name = self._request_model_name(model or self.default_model)
+        effort = (reasoning_effort or "").lower() if isinstance(reasoning_effort, str) else ""
+        if effort == "none":
+            wire = WIRE_RESPONSES if self._should_use_responses_api(model, reasoning_effort) else WIRE_CHAT
+            shapes = self._reasoning_off_shapes(model_name, wire)
+            if self._reasoning_off.register_rejection(
+                key, e, shapes, knob_known=self._reasoning_knob_documented(model_name)
+            ):
+                return True
+        if (
+            effort
+            and effort != "none"
+            and key not in self._reasoning_knob_rejected
+            and classify_rejection(e) == REJECT_UNSUPPORTED
+        ):
+            self._reasoning_knob_rejected.add(key)
+            logger.info(
+                "Model {} rejected the reasoning_effort parameter; retrying without it",
+                key,
+            )
+            return True
+        return False
+
+    @classmethod
+    def _openrouter_outbound_tool_name(cls, name: str) -> str:
+        if name == _OR_APPLY_PATCH_LOCAL:
+            return _OR_APPLY_PATCH_WIRE
+        return name
+
+    @classmethod
+    def _openrouter_inbound_tool_name(cls, name: str) -> str:
+        if name == _OR_APPLY_PATCH_WIRE:
+            return _OR_APPLY_PATCH_LOCAL
+        return name
+
+    def _inbound_tool_name(self, name: str) -> str:
+        if self._is_openrouter:
+            return self._openrouter_inbound_tool_name(name)
+        return name
+
+    def _remap_tool_calls(
+        self,
+        tool_calls: list[ToolCallRequest],
+    ) -> list[ToolCallRequest]:
+        if not self._is_openrouter or not tool_calls:
+            return tool_calls
+        remapped: list[ToolCallRequest] = []
+        for tc in tool_calls:
+            local = self._openrouter_inbound_tool_name(tc.name)
+            if local == tc.name:
+                remapped.append(tc)
+                continue
+            remapped.append(ToolCallRequest(
+                id=tc.id,
+                name=local,
+                arguments=tc.arguments,
+                extra_content=tc.extra_content,
+                provider_specific_fields=tc.provider_specific_fields,
+                function_provider_specific_fields=tc.function_provider_specific_fields,
+            ))
+        return remapped
+
+    @classmethod
+    def _alias_tools_for_openrouter(
+        cls,
+        tools: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        if not tools:
+            return tools
+        aliased: list[dict[str, Any]] = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                aliased.append(tool)
+                continue
+            fn = tool.get("function")
+            if not isinstance(fn, dict):
+                aliased.append(tool)
+                continue
+            local_name = str(fn.get("name") or "")
+            wire_name = cls._openrouter_outbound_tool_name(local_name)
+            if wire_name == local_name:
+                aliased.append(tool)
+                continue
+            aliased.append({
+                **tool,
+                "function": {**fn, "name": wire_name},
+            })
+        return aliased
+
+    @classmethod
+    def _alias_messages_for_openrouter(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Rewrite apply_patch tool names in history so OR routing stays happy."""
+        out: list[dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                out.append(msg)
+                continue
+            tool_calls = msg.get("tool_calls")
+            if not isinstance(tool_calls, list) or not tool_calls:
+                out.append(msg)
+                continue
+            new_calls: list[Any] = []
+            changed = False
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    new_calls.append(tc)
+                    continue
+                fn = tc.get("function")
+                if not isinstance(fn, dict):
+                    new_calls.append(tc)
+                    continue
+                local_name = str(fn.get("name") or "")
+                wire_name = cls._openrouter_outbound_tool_name(local_name)
+                if wire_name == local_name:
+                    new_calls.append(tc)
+                    continue
+                changed = True
+                new_calls.append({
+                    **tc,
+                    "function": {**fn, "name": wire_name},
+                })
+            out.append({**msg, "tool_calls": new_calls} if changed else msg)
+        return out
+
+    def _register_tool_endpoint_miss(self, model: str | None, e: Exception) -> bool:
+        """True once when OR has no tool-capable endpoint under require_parameters."""
+        text = str(e).lower()
+        if "no endpoints found that support tool use" not in text and not (
+            "support tool use" in text and "no endpoints" in text
+        ):
+            return False
+        key = self._temperature_model_key(model)
+        if key in self._no_require_parameters_models:
+            return False
+        self._no_require_parameters_models.add(key)
+        logger.info(
+            "Model {} has no tool endpoint under require_parameters; "
+            "retrying without that filter",
+            key,
+        )
+        return True
 
     def _build_kwargs(
         self,
@@ -740,6 +1076,10 @@ class OpenAICompatProvider(LLMProvider):
 
         model_name = self._request_model_name(model_name)
 
+        if self._is_openrouter and tools:
+            tools = self._alias_tools_for_openrouter(tools)
+            messages = self._alias_messages_for_openrouter(messages)
+
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
@@ -747,7 +1087,10 @@ class OpenAICompatProvider(LLMProvider):
 
         # GPT-5 and reasoning models (o1/o3/o4) reject temperature when
         # reasoning_effort is active.  Only include it when safe.
-        if self._supports_temperature(model_name, reasoning_effort):
+        if (
+            self._supports_temperature(model_name, reasoning_effort)
+            and self._temperature_model_key(model) not in self._no_temperature_models
+        ):
             kwargs["temperature"] = temperature
 
         if (
@@ -787,6 +1130,14 @@ class OpenAICompatProvider(LLMProvider):
             strip_effort = any(
                 pat in model_lower for pat in spec.implicit_reasoning_models
             )
+        # Same rule, learned rather than declared: families that reason on
+        # their own terms (Grok 4, Magistral, R1...) or that already answered
+        # 400 to the parameter itself.
+        if not strip_effort and (
+            always_reasons(model_name)
+            or self._temperature_model_key(model) in self._reasoning_knob_rejected
+        ):
+            strip_effort = True
 
         # Some providers accept a constrained reasoning_effort vocabulary
         # (Mistral: only "high"/"none"). Remap from OpenAI vocab to the
@@ -832,13 +1183,36 @@ class OpenAICompatProvider(LLMProvider):
             # Moonshot rejects requests that carry both 'reasoning_effort'
             # and the native 'thinking' param.  We already expressed the
             # user's intent via the provider-native shape, so drop the
-            # redundant wire-level kwarg.  Only kimi models need this —
+            # redundant wire-level kwarg.  Only kimi models need this -
             # Xiaomi's API accepts both params.
             if slug in _KIMI_THINKING_MODELS:
                 kwargs.pop("reasoning_effort", None)
 
+            # "None" has to be said in the endpoint's own words; omitting the
+            # parameter leaves its default on (GPT-5 medium, Gemini dynamic,
+            # Ollama auto-thinking, every gateway's upstream default). Native
+            # controls above win when the provider has one; the shape list is
+            # empty for them and for families that never or always reason.
+            if semantic_effort == "none" and not strip_effort:
+                off = self._reasoning_off_patch(model, model_name, WIRE_CHAT)
+                if off:
+                    apply_shape(kwargs, off)
+
         if tools:
             kwargs["tools"] = tools
+            if (
+                self._is_openrouter
+                and isinstance(tool_choice, dict)
+                and isinstance(tool_choice.get("function"), dict)
+            ):
+                fn = tool_choice["function"]
+                local_name = str(fn.get("name") or "")
+                wire_name = self._openrouter_outbound_tool_name(local_name)
+                if wire_name != local_name:
+                    tool_choice = {
+                        **tool_choice,
+                        "function": {**fn, "name": wire_name},
+                    }
             kwargs["tool_choice"] = tool_choice or "auto"
 
         # Backfill reasoning_content="" on assistants missing it: DeepSeek
@@ -863,6 +1237,49 @@ class OpenAICompatProvider(LLMProvider):
             for msg in kwargs["messages"]:
                 if msg.get("role") == "assistant" and "reasoning_content" not in msg:
                     msg["reasoning_content"] = ""
+
+        # OpenRouter's default routing balances on price and often lands on
+        # hosts serving 15-30 tok/s; the same model then feels 10x slower
+        # than on a fast host.  For an interactive agent, latency is the
+        # product, so ask for the fastest provider.  setdefault keeps any
+        # user-configured "provider" preferences (merged below) in charge.
+        if self._is_openrouter:
+            provider = kwargs.setdefault("extra_body", {}).setdefault(
+                "provider", {"sort": "throughput"},
+            )
+            # When we send tools, only route to endpoints that support all
+            # request params (incl. tools). require_parameters is a boolean
+            # per OpenRouter provider routing docs - not a string list.
+            # Skip after a tool-endpoint miss retry for this model.
+            if (
+                tools
+                and isinstance(provider, dict)
+                and self._temperature_model_key(model_name)
+                not in self._no_require_parameters_models
+            ):
+                provider["require_parameters"] = True
+            # Real billed cost in the response (usage.cost, USD credits) so
+            # managed-budget accounting debits actual spend, not an estimate.
+            kwargs.setdefault("extra_body", {}).setdefault(
+                "usage", {"include": True},
+            )
+            # Sticky routing: pin the whole session to one upstream host so
+            # the prompt cache stays warm across agent-loop iterations.
+            # Without it OpenRouter re-picks a host per request and the
+            # cached prefix is billed at full price again.
+            session_id = current_session_id()
+            if session_id:
+                kwargs.setdefault("extra_body", {}).setdefault(
+                    "session_id", session_id,
+                )
+        elif _is_direct_openai_base(self.api_base):
+            # Direct OpenAI: prompt_cache_key routes requests to the machine
+            # holding the warm cache (required on GPT-5.6+ for reliable hits).
+            session_id = current_session_id()
+            if session_id:
+                kwargs.setdefault("extra_body", {}).setdefault(
+                    "prompt_cache_key", session_id,
+                )
 
         # Merge user-configured extra_body last so it can override or
         # extend provider-specific defaults (e.g. chat_template_kwargs,
@@ -926,7 +1343,7 @@ class OpenAICompatProvider(LLMProvider):
         if count >= _RESPONSES_FAILURE_THRESHOLD:
             self._responses_tripped_at[key] = time.monotonic()
             logger.warning(
-                "Responses API circuit open for {} — falling back to Chat Completions",
+                "Responses API circuit open for {} - falling back to Chat Completions",
                 key,
             )
 
@@ -992,13 +1409,27 @@ class OpenAICompatProvider(LLMProvider):
         if self._supports_temperature(model_name, reasoning_effort):
             body["temperature"] = temperature
 
-        if reasoning_effort and reasoning_effort.lower() != "none":
+        effort_lower = reasoning_effort.lower() if isinstance(reasoning_effort, str) else ""
+        knob_rejected = self._temperature_model_key(model) in self._reasoning_knob_rejected
+        if effort_lower == "none":
+            # GPT-5 defaults to "medium" when the field is missing, so "none"
+            # is spelled out (GPT-5.1+), or its floor for older generations.
+            off = self._reasoning_off_patch(model, model_name, WIRE_RESPONSES)
+            if off:
+                apply_shape(body, off)
+        elif reasoning_effort and not knob_rejected and not always_reasons(model_name):
             body["reasoning"] = {"effort": reasoning_effort}
             body["include"] = ["reasoning.encrypted_content"]
 
         if tools:
             body["tools"] = convert_tools(tools)
             body["tool_choice"] = tool_choice or "auto"
+
+        # OpenAI routes cache lookups by prompt_cache_key; GPT-5.6+ needs it
+        # for reliable prefix matching across agent-loop iterations.
+        session_id = current_session_id()
+        if session_id:
+            body["prompt_cache_key"] = session_id
 
         extra_body = getattr(self, "_extra_body", {})
         if extra_body:
@@ -1121,6 +1552,38 @@ class OpenAICompatProvider(LLMProvider):
                 result["cached_tokens"] = cached
                 break
 
+        # --- reasoning tokens: the only witness that "none" reached the wire ---
+        for path in (
+            ("completion_tokens_details", "reasoning_tokens"),  # OpenAI/OpenRouter/Groq
+            ("output_tokens_details", "reasoning_tokens"),      # Responses-shaped usage
+            ("reasoning_tokens",),                              # flat variants
+        ):
+            reasoning = cls._get_nested_int(usage_map, path) if usage_map is not None else 0
+            if not reasoning and usage_obj is not None:
+                reasoning = cls._get_nested_int(usage_obj, path)
+            if reasoning:
+                result["reasoning_tokens"] = reasoning
+                break
+
+        # --- real billed cost (OpenRouter `usage.cost`, USD credits) ---
+        # Kept as integer micro-USD so the whole usage dict stays dict[str, int]
+        # and survives the runner's int-only accumulation.
+        cost_raw: Any = None
+        if usage_map is not None:
+            cost_raw = usage_map.get("cost")
+        if cost_raw is None and usage_obj is not None:
+            cost_raw = getattr(usage_obj, "cost", None)
+            if cost_raw is None:
+                extra = getattr(usage_obj, "model_extra", None)
+                if isinstance(extra, dict):
+                    cost_raw = extra.get("cost")
+        try:
+            cost_usd = float(cost_raw) if cost_raw is not None else 0.0
+        except (TypeError, ValueError):
+            cost_usd = 0.0
+        if cost_usd > 0:
+            result["cost_micro_usd"] = max(1, round(cost_usd * 1_000_000))
+
         return result
 
     @staticmethod
@@ -1213,7 +1676,7 @@ class OpenAICompatProvider(LLMProvider):
                 _seen_tc_ids.add(raw_id)
                 parsed_tool_calls.append(ToolCallRequest(
                     id=raw_id,
-                    name=str(fn.get("name") or ""),
+                    name=self._inbound_tool_name(str(fn.get("name") or "")),
                     arguments=args,
                     extra_content=ec,
                     provider_specific_fields=prov,
@@ -1221,6 +1684,7 @@ class OpenAICompatProvider(LLMProvider):
                 ))
             if not parsed_tool_calls:
                 content, parsed_tool_calls = _extract_text_tool_calls(content)
+                parsed_tool_calls = self._remap_tool_calls(parsed_tool_calls)
 
             return LLMResponse(
                 content=content,
@@ -1260,7 +1724,7 @@ class OpenAICompatProvider(LLMProvider):
             ec, prov, fn_prov = _extract_tc_extras(tc)
             tool_calls.append(ToolCallRequest(
                 id=str(getattr(tc, "id", None) or _short_tool_id()),
-                name=tc.function.name,
+                name=self._inbound_tool_name(str(tc.function.name or "")),
                 arguments=args,
                 extra_content=ec,
                 provider_specific_fields=prov,
@@ -1268,6 +1732,7 @@ class OpenAICompatProvider(LLMProvider):
             ))
         if not tool_calls:
             content, tool_calls = _extract_text_tool_calls(content)
+            tool_calls = self._remap_tool_calls(tool_calls)
 
         reasoning_content = getattr(msg, "reasoning_content", None)
         if reasoning_content is None and getattr(msg, "reasoning", None):
@@ -1449,6 +1914,12 @@ class OpenAICompatProvider(LLMProvider):
         status_code = getattr(e, "status_code", None)
         if status_code is None and response is not None:
             status_code = getattr(response, "status_code", None)
+        if status_code is None:
+            from navin.providers.user_facing_errors import http_status_from_error_payload
+
+            status_code = http_status_from_error_payload(payload)
+            if status_code is None:
+                status_code = http_status_from_error_payload(str(e))
 
         should_retry: bool | None = None
         if headers is not None:
@@ -1466,6 +1937,21 @@ class OpenAICompatProvider(LLMProvider):
             error_kind = "timeout"
         elif "connection" in error_name:
             error_kind = "connection"
+        elif status_code is not None:
+            try:
+                status = int(status_code)
+            except (TypeError, ValueError):
+                status = None
+            if status == 429:
+                error_kind = "rate_limit"
+            elif status is not None and 500 <= status <= 599:
+                error_kind = "server_error"
+            elif status in (401, 403):
+                error_kind = "authentication"
+            elif status == 408:
+                error_kind = "timeout"
+            elif status == 404:
+                error_kind = "invalid_request"
 
         return {
             "error_status_code": int(status_code) if status_code is not None else None,
@@ -1475,6 +1961,33 @@ class OpenAICompatProvider(LLMProvider):
             "error_retry_after_s": cls._extract_retry_after_from_headers(headers),
             "error_should_retry": should_retry,
         }
+
+    @staticmethod
+    def _maybe_resync_managed_key(status_code: int | None) -> None:
+        """401/403 sur la clé gérée : demander un validate immédiat.
+
+        Après une rotation (renouvellement Stripe), l'ancienne clé meurt
+        instantanément côté fournisseur ; sans ceci, la nouvelle clé
+        n'arrivait qu'au prochain poll (jusqu'à 10 minutes d'appels en
+        échec). Best-effort et throttlé côté license_sync.
+        """
+        if status_code not in (401, 403, 402):
+            return
+        try:
+            from navin.config.loader import load_config
+            from navin.license_client import uses_managed_key
+            from navin.license_sync import request_immediate_sync
+
+            if uses_managed_key(load_config()):
+                # 402 = plafond OpenRouter : souvent une clé périmée / sous-capée
+                # après upgrade. Resync pour PATCH du cap ou nouvelle clé.
+                request_immediate_sync(
+                    "provider_quota_or_auth_error"
+                    if status_code == 402
+                    else "provider_auth_error"
+                )
+        except Exception:
+            logger.debug("managed key resync skipped", exc_info=True)
 
     @staticmethod
     def _handle_error(
@@ -1489,10 +2002,26 @@ class OpenAICompatProvider(LLMProvider):
             or getattr(getattr(e, "response", None), "text", None)
         )
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
-        msg = f"Error: {body_text.strip()[:500]}" if body_text.strip() else f"Error calling LLM: {e}"
+        from navin.providers.user_facing_errors import (
+            provider_error_detail,
+            user_facing_llm_error,
+        )
+
+        raw = body_text.strip() if body_text.strip() else f"Error calling LLM: {e}"
+        # The chat surface only shows the sanitized message; keep the raw
+        # provider error in the log so failures stay diagnosable.
+        logger.warning("LLM provider error ({}): {}", e.__class__.__name__, raw[:600])
+        msg = user_facing_llm_error(
+            raw if raw.lower().startswith("error") else f"Error: {raw}"
+        )
 
         text = f"{body_text} {e}".lower()
         if spec and spec.is_local and ("502" in text or "connection" in text or "refused" in text):
+            if not body_text.strip():
+                # Nothing came back from the server, so the generic internet
+                # wording would send the user chasing their ISP instead of
+                # their own Ollama / vLLM process.
+                msg = "Error: could not reach the local model server."
             msg += (
                 "\nHint: this is a local model endpoint. Check that the local server is reachable at "
                 f"{api_base or spec.default_api_base}, and if you are using a proxy/tunnel, make sure it "
@@ -1503,11 +2032,22 @@ class OpenAICompatProvider(LLMProvider):
         retry_after = LLMProvider._extract_retry_after_from_headers(getattr(response, "headers", None))
         if retry_after is None:
             retry_after = LLMProvider._extract_retry_after(msg)
+        metadata = OpenAICompatProvider._extract_error_metadata(e)
+        OpenAICompatProvider._maybe_resync_managed_key(
+            metadata.get("error_status_code"),
+        )
+        provider_label = ""
+        if spec is not None:
+            provider_label = str(
+                getattr(spec, "display_name", "") or getattr(spec, "name", "") or ""
+            ).strip()
         return LLMResponse(
             content=msg,
             finish_reason="error",
             retry_after=retry_after,
-            **OpenAICompatProvider._extract_error_metadata(e),
+            error_detail=provider_error_detail(raw),
+            error_provider=provider_label or None,
+            **metadata,
         )
 
     # ------------------------------------------------------------------
@@ -1536,6 +2076,11 @@ class OpenAICompatProvider(LLMProvider):
                     self._record_responses_success(model, reasoning_effort)
                     return result
                 except Exception as responses_error:
+                    if self._register_reasoning_rejection(model, responses_error, reasoning_effort):
+                        return await self.chat(
+                            messages, tools, model, max_tokens, temperature,
+                            reasoning_effort, tool_choice,
+                        )
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
                         # falling back to /chat/completions cannot succeed and would
@@ -1553,6 +2098,22 @@ class OpenAICompatProvider(LLMProvider):
             )
             return self._parse(await self._client.chat.completions.create(**kwargs))
         except Exception as e:
+            if self._register_temperature_rejection(model, e):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
+            if self._register_tool_endpoint_miss(model, e):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
+            if self._register_reasoning_rejection(model, e, reasoning_effort):
+                return await self.chat(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
+            await self._maybe_reset_client_after_error(e)
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
     async def chat_stream(
@@ -1611,6 +2172,14 @@ class OpenAICompatProvider(LLMProvider):
                         reasoning_content=reasoning_content,
                     )
                 except Exception as responses_error:
+                    if self._register_reasoning_rejection(model, responses_error, reasoning_effort):
+                        return await self.chat_stream(
+                            messages, tools, model, max_tokens, temperature,
+                            reasoning_effort, tool_choice,
+                            on_content_delta=on_content_delta,
+                            on_thinking_delta=on_thinking_delta,
+                            on_tool_call_delta=on_tool_call_delta,
+                        )
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
                         # falling back to /chat/completions cannot succeed and would
@@ -1626,7 +2195,7 @@ class OpenAICompatProvider(LLMProvider):
                 messages, tools, model, max_tokens, temperature,
                 reasoning_effort, tool_choice,
             )
-            if self._spec and self._spec.name == "zhipu" and tools and on_tool_call_delta:
+            if self._spec and self._spec.name in _GLM_PROVIDERS and tools and on_tool_call_delta:
                 # Z.AI/GLM keeps streaming tool-call arguments behind an
                 # explicit provider flag.  Pass it through the OpenAI SDK's
                 # extra_body escape hatch so the usual delta.tool_calls path
@@ -1677,7 +2246,9 @@ class OpenAICompatProvider(LLMProvider):
                             await on_tool_call_delta({
                                 "index": tool_index if tool_index is not None else idx,
                                 "call_id": str(_get(tool_delta, "id") or ""),
-                                "name": str(_get(fn, "name") or "") if fn is not None else "",
+                                "name": self._inbound_tool_name(
+                                    str(_get(fn, "name") or "") if fn is not None else "",
+                                ),
                                 "arguments_delta": (
                                     str(_get(fn, "arguments") or "") if fn is not None else ""
                                 ),
@@ -1687,10 +2258,15 @@ class OpenAICompatProvider(LLMProvider):
                             await on_tool_call_delta({
                                 "index": 0,
                                 "call_id": "",
-                                "name": str(_get(function_call, "name") or ""),
+                                "name": self._inbound_tool_name(
+                                    str(_get(function_call, "name") or ""),
+                                ),
                                 "arguments_delta": str(_get(function_call, "arguments") or ""),
                             })
-            return self._parse_chunks(chunks)
+            parsed = self._parse_chunks(chunks)
+            if self._is_openrouter and parsed.tool_calls:
+                parsed.tool_calls = self._remap_tool_calls(parsed.tool_calls)
+            return parsed
         except asyncio.TimeoutError:
             return LLMResponse(
                 content=(
@@ -1701,7 +2277,41 @@ class OpenAICompatProvider(LLMProvider):
                 error_kind="timeout",
             )
         except Exception as e:
+            if self._register_temperature_rejection(model, e):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            if self._register_tool_endpoint_miss(model, e):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            if self._register_reasoning_rejection(model, e, reasoning_effort):
+                return await self.chat_stream(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                    on_content_delta=on_content_delta,
+                    on_thinking_delta=on_thinking_delta,
+                    on_tool_call_delta=on_tool_call_delta,
+                )
+            await self._maybe_reset_client_after_error(e)
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
+
+    async def _maybe_reset_client_after_error(self, error: Exception) -> None:
+        kind = (self._extract_error_metadata(error).get("error_kind") or "").lower()
+        if kind in {"connection", "timeout"}:
+            logger.warning(
+                "Resetting OpenAI-compatible HTTP client after {} error",
+                kind,
+            )
+            await self._reset_client()
 
     def get_default_model(self) -> str:
         return self.default_model

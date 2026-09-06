@@ -1,6 +1,6 @@
 ---
 name: email-marketing
-description: Design newsletters, nurture sequences, and lifecycle emails — structure, cadence, deliverability, and measurement. Use for any recurring or automated email program.
+description: Design newsletters, nurture sequences, and lifecycle emails - structure, cadence, deliverability, and measurement. Use for any recurring or automated email program.
 metadata: {"navin":{"emoji":"💌","category":"marketing"}}
 ---
 
@@ -14,7 +14,7 @@ Email is the highest-ROI owned channel when the list is clean and the sequences 
 
 | Program | Trigger | Goal |
 |---------|---------|------|
-| Welcome sequence | signup | activate + set expectations (3–5 emails) |
+| Welcome sequence | signup | activate + set expectations (3-5 emails) |
 | Nurture | lead not sales-ready | educate until buying trigger (weekly-ish) |
 | Newsletter | calendar | stay top of mind with real value |
 | Re-engagement | 90d inactive | win back or clean the list |
@@ -22,7 +22,7 @@ Email is the highest-ROI owned channel when the list is clean and the sequences 
 
 ## Email anatomy
 
-- Subject: ≤50 chars, curiosity or clear benefit — write 5 options
+- Subject: ≤50 chars, curiosity or clear benefit - write 5 options
 - Preheader: complements, doesn't repeat the subject
 - Body: one idea, one CTA; short paragraphs; personal tone
 - CTA: one primary button/link (repeat it, don't compete with it)

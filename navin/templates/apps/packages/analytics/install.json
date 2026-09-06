@@ -1,0 +1,480 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "analytics",
+  "name": "Analytics / BI",
+  "kind": "business",
+  "category": "analytics",
+  "source_github": "https://github.com/umami-software/umami",
+  "source_name": "Umami",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/analytics",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 20,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "--- \ud83d\ude80 Getting Started A detailed getting started guide can be found at [umami.is/docs](https://umami.is/docs/). --- \ud83d\udee0 Installing from Source Requirements - A server with Node.js version 18.18+. - A PostgreSQL database version v12.14+. Get the source code and install packages git clone https://github.com/umami-software/umami.git cd umami pnpm install Configure Umami Create an `.env` file with the following: DATABASE_URL=connection-url Optional: set `API_URL` to change the base URL used by internal UI API calls."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "umami",
+        "scripts": {
+          "dev": "dotenv next dev --turbo",
+          "build": "npm-run-all check-env build-db check-db build-tracker build-recorder build-geo build-app",
+          "start": "next start",
+          "build-docker": "npm-run-all build-db build-tracker build-recorder build-geo build-app",
+          "start-docker": "npm-run-all check-db update-tracker start-server",
+          "start-env": "node scripts/start-env.js",
+          "start-server": "node server.js",
+          "build-app": "next build --turbo",
+          "build-icons": "svgr ./src/assets --out-dir src/components/svg --typescript",
+          "build-components": "node scripts/bump-components.js && tsup",
+          "build-tracker": "npm-run-all check-tracker build-tracker-script build-tracker-types",
+          "build-tracker-script": "rollup -c rollup.tracker.config.js",
+          "build-tracker-types": "tsc -p tsconfig.tracker.types.json && biome format --write src/tracker/index.d.ts",
+          "build-recorder": "rollup -c rollup.recorder.config.js",
+          "build-prisma-client": "node scripts/build-prisma-client.js",
+          "build-lang": "npm-run-all download-country-names download-language-names",
+          "build-geo": "node scripts/build-geo.js",
+          "build-db": "npm-run-all build-db-client build-prisma-client",
+          "build-db-schema": "prisma db pull",
+          "build-db-client": "prisma generate",
+          "update-db": "prisma migrate deploy",
+          "check-db": "node scripts/check-db.js",
+          "copy-db-files": "node scripts/copy-db-files.js",
+          "postbuild": "node scripts/postbuild.js",
+          "pretest": "pnpm build-db-client",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:e2e": "playwright test",
+          "test:e2e:ui": "playwright test --ui",
+          "seed-data": "tsx scripts/seed-data.ts",
+          "lint": "biome lint ."
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react",
+          "redis"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "umami",
+        "scripts": {
+          "dev": "dotenv next dev --turbo",
+          "build": "npm-run-all check-env build-db check-db build-tracker build-recorder build-geo build-app",
+          "start": "next start",
+          "build-docker": "npm-run-all build-db build-tracker build-recorder build-geo build-app",
+          "start-docker": "npm-run-all check-db update-tracker start-server",
+          "start-env": "node scripts/start-env.js",
+          "start-server": "node server.js",
+          "build-app": "next build --turbo",
+          "build-icons": "svgr ./src/assets --out-dir src/components/svg --typescript",
+          "build-components": "node scripts/bump-components.js && tsup",
+          "build-tracker": "npm-run-all check-tracker build-tracker-script build-tracker-types",
+          "build-tracker-script": "rollup -c rollup.tracker.config.js",
+          "build-tracker-types": "tsc -p tsconfig.tracker.types.json && biome format --write src/tracker/index.d.ts",
+          "build-recorder": "rollup -c rollup.recorder.config.js",
+          "build-prisma-client": "node scripts/build-prisma-client.js",
+          "build-lang": "npm-run-all download-country-names download-language-names",
+          "build-geo": "node scripts/build-geo.js",
+          "build-db": "npm-run-all build-db-client build-prisma-client",
+          "build-db-schema": "prisma db pull",
+          "build-db-client": "prisma generate",
+          "update-db": "prisma migrate deploy",
+          "check-db": "node scripts/check-db.js",
+          "copy-db-files": "node scripts/copy-db-files.js",
+          "postbuild": "node scripts/postbuild.js",
+          "pretest": "pnpm build-db-client",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:e2e": "playwright test",
+          "test:e2e:ui": "playwright test --ui",
+          "seed-data": "tsx scripts/seed-data.ts",
+          "lint": "biome lint ."
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react",
+          "redis"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "umami",
+        "scripts": {
+          "dev": "dotenv next dev --turbo",
+          "build": "npm-run-all check-env build-db check-db build-tracker build-recorder build-geo build-app",
+          "start": "next start",
+          "build-docker": "npm-run-all build-db build-tracker build-recorder build-geo build-app",
+          "start-docker": "npm-run-all check-db update-tracker start-server",
+          "start-env": "node scripts/start-env.js",
+          "start-server": "node server.js",
+          "build-app": "next build --turbo",
+          "build-icons": "svgr ./src/assets --out-dir src/components/svg --typescript",
+          "build-components": "node scripts/bump-components.js && tsup",
+          "build-tracker": "npm-run-all check-tracker build-tracker-script build-tracker-types",
+          "build-tracker-script": "rollup -c rollup.tracker.config.js",
+          "build-tracker-types": "tsc -p tsconfig.tracker.types.json && biome format --write src/tracker/index.d.ts",
+          "build-recorder": "rollup -c rollup.recorder.config.js",
+          "build-prisma-client": "node scripts/build-prisma-client.js",
+          "build-lang": "npm-run-all download-country-names download-language-names",
+          "build-geo": "node scripts/build-geo.js",
+          "build-db": "npm-run-all build-db-client build-prisma-client",
+          "build-db-schema": "prisma db pull",
+          "build-db-client": "prisma generate",
+          "update-db": "prisma migrate deploy",
+          "check-db": "node scripts/check-db.js",
+          "copy-db-files": "node scripts/copy-db-files.js",
+          "postbuild": "node scripts/postbuild.js",
+          "pretest": "pnpm build-db-client",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:e2e": "playwright test",
+          "test:e2e:ui": "playwright test --ui",
+          "seed-data": "tsx scripts/seed-data.ts",
+          "lint": "biome lint ."
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "next",
+          "prisma",
+          "react",
+          "redis"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    5432,
+    6379
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "connection-url",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "README.md"
+    },
+    {
+      "key": "API_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "BASE_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "CLOUD_MODE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "CLOUD_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "COLLECT_API_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "COLLECT_API_HOST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:rollup.tracker.config.js"
+    },
+    {
+      "key": "CORS_MAX_AGE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "DEFAULT_CURRENCY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "DEFAULT_LOCALE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "DISABLE_LOGIN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:docker/proxy.ts"
+    },
+    {
+      "key": "FORCE_SSL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "source:playwright.config.ts"
+    },
+    {
+      "key": "TRACKER_SCRIPT_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "TRACKER_SCRIPT_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "UMAMI_SELF_RECORD",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "UMAMI_SELF_TRACK",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "VERCEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "umami",
+        "image": "ghcr.io/umami-software/umami:latest",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "db",
+        "image": "postgres:15-alpine",
+        "ports": []
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/analytics/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/analytics/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/analytics/overlay.json",
+    "agents": ".navin/apps/analytics/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "data-analyst-agent",
+      "kpi-agent",
+      "report-agent",
+      "anomaly-agent",
+      "executive-insights-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

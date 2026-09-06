@@ -1,6 +1,6 @@
 ---
 name: style-editor
-description: Rewrite text to match a target tone — the company's, an executive's, or a specific register — while keeping the substance. Use to align content with a voice.
+description: Rewrite text to match a target tone - the company's, an executive's, or a specific register - while keeping the substance. Use to align content with a voice.
 metadata: {"navin":{"emoji":"🎭","category":"writing"}}
 ---
 
@@ -22,14 +22,14 @@ Same message, different skin. Transform tone, rhythm, and vocabulary while prese
 
 ## Capturing a voice
 
-1. Get 3–5 samples of the target voice (emails, posts, speeches).
+1. Get 3-5 samples of the target voice (emails, posts, speeches).
 2. Extract the fingerprint: sentence length, favorite constructions, signature words, what they never say, humor level.
 3. Write the style card (store via `brand-voice-manager` if it's the company voice).
 
 ## Workflow
 
 1. Identify source text + target voice (existing style card or samples).
-2. List the invariants: facts, numbers, commitments, legal phrases — these cannot move.
+2. List the invariants: facts, numbers, commitments, legal phrases - these cannot move.
 3. Rewrite; read both versions side by side to verify nothing was added or lost.
 4. Deliver with a 2-line note on what changed stylistically.
 

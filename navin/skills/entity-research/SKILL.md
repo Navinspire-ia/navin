@@ -1,6 +1,6 @@
 ---
 name: entity-research
-description: Research companies and people — leadership, revenue signals, tech stack, contacts, and sources. Use for sales intel, partner diligence, or competitive briefs.
+description: Research companies and people - leadership, revenue signals, tech stack, contacts, and sources. Use for sales intel, partner diligence, or competitive briefs.
 metadata: {"navin":{"emoji":"🏢","category":"navigation"}}
 ---
 
@@ -38,7 +38,7 @@ Build a sourced company/person dossier. Separate facts from inference.
 ```
 
 4. Mark confidence (high/med/low) per claim.
-5. Never invent emails or phone numbers — only cite found contacts.
+5. Never invent emails or phone numbers - only cite found contacts.
 
 ## Rules
 

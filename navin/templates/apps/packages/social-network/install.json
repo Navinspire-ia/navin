@@ -1,0 +1,272 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "social-network",
+  "name": "Social Network",
+  "kind": "business",
+  "category": "social",
+  "source_github": "https://github.com/maazajaz/socialens",
+  "source_name": "SociaLens",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Supabase"
+  ],
+  "studied_from": "templates_apps/social-network",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 9,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "SociaLens - Advanced Social Media Platform SociaLens is a feature-rich social media platform built with Next.js 15, React, TypeScript, and Supabase. It combines modern design with powerful functionality including real-time user activity tracking, comprehensive admin management, and advanced user engagement features. \u2728 Key Features \ud83d\udd10 **Advanced User Management** - **Secure Authentication**: Email/password with email verification - **Real-time Activity Tracking**: Smart presence indicators (Online, Just left, Minutes/Hours/Days ago)"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "socialens",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "socialens",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "supabase",
+      "required": true,
+      "docker_image": "supabase/postgres",
+      "port": 54321,
+      "env_url": "VITE_SUPABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    54321
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "NEXT_PUBLIC_SUPABASE_URL",
+      "default": "your_supabase_project_url_here",
+      "required": false,
+      "secret": false,
+      "purpose": "Supabase API URL (Next)",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "default": "your_supabase_anon_key_here",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SUPABASE_SERVICE_ROLE_KEY",
+      "default": "your_supabase_service_role_key_here",
+      "required": true,
+      "secret": true,
+      "purpose": "Supabase service role (secret)",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:src/lib/config.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:src/lib/config.ts"
+    },
+    {
+      "key": "VERCEL_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/config.ts"
+    },
+    {
+      "key": "VERCEL_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:src/lib/config.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/social-network/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-supabase",
+        "run": "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/social-network/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/social-network/overlay.json",
+    "agents": ".navin/apps/social-network/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "moderation-agent",
+      "feed-agent",
+      "community-agent",
+      "growth-agent",
+      "safety-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

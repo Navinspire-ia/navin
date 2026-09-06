@@ -1,131 +1,59 @@
-# Multiple Instances
+# Separate Projects and Channel Setups
 
-Run multiple navin instances simultaneously with separate configs and runtime data. Use `--config` as the main entrypoint. Optionally pass `--workspace` during `onboard` when you want to initialize or update the saved workspace for a specific instance.
+The Navin desktop app is one application. Separate work is handled with **projects**, **Settings**, and optional **channel** bots - not by launching multiple CLI processes.
 
-## Quick Start
+## One app, many projects
 
-If you want each instance to have its own dedicated workspace from the start, pass both `--config` and `--workspace` during onboarding.
+Open Navin once. Use the project / workspace picker to switch folders. Each project keeps its own:
 
-**Initialize instances:**
+- chat sessions and history
+- memory files (`USER.md`, `MEMORY.md`, Dream state)
+- automations and heartbeat tasks tied to that project
+- file tree, terminals, and Dev workbench scope
 
-```bash
-# Create separate instance configs and workspaces
-navin onboard --config ~/.navin-telegram/config.json --workspace ~/.navin-telegram/workspace
-navin onboard --config ~/.navin-discord/config.json --workspace ~/.navin-discord/workspace
-navin onboard --config ~/.navin-work/config.json --workspace ~/.navin-work/workspace
-```
+Switching projects changes where the agent reads and writes. Prefer one project per trust boundary (personal vs work, client A vs client B).
 
-**Configure each instance:**
+## Separate channel bots
 
-Edit `~/.navin-telegram/config.json`, `~/.navin-discord/config.json`, etc. with different channel settings. The workspace you passed during `onboard` is saved into each config as that instance's default workspace.
+To talk to Navin from Telegram, Discord, Slack, and similar apps:
 
-**Run instances:**
+1. Open **Settings → Channels**.
+2. Enable the platform you need and paste its token or complete its login flow.
+3. Keep Navin open so messages can arrive and replies can send.
+4. Prefer pairing for first DMs; keep group policies narrow until you trust the setup.
 
-```bash
-# Check one instance before starting it
-navin status --config ~/.navin-telegram/config.json
+You can enable more than one channel in the same app. Use different bot tokens when you want distinct public identities (for example a personal bot and a team bot). Channel credentials live in Settings for that Navin install.
 
-# Instance A - Telegram bot
-navin gateway --config ~/.navin-telegram/config.json
+If two bots must stay fully isolated (different memory, different tools, different people), use separate projects and review which project is active before testing each bot.
 
-# Instance B - Discord bot
-navin gateway --config ~/.navin-discord/config.json
+## Models and providers per role
 
-# Instance C - Discord bot with custom port
-navin gateway --config ~/.navin-work/config.json --port 18792
-```
+Under **Settings → Providers** and **Settings → Models** you can:
 
-## Path Resolution
+- add more than one provider key
+- create named model configurations (presets)
+- set task routing so fast work and deep work use different models
+- set fallback models if a provider rate-limits
 
-When using `--config`, navin derives its runtime data directory from the config file location. The workspace still comes from `agents.defaults.workspace` unless you override it with `--workspace`.
+You do not need a second Navin install to use a cheaper model for summaries and a stronger model for coding.
 
-To open a CLI session against one of these instances locally:
+## When you might want two installs
 
-```bash
-navin agent -c ~/.navin-telegram/config.json -m "Hello from Telegram instance"
-navin agent -c ~/.navin-discord/config.json -m "Hello from Discord instance"
+Most people never need this. Consider a second desktop install only if your OS account isolation requires it (for example a locked-down work laptop profile vs a personal machine). Everyday separation is: different projects, different channel bots, different model presets - all inside one Navin app.
 
-# Open the browser workbench for a specific instance
-navin webui -c ~/.navin-telegram/config.json
+## Common setups
 
-# Optional one-off workspace override
-navin agent -c ~/.navin-telegram/config.json -w /tmp/navin-telegram-test
-```
+| Goal | Approach in the app |
+|---|---|
+| Personal vs client work | Two projects; switch with the project picker |
+| Telegram + Discord | Enable both under **Settings → Channels**; keep Navin open |
+| Fast vs deep models | **Settings → Models** presets + task routing |
+| Quiet background checks | `HEARTBEAT.md` in the project + Automations view |
+| Test risky tools safely | A separate experimental project with stricter Settings |
 
-> `navin agent` starts a local CLI agent using the selected workspace/config. It does not attach to or proxy through an already running `navin gateway` process.
+## Related docs
 
-| Component | Resolved From | Example |
-|-----------|---------------|---------|
-| **Config** | `--config` path | `~/.navin-A/config.json` |
-| **Workspace** | `--workspace` or config | `~/.navin-A/workspace/` |
-| **Cron Jobs** | workspace directory | `~/.navin-A/workspace/cron/` |
-| **Media / runtime state** | config directory | `~/.navin-A/media/` |
-
-## How It Works
-
-- `--config` selects which config file to load
-- By default, the workspace comes from `agents.defaults.workspace` in that config
-- If you pass `--workspace`, it overrides the workspace from the config file
-
-## Minimal Setup
-
-1. Copy your base config into a new instance directory.
-2. Set a different `agents.defaults.workspace` for that instance.
-3. Start the instance with `--config`.
-
-Example config fragment:
-
-```json
-{
-  "agents": {
-    "defaults": {
-      "workspace": "~/.navin-telegram/workspace"
-    }
-  },
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "YOUR_TELEGRAM_BOT_TOKEN"
-    }
-  },
-  "gateway": {
-    "host": "127.0.0.1",
-    "port": 18790
-  }
-}
-```
-
-The copied base config can keep using the same `modelPresets` and `agents.defaults.modelPreset`. If this instance needs a different model, add another preset and set `agents.defaults.modelPreset` to that preset name.
-
-Start separate instances:
-
-```bash
-navin status --config ~/.navin-telegram/config.json
-navin gateway --config ~/.navin-telegram/config.json
-navin gateway --config ~/.navin-discord/config.json
-```
-
-Each gateway instance also exposes a lightweight HTTP health endpoint on `gateway.host:gateway.port`. By default, the gateway binds to `127.0.0.1`, so the endpoint stays local unless you explicitly set `gateway.host` to a public or LAN-facing address.
-
-- `GET /health` returns `{"status":"ok"}`
-- Other paths return `404`
-
-Override workspace for one-off runs when needed:
-
-```bash
-navin gateway --config ~/.navin-telegram/config.json --workspace /tmp/navin-telegram-test
-```
-
-## Common Use Cases
-
-- Run separate bots for Telegram, Discord, Slack, and other platforms
-- Keep testing and production instances isolated
-- Use different models or providers for different teams
-- Serve multiple tenants with separate configs and runtime data
-
-## Notes
-
-- Each instance must use a different port if they run at the same time
-- Use a different workspace per instance if you want isolated memory, sessions, and skills
-- `--workspace` overrides the workspace defined in the config file
-- Cron jobs are stored in the active workspace; runtime media/state is derived from the config directory
+- [`configuration.md`](./configuration.md) - Providers, Models, task routing
+- [`automations.md`](./automations.md) - Scheduled work while Navin stays open
+- [`guides/chat-app-ai-agent.md`](./guides/chat-app-ai-agent.md) - Channels from Settings
+- [`start-without-technical-background.md`](./start-without-technical-background.md) - First launch wizard

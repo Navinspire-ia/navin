@@ -24,5 +24,5 @@ For SQL, use the built-in `db_query` tool with a connection configured as `{"eng
 
 ## Rules
 
-- Service-role keys are secrets — never expose to clients or chat.
+- Service-role keys are secrets - never expose to clients or chat.
 - Policy tightening/loosening needs review (`human-approval` on prod).

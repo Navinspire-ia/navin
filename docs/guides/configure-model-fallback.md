@@ -1,33 +1,36 @@
-# How to Configure Model Fallback in navin
+# How to Configure Model Fallback in Navin
 
-Model fallback lets navin try a primary model first, then fall back to one or
-more named presets when the primary provider fails or rate-limits.
+Model fallback lets Navin try a primary model first, then continue on one or more other configurations when the primary blocks: rate limit, outage, expired key, dropped model id, refusal, timeout.
+
+## What happens by default
+
+You already have fallback as soon as two text configurations exist. When the active model blocks, Navin asks it again at most twice (only for failures that clear in seconds, each wait capped at 10 seconds), then the next configuration whose provider has credentials answers that step. The chat shows a notice naming both models. A definitive refusal (4xx, bad key, content filter, exhausted account) or a timeout switches at once.
+
+The automatic order is: the default configuration, then the configurations named by task routes, then the rest of the list alternating vendors, free-tier models last (five candidates at most). Configurations that are disabled, non-text (image, video, audio), or whose provider has no credentials are never used.
+
+Follow the steps below only when you want to pin your own order.
 
 ## What you will build
 
-- two or more `modelPresets`
-- a primary `agents.defaults.modelPreset`
-- an ordered `agents.defaults.fallbackModels` chain
+- two or more model configurations in **Settings → Models**
+- one active (primary) configuration
+- an ordered fallback list
 
 ## When to use this
 
-Use fallback when you want better reliability across rate limits, provider
-outages, local model downtime, or cost-sensitive routing.
+Use an explicit list when you want a fixed order across rate limits, provider outages, local model downtime, or cost-sensitive routing.
 
-## Install
+## Configure in Settings
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin agent -m "Hello!"
-```
+1. Open Navin and add credentials under **Settings → Providers** for each provider you will use.
+2. Open **Settings → Models** and create at least two configurations (for example **Fast** and **Deep**).
+3. Set the everyday configuration as **Active**.
+4. Open the fallback list for agent defaults (same Models area) and add the backup configuration names in order.
+5. Send a chat message. If the primary provider fails in a retryable way, Navin tries the next named configuration.
 
-Verify each provider works before adding it as a fallback.
+Verify each provider works on its own (switch Active temporarily and chat) before adding it as a fallback.
 
-## Minimal working example
-
-Merge this shape into `~/.navin/config.json` and replace provider/model names
-with ones you control:
+### Advanced JSON shape (optional)
 
 ```json
 {
@@ -58,36 +61,29 @@ with ones you control:
 }
 ```
 
-String entries in `fallbackModels` are preset names, not raw model IDs.
-Replace the placeholder model IDs with currently supported model IDs from your
-provider. The [Provider Cookbook](../provider-cookbook.md) has concrete recipes
-for common providers.
+String entries in the fallback list are configuration names, not raw model IDs. Replace placeholder model IDs with IDs from your provider. The [Provider Cookbook](../provider-cookbook.md) has concrete Settings recipes.
 
 ## Production notes
 
-- Keep fallback context windows realistic; smaller fallback windows constrain
-  how much context can fit.
+- Keep fallback context windows realistic; smaller fallback windows constrain how much context can fit.
 - Put cheaper or faster fallbacks before expensive ones when acceptable.
-- Use `/model <preset>` for runtime switching without editing config.
-- Keep labels human-readable for WebUI model lists.
+- Use `/model <name>` in chat for runtime switching without editing Settings permanently.
+- Keep labels human-readable in the Models list.
 
 ## Security notes
 
 - Different providers may have different data handling policies.
-- Do not put provider keys directly in shared config files.
+- Do not put provider keys in shared documents.
 - Confirm fallback models can safely receive the same prompts and files.
 
 ## Troubleshooting
 
-- If a fallback never triggers, confirm the primary error is treated as
-  retryable/fallbackable.
-- If startup fails, check that each fallback string matches a key under
-  `modelPresets`.
-- If output is truncated after fallback, review `maxTokens` and
-  `contextWindowTokens`.
+- Fallback never triggers: confirm the primary error is treated as retryable.
+- Startup / save fails: check that each fallback name matches a configuration under Models.
+- Output truncated after fallback: review max tokens and context window on the fallback configuration.
 
-## Related navin docs
+## Related docs
 
 - [Providers and Models](../providers.md)
 - [Provider Cookbook: Fallback Presets](../provider-cookbook.md#recipe-fallback-presets)
-- [Configuration: Model Fallbacks](../configuration.md#model-fallbacks)
+- [Configuration](../configuration.md)

@@ -1,0 +1,11 @@
+id: lead-qualification-agent
+name: Lead Qualification Agent
+enabled: true
+permissions:
+  - contacts.read
+  - contacts.write
+  - notes.write
+tools:
+  - get_schema
+  - query
+  - mutate

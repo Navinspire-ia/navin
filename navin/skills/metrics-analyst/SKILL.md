@@ -1,6 +1,6 @@
 ---
 name: metrics-analyst
-description: Measure project and product health — code metrics, complexity, dependency freshness, test coverage, technical debt, and product KPIs. Use for /pulse, health dashboards, or "how is the project doing?" questions.
+description: Measure project and product health - code metrics, complexity, dependency freshness, test coverage, technical debt, and product KPIs. Use for /pulse, health dashboards, or "how is the project doing?" questions.
 metadata: {"navin":{"emoji":"📊","category":"data"}}
 ---
 
@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"📊","category":"data"}}
 
 ## Overview
 
-Turn a codebase or product into a scored, comparable dashboard. Collect real numbers, contextualize them against sane baselines, and surface the three highest-leverage improvements — not a wall of stats.
+Turn a codebase or product into a scored, comparable dashboard. Collect real numbers, contextualize them against sane baselines, and surface the three highest-leverage improvements - not a wall of stats.
 
 ## Metric families
 
@@ -25,7 +25,7 @@ Turn a codebase or product into a scored, comparable dashboard. Collect real num
 ## Workflow
 
 1. Clarify the audience: engineering health check, management report, or pre-audit baseline? Pick the metric families accordingly.
-2. Collect with real commands — never invent numbers. If a metric is not collectable, say so and skip it.
+2. Collect with real commands - never invent numbers. If a metric is not collectable, say so and skip it.
 3. Normalize into a dashboard:
    - each metric: value, baseline/target, trend arrow if history exists, score (🟢/🟡/🔴)
 4. Interpret: what do the reds mean together? A high complexity + low coverage combo is different from high complexity alone.

@@ -94,7 +94,10 @@ class CronTool(Tool):
         try:
             ZoneInfo(tz)
         except (KeyError, Exception):
-            return ToolResult.error(f"Error: unknown timezone '{tz}'")
+            return ToolResult.error(
+                f"Error: unknown timezone '{tz}'. Use an IANA name "
+                "such as 'Europe/Paris', 'UTC' or 'America/New_York'."
+            )
         return None
 
     def _display_timezone(self, schedule: CronSchedule) -> str:
@@ -149,7 +152,7 @@ class CronTool(Tool):
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
-        return f"Unknown action: {action}"
+        return self.unknown_action(action)
 
     def _add_job(
         self,
@@ -240,7 +243,7 @@ class CronTool(Tool):
         if state.last_run_at_ms:
             info = (
                 f"  Last run: {self._format_timestamp(state.last_run_at_ms, display_tz)}"
-                f" — {state.last_status or 'unknown'}"
+                f" - {state.last_status or 'unknown'}"
             )
             if state.last_error:
                 info += f" ({state.last_error})"
@@ -288,4 +291,7 @@ class CronTool(Tool):
                 f"Cannot remove job `{job_id}`.\n"
                 "This is a protected system-managed cron job."
             )
-        return f"Job {job_id} not found"
+        return ToolResult.error(
+            f"Error: job '{job_id}' not found. Use action='list' to see the "
+            "scheduled jobs and their ids."
+        )

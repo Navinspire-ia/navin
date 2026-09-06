@@ -1,0 +1,430 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "document-rag",
+  "name": "Document RAG",
+  "kind": "ai-product",
+  "category": "rag",
+  "source_github": "https://github.com/Cinnamon/kotaemon",
+  "source_name": "Kotaemon",
+  "license": "Apache-2.0",
+  "stack": [
+    "Python",
+    "Gradio",
+    "RAG"
+  ],
+  "studied_from": "templates_apps/document-rag",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 32,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "kotaemon An open-source clean & customizable RAG UI for chatting with your documents. Built with both end users and developers in mind. [Live Demo #1](https://huggingface.co/spaces/cin-model/kotaemon) | [Live Demo #2](https://huggingface.co/spaces/cin-model/kotaemon-demo) | [Online Install](https://cinnamon.github.io/kotaemon/online_install/) | [Colab Notebook (Local RAG)](https://colab.research.google.com/drive/1eTfieec_UOowNizTJA1NjawBJH9y_1nn) [User Guide](https://cinnamon.github.io/kotaemon/) |"
+  },
+  "system": {
+    "node": false,
+    "node_engine": "",
+    "python": true,
+    "docker": true,
+    "package_manager": "uv",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "uv",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "libs/kotaemon/pyproject.toml",
+          "libs/ktem/pyproject.toml",
+          "libs/ktem/requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "libs/kotaemon/pyproject.toml",
+          "libs/ktem/pyproject.toml",
+          "libs/ktem/requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "elasticsearch",
+      "required": true,
+      "docker_image": "elasticsearch:8.11.3",
+      "port": 9200,
+      "env_url": "ELASTIC_PASSWORD",
+      "compose": [],
+      "bootstrap": [
+        "Start via docker compose profile elasticsearch (do not invent a local sqlite file)."
+      ]
+    }
+  ],
+  "ports": [
+    9200
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "OPENAI_API_BASE",
+      "default": "https://api.openai.com/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "<YOUR_OPENAI_KEY>",
+      "required": true,
+      "secret": true,
+      "purpose": "OpenAI API key",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_CHAT_MODEL",
+      "default": "gpt-4o-mini",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_EMBEDDINGS_MODEL",
+      "default": "text-embedding-3-large",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_API_VERSION",
+      "default": "2024-02-15-preview",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_CHAT_DEPLOYMENT",
+      "default": "gpt-35-turbo",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT",
+      "default": "text-embedding-ada-002",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "COHERE_API_KEY",
+      "default": "<COHERE_API_KEY>",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "VOYAGE_API_KEY",
+      "default": "<VOYAGE_API_KEY>",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOCAL_MODEL",
+      "default": "qwen2.5:7b",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOCAL_MODEL_EMBEDDINGS",
+      "default": "nomic-embed-text",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GRAPHRAG_API_KEY",
+      "default": "<YOUR_OPENAI_KEY>",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GRAPHRAG_LLM_MODEL",
+      "default": "gpt-4o-mini",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "GRAPHRAG_EMBEDDING_MODEL",
+      "default": "text-embedding-3-small",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "USE_CUSTOMIZED_GRAPHRAG_SETTING",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_DI_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_DI_CREDENTIAL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PDF_SERVICES_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PDF_SERVICES_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "PDFJS_VERSION_DIST",
+      "default": "pdfjs-4.0.379-dist",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PADDLE_DEVICE",
+      "default": "gpu",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AUTHENTICATION_METHOD",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "KEYCLOAK_SERVER_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "KEYCLOAK_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "KEYCLOAK_REALM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "KEYCLOAK_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "KH_DOCSTORE",
+      "default": "(Elasticsearch | LanceDB | SimpleFileDocumentStore)",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "KH_VECTORSTORE",
+      "default": "(ChromaDB | LanceDB | InMemory | Milvus | Qdrant)",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "KH_REASONINGS_USE_MULTIMODAL",
+      "default": "True",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "KH_REASONINGS",
+      "default": "[",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "python -m uvicorn app:app --reload || python manage.py runserver"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/document-rag/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-elasticsearch",
+        "run": "Start via docker compose profile elasticsearch (do not invent a local sqlite file)."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/document-rag/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "python -m uvicorn app:app --reload || python manage.py runserver"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/document-rag/overlay.json",
+    "agents": ".navin/apps/document-rag/agents/",
+    "env": ".env",
+    "frontend": "package.json of role=frontend or root",
+    "backend": "pyproject.toml",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "ingestion-agent",
+      "qa-agent",
+      "citation-agent",
+      "collection-agent",
+      "share-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

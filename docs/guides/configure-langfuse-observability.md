@@ -74,6 +74,4 @@ navin agent -m "Hello!"
 
 ## Related navin docs
 
-- [Configuration: Langfuse Observability](../configuration.md#langfuse-observability)
 - [Provider Cookbook: Langfuse Tracing](../provider-cookbook.md#recipe-langfuse-tracing)
-- [Deployment](../deployment.md)

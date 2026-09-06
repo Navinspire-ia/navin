@@ -48,12 +48,15 @@ def validate_channel_config(
     values = _merge_form_values(channel, values, raw_values or {})
 
     validator = _VALIDATORS.get(channel, _validate_generic)
+    allow_loopback = bool(config.tools.webui_allow_local_service_access)
     if channel == "email":
-        payload = _validate_email(
-            channel,
-            values,
-            allow_loopback=config.tools.webui_allow_local_service_access,
-        )
+        payload = _validate_email(channel, values, allow_loopback=allow_loopback)
+    elif channel == "signal":
+        payload = _validate_signal(channel, values)
+    elif channel == "mattermost":
+        payload = _validate_mattermost(channel, values, allow_loopback=allow_loopback)
+    elif channel == "msteams":
+        payload = _validate_msteams(channel, values)
     else:
         payload = validator(channel, values)
     payload["name"] = channel
@@ -262,21 +265,126 @@ def _validate_matrix(name: str, values: dict[str, Any]) -> dict[str, Any]:
     return _status_from_checks(name, checks, list(dict.fromkeys(missing)))
 
 
-def _validate_cli_handoff(name: str, values: dict[str, Any]) -> dict[str, Any]:
-    checks: list[dict[str, Any]] = []
-    if _enabled(values) or _str(values.get("token")) or _str(values.get("databasePath")):
-        checks.append(_check("local_state", "Local login state", "pass", "Saved local login state was detected."))
-        return _payload(name, "configured", checks, can_enable=True)
+def _validate_mattermost(
+    name: str,
+    values: dict[str, Any],
+    *,
+    allow_loopback: bool = False,
+) -> dict[str, Any]:
+    checks, missing = _required_checks(name, values)
+    server_url = _str(values.get("serverUrl")).rstrip("/")
+    token = _str(values.get("token"))
+    if server_url and token:
+        ok, error, _resolved = resolve_url_target(server_url, allow_loopback=allow_loopback)
+        if not ok:
+            checks.append(_check("server", "Mattermost server", "fail", error or "Server URL is not allowed."))
+        else:
+            try:
+                data = _http_get(
+                    f"{server_url}/api/v4/users/me",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                identity = {
+                    "name": data.get("username") or data.get("nickname"),
+                    "account": str(data.get("id") or ""),
+                }
+                checks.append(_check("me", "Bot identity", "pass", "Mattermost accepted the bot token."))
+                return _payload(name, "connected", checks, identity=identity, missing_fields=missing)
+            except httpx.HTTPStatusError as exc:
+                checks.append(
+                    _check(
+                        "me",
+                        "Bot identity",
+                        "fail",
+                        f"Mattermost rejected the token: HTTP {exc.response.status_code}.",
+                    )
+                )
+            except Exception as exc:
+                checks.append(_check("me", "Bot identity", "warn", f"Could not reach Mattermost now: {exc}"))
+    return _status_from_checks(name, checks, missing)
+
+
+def _validate_signal(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    checks, missing = _required_checks(name, values)
+    host = _str(values.get("daemonHost")) or "localhost"
+    port = _int(values.get("daemonPort")) or 8080
+    if port <= 0 or port > 65535:
+        checks.append(_check("daemon_port", "Daemon port", "fail", "Port must be between 1 and 65535."))
+        return _status_from_checks(name, checks, missing)
+    try:
+        with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
+            response = client.get(f"http://{host}:{port}/api/v1/check")
+            response.raise_for_status()
+        checks.append(
+            _check(
+                "daemon",
+                "signal-cli daemon",
+                "pass",
+                f"signal-cli answered on {host}:{port}.",
+            )
+        )
+    except Exception:
+        checks.append(
+            _check(
+                "daemon",
+                "signal-cli daemon",
+                "fail",
+                f"No signal-cli HTTP daemon on {host}:{port}. Start: signal-cli -a +YOURNUMBER daemon --http {host}:{port}",
+            )
+        )
+    return _status_from_checks(name, checks, missing)
+
+
+def _validate_msteams(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    checks, missing = _required_checks(name, values)
+    app_id = _str(values.get("appId"))
+    if app_id:
+        if re.match(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            app_id,
+        ):
+            checks.append(_check("app_id", "App ID", "pass", "Looks like a Microsoft App ID."))
+        else:
+            checks.append(_check("app_id", "App ID", "fail", "Microsoft App IDs look like a UUID."))
+    host = _str(values.get("host")) or "0.0.0.0"
+    port = _int(values.get("port")) or 3978
+    path = _str(values.get("path")) or "/api/messages"
     checks.append(
         _check(
-            "terminal_login",
-            "Terminal login",
-            "skipped",
-            "This channel uses a terminal QR login flow.",
+            "callback",
+            "Public callback",
+            "warn",
+            f"This machine listens on {host}:{port}{path}. Teams only delivers to a public HTTPS URL that forwards there.",
             action_url=_official_action(name),
         )
     )
-    return _payload(name, "needs_setup", checks, missing_fields=["terminal_login"], can_enable=False)
+    return _status_from_checks(name, checks, missing)
+
+
+def _validate_whatsapp(name: str, values: dict[str, Any]) -> dict[str, Any]:
+    from pathlib import Path
+
+    from navin.channels.whatsapp import _default_database_path
+
+    checks: list[dict[str, Any]] = []
+    configured = _str(values.get("databasePath"))
+    db_path = Path(configured).expanduser() if configured else _default_database_path()
+    try:
+        present = db_path.is_file() and db_path.stat().st_size > 0
+    except OSError:
+        present = False
+    if present or _enabled(values):
+        checks.append(_check("local_state", "WhatsApp session", "pass", "A linked WhatsApp session is saved on this machine."))
+        return _payload(name, "configured", checks, can_enable=True)
+    checks.append(
+        _check(
+            "qr_login",
+            "WhatsApp link",
+            "skipped",
+            "Connect WhatsApp in this panel, then scan the QR with Linked Devices on your phone.",
+        )
+    )
+    return _payload(name, "needs_setup", checks, missing_fields=["qr_login"], can_enable=False)
 
 
 def _validate_generic(name: str, values: dict[str, Any]) -> dict[str, Any]:
@@ -297,7 +405,10 @@ _VALIDATORS = {
     "slack": _validate_slack,
     "email": _validate_email,
     "matrix": _validate_matrix,
-    "whatsapp": _validate_cli_handoff,
+    "mattermost": _validate_mattermost,
+    "whatsapp": _validate_whatsapp,
+    "signal": _validate_signal,
+    "msteams": _validate_msteams,
 }
 
 

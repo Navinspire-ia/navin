@@ -1,0 +1,1809 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "lms",
+  "name": "LMS / E-learning",
+  "kind": "business",
+  "category": "education",
+  "source_github": "https://github.com/Selleo/mentingo",
+  "source_name": "Mentingo",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node.js",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/lms",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 155,
+    "package_count": 11
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Mentingo LMS Core Project A modern, scalable Learning Management System built with cutting-edge technologies. [Features](#features) \u2022 [Development Setup](docs/development-setup.md) \u2022 [Contributing](#contributing) Table of Contents Features \ud83e\udd16 AI-Powered Training - **Voice & Chat AI Mentor:** Immersive, real-time role-play simulations for sales, compliance, and customer support training with instant, automated AI evaluation. - **AI Course Architect:** Transform raw corporate knowledge bases, documentation, and internal policies into structured interactive "
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=22.15.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": true,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "make",
+      "why": "Project Makefile (start / install / seed)"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "web",
+        "scripts": {
+          "build": "remix vite:build",
+          "dev": "vite dev",
+          "dev:test": "VITE_E2E=true vite dev",
+          "dev_ssr": "node ./server.js",
+          "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+          "lint-tsc": "tsc --noEmit && eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+          "start": "cross-env NODE_ENV=production node ./server.js",
+          "test": "cross-env VITE_TEST=true VITE_API_URL=http://localhost:3000 vitest run",
+          "test:e2e": "cross-env VITE_TEST=true playwright test",
+          "test:e2e:ui": "cross-env VITE_TEST=true playwright codegen https://app.lms.localhost --viewport-size 1920,1000 & VITE_TEST=true playwright test --ui"
+        },
+        "node_engine": ">=22.15.0",
+        "deps_hint": [
+          "axios",
+          "vite"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/email-templates/package.json",
+        "name": "@repo/email-templates",
+        "scripts": {
+          "build": "tsup",
+          "dev": "email dev -p 3001 --dir ./src/templates"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@repo/ui",
+        "scripts": {
+          "lint": "eslint . --max-warnings 0"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "apps/api/package.json",
+        "name": "api",
+        "scripts": {
+          "build": "nest build",
+          "start": "nest start",
+          "start:dev": "nest start --watch",
+          "dev": "nest start --watch",
+          "dev:test": "DISABLE_RATE_LIMITING=true NODE_ENV=test nest start --watch",
+          "start:debug": "nest start --debug --watch",
+          "start:prod": "node dist/src/main",
+          "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+          "lint-fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+          "lint-tsc": "tsc --noEmit && eslint \"{src,apps,libs,test}/**/*.ts\"",
+          "test": "jest",
+          "test:ci": "jest --ci --watchAll=false",
+          "test:watch": "jest --watch",
+          "test:cov": "jest --coverage",
+          "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+          "test:e2e": "jest --config ./test/jest-e2e.json",
+          "test:e2e:shard:1": "jest --config ./test/jest-e2e.json --shard=1/2",
+          "test:e2e:shard:2": "jest --config ./test/jest-e2e.json --shard=2/2",
+          "test:e2e:watch": "jest --config ./test/jest-e2e.json --watch",
+          "db:migrate": "drizzle-kit migrate --config ./drizzle.migrator.config.ts",
+          "db:generate": "drizzle-kit generate --config ./drizzle.migrator.config.ts",
+          "db:seed": "tsx ./src/seed/seed.ts",
+          "db:seed-staging": "node dist/src/seed/seed.js",
+          "db:seed-prod": "tsx ./src/seed/seed-prod.ts",
+          "db:seed-e2e": "tsx ./src/seed/e2e-seed.ts",
+          "db:seed-bulk": "tsx ./src/seed/bulk-users-seed.ts",
+          "db:truncate-tables": "tsx ./src/seed/truncateTables.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "lms-core",
+        "scripts": {
+          "build": "turbo build",
+          "packages:build": "pnpm --filter @repo/shared build && pnpm --filter @repo/email-templates build && pnpm --filter @repo/prompts build && pnpm --filter @repo/scorm-export-runtime build && pnpm --filter @repo/scorm-export-generator build",
+          "dev": "turbo dev",
+          "dev:test": "turbo dev:test",
+          "lint": "turbo lint",
+          "lint-tsc-web": "pnpm run --filter=web lint-tsc",
+          "lint-tsc-api": "pnpm run --filter=api lint-tsc",
+          "db:generate": "pnpm run --filter=api db:generate",
+          "db:migrate": "pnpm run --filter=api db:migrate",
+          "db:seed": "pnpm run --filter=api db:seed",
+          "test:web": "pnpm run --filter=web test",
+          "test:api": "pnpm run --filter=api test",
+          "test:web:e2e": "pnpm run --filter=web test:e2e",
+          "test:api:e2e": "pnpm run --filter=api test:e2e",
+          "start:debug": "pnpm run --filter=api start:debug"
+        },
+        "node_engine": ">=22.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "apps/api/package.json",
+        "name": "api",
+        "scripts": {
+          "build": "nest build",
+          "start": "nest start",
+          "start:dev": "nest start --watch",
+          "dev": "nest start --watch",
+          "dev:test": "DISABLE_RATE_LIMITING=true NODE_ENV=test nest start --watch",
+          "start:debug": "nest start --debug --watch",
+          "start:prod": "node dist/src/main",
+          "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+          "lint-fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+          "lint-tsc": "tsc --noEmit && eslint \"{src,apps,libs,test}/**/*.ts\"",
+          "test": "jest",
+          "test:ci": "jest --ci --watchAll=false",
+          "test:watch": "jest --watch",
+          "test:cov": "jest --coverage",
+          "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+          "test:e2e": "jest --config ./test/jest-e2e.json",
+          "test:e2e:shard:1": "jest --config ./test/jest-e2e.json --shard=1/2",
+          "test:e2e:shard:2": "jest --config ./test/jest-e2e.json --shard=2/2",
+          "test:e2e:watch": "jest --config ./test/jest-e2e.json --watch",
+          "db:migrate": "drizzle-kit migrate --config ./drizzle.migrator.config.ts",
+          "db:generate": "drizzle-kit generate --config ./drizzle.migrator.config.ts",
+          "db:seed": "tsx ./src/seed/seed.ts",
+          "db:seed-staging": "node dist/src/seed/seed.js",
+          "db:seed-prod": "tsx ./src/seed/seed-prod.ts",
+          "db:seed-e2e": "tsx ./src/seed/e2e-seed.ts",
+          "db:seed-bulk": "tsx ./src/seed/bulk-users-seed.ts",
+          "db:truncate-tables": "tsx ./src/seed/truncateTables.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "apps/reverse-proxy/package.json",
+        "name": "guidebook_development_reverse_proxy",
+        "scripts": {
+          "dev": "caddy run",
+          "dev:test": "caddy run"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "web",
+        "scripts": {
+          "build": "remix vite:build",
+          "dev": "vite dev",
+          "dev:test": "VITE_E2E=true vite dev",
+          "dev_ssr": "node ./server.js",
+          "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+          "lint-tsc": "tsc --noEmit && eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+          "start": "cross-env NODE_ENV=production node ./server.js",
+          "test": "cross-env VITE_TEST=true VITE_API_URL=http://localhost:3000 vitest run",
+          "test:e2e": "cross-env VITE_TEST=true playwright test",
+          "test:e2e:ui": "cross-env VITE_TEST=true playwright codegen https://app.lms.localhost --viewport-size 1920,1000 & VITE_TEST=true playwright test --ui"
+        },
+        "node_engine": ">=22.15.0",
+        "deps_hint": [
+          "axios",
+          "vite"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/email-templates/package.json",
+        "name": "@repo/email-templates",
+        "scripts": {
+          "build": "tsup",
+          "dev": "email dev -p 3001 --dir ./src/templates"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/performance-tests/package.json",
+        "name": "@mentingo/performance-tests",
+        "scripts": {
+          "test:load": "set -a && source .env && set +a && k6 run src/scenarios/load-test.js",
+          "test:stress": "set -a && source .env && set +a && k6 run src/scenarios/stress-test.js",
+          "test:spike": "set -a && source .env && set +a && k6 run src/scenarios/spike-test.js",
+          "test:soak": "set -a && source .env && set +a && k6 run src/scenarios/soak-test.js",
+          "test:load:dashboard": "set -a && source .env && set +a && K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_PERIOD=1s k6 run src/scenarios/load-test.js",
+          "test:mixed": "set -a && source .env && set +a && k6 run src/tests/mixed-workload.test.js",
+          "test:load:cloud": "set -a && source .env && set +a && k6 cloud --env ENVIRONMENT=$ENVIRONMENT --env API_BASE_URL=$API_BASE_URL --env TEST_USER_EMAIL=$TEST_USER_EMAIL --env TEST_USER_PASSWORD=$TEST_USER_PASSWORD --env TEST_ADMIN_EMAIL=$TEST_ADMIN_EMAIL --env TEST_ADMIN_PASSWORD=$TEST_ADMIN_PASSWORD --env TEST_CREATOR_EMAIL=$TEST_CREATOR_EMAIL --env TEST_CREATOR_PASSWORD=$TEST_CREATOR_PASSWORD --env SEEDED_USER_PASSWORD=$SEEDED_USER_PASSWORD --env SEEDED_STUDENT_COUNT=$SEEDED_STUDENT_COUNT --env SEEDED_ADMIN_COUNT=$SEEDED_ADMIN_COUNT --env SEEDED_CREATOR_COUNT=$SEEDED_CREATOR_COUNT src/scenarios/load-test.js",
+          "test:stress:cloud": "set -a && source .env && set +a && k6 cloud --env ENVIRONMENT=$ENVIRONMENT --env API_BASE_URL=$API_BASE_URL --env TEST_USER_EMAIL=$TEST_USER_EMAIL --env TEST_USER_PASSWORD=$TEST_USER_PASSWORD --env TEST_ADMIN_EMAIL=$TEST_ADMIN_EMAIL --env TEST_ADMIN_PASSWORD=$TEST_ADMIN_PASSWORD --env TEST_CREATOR_EMAIL=$TEST_CREATOR_EMAIL --env TEST_CREATOR_PASSWORD=$TEST_CREATOR_PASSWORD --env SEEDED_USER_PASSWORD=$SEEDED_USER_PASSWORD --env SEEDED_STUDENT_COUNT=$SEEDED_STUDENT_COUNT --env SEEDED_ADMIN_COUNT=$SEEDED_ADMIN_COUNT --env SEEDED_CREATOR_COUNT=$SEEDED_CREATOR_COUNT src/scenarios/stress-test.js",
+          "test:spike:cloud": "set -a && source .env && set +a && k6 cloud --env ENVIRONMENT=$ENVIRONMENT --env API_BASE_URL=$API_BASE_URL --env TEST_USER_EMAIL=$TEST_USER_EMAIL --env TEST_USER_PASSWORD=$TEST_USER_PASSWORD --env TEST_ADMIN_EMAIL=$TEST_ADMIN_EMAIL --env TEST_ADMIN_PASSWORD=$TEST_ADMIN_PASSWORD --env TEST_CREATOR_EMAIL=$TEST_CREATOR_EMAIL --env TEST_CREATOR_PASSWORD=$TEST_CREATOR_PASSWORD --env SEEDED_USER_PASSWORD=$SEEDED_USER_PASSWORD --env SEEDED_STUDENT_COUNT=$SEEDED_STUDENT_COUNT --env SEEDED_ADMIN_COUNT=$SEEDED_ADMIN_COUNT --env SEEDED_CREATOR_COUNT=$SEEDED_CREATOR_COUNT src/scenarios/spike-test.js",
+          "test:soak:cloud": "set -a && source .env && set +a && k6 cloud --env ENVIRONMENT=$ENVIRONMENT --env API_BASE_URL=$API_BASE_URL --env TEST_USER_EMAIL=$TEST_USER_EMAIL --env TEST_USER_PASSWORD=$TEST_USER_PASSWORD --env TEST_ADMIN_EMAIL=$TEST_ADMIN_EMAIL --env TEST_ADMIN_PASSWORD=$TEST_ADMIN_PASSWORD --env TEST_CREATOR_EMAIL=$TEST_CREATOR_EMAIL --env TEST_CREATOR_PASSWORD=$TEST_CREATOR_PASSWORD --env SEEDED_USER_PASSWORD=$SEEDED_USER_PASSWORD --env SEEDED_STUDENT_COUNT=$SEEDED_STUDENT_COUNT --env SEEDED_ADMIN_COUNT=$SEEDED_ADMIN_COUNT --env SEEDED_CREATOR_COUNT=$SEEDED_CREATOR_COUNT src/scenarios/soak-test.js",
+          "test:mixed:cloud": "set -a && source .env && set +a && k6 cloud --env ENVIRONMENT=$ENVIRONMENT --env API_BASE_URL=$API_BASE_URL --env TEST_USER_EMAIL=$TEST_USER_EMAIL --env TEST_USER_PASSWORD=$TEST_USER_PASSWORD --env TEST_ADMIN_EMAIL=$TEST_ADMIN_EMAIL --env TEST_ADMIN_PASSWORD=$TEST_ADMIN_PASSWORD --env TEST_CREATOR_EMAIL=$TEST_CREATOR_EMAIL --env TEST_CREATOR_PASSWORD=$TEST_CREATOR_PASSWORD --env SEEDED_USER_PASSWORD=$SEEDED_USER_PASSWORD --env SEEDED_STUDENT_COUNT=$SEEDED_STUDENT_COUNT --env SEEDED_ADMIN_COUNT=$SEEDED_ADMIN_COUNT --env SEEDED_CREATOR_COUNT=$SEEDED_CREATOR_COUNT src/tests/mixed-workload.test.js"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/prompts/package.json",
+        "name": "@repo/prompts",
+        "scripts": {
+          "build": "ts-node src/generation/generate-prompts.ts && tsc -p tsconfig.json"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/scorm-export-generator/package.json",
+        "name": "@repo/scorm-export-generator",
+        "scripts": {
+          "build": "tsup"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/scorm-export-runtime/package.json",
+        "name": "@repo/scorm-export-runtime",
+        "scripts": {
+          "build": "tsup && node scripts/copy-player-assets.mjs"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/shared/package.json",
+        "name": "@repo/shared",
+        "scripts": {
+          "build": "tsup"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@repo/ui",
+        "scripts": {
+          "lint": "eslint . --max-warnings 0"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.langfuse.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker-compose.langfuse.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    },
+    {
+      "engine": "minio",
+      "required": true,
+      "docker_image": "minio/minio",
+      "port": 9000,
+      "env_url": "MINIO_PASSWORD",
+      "compose": [
+        "docker-compose.langfuse.yml",
+        "docker-compose.preview.tpl.yml"
+      ],
+      "bootstrap": [
+        "Start MinIO via the project docker compose (object store for documents)."
+      ]
+    }
+  ],
+  "ports": [
+    1025,
+    3000,
+    5432,
+    6379,
+    9000
+  ],
+  "env_files": [
+    ".env.example",
+    "apps/api/.env.example",
+    "apps/web/.env.example",
+    "packages/performance-tests/.env.example"
+  ],
+  "env": [
+    {
+      "key": "LANGFUSE_POSTGRES_USER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_POSTGRES_DB",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_POSTGRES_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_CLICKHOUSE_USER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_CLICKHOUSE_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_MEDIA_PREFIX",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_EVENT_PREFIX",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_NEXTAUTH_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_NEXTAUTH_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_DATABASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_SALT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_ENCRYPTION_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_CLICKHOUSE_MIGRATION_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLICKHOUSE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "AWS_BUCKET_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "AWS_REGION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "AWS_ACCESS_KEY_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "AWS_SECRET_ACCESS_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLICKHOUSE_CLUSTER_ENABLED",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_BUCKET",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_PREFIX",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_REGION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "CORS_ORIGIN",
+      "default": "https://tenant1.lms.localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "TEST_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://postgres:guidebook@localhost:5432/guidebook",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "secret",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "JWT_REFRESH_SECRET",
+      "default": "refresh",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "JWT_EXPIRATION_TIME",
+      "default": "24h",
+      "required": false,
+      "secret": false,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "GOOGLE_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MICROSOFT_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MICROSOFT_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MICROSOFT_MENTINGO_MARKER_PROPERTY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MICROSOFT_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SLACK_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SLACK_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SLACK_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "EMAIL_ADAPTER",
+      "default": "mailhog",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_HOST",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_PORT",
+      "default": "1025",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_USER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_EMAIL_FROM",
+      "default": "noreply@mentingo.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "S3_ENDPOINT",
+      "default": "http://localhost:9100",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "S3_REGION",
+      "default": "eu-central-1",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "S3_ACCESS_KEY_ID",
+      "default": "minioadmin",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "S3_SECRET_ACCESS_KEY",
+      "default": "minioadmin",
+      "required": true,
+      "secret": true,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "S3_BUCKET_NAME",
+      "default": "my-local-bucket",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "BUNNY_STREAM_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "BUNNY_STREAM_SIGNING_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "BUNNY_STREAM_LIBRARY_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "BUNNY_STREAM_CDN_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "BUNNY_STREAM_TOKEN_SIGNING_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STRIPE_PUBLISHABLE_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SENTRY_ENVIRONMENT",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SENTRY_DSN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "OpenAI API key",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "WORKER_CONCURRENCY",
+      "default": "10",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MASTER_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "DATABASE_TEST_URL",
+      "default": "postgresql://postgres:guidebook@localhost:5432/guidebook_test",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "REDIS_TEST_URL",
+      "default": "redis://localhost:6379/1",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis setting",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "ANALYTICS_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LMS_DATABASE_URL",
+      "default": "postgresql://lms_app_user:replace_with_strong_password@localhost:5432/guidebook",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "MIGRATOR_DATABASE_URL",
+      "default": "postgres://postgres:guidebook@localhost:5432/guidebook",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "DEV_TENANT_ORIGINS",
+      "default": "https://tenant1.lms.localhost,https://tenant2.lms.localhost,https://tenant3.lms.localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "INTEGRATION_CORS_ORIGINS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LUMA_BASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "VITE_API_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_APP_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_STRIPE_PUBLISHABLE_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "SENTRY_AUTH_TOKEN",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "SENTRY_ORG",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "SENTRY_PROJECT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_SENTRY_DSN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_GOOGLE_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_MICROSOFT_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_SLACK_OAUTH_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_PLAYERJS_CDN_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_POSTHOG_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "VITE_POSTHOG_HOST",
+      "default": "https://eu.i.posthog.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/web/.env.example"
+    },
+    {
+      "key": "ENVIRONMENT",
+      "default": "local",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "K6_ENVIRONMENT",
+      "default": "local",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "API_BASE_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "WEB_BASE_URL",
+      "default": "http://localhost:8080",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "REQUEST_TIMEOUT_MS",
+      "default": "30000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TLS_SKIP_VERIFY",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_USER_EMAIL",
+      "default": "user@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_USER_PASSWORD",
+      "default": "password",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_ADMIN_EMAIL",
+      "default": "admin@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_ADMIN_PASSWORD",
+      "default": "password",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_CREATOR_EMAIL",
+      "default": "contentcreator@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_CREATOR_PASSWORD",
+      "default": "password",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SEEDED_USER_PASSWORD",
+      "default": "password",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SEEDED_STUDENT_COUNT",
+      "default": "1000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SEEDED_ADMIN_COUNT",
+      "default": "100",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SEEDED_CREATOR_COUNT",
+      "default": "100",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "LOAD_TEST_RAMP_UP_DURATION",
+      "default": "2m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "LOAD_TEST_SUSTAIN_DURATION",
+      "default": "3m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "LOAD_TEST_RAMP_DOWN_DURATION",
+      "default": "2m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "LOAD_TEST_MAX_VUS",
+      "default": "20",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_INITIAL_VUS",
+      "default": "1000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_1_DURATION",
+      "default": "3m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_1_VUS",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_2_DURATION",
+      "default": "3m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_2_VUS",
+      "default": "10000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_3_DURATION",
+      "default": "3m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_STAGE_3_VUS",
+      "default": "15000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_MAX_VUS",
+      "default": "20000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "STRESS_TEST_RAMP_DOWN_DURATION",
+      "default": "2m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_INITIAL_VUS",
+      "default": "100",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_SPIKE_DURATION",
+      "default": "30s",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_SPIKE_VUS",
+      "default": "10000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_HOLD_DURATION",
+      "default": "1m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_DROP_DURATION",
+      "default": "1m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SPIKE_TEST_RAMP_DOWN_DURATION",
+      "default": "10s",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SOAK_TEST_RAMP_UP_DURATION",
+      "default": "5m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SOAK_TEST_SUSTAIN_DURATION",
+      "default": "120m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SOAK_TEST_RAMP_DOWN_DURATION",
+      "default": "5m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "SOAK_TEST_VUS",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_P95_MS",
+      "default": "500",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_P99_MS",
+      "default": "1000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_MAX_MS",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_ERROR_RATE",
+      "default": "0.01",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_CHECK_RATE",
+      "default": "0.99",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_SLOW_P95_MS",
+      "default": "2000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_SLOW_P99_MS",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_SLOW_MAX_MS",
+      "default": "30000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_SLOW_ERROR_RATE",
+      "default": "0.02",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_CRITICAL_P95_MS",
+      "default": "300",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_CRITICAL_P99_MS",
+      "default": "500",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_CRITICAL_MAX_MS",
+      "default": "2000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "THRESHOLD_CRITICAL_ERROR_RATE",
+      "default": "0.005",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "K6_CLOUD_PROJECT_ID",
+      "default": "3498765",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "K6_CLOUD_TEST_NAME",
+      "default": "Mentingo Load Test",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "K6_CLOUD_TEST_NOTE",
+      "default": "Load test with realistic user behavior",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "COOKIE_DOMAIN",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "DEFAULT_PAGE",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "DEFAULT_PER_PAGE",
+      "default": "10",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "DEFAULT_LANGUAGE",
+      "default": "en",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "TEST_EMAIL_DOMAIN",
+      "default": "mentingo.local",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "packages/performance-tests/.env.example"
+    },
+    {
+      "key": "BUILD_VERIFICATION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/api/src/app-startup.service.spec.ts"
+    },
+    {
+      "key": "JEST_WORKER_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/api/src/app-startup.service.spec.ts"
+    },
+    {
+      "key": "LANGFUSE_HOST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/api/src/langfuse/instrumentation.ts"
+    },
+    {
+      "key": "LANGFUSE_PUBLIC_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/api/src/langfuse/instrumentation.ts"
+    },
+    {
+      "key": "LANGFUSE_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "source:apps/api/src/langfuse/instrumentation.ts"
+    },
+    {
+      "key": "LUMA_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/api/src/env/services/env.service.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:apps/api/src/main.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.langfuse.yml",
+      "docker-compose.preview.tpl.yml",
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "project-db",
+        "image": "pgvector/pgvector:pg16",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:8.0-M02-alpine3.20",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "mailhog",
+        "image": "mailhog/mailhog",
+        "ports": [
+          "1025:1025",
+          "8025:8025"
+        ]
+      },
+      {
+        "name": "langfuse-db",
+        "image": "pgvector/pgvector:pg16",
+        "ports": [
+          "5433:5432"
+        ]
+      },
+      {
+        "name": "langfuse-worker",
+        "image": "docker.io/langfuse/langfuse-worker:3",
+        "ports": []
+      },
+      {
+        "name": "langfuse-web",
+        "image": "docker.io/langfuse/langfuse:3",
+        "ports": [
+          "3002:3000"
+        ]
+      },
+      {
+        "name": "clickhouse",
+        "image": "docker.io/clickhouse/clickhouse-server",
+        "ports": []
+      },
+      {
+        "name": "minio",
+        "image": "quay.io/minio/minio:latest",
+        "ports": [
+          "9100:9000",
+          "9101:9001"
+        ]
+      },
+      {
+        "name": "create-minio-bucket",
+        "image": "quay.io/minio/mc:latest",
+        "ports": []
+      },
+      {
+        "name": "project-db",
+        "image": "pgvector/pgvector:pg16",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:8.0-M02-alpine3.20",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "mailhog",
+        "image": "mailhog/mailhog",
+        "ports": [
+          "1025:1025",
+          "8025:8025"
+        ]
+      },
+      {
+        "name": "minio",
+        "image": "quay.io/minio/minio:latest",
+        "ports": [
+          "9100:9000",
+          "9101:9001"
+        ]
+      },
+      {
+        "name": "create-minio-bucket",
+        "image": "quay.io/minio/mc:latest",
+        "ports": []
+      }
+    ],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "seed": "npm run db:seed",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/lms/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-minio",
+        "run": "Start MinIO via the project docker compose (object store for documents)."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "seed",
+        "run": "npm run db:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/lms/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/lms/overlay.json",
+    "agents": ".navin/apps/lms/agents/",
+    "env": ".env",
+    "frontend": "apps/web/package.json",
+    "backend": "apps/api/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "ai-tutor",
+      "course-creator-agent",
+      "quiz-generator",
+      "student-progress-agent",
+      "teacher-assistant"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -1,10 +1,10 @@
 # My Tool
 
-Let the agent sense and adjust its own runtime state — like asking a coworker "are you busy? can you switch to a bigger monitor?"
+Let the agent sense and adjust its own runtime state - like asking a coworker "are you busy? can you switch to a bigger monitor?"
 
 ## Why You Need It
 
-Normal tools let the agent operate on the outside world (read/write files, search code). But the agent knows nothing about itself — it doesn't know which model it's running on, how many iterations are left, or how many tokens it has consumed.
+Normal tools let the agent operate on the outside world (read/write files, search code). But the agent knows nothing about itself - it doesn't know which model it's running on, how many iterations are left, or how many tokens it has consumed.
 
 My tool fills this gap. With it, the agent can:
 
@@ -27,11 +27,11 @@ To allow the agent to set its configuration (e.g. switch models, adjust paramete
 
 Legacy `tools.myEnabled` / `tools.mySet` keys are auto-migrated on load, and rewritten in-place the next time `navin onboard` refreshes the config.
 
-All modifications are held in memory only — restart restores defaults.
+All modifications are held in memory only - restart restores defaults.
 
 ---
 
-## check — Check "my" current state
+## check - Check "my" current state
 
 Without parameters, returns a key config overview:
 
@@ -68,14 +68,14 @@ my(action="check", key="web_config.enable")
 | "What model are you using?" | `check("model")` |
 | "Which model preset is active?" | `check("model_preset")` |
 | "How many more tool calls can you make?" | `check("max_iterations")` minus `check("_current_iteration")` |
-| "How many tokens has this conversation used?" | `check("_last_usage")` — cumulative across all turns |
+| "How many tokens has this conversation used?" | `check("_last_usage")` - cumulative across all turns |
 | "Where is your working directory?" | `check("workspace")` |
 | "Show me your full config" | `check()` |
-| "Are there any subagents running?" | `check("subagents")` — shows phase, iteration, elapsed time, tool events |
+| "Are there any subagents running?" | `check("subagents")` - shows phase, iteration, elapsed time, tool events |
 
 ---
 
-## set — Runtime tuning
+## set - Runtime tuning
 
 Changes take effect immediately, no restart required.
 
@@ -104,12 +104,12 @@ my(action="set", key="task_complexity", value="high")
 
 ### Protected parameters
 
-These parameters have type and range validation — invalid values are rejected:
+These parameters have type and range validation - invalid values are rejected:
 
 | Parameter | Type | Range | Purpose |
 |-----------|------|-------|---------|
-| `max_iterations` | int | 1–100 | Max tool calls per conversation turn |
-| `context_window_tokens` | int | 4,096–1,000,000 | Context window size |
+| `max_iterations` | int | 1-100 | Max tool calls per conversation turn |
+| `context_window_tokens` | int | 4,096-1,000,000 | Context window size |
 | `model` | str | non-empty | LLM model to use |
 | `model_preset` | str | configured preset name | Named preset to use |
 
@@ -148,7 +148,7 @@ User: "Why aren't you searching the web?"
 Agent: Let me check my web config.
 → my(action="check", key="web_config.enable")
 # → False
-Agent: Web search is disabled — please set web.enable: true in your config.
+Agent: Web search is disabled - please set web.enable: true in your config.
 ```
 
 ### "Token budget management"
@@ -184,7 +184,7 @@ Core design principle: **All modifications live in memory only. Restart restores
 
 ### Off-limits (BLOCKED)
 
-Cannot be checked or modified — fully hidden:
+Cannot be checked or modified - fully hidden:
 
 | Category | Attributes | Reason |
 |----------|-----------|--------|

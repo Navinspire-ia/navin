@@ -1,0 +1,546 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "restaurant-pos",
+  "name": "Restaurant / POS",
+  "kind": "business",
+  "category": "hospitality",
+  "source_github": "https://github.com/FreeOpenSourcePOS/FloCafe",
+  "source_name": "FloCafe",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/restaurant-pos",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 12,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "FloCafe runs on the business's own computer. Orders, customers, receipts, and backups stay in a local SQLite database, so the counter keeps working when the internet does not. Google Drive backup, WhatsApp bill delivery, and cloud-connected reporting are optional. If FloCafe helps your cafe, restaurant, cloud kitchen, bakery, or food truck, please star the repository. GitHub stars help more operators find a free open-source POS instead of assuming every restaurant system must be a paid cloud subscription."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=22.12.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint",
+          "test:e2e": "playwright test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "package.json",
+        "name": "flo-desktop",
+        "scripts": {
+          "predev": "",
+          "dev": "npm run clean && npm run build:frontend && npm run build && electron .",
+          "dev:restart": "bash scripts/dev/restart.sh",
+          "dev:reset": "bash scripts/dev/nuclear-reset.sh",
+          "dev:frontend": "cd frontend && npm run dev",
+          "build": "tsc && node scripts/copy-runtime-assets.cjs",
+          "lint:backend": "eslint main/",
+          "lint": "npm run lint:backend && npm --prefix frontend run lint",
+          "build:frontend": "cd frontend && npm ci && npx cross-env NEXT_BUILD_MODE=desktop npm run build",
+          "build:all-platforms": "npm run build:frontend && npm run build && electron-builder --win --mac --linux",
+          "build:win": "npm run build:frontend && npm run build && electron-builder --win",
+          "build:appx": "npm run build:frontend && npm run build && electron-builder --win appx --config.npmRebuild=false",
+          "build:mac": "npm run build:frontend && npm run build && electron-builder --mac",
+          "build:mas": "MAS_BUILD=1 npm run build:frontend && MAS_BUILD=1 npm run build && MAS_BUILD=1 electron-builder --mac mas --universal",
+          "build:mas-dev": "MAS_BUILD=1 npm run build:frontend && MAS_BUILD=1 npm run build && MAS_BUILD=1 electron-builder --mac masDev",
+          "build:linux": "npm run build:frontend && npm run build && electron-builder --linux",
+          "pretest": "bash tests/run-test.sh npm run test:payment-methods-split",
+          "start": "electron .",
+          "rebuild": "HOME=~/.electron-gyp node-gyp rebuild --target=$(node -p \"require('./node_modules/electron/package.json').version\") --arch=$(node -p \"process.arch\") --dist-url=https://electronjs.org/headers --runtime=electron --directory node_modules/better-sqlite3",
+          "test": "bash tests/run-test.sh npm run test:smoke && bash tests/run-test.sh npm run test:kds-integration && bash tests/run-test.sh npm run test:kds-contract && bash tests/run-test.sh npm run test:kds-frontend-conflict && bash tests/run-test.sh npm run test:cors && bash tests/run-test.sh npm run test:release-config && bash tests/run-test.sh npm run test:telemetry && bash tests/run-test.sh npm run test:first-run && bash tests/run-test.sh npm run test:security && bash tests/run-test.sh npm run test:staff-authz && bash tests/run-test.sh npm run test:orders-authz && bash tests/run-test.sh npm run test:authz-phase3 && bash tests/run-test.sh npm run test:customer-auth && bash tests/run-test.sh npm run test:customer-pagination && bash tests/run-test.sh npm run test:backup && bash tests/run-test.sh npm run test:recovery-cloud && bash tests/run-test.sh npm run test:cloud-account-status && bash tests/run-test.sh npm run test:printer && bash tests/run-test.sh npm run test:printer-width-refresh && bash tests/run-test.sh npm run test:printer-migrations && bash tests/run-test.sh npm run test:translations && bash tests/run-test.sh npm run test:phone && bash tests/run-test.sh npm run test:currency && bash tests/run-test.sh npm run test:tax-engine && bash tests/run-test.sh npm run test:tax-components && bash tests/run-test.sh npm run test:tax-pack-catalog && bash tests/run-test.sh npm run test:tax-pack-management && bash tests/run-test.sh npm run test:manual-tax-config && bash tests/run-test.sh npm run test:legacy-tax-pack-digest && bash tests/run-test.sh npm run test:support-ticket && bash tests/run-test.sh npm run test:customer-phone-search && bash tests/run-test.sh npm run test:phone-search-integration && bash tests/run-test.sh npm run test:receipt-column-width && bash tests/run-test.sh npm run test:notes-validation && bash tests/run-test.sh npm run test:receipt-printing && bash tests/run-test.sh npm run test:cancel-override && bash tests/run-test.sh npm run test:kitchen-addons && bash tests/run-test.sh npm run test:order-item-addons && bash tests/run-test.sh npm run test:issue-125-addon-reads && bash tests/run-test.sh npm run test:windows-country-code-crash && bash tests/run-test.sh npm run test:reports-insights && bash tests/run-test.sh npm run test:sequence && bash tests/run-test.sh npm run test:integration-happy && bash tests/run-test.sh npm run test:integration-tax && bash tests/run-test.sh npm run test:integration-payments && bash tests/run-test.sh npm run test:issue-214 && bash tests/run-test.sh npm run test:issue-214-auth && bash tests/run-test.sh npm run test:issue-214-migration && bash tests/run-test.sh npm run test:integration-lifecycle && bash tests/run-test.sh npm run test:integration-reconciliation && bash tests/run-test.sh npm run test:integration-loyalty && bash tests/run-test.sh npm run test:integration-discount && bash tests/run-test.sh npm run test:loyalty-toggle && bash tests/run-test.sh npm run test:discount-system && bash tests/run-test.sh npm run test:integration-discount-settings && bash tests/run-test.sh npm run test:integration-loyalty-global && bash tests/run-test.sh npm run test:issue-248-csv && bash tests/run-test.sh npm run test:integration-loyalty-redemption && bash tests/run-test.sh npm run test:bills-print-api && bash tests/run-test.sh npm run test:issue-24 && bash tests/run-test.sh npm run test:issue-134-routing && bash tests/run-test.sh npm run test:issue-134-mgmt && bash tests/run-test.sh npm run test:issue-137-barcode && bash tests/run-test.sh npm run test:issue-244-product-addon-links && bash tests/run-test.sh npm run test:issue-250-catalog-perf && bash tests/run-test.sh npm run test:issue-258-bill-pagination && bash tests/run-test.sh npm run test:issue-265-morocco-profile && bash tests/run-test.sh npm run test:issue-266-currency-symbol-print && bash tests/run-test.sh npm run test:tables-string-ids && bash tests/run-test.sh npm run test:held-orders && bash tests/run-test.sh npm run test:schema-health && bash tests/run-test.sh npm run test:upgrade-path && bash tests/run-test.sh npm run test:migration-v56-v57 && bash tests/run-test.sh npm run test:master-pin && bash tests/run-test.sh npm run test:google-drive && bash tests/run-test.sh npm run test:database-tools-api && bash tests/run-test.sh npm run test:phone-validation && bash tests/run-test.sh npm run test:phone-migration && bash tests/run-test.sh npm run test:issue-133-kds-kot-toggles && bash tests/run-test.sh npm run test:whatsapp-schema && bash tests/run-test.sh npm run test:whatsapp-service && bash tests/run-test.sh npm run test:whatsapp-middleware && bash tests/run-test.sh npm run test:issue-127-password-recovery && bash tests/run-test.sh npm run test:dev-tooling && bash tests/run-test.sh npm run test:windows-uninstaller && bash tests/run-test.sh npm run test:shutdown-lifecycle",
+          "test:dev-tooling": "ts-node --transpile-only -P tests/tsconfig.json tests/dev-tooling-scripts.test.ts && npm run test:phase2 && npm run test:url-allowlist && npm run test:static-routes",
+          "test:shutdown-lifecycle": "npm run build && node tests/run-electron-node-test.cjs tests/shutdown-lifecycle.test.ts",
+          "test:phase2": "ts-node --transpile-only -P tests/tsconfig.json tests/auth-state-recovery.test.ts && node tests/run-electron-node-test.cjs tests/login-email-normalization.test.ts && node tests/run-electron-node-test.cjs tests/master-pin.test.ts && node tests/run-electron-node-test.cjs tests/manager-pin-verification.test.ts && node tests/run-electron-node-test.cjs tests/jwt-logout-lifecycle.test.ts && node tests/run-electron-node-test.cjs tests/kds-websocket-revalidation.test.ts",
+          "test:url-allowlist": "ts-node --transpile-only -P tests/tsconfig.json tests/url-allowlist.test.ts",
+          "test:cors": "ts-node --transpile-only -P tests/tsconfig.json tests/cors-security.test.ts",
+          "test:smoke": "node tests/run-electron-node-test.cjs tests/smoke-test.test.ts",
+          "test:payment-methods-split": "node tests/run-electron-node-test.cjs tests/payment-methods-split-checks.test.ts",
+          "test:kds-integration": "node tests/run-electron-node-test.cjs tests/kds-integration.test.ts",
+          "test:kds-contract": "node tests/run-electron-node-test.cjs tests/kds-contract.test.ts",
+          "test:kds-frontend-conflict": "ts-node --transpile-only -P tests/tsconfig.json tests/kds-frontend-conflict.test.ts",
+          "test:e2e": "npm run build && npm run build:frontend && cd frontend && npx playwright install chromium && npx playwright test",
+          "test:release-config": "ts-node --transpile-only -P tests/tsconfig.json tests/release-config.test.ts",
+          "test:windows-uninstaller": "node tests/run-windows-uninstaller-tests.cjs",
+          "test:telemetry": "node tests/run-electron-node-test.cjs tests/telemetry-delivery.test.ts",
+          "test:static-routes": "node tests/run-electron-node-test.cjs tests/static-route-resolution.test.ts",
+          "test:notes-validation": "ts-node --transpile-only -P tests/tsconfig.json tests/order-notes-validation.test.ts",
+          "test:first-run": "node tests/run-electron-node-test.cjs tests/first-run-setup.test.ts && node tests/run-electron-node-test.cjs tests/setup-failure-recovery.test.ts",
+          "test:security": "node tests/run-electron-node-test.cjs tests/security-hardening.test.ts",
+          "test:staff-authz": "node tests/run-electron-node-test.cjs tests/staff-authz.test.ts",
+          "test:orders-authz": "node tests/run-electron-node-test.cjs tests/orders-authz.test.ts",
+          "test:authz-phase3": "node tests/run-electron-node-test.cjs tests/authz-matrix-phase3.test.ts",
+          "test:customer-auth": "node tests/run-electron-node-test.cjs tests/customer-auth.test.ts",
+          "test:backup": "ts-node --transpile-only -P tests/tsconfig.json tests/backup-restore.test.ts && node tests/run-electron-node-test.cjs tests/backup-restore-production.test.ts",
+          "test:recovery-cloud": "node tests/run-electron-node-test.cjs tests/recovery-legacy-fk.test.ts && node tests/run-electron-node-test.cjs tests/cloud-deletion-recovery.test.ts",
+          "test:cloud-account-status": "node tests/run-electron-node-test.cjs tests/cloud-account-status.test.ts",
+          "test:printer": "ts-node --transpile-only -P tests/tsconfig.json tests/printer.test.ts",
+          "audit:db": "ts-node --transpile-only -P tests/tsconfig.json tests/db-audit.test.ts",
+          "test:receipt-printing": "ts-node --transpile-only -P tests/tsconfig.json tests/receipt-printing.test.ts",
+          "test:bills-print-api": "ts-node --transpile-only -P tests/tsconfig.json tests/bills-print-api.test.ts",
+          "test:cancel-override": "node tests/run-electron-node-test.cjs tests/cancel-override.test.ts",
+          "test:kitchen-addons": "node tests/run-electron-node-test.cjs tests/kitchen-addons-parsing.test.ts",
+          "test:order-item-addons": "node tests/run-electron-node-test.cjs tests/order-item-addons.test.ts",
+          "test:issue-125-addon-reads": "node tests/run-electron-node-test.cjs tests/issue-125-addon-read-paths.test.ts",
+          "test:windows-country-code-crash": "node tests/run-electron-node-test.cjs tests/issue-windows-country-code-crash.test.ts",
+          "test:reports-insights": "node tests/run-electron-node-test.cjs tests/reports-insights.test.ts",
+          "test:integration-happy": "node tests/run-electron-node-test.cjs tests/integration-happy-path.test.ts",
+          "test:integration-tax": "node tests/run-electron-node-test.cjs tests/integration-tax.test.ts",
+          "test:integration-payments": "node tests/run-electron-node-test.cjs tests/integration-payments.test.ts",
+          "test:issue-214": "node tests/run-electron-node-test.cjs tests/issue-214-payment-integrity.test.ts",
+          "test:issue-214-auth": "node tests/run-electron-node-test.cjs tests/issue-214-auth-migration.test.ts",
+          "test:issue-214-migration": "node tests/run-electron-node-test.cjs tests/issue-214-migration-integrity.test.ts",
+          "test:issue-255-cart": "ts-node --transpile-only -P tests/tsconfig.json tests/issue-255-pos-cart-retry.test.ts",
+          "test:issue-255-append": "node tests/run-electron-node-test.cjs tests/issue-255-append-idempotency.test.ts",
+          "test:integration-lifecycle": "node tests/run-electron-node-test.cjs tests/integration-order-lifecycle.test.ts",
+          "test:integration-reconciliation": "node tests/run-electron-node-test.cjs tests/integration-bill-reconciliation.test.ts",
+          "test:integration-loyalty": "node tests/run-electron-node-test.cjs tests/integration-loyalty.test.ts",
+          "test:integration-discount": "node tests/run-electron-node-test.cjs tests/integration-discount-edge.test.ts",
+          "test:sequence": "node tests/run-electron-node-test.cjs tests/sequence-generation.test.ts",
+          "test:order-numbering-settings": "node tests/run-electron-node-test.cjs tests/order-numbering-settings.test.ts",
+          "test:loyalty-toggle": "node tests/run-electron-node-test.cjs tests/loyalty-toggle.test.ts",
+          "test:discount-system": "node tests/run-electron-node-test.cjs tests/discount-system.test.ts",
+          "test:integration-discount-settings": "node tests/run-electron-node-test.cjs tests/integration-discount-settings.test.ts",
+          "test:integration-loyalty-global": "node tests/run-electron-node-test.cjs tests/integration-loyalty-global-rate.test.ts",
+          "test:issue-248-csv": "node tests/run-electron-node-test.cjs tests/issue-248-menu-csv.test.ts",
+          "test:integration-loyalty-redemption": "node tests/run-electron-node-test.cjs tests/integration-loyalty-redemption.test.ts",
+          "test:issue-24": "node tests/run-electron-node-test.cjs tests/issue-24-cancel-item-checkout.test.ts",
+          "test:issue-134-routing": "node tests/run-electron-node-test.cjs tests/issue-134-station-routing.test.ts",
+          "test:issue-134-mgmt": "node tests/run-electron-node-test.cjs tests/issue-134-station-management.test.ts",
+          "test:issue-133-kds-kot-toggles": "node tests/run-electron-node-test.cjs tests/issue-133-kds-kot-toggles.test.ts",
+          "test:issue-137-barcode": "node tests/run-electron-node-test.cjs tests/issue-137-barcode.test.ts",
+          "test:issue-244-product-addon-links": "node tests/run-electron-node-test.cjs tests/issue-244-product-addon-links.test.ts",
+          "test:issue-250-catalog-perf": "node tests/run-electron-node-test.cjs tests/issue-250-catalog-perf.test.ts",
+          "test:issue-258-bill-pagination": "node tests/run-electron-node-test.cjs tests/issue-258-bill-pagination.test.ts",
+          "test:issue-265-morocco-profile": "node tests/run-electron-node-test.cjs tests/issue-265-morocco-profile.test.ts",
+          "test:issue-266-currency-symbol-print": "node tests/run-electron-node-test.cjs tests/issue-266-currency-symbol-print.test.ts",
+          "test:tables-string-ids": "node tests/run-electron-node-test.cjs tests/tables-string-ids.test.ts",
+          "test:held-orders": "node tests/run-electron-node-test.cjs tests/held-orders.test.ts && ts-node --transpile-only -P tests/tsconfig.json tests/held-orders-store.test.ts",
+          "test:product-images": "node tests/run-electron-node-test.cjs tests/product-images.test.ts",
+          "test:schema-health": "node tests/run-electron-node-test.cjs tests/schema-health.test.ts",
+          "test:upgrade-path": "node tests/run-electron-node-test.cjs tests/upgrade-path.test.ts",
+          "test:upgrade-regression": "npm run test:upgrade-path",
+          "test:migration-v56-v57": "node tests/run-electron-node-test.cjs tests/migration-v56-to-v57.test.ts",
+          "test:master-pin": "node tests/run-electron-node-test.cjs tests/master-pin.test.ts",
+          "test:google-drive": "node tests/run-electron-node-test.cjs tests/google-drive.test.ts",
+          "test:database-tools-api": "node tests/run-electron-node-test.cjs tests/database-tools-api.test.ts && node tests/run-electron-node-test.cjs tests/database-maintenance-lock.test.ts",
+          "test:issue-127-password-recovery": "node tests/run-electron-node-test.cjs tests/issue-127-password-recovery.test.ts",
+          "test:customer-soft-reactivate-bindings": "ts-node --transpile-only -P tests/tsconfig.json tests/customer-soft-reactivate-bindings.test.ts",
+          "test:customer-phone-search": "node tests/run-electron-node-test.cjs tests/customer-phone-search.test.ts",
+          "test:customer-pagination": "node tests/run-electron-node-test.cjs tests/customer-pagination.test.ts",
+          "test:phone-search-integration": "node tests/run-electron-node-test.cjs tests/phone-search-integration.test.ts",
+          "test:e2e-argentina-flow": "ts-node --transpile-only -P tests/tsconfig.json tests/e2e-argentina-flow.test.ts",
+          "test:translations": "ts-node --transpile-only -P tests/tsconfig.json tests/translations.test.ts",
+          "test:phone": "ts-node --transpile-only -P tests/tsconfig.json tests/phone.test.ts",
+          "test:currency": "ts-node --transpile-only -P tests/tsconfig.json tests/currency.test.ts && ts-node --transpile-only -P tests/tsconfig.json tests/country-profile.test.ts",
+          "test:tax-engine": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-engine.test.ts",
+          "test:tax-components": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-components.test.ts",
+          "test:tax-pack-catalog": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-pack-catalog.test.ts",
+          "test:tax-pack-management": "node tests/run-electron-node-test.cjs tests/tax-pack-management.test.ts",
+          "test:manual-tax-config": "node tests/run-electron-node-test.cjs tests/manual-tax-config.test.ts",
+          "test:legacy-tax-pack-digest": "node tests/run-electron-node-test.cjs tests/legacy-tax-pack-digest.test.ts",
+          "test:support-ticket": "node tests/run-electron-node-test.cjs tests/support-ticket.test.ts",
+          "test:receipt-column-width": "ts-node --transpile-only -P tests/tsconfig.json tests/receipt-column-width.test.ts",
+          "test:phone-validation": "node tests/run-electron-node-test.cjs tests/phone-validation.test.ts",
+          "test:phone-migration": "node tests/run-electron-node-test.cjs tests/phone-migration.test.ts",
+          "test:whatsapp-schema": "node tests/run-electron-node-test.cjs tests/whatsapp-schema.test.ts",
+          "test:whatsapp-service": "ts-node --transpile-only -P tests/tsconfig.json tests/whatsapp-service.test.ts",
+          "test:whatsapp-middleware": "node tests/run-electron-node-test.cjs tests/whatsapp-middleware.test.ts",
+          "test:printer-width-refresh": "node tests/run-electron-node-test.cjs tests/printer-width-refresh.test.ts",
+          "test:printer-migrations": "node tests/run-electron-node-test.cjs tests/printer-usb-device-path-migration.test.ts",
+          "test:issue-252": "node tests/run-electron-node-test.cjs tests/issue-252-order-lifecycle-inventory.test.ts"
+        },
+        "node_engine": ">=22.12.0",
+        "deps_hint": [
+          "better-sqlite3",
+          "express"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "package.json",
+        "name": "flo-desktop",
+        "scripts": {
+          "predev": "",
+          "dev": "npm run clean && npm run build:frontend && npm run build && electron .",
+          "dev:restart": "bash scripts/dev/restart.sh",
+          "dev:reset": "bash scripts/dev/nuclear-reset.sh",
+          "dev:frontend": "cd frontend && npm run dev",
+          "build": "tsc && node scripts/copy-runtime-assets.cjs",
+          "lint:backend": "eslint main/",
+          "lint": "npm run lint:backend && npm --prefix frontend run lint",
+          "build:frontend": "cd frontend && npm ci && npx cross-env NEXT_BUILD_MODE=desktop npm run build",
+          "build:all-platforms": "npm run build:frontend && npm run build && electron-builder --win --mac --linux",
+          "build:win": "npm run build:frontend && npm run build && electron-builder --win",
+          "build:appx": "npm run build:frontend && npm run build && electron-builder --win appx --config.npmRebuild=false",
+          "build:mac": "npm run build:frontend && npm run build && electron-builder --mac",
+          "build:mas": "MAS_BUILD=1 npm run build:frontend && MAS_BUILD=1 npm run build && MAS_BUILD=1 electron-builder --mac mas --universal",
+          "build:mas-dev": "MAS_BUILD=1 npm run build:frontend && MAS_BUILD=1 npm run build && MAS_BUILD=1 electron-builder --mac masDev",
+          "build:linux": "npm run build:frontend && npm run build && electron-builder --linux",
+          "pretest": "bash tests/run-test.sh npm run test:payment-methods-split",
+          "start": "electron .",
+          "rebuild": "HOME=~/.electron-gyp node-gyp rebuild --target=$(node -p \"require('./node_modules/electron/package.json').version\") --arch=$(node -p \"process.arch\") --dist-url=https://electronjs.org/headers --runtime=electron --directory node_modules/better-sqlite3",
+          "test": "bash tests/run-test.sh npm run test:smoke && bash tests/run-test.sh npm run test:kds-integration && bash tests/run-test.sh npm run test:kds-contract && bash tests/run-test.sh npm run test:kds-frontend-conflict && bash tests/run-test.sh npm run test:cors && bash tests/run-test.sh npm run test:release-config && bash tests/run-test.sh npm run test:telemetry && bash tests/run-test.sh npm run test:first-run && bash tests/run-test.sh npm run test:security && bash tests/run-test.sh npm run test:staff-authz && bash tests/run-test.sh npm run test:orders-authz && bash tests/run-test.sh npm run test:authz-phase3 && bash tests/run-test.sh npm run test:customer-auth && bash tests/run-test.sh npm run test:customer-pagination && bash tests/run-test.sh npm run test:backup && bash tests/run-test.sh npm run test:recovery-cloud && bash tests/run-test.sh npm run test:cloud-account-status && bash tests/run-test.sh npm run test:printer && bash tests/run-test.sh npm run test:printer-width-refresh && bash tests/run-test.sh npm run test:printer-migrations && bash tests/run-test.sh npm run test:translations && bash tests/run-test.sh npm run test:phone && bash tests/run-test.sh npm run test:currency && bash tests/run-test.sh npm run test:tax-engine && bash tests/run-test.sh npm run test:tax-components && bash tests/run-test.sh npm run test:tax-pack-catalog && bash tests/run-test.sh npm run test:tax-pack-management && bash tests/run-test.sh npm run test:manual-tax-config && bash tests/run-test.sh npm run test:legacy-tax-pack-digest && bash tests/run-test.sh npm run test:support-ticket && bash tests/run-test.sh npm run test:customer-phone-search && bash tests/run-test.sh npm run test:phone-search-integration && bash tests/run-test.sh npm run test:receipt-column-width && bash tests/run-test.sh npm run test:notes-validation && bash tests/run-test.sh npm run test:receipt-printing && bash tests/run-test.sh npm run test:cancel-override && bash tests/run-test.sh npm run test:kitchen-addons && bash tests/run-test.sh npm run test:order-item-addons && bash tests/run-test.sh npm run test:issue-125-addon-reads && bash tests/run-test.sh npm run test:windows-country-code-crash && bash tests/run-test.sh npm run test:reports-insights && bash tests/run-test.sh npm run test:sequence && bash tests/run-test.sh npm run test:integration-happy && bash tests/run-test.sh npm run test:integration-tax && bash tests/run-test.sh npm run test:integration-payments && bash tests/run-test.sh npm run test:issue-214 && bash tests/run-test.sh npm run test:issue-214-auth && bash tests/run-test.sh npm run test:issue-214-migration && bash tests/run-test.sh npm run test:integration-lifecycle && bash tests/run-test.sh npm run test:integration-reconciliation && bash tests/run-test.sh npm run test:integration-loyalty && bash tests/run-test.sh npm run test:integration-discount && bash tests/run-test.sh npm run test:loyalty-toggle && bash tests/run-test.sh npm run test:discount-system && bash tests/run-test.sh npm run test:integration-discount-settings && bash tests/run-test.sh npm run test:integration-loyalty-global && bash tests/run-test.sh npm run test:issue-248-csv && bash tests/run-test.sh npm run test:integration-loyalty-redemption && bash tests/run-test.sh npm run test:bills-print-api && bash tests/run-test.sh npm run test:issue-24 && bash tests/run-test.sh npm run test:issue-134-routing && bash tests/run-test.sh npm run test:issue-134-mgmt && bash tests/run-test.sh npm run test:issue-137-barcode && bash tests/run-test.sh npm run test:issue-244-product-addon-links && bash tests/run-test.sh npm run test:issue-250-catalog-perf && bash tests/run-test.sh npm run test:issue-258-bill-pagination && bash tests/run-test.sh npm run test:issue-265-morocco-profile && bash tests/run-test.sh npm run test:issue-266-currency-symbol-print && bash tests/run-test.sh npm run test:tables-string-ids && bash tests/run-test.sh npm run test:held-orders && bash tests/run-test.sh npm run test:schema-health && bash tests/run-test.sh npm run test:upgrade-path && bash tests/run-test.sh npm run test:migration-v56-v57 && bash tests/run-test.sh npm run test:master-pin && bash tests/run-test.sh npm run test:google-drive && bash tests/run-test.sh npm run test:database-tools-api && bash tests/run-test.sh npm run test:phone-validation && bash tests/run-test.sh npm run test:phone-migration && bash tests/run-test.sh npm run test:issue-133-kds-kot-toggles && bash tests/run-test.sh npm run test:whatsapp-schema && bash tests/run-test.sh npm run test:whatsapp-service && bash tests/run-test.sh npm run test:whatsapp-middleware && bash tests/run-test.sh npm run test:issue-127-password-recovery && bash tests/run-test.sh npm run test:dev-tooling && bash tests/run-test.sh npm run test:windows-uninstaller && bash tests/run-test.sh npm run test:shutdown-lifecycle",
+          "test:dev-tooling": "ts-node --transpile-only -P tests/tsconfig.json tests/dev-tooling-scripts.test.ts && npm run test:phase2 && npm run test:url-allowlist && npm run test:static-routes",
+          "test:shutdown-lifecycle": "npm run build && node tests/run-electron-node-test.cjs tests/shutdown-lifecycle.test.ts",
+          "test:phase2": "ts-node --transpile-only -P tests/tsconfig.json tests/auth-state-recovery.test.ts && node tests/run-electron-node-test.cjs tests/login-email-normalization.test.ts && node tests/run-electron-node-test.cjs tests/master-pin.test.ts && node tests/run-electron-node-test.cjs tests/manager-pin-verification.test.ts && node tests/run-electron-node-test.cjs tests/jwt-logout-lifecycle.test.ts && node tests/run-electron-node-test.cjs tests/kds-websocket-revalidation.test.ts",
+          "test:url-allowlist": "ts-node --transpile-only -P tests/tsconfig.json tests/url-allowlist.test.ts",
+          "test:cors": "ts-node --transpile-only -P tests/tsconfig.json tests/cors-security.test.ts",
+          "test:smoke": "node tests/run-electron-node-test.cjs tests/smoke-test.test.ts",
+          "test:payment-methods-split": "node tests/run-electron-node-test.cjs tests/payment-methods-split-checks.test.ts",
+          "test:kds-integration": "node tests/run-electron-node-test.cjs tests/kds-integration.test.ts",
+          "test:kds-contract": "node tests/run-electron-node-test.cjs tests/kds-contract.test.ts",
+          "test:kds-frontend-conflict": "ts-node --transpile-only -P tests/tsconfig.json tests/kds-frontend-conflict.test.ts",
+          "test:e2e": "npm run build && npm run build:frontend && cd frontend && npx playwright install chromium && npx playwright test",
+          "test:release-config": "ts-node --transpile-only -P tests/tsconfig.json tests/release-config.test.ts",
+          "test:windows-uninstaller": "node tests/run-windows-uninstaller-tests.cjs",
+          "test:telemetry": "node tests/run-electron-node-test.cjs tests/telemetry-delivery.test.ts",
+          "test:static-routes": "node tests/run-electron-node-test.cjs tests/static-route-resolution.test.ts",
+          "test:notes-validation": "ts-node --transpile-only -P tests/tsconfig.json tests/order-notes-validation.test.ts",
+          "test:first-run": "node tests/run-electron-node-test.cjs tests/first-run-setup.test.ts && node tests/run-electron-node-test.cjs tests/setup-failure-recovery.test.ts",
+          "test:security": "node tests/run-electron-node-test.cjs tests/security-hardening.test.ts",
+          "test:staff-authz": "node tests/run-electron-node-test.cjs tests/staff-authz.test.ts",
+          "test:orders-authz": "node tests/run-electron-node-test.cjs tests/orders-authz.test.ts",
+          "test:authz-phase3": "node tests/run-electron-node-test.cjs tests/authz-matrix-phase3.test.ts",
+          "test:customer-auth": "node tests/run-electron-node-test.cjs tests/customer-auth.test.ts",
+          "test:backup": "ts-node --transpile-only -P tests/tsconfig.json tests/backup-restore.test.ts && node tests/run-electron-node-test.cjs tests/backup-restore-production.test.ts",
+          "test:recovery-cloud": "node tests/run-electron-node-test.cjs tests/recovery-legacy-fk.test.ts && node tests/run-electron-node-test.cjs tests/cloud-deletion-recovery.test.ts",
+          "test:cloud-account-status": "node tests/run-electron-node-test.cjs tests/cloud-account-status.test.ts",
+          "test:printer": "ts-node --transpile-only -P tests/tsconfig.json tests/printer.test.ts",
+          "audit:db": "ts-node --transpile-only -P tests/tsconfig.json tests/db-audit.test.ts",
+          "test:receipt-printing": "ts-node --transpile-only -P tests/tsconfig.json tests/receipt-printing.test.ts",
+          "test:bills-print-api": "ts-node --transpile-only -P tests/tsconfig.json tests/bills-print-api.test.ts",
+          "test:cancel-override": "node tests/run-electron-node-test.cjs tests/cancel-override.test.ts",
+          "test:kitchen-addons": "node tests/run-electron-node-test.cjs tests/kitchen-addons-parsing.test.ts",
+          "test:order-item-addons": "node tests/run-electron-node-test.cjs tests/order-item-addons.test.ts",
+          "test:issue-125-addon-reads": "node tests/run-electron-node-test.cjs tests/issue-125-addon-read-paths.test.ts",
+          "test:windows-country-code-crash": "node tests/run-electron-node-test.cjs tests/issue-windows-country-code-crash.test.ts",
+          "test:reports-insights": "node tests/run-electron-node-test.cjs tests/reports-insights.test.ts",
+          "test:integration-happy": "node tests/run-electron-node-test.cjs tests/integration-happy-path.test.ts",
+          "test:integration-tax": "node tests/run-electron-node-test.cjs tests/integration-tax.test.ts",
+          "test:integration-payments": "node tests/run-electron-node-test.cjs tests/integration-payments.test.ts",
+          "test:issue-214": "node tests/run-electron-node-test.cjs tests/issue-214-payment-integrity.test.ts",
+          "test:issue-214-auth": "node tests/run-electron-node-test.cjs tests/issue-214-auth-migration.test.ts",
+          "test:issue-214-migration": "node tests/run-electron-node-test.cjs tests/issue-214-migration-integrity.test.ts",
+          "test:issue-255-cart": "ts-node --transpile-only -P tests/tsconfig.json tests/issue-255-pos-cart-retry.test.ts",
+          "test:issue-255-append": "node tests/run-electron-node-test.cjs tests/issue-255-append-idempotency.test.ts",
+          "test:integration-lifecycle": "node tests/run-electron-node-test.cjs tests/integration-order-lifecycle.test.ts",
+          "test:integration-reconciliation": "node tests/run-electron-node-test.cjs tests/integration-bill-reconciliation.test.ts",
+          "test:integration-loyalty": "node tests/run-electron-node-test.cjs tests/integration-loyalty.test.ts",
+          "test:integration-discount": "node tests/run-electron-node-test.cjs tests/integration-discount-edge.test.ts",
+          "test:sequence": "node tests/run-electron-node-test.cjs tests/sequence-generation.test.ts",
+          "test:order-numbering-settings": "node tests/run-electron-node-test.cjs tests/order-numbering-settings.test.ts",
+          "test:loyalty-toggle": "node tests/run-electron-node-test.cjs tests/loyalty-toggle.test.ts",
+          "test:discount-system": "node tests/run-electron-node-test.cjs tests/discount-system.test.ts",
+          "test:integration-discount-settings": "node tests/run-electron-node-test.cjs tests/integration-discount-settings.test.ts",
+          "test:integration-loyalty-global": "node tests/run-electron-node-test.cjs tests/integration-loyalty-global-rate.test.ts",
+          "test:issue-248-csv": "node tests/run-electron-node-test.cjs tests/issue-248-menu-csv.test.ts",
+          "test:integration-loyalty-redemption": "node tests/run-electron-node-test.cjs tests/integration-loyalty-redemption.test.ts",
+          "test:issue-24": "node tests/run-electron-node-test.cjs tests/issue-24-cancel-item-checkout.test.ts",
+          "test:issue-134-routing": "node tests/run-electron-node-test.cjs tests/issue-134-station-routing.test.ts",
+          "test:issue-134-mgmt": "node tests/run-electron-node-test.cjs tests/issue-134-station-management.test.ts",
+          "test:issue-133-kds-kot-toggles": "node tests/run-electron-node-test.cjs tests/issue-133-kds-kot-toggles.test.ts",
+          "test:issue-137-barcode": "node tests/run-electron-node-test.cjs tests/issue-137-barcode.test.ts",
+          "test:issue-244-product-addon-links": "node tests/run-electron-node-test.cjs tests/issue-244-product-addon-links.test.ts",
+          "test:issue-250-catalog-perf": "node tests/run-electron-node-test.cjs tests/issue-250-catalog-perf.test.ts",
+          "test:issue-258-bill-pagination": "node tests/run-electron-node-test.cjs tests/issue-258-bill-pagination.test.ts",
+          "test:issue-265-morocco-profile": "node tests/run-electron-node-test.cjs tests/issue-265-morocco-profile.test.ts",
+          "test:issue-266-currency-symbol-print": "node tests/run-electron-node-test.cjs tests/issue-266-currency-symbol-print.test.ts",
+          "test:tables-string-ids": "node tests/run-electron-node-test.cjs tests/tables-string-ids.test.ts",
+          "test:held-orders": "node tests/run-electron-node-test.cjs tests/held-orders.test.ts && ts-node --transpile-only -P tests/tsconfig.json tests/held-orders-store.test.ts",
+          "test:product-images": "node tests/run-electron-node-test.cjs tests/product-images.test.ts",
+          "test:schema-health": "node tests/run-electron-node-test.cjs tests/schema-health.test.ts",
+          "test:upgrade-path": "node tests/run-electron-node-test.cjs tests/upgrade-path.test.ts",
+          "test:upgrade-regression": "npm run test:upgrade-path",
+          "test:migration-v56-v57": "node tests/run-electron-node-test.cjs tests/migration-v56-to-v57.test.ts",
+          "test:master-pin": "node tests/run-electron-node-test.cjs tests/master-pin.test.ts",
+          "test:google-drive": "node tests/run-electron-node-test.cjs tests/google-drive.test.ts",
+          "test:database-tools-api": "node tests/run-electron-node-test.cjs tests/database-tools-api.test.ts && node tests/run-electron-node-test.cjs tests/database-maintenance-lock.test.ts",
+          "test:issue-127-password-recovery": "node tests/run-electron-node-test.cjs tests/issue-127-password-recovery.test.ts",
+          "test:customer-soft-reactivate-bindings": "ts-node --transpile-only -P tests/tsconfig.json tests/customer-soft-reactivate-bindings.test.ts",
+          "test:customer-phone-search": "node tests/run-electron-node-test.cjs tests/customer-phone-search.test.ts",
+          "test:customer-pagination": "node tests/run-electron-node-test.cjs tests/customer-pagination.test.ts",
+          "test:phone-search-integration": "node tests/run-electron-node-test.cjs tests/phone-search-integration.test.ts",
+          "test:e2e-argentina-flow": "ts-node --transpile-only -P tests/tsconfig.json tests/e2e-argentina-flow.test.ts",
+          "test:translations": "ts-node --transpile-only -P tests/tsconfig.json tests/translations.test.ts",
+          "test:phone": "ts-node --transpile-only -P tests/tsconfig.json tests/phone.test.ts",
+          "test:currency": "ts-node --transpile-only -P tests/tsconfig.json tests/currency.test.ts && ts-node --transpile-only -P tests/tsconfig.json tests/country-profile.test.ts",
+          "test:tax-engine": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-engine.test.ts",
+          "test:tax-components": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-components.test.ts",
+          "test:tax-pack-catalog": "ts-node --transpile-only -P tests/tsconfig.json tests/tax-pack-catalog.test.ts",
+          "test:tax-pack-management": "node tests/run-electron-node-test.cjs tests/tax-pack-management.test.ts",
+          "test:manual-tax-config": "node tests/run-electron-node-test.cjs tests/manual-tax-config.test.ts",
+          "test:legacy-tax-pack-digest": "node tests/run-electron-node-test.cjs tests/legacy-tax-pack-digest.test.ts",
+          "test:support-ticket": "node tests/run-electron-node-test.cjs tests/support-ticket.test.ts",
+          "test:receipt-column-width": "ts-node --transpile-only -P tests/tsconfig.json tests/receipt-column-width.test.ts",
+          "test:phone-validation": "node tests/run-electron-node-test.cjs tests/phone-validation.test.ts",
+          "test:phone-migration": "node tests/run-electron-node-test.cjs tests/phone-migration.test.ts",
+          "test:whatsapp-schema": "node tests/run-electron-node-test.cjs tests/whatsapp-schema.test.ts",
+          "test:whatsapp-service": "ts-node --transpile-only -P tests/tsconfig.json tests/whatsapp-service.test.ts",
+          "test:whatsapp-middleware": "node tests/run-electron-node-test.cjs tests/whatsapp-middleware.test.ts",
+          "test:printer-width-refresh": "node tests/run-electron-node-test.cjs tests/printer-width-refresh.test.ts",
+          "test:printer-migrations": "node tests/run-electron-node-test.cjs tests/printer-usb-device-path-migration.test.ts",
+          "test:issue-252": "node tests/run-electron-node-test.cjs tests/issue-252-order-lifecycle-inventory.test.ts"
+        },
+        "node_engine": ">=22.12.0",
+        "deps_hint": [
+          "better-sqlite3",
+          "express"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint",
+          "test:e2e": "playwright test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    5432
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "APPIMAGE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:main/index.ts"
+    },
+    {
+      "key": "FLO_DEV_USER_DATA",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:dev-server.js"
+    },
+    {
+      "key": "GOOGLE_DRIVE_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:main/services/google-drive.ts"
+    },
+    {
+      "key": "GOOGLE_DRIVE_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "source:main/services/google-drive.ts"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "source:main/routes/auth.ts"
+    },
+    {
+      "key": "KDS_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "source:main/kds-server.ts"
+    },
+    {
+      "key": "MAS_BUILD",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:main/index.ts"
+    },
+    {
+      "key": "NEXT_BUILD_MODE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:frontend/next.config.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:main/index.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "source:main/index.ts"
+    },
+    {
+      "key": "SERVER_APP_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "source:main/server-app-state.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/restaurant-pos/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/restaurant-pos/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/restaurant-pos/overlay.json",
+    "agents": ".navin/apps/restaurant-pos/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "restaurant-manager-agent",
+      "ordering-agent",
+      "inventory-agent",
+      "reservation-agent",
+      "kitchen-operations-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

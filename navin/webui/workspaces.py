@@ -181,11 +181,56 @@ class WebUIWorkspaceController:
         self._default_workspace = default_workspace
         self._default_restrict_to_workspace = default_restrict_to_workspace
 
+    def _live_restrict_to_workspace(self) -> bool:
+        try:
+            from navin.config.loader import load_config
+
+            return bool(load_config().tools.restrict_to_workspace)
+        except Exception:
+            return self._default_restrict_to_workspace
+
     def default_scope(self) -> WorkspaceScope:
         return default_scope_for_webui(
             self._default_workspace,
-            self._default_restrict_to_workspace,
+            self._live_restrict_to_workspace(),
         )
+
+    def scope_from_stored_payload(self, raw: Any) -> WorkspaceScope:
+        """Resolve a stored scope without opening the session file again."""
+        if not isinstance(raw, dict):
+            return self.default_scope()
+        try:
+            return validate_workspace_scope_payload(
+                raw,
+                default_workspace=self._default_workspace,
+                default_restrict_to_workspace=self._live_restrict_to_workspace(),
+                source_channel=_WEBUI_SCOPE_CHANNEL,
+            )
+        except WorkspaceScopeError:
+            return self.default_scope()
+
+    def list_scope_payload(
+        self,
+        raw: Any,
+        *,
+        default: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Sidebar scope payload without ``is_dir`` on every row."""
+        fallback = default if default is not None else self.default_scope().payload()
+        if not isinstance(raw, dict):
+            return fallback
+        path = raw.get("project_path") or raw.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return fallback
+        mode = raw.get("access_mode")
+        if not isinstance(mode, str) or not mode:
+            mode = fallback.get("access_mode") or "default"
+        return {
+            **fallback,
+            "project_path": path,
+            "access_mode": mode,
+            "project_name": Path(path).name or path,
+        }
 
     def scope_for_session_key(self, session_key: str) -> WorkspaceScope:
         if self._sessions is None:
@@ -202,7 +247,7 @@ class WebUIWorkspaceController:
             return validate_workspace_scope_payload(
                 metadata.get(WORKSPACE_SCOPE_METADATA_KEY),
                 default_workspace=self._default_workspace,
-                default_restrict_to_workspace=self._default_restrict_to_workspace,
+                default_restrict_to_workspace=self._live_restrict_to_workspace(),
                 source_channel=_WEBUI_SCOPE_CHANNEL,
             )
         except WorkspaceScopeError:
@@ -211,7 +256,7 @@ class WebUIWorkspaceController:
     def payload(self, *, controls_available: bool) -> dict[str, Any]:
         return workspaces_payload(
             default_workspace=self._default_workspace,
-            default_restrict_to_workspace=self._default_restrict_to_workspace,
+            default_restrict_to_workspace=self._live_restrict_to_workspace(),
             controls_available=controls_available,
         )
 
@@ -230,7 +275,7 @@ class WebUIWorkspaceController:
             scope = validate_workspace_scope_payload(
                 raw,
                 default_workspace=self._default_workspace,
-                default_restrict_to_workspace=self._default_restrict_to_workspace,
+                default_restrict_to_workspace=self._live_restrict_to_workspace(),
                 source_channel=_WEBUI_SCOPE_CHANNEL,
             )
         if not controls_available and not _scope_change_is_non_escalating(current, scope):
@@ -292,3 +337,15 @@ class WebUIWorkspaceController:
             session.metadata["webui"] = True
             session.metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
             self._sessions.save(session)
+        # Opening / binding a project must create the durable scaffold once so
+        # Code and every studio share the same brain (SOUL / USER / MEMORY),
+        # board, and metadata - not only the default ~/.navin workspace.
+        try:
+            from navin.utils.helpers import ensure_project_scaffold
+
+            ensure_project_scaffold(scope.project_path, silent=True)
+        except Exception:
+            logger.exception(
+                "project scaffold failed for {}",
+                getattr(scope, "project_path", None),
+            )

@@ -1,0 +1,244 @@
+{
+  "docs": [
+    "Language table for the code index. This is DATA, not code: adding a new",
+    "language means adding an entry here, with no Python change.",
+    "A user override at <config dir>/index_languages.json is merged in front of",
+    "this file, so corrections and new languages can be applied without",
+    "updating the installed package.",
+    "",
+    "Per language:",
+    "  extensions      file suffixes (lowercase, with dot)",
+    "  parser          'ast' (Python only, exact) or 'patterns' (regex)",
+    "  ignore_case     match patterns case-insensitively (SQL keywords).",
+    "                  Leave unset for languages where case carries meaning,",
+    "                  such as Go exports or React component names.",
+    "  export_rule     how to decide a symbol is public:",
+    "                    keyword:<kw>  line contains the keyword",
+    "                    capitalized   name starts with an uppercase letter (Go)",
+    "                    not_underscore name does not start with '_' (Python)",
+    "                    always        every symbol is public",
+    "  line_comments   prefixes that make a line a comment (skipped)",
+    "  patterns        symbol rules: kind + regex with ONE capture group (the",
+    "                  name). Anchored per line, evaluated in order; the first",
+    "                  match wins for a given line.",
+    "  imports         regexes whose first non-empty group is an import target.",
+    "",
+    "Regexes run per line against the raw source with re.match semantics via",
+    "an implicit leading \\s*, so do not add '^'."
+  ],
+  "version": "2026-07-25",
+  "languages": {
+    "python": {
+      "extensions": [".py", ".pyi"],
+      "parser": "ast",
+      "export_rule": "not_underscore",
+      "line_comments": ["#"]
+    },
+    "typescript": {
+      "extensions": [".ts", ".tsx", ".mts", ".cts"],
+      "parser": "patterns",
+      "export_rule": "keyword:export",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s+(\\w+)" },
+        { "kind": "class", "regex": "(?:export\\s+)?(?:default\\s+)?(?:abstract\\s+)?class\\s+(\\w+)" },
+        { "kind": "interface", "regex": "(?:export\\s+)?(?:declare\\s+)?interface\\s+(\\w+)" },
+        { "kind": "type", "regex": "(?:export\\s+)?(?:declare\\s+)?type\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:export\\s+)?(?:declare\\s+)?(?:const\\s+)?enum\\s+(\\w+)" },
+        { "kind": "component", "regex": "(?:export\\s+)?(?:default\\s+)?(?:const|let|var)\\s+([A-Z]\\w*)\\s*(?::[^=]+)?=\\s*(?:React\\.)?(?:memo|forwardRef)?\\s*\\(?\\s*(?:function|\\()" },
+        { "kind": "function", "regex": "(?:export\\s+)?(?:const|let|var)\\s+(\\w+)\\s*(?::[^=]+)?=\\s*(?:async\\s*)?(?:function\\b|\\([^)]*\\)\\s*(?::[^=]+)?=>|\\w+\\s*=>)" },
+        { "kind": "constant", "regex": "(?:export\\s+)?const\\s+(\\w+)\\s*(?::[^=]+)?=" }
+      ],
+      "imports": [
+        { "regex": "(?:import|export)\\s+(?:type\\s+)?(?:[\\w*\\s{},$]+\\s+from\\s+)?[\"']([^\"']+)[\"']" },
+        { "regex": "require\\(\\s*[\"']([^\"']+)[\"']\\s*\\)" },
+        { "regex": "import\\(\\s*[\"']([^\"']+)[\"']\\s*\\)" }
+      ]
+    },
+    "javascript": {
+      "extensions": [".js", ".jsx", ".mjs", ".cjs"],
+      "parser": "patterns",
+      "export_rule": "keyword:export",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s+(\\w+)" },
+        { "kind": "class", "regex": "(?:export\\s+)?(?:default\\s+)?class\\s+(\\w+)" },
+        { "kind": "component", "regex": "(?:export\\s+)?(?:default\\s+)?(?:const|let|var)\\s+([A-Z]\\w*)\\s*=\\s*(?:React\\.)?(?:memo|forwardRef)?\\s*\\(?\\s*(?:function|\\()" },
+        { "kind": "function", "regex": "(?:export\\s+)?(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:async\\s*)?(?:function\\b|\\([^)]*\\)\\s*=>|\\w+\\s*=>)" },
+        { "kind": "constant", "regex": "(?:export\\s+)?const\\s+(\\w+)\\s*=" }
+      ],
+      "imports": [
+        { "regex": "(?:import|export)\\s+(?:[\\w*\\s{},$]+\\s+from\\s+)?[\"']([^\"']+)[\"']" },
+        { "regex": "require\\(\\s*[\"']([^\"']+)[\"']\\s*\\)" }
+      ]
+    },
+    "go": {
+      "extensions": [".go"],
+      "parser": "patterns",
+      "export_rule": "capitalized",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "method", "regex": "func\\s+\\([^)]*\\)\\s+(\\w+)" },
+        { "kind": "function", "regex": "func\\s+(\\w+)" },
+        { "kind": "struct", "regex": "type\\s+(\\w+)\\s+struct" },
+        { "kind": "interface", "regex": "type\\s+(\\w+)\\s+interface" },
+        { "kind": "type", "regex": "type\\s+(\\w+)\\s" },
+        { "kind": "constant", "regex": "const\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "[\"']([\\w./-]+)[\"']" }]
+    },
+    "rust": {
+      "extensions": [".rs"],
+      "parser": "patterns",
+      "export_rule": "keyword:pub",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:const\\s+)?(?:unsafe\\s+)?fn\\s+(\\w+)" },
+        { "kind": "struct", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?enum\\s+(\\w+)" },
+        { "kind": "trait", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?(?:unsafe\\s+)?trait\\s+(\\w+)" },
+        { "kind": "type", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?type\\s+(\\w+)" },
+        { "kind": "constant", "regex": "(?:pub(?:\\([^)]*\\))?\\s+)?(?:const|static)\\s+(?:mut\\s+)?(\\w+)" },
+        { "kind": "macro", "regex": "macro_rules!\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "use\\s+([\\w:{}, *]+);" }]
+    },
+    "java": {
+      "extensions": [".java"],
+      "parser": "patterns",
+      "export_rule": "keyword:public",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "class", "regex": "(?:public\\s+|private\\s+|protected\\s+)?(?:final\\s+|abstract\\s+|static\\s+)*class\\s+(\\w+)" },
+        { "kind": "interface", "regex": "(?:public\\s+|private\\s+|protected\\s+)?interface\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:public\\s+|private\\s+|protected\\s+)?enum\\s+(\\w+)" },
+        { "kind": "record", "regex": "(?:public\\s+|private\\s+|protected\\s+)?record\\s+(\\w+)" },
+        { "kind": "method", "regex": "(?:public|private|protected)\\s+(?:static\\s+|final\\s+|synchronized\\s+|abstract\\s+)*[\\w<>\\[\\],.?\\s]+\\s+(\\w+)\\s*\\(" }
+      ],
+      "imports": [{ "regex": "import\\s+(?:static\\s+)?([\\w.*]+);" }]
+    },
+    "kotlin": {
+      "extensions": [".kt", ".kts"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:public\\s+|private\\s+|internal\\s+)?(?:suspend\\s+)?fun\\s+(?:<[^>]+>\\s+)?(\\w+)" },
+        { "kind": "class", "regex": "(?:public\\s+|private\\s+|internal\\s+)?(?:data\\s+|sealed\\s+|abstract\\s+|open\\s+)?class\\s+(\\w+)" },
+        { "kind": "interface", "regex": "(?:public\\s+|private\\s+|internal\\s+)?interface\\s+(\\w+)" },
+        { "kind": "object", "regex": "(?:companion\\s+)?object\\s+(\\w+)" },
+        { "kind": "constant", "regex": "(?:const\\s+)?val\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "import\\s+([\\w.*]+)" }]
+    },
+    "csharp": {
+      "extensions": [".cs"],
+      "parser": "patterns",
+      "export_rule": "keyword:public",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "class", "regex": "(?:public\\s+|private\\s+|protected\\s+|internal\\s+)?(?:sealed\\s+|abstract\\s+|static\\s+|partial\\s+)*class\\s+(\\w+)" },
+        { "kind": "interface", "regex": "(?:public\\s+|private\\s+|protected\\s+|internal\\s+)?interface\\s+(\\w+)" },
+        { "kind": "struct", "regex": "(?:public\\s+|private\\s+|protected\\s+|internal\\s+)?struct\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:public\\s+|private\\s+|protected\\s+|internal\\s+)?enum\\s+(\\w+)" },
+        { "kind": "record", "regex": "(?:public\\s+|private\\s+|protected\\s+|internal\\s+)?record\\s+(\\w+)" },
+        { "kind": "method", "regex": "(?:public|private|protected|internal)\\s+(?:static\\s+|virtual\\s+|override\\s+|async\\s+|sealed\\s+)*[\\w<>\\[\\],.?]+\\s+(\\w+)\\s*\\(" }
+      ],
+      "imports": [{ "regex": "using\\s+(?:static\\s+)?([\\w.]+);" }]
+    },
+    "ruby": {
+      "extensions": [".rb", ".rake"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["#"],
+      "patterns": [
+        { "kind": "method", "regex": "def\\s+(?:self\\.)?(\\w+[?!=]?)" },
+        { "kind": "class", "regex": "class\\s+(\\w+)" },
+        { "kind": "module", "regex": "module\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "(?:require|require_relative)\\s+[\"']([^\"']+)[\"']" }]
+    },
+    "php": {
+      "extensions": [".php"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["//", "#"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:public\\s+|private\\s+|protected\\s+|static\\s+)*function\\s+(\\w+)" },
+        { "kind": "class", "regex": "(?:final\\s+|abstract\\s+)?class\\s+(\\w+)" },
+        { "kind": "interface", "regex": "interface\\s+(\\w+)" },
+        { "kind": "trait", "regex": "trait\\s+(\\w+)" },
+        { "kind": "enum", "regex": "enum\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "(?:use|require|require_once|include|include_once)\\s+[\"']?([\\w\\\\/.]+)" }]
+    },
+    "swift": {
+      "extensions": [".swift"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:public\\s+|private\\s+|internal\\s+|open\\s+|fileprivate\\s+)?(?:static\\s+|class\\s+)?func\\s+(\\w+)" },
+        { "kind": "class", "regex": "(?:public\\s+|private\\s+|internal\\s+|open\\s+|final\\s+)*class\\s+(\\w+)" },
+        { "kind": "struct", "regex": "(?:public\\s+|private\\s+|internal\\s+)?struct\\s+(\\w+)" },
+        { "kind": "protocol", "regex": "(?:public\\s+|private\\s+|internal\\s+)?protocol\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:public\\s+|private\\s+|internal\\s+)?enum\\s+(\\w+)" },
+        { "kind": "extension", "regex": "extension\\s+(\\w+)" }
+      ],
+      "imports": [{ "regex": "import\\s+(\\w+)" }]
+    },
+    "c": {
+      "extensions": [".c", ".h"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "struct", "regex": "(?:typedef\\s+)?struct\\s+(\\w+)" },
+        { "kind": "enum", "regex": "(?:typedef\\s+)?enum\\s+(\\w+)" },
+        { "kind": "function", "regex": "(?:static\\s+|inline\\s+|extern\\s+)*[\\w*]+\\s+\\**(\\w+)\\s*\\([^;]*\\)\\s*\\{" }
+      ],
+      "imports": [{ "regex": "#include\\s+[\"<]([^\">]+)[\">]" }]
+    },
+    "cpp": {
+      "extensions": [".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "class", "regex": "class\\s+(\\w+)" },
+        { "kind": "struct", "regex": "struct\\s+(\\w+)" },
+        { "kind": "enum", "regex": "enum\\s+(?:class\\s+)?(\\w+)" },
+        { "kind": "namespace", "regex": "namespace\\s+(\\w+)" },
+        { "kind": "function", "regex": "(?:static\\s+|inline\\s+|virtual\\s+|constexpr\\s+)*[\\w:<>*&]+\\s+\\**(\\w+)\\s*\\([^;]*\\)\\s*(?:const\\s*)?\\{" }
+      ],
+      "imports": [{ "regex": "#include\\s+[\"<]([^\">]+)[\">]" }]
+    },
+    "sql": {
+      "extensions": [".sql"],
+      "parser": "patterns",
+      "export_rule": "always",
+      "ignore_case": true,
+      "line_comments": ["--"],
+      "patterns": [
+        { "kind": "table", "regex": "create\\s+(?:or\\s+replace\\s+)?table\\s+(?:if\\s+not\\s+exists\\s+)?[\"'`]?([\\w.]+)" },
+        { "kind": "view", "regex": "create\\s+(?:or\\s+replace\\s+)?view\\s+[\"'`]?([\\w.]+)" },
+        { "kind": "function", "regex": "create\\s+(?:or\\s+replace\\s+)?function\\s+[\"'`]?([\\w.]+)" },
+        { "kind": "index", "regex": "create\\s+(?:unique\\s+)?index\\s+(?:if\\s+not\\s+exists\\s+)?[\"'`]?([\\w.]+)" }
+      ],
+      "imports": []
+    },
+    "vue": {
+      "extensions": [".vue", ".svelte"],
+      "parser": "patterns",
+      "export_rule": "keyword:export",
+      "line_comments": ["//"],
+      "patterns": [
+        { "kind": "function", "regex": "(?:export\\s+)?(?:async\\s+)?function\\s+(\\w+)" },
+        { "kind": "function", "regex": "(?:export\\s+)?(?:const|let)\\s+(\\w+)\\s*=\\s*(?:async\\s*)?(?:\\([^)]*\\)\\s*=>|function\\b)" }
+      ],
+      "imports": [
+        { "regex": "(?:import|export)\\s+(?:[\\w*\\s{},$]+\\s+from\\s+)?[\"']([^\"']+)[\"']" }
+      ]
+    }
+  }
+}

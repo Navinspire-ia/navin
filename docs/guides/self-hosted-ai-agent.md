@@ -1,83 +1,61 @@
-# How to Run a Self-Hosted AI Agent with navin
+# How to Keep a Self-Hosted AI Agent with Navin
 
-This guide sets up navin as a self-hosted AI agent runtime on your own
-machine or server. The result is a gateway process that can serve the WebUI,
-chat apps, automations, and API integrations.
+This guide frames Navin as a self-hosted AI agent that stays on **your computer**. The desktop app keeps chats, projects, memory, and provider keys local unless you choose otherwise.
 
-## What you will build
+## What you get
 
-- a navin config and workspace under your control
-- a model provider connected through `config.json`
-- a long-running `navin gateway`
-- optional browser, chat app, and API access
+- Navin running as a local desktop app under your control
+- model providers configured in Settings
+- optional chat apps and automations while the app stays open
+- data that lives in your projects on disk
 
 ## When to use this
 
-Use this path when you want local or server-side ownership of the agent process,
-workspace files, memory files, and provider keys. It is also the right path when
-the agent must keep running after one terminal command finishes.
+Use this path when you want local ownership of the agent process, project files, memory files, and provider keys - without sending everyday work to a hosted chat product.
 
-## Install
+## Keep Navin on your machine
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin agent -m "Hello!"
-```
+1. Install Navin from [navin.live/download](https://navin.live/download).
+2. Open the app and complete the setup wizard.
+3. Add a provider under **Settings → Providers** (your own API key or a local model server such as Ollama).
+4. Set an active model under **Settings → Models**.
+5. Open a project folder you control and chat there.
 
-Complete the CLI check before deploying the gateway. A deployment problem is
-much easier to debug after the provider and model are known to work.
+Chats, files, and memory stay on your computer. An optional navin.live account syncs plan, license, and device activations only - see Privacy in [`../start-without-technical-background.md`](../start-without-technical-background.md).
 
-## Minimal working example
+## Stay available for channels and automations
 
-For chat apps, automations, and WebSocket delivery, start the gateway:
+Leave Navin running when you need:
 
-```bash
-navin gateway
-```
+- Telegram, Discord, Slack, and other channels (**Settings → Channels**)
+- scheduled automations and heartbeat checks
+- long-running goals in chat
 
-For the browser surface, use the WebUI launcher instead. It can start and manage
-the local gateway for you:
-
-```bash
-navin webui
-```
-
-Or connect a channel in `~/.navin/config.json`, then keep the same gateway
-process running for messages.
+You do not deploy a separate server for everyday personal use. The desktop app is the local runtime.
 
 ## Production notes
 
-- Use Docker, systemd, or a macOS LaunchAgent when the process should survive
-  terminal exits.
-- Give every deployed instance a distinct config path, workspace path, and port
-  set.
-- Keep secrets in environment variables and start the service from the same
-  environment.
-- Use health checks against the gateway or API process, not chat app delivery as
-  the only signal.
+- Use one project per trust boundary.
+- Prefer Settings for secrets; avoid pasting keys into shared documents.
+- Review tool access (**Settings**) before inviting teammates through chat apps.
+- For separate clients or bots, use separate projects and channel tokens - see [`../multiple-instances.md`](../multiple-instances.md).
 
 ## Security notes
 
-- Bind local-only services to `127.0.0.1` unless you intentionally expose them.
-- Set an API key before binding the OpenAI-compatible API to a public interface.
-- Prefer pairing for DM-capable chat apps, and keep any static `allowFrom`
-  allowlists strict.
-- Enable `tools.restrictToWorkspace`; on Linux, use the bubblewrap sandbox for
-  shell execution.
+- Keep Navin local unless you intentionally share access on a LAN.
+- Prefer pairing for DM-capable chat apps; keep allowlists strict.
+- Enable project / workspace restriction before broad file or shell tools.
+- On Linux, prefer the shell sandbox when Settings offer it.
 
 ## Troubleshooting
 
-- Run `navin status` with the same `--config` and `--workspace` flags used by
-  the service.
-- Run `navin gateway --verbose` while debugging channel startup.
-- Check port conflicts if the WebUI, WebSocket channel, or API endpoint fails to
-  bind.
+- Provider errors: fix **Settings → Providers** / **Models**, then retry a short chat.
+- Channels idle: confirm the channel is enabled and Navin is still open.
+- Wrong memory or files: confirm the active project in the project picker.
 
-## Related navin docs
+## Related docs
 
-- [Deployment](../deployment.md)
-- [Multiple Instances](../multiple-instances.md)
-- [Configuration](../configuration.md)
-- [Chat Apps](../chat-apps.md)
-- [OpenAI-Compatible API](../openai-api.md)
+- [`build-a-personal-ai-agent.md`](./build-a-personal-ai-agent.md)
+- [`secure-local-ai-agent.md`](./secure-local-ai-agent.md)
+- [`../multiple-instances.md`](../multiple-instances.md)
+- [`long-running-ai-agent.md`](./long-running-ai-agent.md)

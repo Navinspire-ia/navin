@@ -1,0 +1,540 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "delivery",
+  "name": "Delivery / Courier",
+  "kind": "business",
+  "category": "logistics",
+  "source_github": "https://github.com/roaziy/ubdelivery",
+  "source_name": "UBDelivery",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Express",
+    "React"
+  ],
+  "studied_from": "templates_apps/delivery",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 24,
+    "package_count": 6
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "\ud83c\udf54 UB Delivery - Complete Food Delivery Platform A full-stack food delivery platform built with Next.js and Express.js, featuring 4 specialized frontend applications and a unified REST API backend. The platform supports customers, restaurants, drivers, and administrators with role-based access control, real-time order tracking, and comprehensive management dashboards. \ud83c\udfd7\ufe0f Architecture Overview \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u2502                    Frontend Applications                     \u2502"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/go-delivery/package.json",
+        "name": "go-delivery",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/restaurant-admin/package.json",
+        "name": "restaurant-admin",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/super-admin/package.json",
+        "name": "super-admin",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/www-user/package.json",
+        "name": "www-user",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "ubdelivery-backend",
+        "scripts": {
+          "start": "node src/app.js",
+          "dev": "nodemon src/app.js",
+          "db:migrate": "node src/database/migrate.js",
+          "db:seed": "node src/database/seed.js"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "express"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "ubdelivery",
+        "scripts": {
+          "dev:backend": "cd backend && npm run dev",
+          "dev:www-user": "cd frontend/www-user && npm run dev",
+          "dev:restaurant-admin": "cd frontend/restaurant-admin && npm run dev -- -p 3001",
+          "dev:super-admin": "cd frontend/super-admin && npm run dev -- -p 3002",
+          "dev:go-delivery": "cd frontend/go-delivery && npm run dev -- -p 3003",
+          "build:all": "npm run build:backend && npm run build:frontend",
+          "build:backend": "echo 'Backend is ready for production'",
+          "build:frontend": "npm run build:www-user && npm run build:restaurant-admin && npm run build:super-admin && npm run build:go-delivery",
+          "build:www-user": "cd frontend/www-user && npm run build",
+          "build:restaurant-admin": "cd frontend/restaurant-admin && npm run build",
+          "build:super-admin": "cd frontend/super-admin && npm run build",
+          "build:go-delivery": "cd frontend/go-delivery && npm run build",
+          "start:backend": "cd backend && npm start",
+          "start:www-user": "cd frontend/www-user && npm start",
+          "start:restaurant-admin": "cd frontend/restaurant-admin && npm start -- -p 3001",
+          "start:super-admin": "cd frontend/super-admin && npm start -- -p 3002",
+          "start:go-delivery": "cd frontend/go-delivery && npm start -- -p 3003",
+          "lint": "npm run lint:www-user && npm run lint:restaurant-admin && npm run lint:super-admin && npm run lint:go-delivery",
+          "lint:www-user": "cd frontend/www-user && npx tsc --noEmit",
+          "lint:restaurant-admin": "cd frontend/restaurant-admin && npx tsc --noEmit",
+          "lint:super-admin": "cd frontend/super-admin && npx tsc --noEmit",
+          "lint:go-delivery": "cd frontend/go-delivery && npx tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "ubdelivery-backend",
+        "scripts": {
+          "start": "node src/app.js",
+          "dev": "nodemon src/app.js",
+          "db:migrate": "node src/database/migrate.js",
+          "db:seed": "node src/database/seed.js"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "express"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/go-delivery/package.json",
+        "name": "go-delivery",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/restaurant-admin/package.json",
+        "name": "restaurant-admin",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/super-admin/package.json",
+        "name": "super-admin",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/www-user/package.json",
+        "name": "www-user",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "supabase",
+      "required": true,
+      "docker_image": "supabase/postgres",
+      "port": 54321,
+      "env_url": "VITE_SUPABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      ]
+    }
+  ],
+  "ports": [
+    5000,
+    5432,
+    54321
+  ],
+  "env_files": [
+    "backend/.env.example"
+  ],
+  "env": [
+    {
+      "key": "PORT",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SUPABASE_URL",
+      "default": "https://your-project-id.supabase.co",
+      "required": false,
+      "secret": false,
+      "purpose": "Supabase API URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SUPABASE_ANON_KEY",
+      "default": "your-anon-key",
+      "required": true,
+      "secret": true,
+      "purpose": "Supabase anon key",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SUPABASE_SERVICE_KEY",
+      "default": "your-service-role-key",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "FIREBASE_PROJECT_ID",
+      "default": "your-firebase-project-id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "FIREBASE_CLIENT_EMAIL",
+      "default": "firebase-adminsdk-xxxxx@your-project.iam.gserviceaccount.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "FIREBASE_PRIVATE_KEY",
+      "default": "-----BEGIN PRIVATE KEY-----\\nYOUR_PRIVATE_KEY_HERE\\n-----END PRIVATE KEY-----\\n",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "your-super-secret-jwt-key-at-least-32-chars",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "WWW_USER_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "RESTAURANT_ADMIN_URL",
+      "default": "http://localhost:3001",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SUPER_ADMIN_URL",
+      "default": "http://localhost:3002",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "GO_DELIVERY_URL",
+      "default": "http://localhost:3003",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_API_URL",
+      "default": "http://localhost:5000/api",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_API_KEY",
+      "default": "your-api-key",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+      "default": "your-project.firebaseapp.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+      "default": "your-project-id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+      "default": "your-project.appspot.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+      "default": "your-sender-id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_FIREBASE_APP_ID",
+      "default": "your-app-id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "SUPABASE_SERVICE_ROLE_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Supabase service role (secret)",
+      "from": "source:backend/src/database/create_restaurant_admin.js"
+    },
+    {
+      "key": "SUPER_ADMIN_EMAIL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/database/seed.js"
+    },
+    {
+      "key": "SUPER_ADMIN_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "source:backend/src/database/seed.js"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/delivery/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy backend/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-supabase",
+        "run": "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/delivery/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/delivery/overlay.json",
+    "agents": ".navin/apps/delivery/agents/",
+    "env": ".env",
+    "frontend": "frontend/go-delivery/package.json",
+    "backend": "backend/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "dispatch-agent",
+      "driver-agent",
+      "order-agent",
+      "eta-agent",
+      "support-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

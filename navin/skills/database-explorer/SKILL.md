@@ -17,7 +17,7 @@ Prefer the built-in `db_query` tool: it queries SQLite files in the workspace di
 ## Workflow
 
 1. Identify engine + connection method (`db_query` connection, CLI, URL in env, MCP Supabase, etc.).
-2. List databases/schemas/tables — never dump entire prod tables.
+2. List databases/schemas/tables - never dump entire prod tables.
 3. Sample with `LIMIT` / projections; avoid `SELECT *` on huge tables.
 4. Summarize: entities, keys, relations, row-count estimates.
 5. Flag PII columns; do not paste sensitive rows into chat.

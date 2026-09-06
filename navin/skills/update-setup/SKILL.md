@@ -9,7 +9,7 @@ Generate a personalized upgrade skill for this workspace.
 
 ## Step 1: Check Existing
 
-Use `read_file` to check if `skills/update/SKILL.md` already exists in the workspace.
+Use `read_file` to check if `.navin/skills/update/SKILL.md` already exists in the workspace.
 
 If it exists, ask the user: "An upgrade skill already exists. Reconfigure?" Wait for the user's reply. If no, stop here.
 
@@ -32,7 +32,7 @@ likely install method. Do not treat them as confirmation.
 
 ## Step 3: Confirm Required Inputs
 
-CRITICAL: Do not write `skills/update/SKILL.md` until the install method is
+CRITICAL: Do not write `.navin/skills/update/SKILL.md` until the install method is
 explicitly confirmed by the user. The install method must come from a user
 answer or confirmation, not from inference alone. If you cannot get a clear
 answer, stop and ask the user to rerun this setup when they know how navin was
@@ -42,7 +42,7 @@ Ask the user the questions below, one at a time, in your response text. Wait for
 the user's reply before proceeding to the next question. If you cannot get a clear
 answer, stop without writing the skill.
 
-**Question 1 — Install method:**
+**Question 1 - Install method:**
 
 ```
 question: "I found these install clues: <SUMMARY>. Which update method should this workspace use?"
@@ -55,15 +55,15 @@ stop. Do not generate the upgrade skill.
 If the user selected `source (git clone)`, ask for the local checkout path:
 `question: "Where is your navin source checkout? Enter an absolute path or a path relative to this workspace:"`.
 
-**Question 2 — Optional dependencies:**
+**Question 2 - Optional dependencies:**
 
 ```
-question: "Which optional dependencies do you need? List names separated by spaces, or reply 'none'. Available: api, azure, bedrock, discord, langfuse, matrix, msteams, olostep, slack, telegram, whatsapp"
+question: "Which optional dependencies do you need? List names separated by spaces, or reply 'none'. Available: api, azure, bedrock, browser, discord, langfuse, matrix, msteams, olostep, slack, telegram, whatsapp"
 ```
 
-Parse the reply. If the user says "none" or similar, set extras to empty. Otherwise collect the valid names.
+Parse the reply. If the user says "none" or similar, set extras to empty. Otherwise collect the valid names. If `browser` is selected, note that `playwright install chromium` must run after the install to fetch the browser itself.
 
-**Question 3 — Proxy:**
+**Question 3 - Proxy:**
 
 ```
 question: "Do you need an HTTP proxy to reach PyPI or GitHub?"
@@ -101,7 +101,7 @@ contains spaces.
 
 Build the skill content. If proxy is configured, add `export http_proxy=URL` and `export https_proxy=URL` lines before the upgrade command.
 
-Use `write_file` to write `skills/update/SKILL.md` with this content:
+Use `write_file` to write `.navin/skills/update/SKILL.md` with this content:
 
 ```
 ---

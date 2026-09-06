@@ -1,0 +1,581 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-rag-chat",
+  "name": "RAG Workspace",
+  "kind": "ai-product",
+  "category": "rag",
+  "source_github": "https://github.com/Mintplex-Labs/anything-llm",
+  "source_name": "AnythingLLM",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node",
+    "RAG"
+  ],
+  "studied_from": "templates_apps/ai-rag-chat",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 24,
+    "package_count": 7
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "> [!NOTE] > We are also working on [Open Computer](/open-computer) which gives an entire computer environment for AI Agents to use. > > This will bring AnythingLLM's agent capabilities to a new level and a novel UX paradigm for AI Agent use. > > \u2b50 Star the repo to stay updated! Chat with your docs, use AI Agents, hyper-configurable, multi-user, & no frustrating setup required. Docs Hosted Instance \ud83d\udc49 AnythingLLM for desktop (Mac, Windows, & Linux)! <a href=\"https://anythingllm.com/download\" target=\"_blank\"> Download Now</a>"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "anything-llm-frontend",
+        "scripts": {
+          "start": "vite --open",
+          "dev": "cross-env NODE_ENV=development vite --debug --host=0.0.0.0",
+          "build": "vite build && node scripts/postbuild.js",
+          "lint:check": "eslint src",
+          "lint": "eslint --fix src"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "collector/package.json",
+        "name": "anything-llm-document-collector",
+        "scripts": {
+          "dev": "cross-env NODE_ENV=development nodemon --ignore hotdir --ignore storage --trace-warnings index.js",
+          "start": "cross-env NODE_ENV=production node index.js",
+          "lint": "eslint --fix .",
+          "lint:check": "eslint ."
+        },
+        "node_engine": ">=18.12.1",
+        "deps_hint": [
+          "express"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "anything-llm-server",
+        "scripts": {
+          "dev": "cross-env NODE_ENV=development nodemon --ignore documents --ignore vector-cache --ignore storage --ignore swagger --trace-warnings index.js",
+          "start": "cross-env NODE_ENV=production node index.js",
+          "lint": "eslint --fix .",
+          "lint:check": "eslint ."
+        },
+        "node_engine": ">=18.12.1",
+        "deps_hint": [
+          "@prisma/client",
+          "express",
+          "mysql2",
+          "pg",
+          "prisma"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "open-computer/services/interface-service/package.json",
+        "name": "interface-service",
+        "scripts": {
+          "start": "node index.js",
+          "dev": "nodemon --watch . --ext js,json,html --ignore node_modules --exec 'node index.js'"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "open-computer/services/memory-manager/package.json",
+        "name": "memory-manager",
+        "scripts": {
+          "start": "node server.js",
+          "build": "npx esbuild server.js --bundle --platform=node --target=node22 --outfile=memory-manager.cjs --format=cjs --minify"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "anything-llm",
+        "scripts": {
+          "test": "jest",
+          "lint": "cd server && yarn lint && cd ../frontend && yarn lint && cd ../collector && yarn lint",
+          "lint:ci": "cd server && yarn lint:check && cd ../frontend && yarn lint:check && cd ../collector && yarn lint:check",
+          "dev:server": "cd server && yarn dev",
+          "dev:collector": "cd collector && yarn dev",
+          "dev:frontend": "cd frontend && yarn dev",
+          "dev": "npx concurrently \"yarn dev:server\" \"yarn dev:frontend\" \"yarn dev:collector\"",
+          "prisma:migrate": "cd server && npx prisma migrate dev --name init",
+          "prisma:seed": "cd server && npx prisma db seed"
+        },
+        "node_engine": ">=18",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "collector/package.json",
+        "name": "anything-llm-document-collector",
+        "scripts": {
+          "dev": "cross-env NODE_ENV=development nodemon --ignore hotdir --ignore storage --trace-warnings index.js",
+          "start": "cross-env NODE_ENV=production node index.js",
+          "lint": "eslint --fix .",
+          "lint:check": "eslint ."
+        },
+        "node_engine": ">=18.12.1",
+        "deps_hint": [
+          "express"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "anything-llm-frontend",
+        "scripts": {
+          "start": "vite --open",
+          "dev": "cross-env NODE_ENV=development vite --debug --host=0.0.0.0",
+          "build": "vite build && node scripts/postbuild.js",
+          "lint:check": "eslint src",
+          "lint": "eslint --fix src"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "anything-llm-server",
+        "scripts": {
+          "dev": "cross-env NODE_ENV=development nodemon --ignore documents --ignore vector-cache --ignore storage --ignore swagger --trace-warnings index.js",
+          "start": "cross-env NODE_ENV=production node index.js",
+          "lint": "eslint --fix .",
+          "lint:check": "eslint ."
+        },
+        "node_engine": ">=18.12.1",
+        "deps_hint": [
+          "@prisma/client",
+          "express",
+          "mysql2",
+          "pg",
+          "prisma"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "open-computer/cli/package.json",
+        "name": "@open-computer/cli",
+        "scripts": {
+          "build": "tsc --noEmit && node build.mjs",
+          "test": "node --import tsx --test \"src/**/*.test.ts\"",
+          "dev": "ts-node src/index.ts",
+          "start": "node dist/open-computer"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "open-computer/services/interface-service/package.json",
+        "name": "interface-service",
+        "scripts": {
+          "start": "node index.js",
+          "dev": "nodemon --watch . --ext js,json,html --ignore node_modules --exec 'node index.js'"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "open-computer/services/memory-manager/package.json",
+        "name": "memory-manager",
+        "scripts": {
+          "start": "node server.js",
+          "build": "npx esbuild server.js --bundle --platform=node --target=node22 --outfile=memory-manager.cjs --format=cjs --minify"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "mysql",
+      "required": true,
+      "docker_image": "mysql:8",
+      "port": 3306,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    3001,
+    3306,
+    5432
+  ],
+  "env_files": [
+    "docker/.env.example",
+    "collector/.env.example",
+    "server/.env.example",
+    "extras/translator/.env.example",
+    "open-computer/services/interface-service/.env.example",
+    "frontend/.env.example"
+  ],
+  "env": [
+    {
+      "key": "SERVER_PORT",
+      "default": "3001",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "STORAGE_DIR",
+      "default": "/app/server/storage",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "UID",
+      "default": "1000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "GID",
+      "default": "1000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "my-random-string-for-seeding\" # Please generate random string at least 12 chars long.",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "SIG_KEY",
+      "default": "passphrase' # Please generate random string at least 32 chars long.",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "SIG_SALT",
+      "default": "salt' # Please generate random string at least 32 chars long.",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "VECTOR_DB",
+      "default": "lancedb",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "WHISPER_PROVIDER",
+      "default": "local",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "TTS_PROVIDER",
+      "default": "native",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "STT_PROVIDER",
+      "default": "native",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "DOCKER_MODEL_RUNNER_BASE_PATH",
+      "default": "http://127.0.0.1:12434/engines/llama.cpp/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "extras/translator/.env.example"
+    },
+    {
+      "key": "DOCKER_MODEL_RUNNER_LLM_MODEL_TOKEN_LIMIT",
+      "default": "128000",
+      "required": true,
+      "secret": true,
+      "purpose": "Model / LLM provider",
+      "from": "extras/translator/.env.example"
+    },
+    {
+      "key": "VITE_API_BASE",
+      "default": "http://localhost:3001/api' # Use this URL when developing locally",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "frontend/.env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_MODEL_PREF",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:server/__tests__/utils/helpers/azureOpenAiModelPref.test.js"
+    },
+    {
+      "key": "COLLECTOR_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "source:collector/utils/http/index.js"
+    },
+    {
+      "key": "ENABLE_HTTPS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:server/index.js"
+    },
+    {
+      "key": "ENABLE_HTTP_LOGGER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:collector/index.js"
+    },
+    {
+      "key": "ENABLE_HTTP_LOGGER_TIMESTAMPS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:collector/index.js"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:collector/index.js"
+    },
+    {
+      "key": "NODE_TLS_REJECT_UNAUTHORIZED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:collector/utils/extensions/Confluence/ConfluenceLoader/index.js"
+    },
+    {
+      "key": "OPEN_MODEL_PREF",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:server/__tests__/utils/helpers/azureOpenAiModelPref.test.js"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker/docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "anything-llm",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "anything-llm",
+        "image": "",
+        "ports": [
+          "3001:3001"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run prisma:migrate",
+    "seed": "npm run prisma:seed"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-rag-chat/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy docker/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mysql",
+        "run": "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      },
+      {
+        "id": "migrate",
+        "run": "npm run prisma:migrate"
+      },
+      {
+        "id": "seed",
+        "run": "npm run prisma:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-rag-chat/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-rag-chat/overlay.json",
+    "agents": ".navin/apps/ai-rag-chat/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "collector/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "workspace-agent",
+      "ingestion-agent",
+      "rag-agent",
+      "agent-builder",
+      "connector-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

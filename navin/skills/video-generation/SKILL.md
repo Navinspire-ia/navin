@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: Generate short videos with the generate_video tool (Veo, Sora, Hailuo) — scripts, storyboards, scene-by-scene AI generation, and ffmpeg assembly. Use for social clips, product demos, and ads.
+description: Generate short videos with the generate_video tool (Veo, Sora, Hailuo) - scripts, storyboards, scene-by-scene AI generation, and ffmpeg assembly. Use for social clips, product demos, and ads.
 metadata: {"navin":{"emoji":"🎥","category":"marketing"}}
 ---
 
@@ -12,18 +12,18 @@ Four layers of video work: the script (always), AI generation with `generate_vid
 
 ## Tooling
 
-- **`generate_video`** — text-to-video or image-to-video through the configured provider (Google Veo via Gemini, OpenAI Sora, MiniMax Hailuo). Returns a persistent artifact (`vid_...`) with a local path. Generation takes minutes; tell the user before launching several clips.
-- **`generate_image`** — produce a key visual or first frame, then animate it by passing the artifact path as `reference_image` to `generate_video`.
+- **`generate_video`** - text-to-video or image-to-video through the configured provider (Google Veo via Gemini, OpenAI Sora, MiniMax Hailuo). Returns a persistent artifact (`vid_...`) with a local path. Generation takes minutes; tell the user before launching several clips.
+- **`generate_image`** - produce a key visual or first frame, then animate it by passing the artifact path as `reference_image` to `generate_video`.
 - If `generate_video` is not in the tool list, video generation is not enabled: deliver script + storyboard + ready-to-use prompts instead, and point the user to Settings → Video to enable a provider.
 
 ## 1. Script & storyboard (the real value)
 
 30s vertical clip structure:
-- **0–3s hook** — question, striking number, or surprising visual (decides everything)
-- **3–20s body** — one point, illustrated
-- **20–30s payoff + CTA**
+- **0-3s hook** - question, striking number, or surprising visual (decides everything)
+- **3-20s body** - one point, illustrated
+- **20-30s payoff + CTA**
 
-Storyboard format: `| Sec | Visual | VO/text overlay | generate_video prompt |` — validate before generating anything.
+Storyboard format: `| Sec | Visual | VO/text overlay | generate_video prompt |` - validate before generating anything.
 
 ## 2. AI generation with `generate_video`
 
@@ -65,7 +65,7 @@ ffmpeg -i in.mp4 -vf "crop=ih*9/16:ih" -c:a copy vertical.mp4
 ffmpeg -i in.mp4 -vf subtitles=subs.srt -i voix.mp3 -map 0:v -map 1:a out.mp4
 ```
 
-Subtitles: always (most social video plays muted) — generate the .srt from the script.
+Subtitles: always (most social video plays muted) - generate the .srt from the script.
 
 ## Workflow
 

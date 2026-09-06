@@ -1,7 +1,7 @@
 ---
 name: ats-analyzer
 description: Score CV-to-job-offer match, identify missing keywords, and check ATS parseability. Use before submitting any application.
-metadata: {"navin":{"emoji":"🧮","category":"careers"}}
+metadata: {"navin":{"emoji":"🧮","category":"careers","default_for":"career"}}
 ---
 
 # ATS Analyzer
@@ -28,7 +28,7 @@ Flag synonym mismatches the ATS may miss: "gestion de projet"≠"project managem
 ## Output format
 
 ```markdown
-## ATS analysis — <CV> vs <offer>
+## ATS analysis - <CV> vs <offer>
 Match score: X% (must-haves: Y/Z)
 
 | Requirement | Weight | Status | Fix |
@@ -40,11 +40,11 @@ Match score: X% (must-haves: Y/Z)
 
 ## Workflow
 
-1. Ingest offer + CV (`pdf-ocr-extractor` for PDFs).
+1. Ingest the Career opportunity + Master CV (`career action=status` / import). `pdf-ocr-extractor` only for a user-provided PDF.
 2. Build the requirement table; score honestly.
 3. For each ❌: is it hidden in the candidate's real experience? → surface it (via `cv-tailoring`). Truly missing? → say so; suggest addressing in the cover letter or skipping the application.
 
 ## Rules
 
 - The score guides effort; below ~50% must-have coverage, recommend not applying.
-- Never advise keyword-stuffing invisible text or lying — both backfire.
+- Never advise keyword-stuffing invisible text or lying - both backfire.

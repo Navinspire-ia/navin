@@ -8,6 +8,11 @@ build/
 navin/web/dist/
 .git
 .env
+.venv
+.venv*/
+.venv-x86
+venv
+os/
 .assets
 node_modules/
 bridge/dist/

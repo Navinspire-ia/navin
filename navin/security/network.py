@@ -1,4 +1,4 @@
-"""Network security utilities — SSRF protection and internal URL detection."""
+"""Network security utilities - SSRF protection and internal URL detection."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import re
 import socket
+import threading
 from contextlib import contextmanager, suppress
 from urllib.parse import urlparse
 from urllib.request import getproxies, proxy_bypass
@@ -27,6 +28,21 @@ _BLOCKED_NETWORKS = [
 
 _URL_RE = re.compile(r"https?://[^\s\"'`;|<>]+", re.IGNORECASE)
 _allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+# Off by default. Blocking private ranges outright means the agent cannot reach
+# the dev server it just started, the staging box on the VPN, or the container
+# next to it - the ordinary targets of the work it is asked to do. An operator
+# running untrusted prompts against cloud metadata turns this on.
+_ssrf_protection = False
+
+
+def configure_ssrf_protection(enabled: bool) -> None:
+    """Turn private-range blocking on or off for the whole process."""
+    global _ssrf_protection
+    _ssrf_protection = enabled
+
+
+def ssrf_protection_enabled() -> bool:
+    return _ssrf_protection
 
 
 def is_loopback_host(host: str) -> bool:
@@ -66,14 +82,25 @@ def _normalize_addr(
     return addr
 
 
-def _is_private(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def _is_private(
+    addr: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    *,
+    enforce_ssrf: bool | None = None,
+) -> bool:
+    if not (_ssrf_protection if enforce_ssrf is None else enforce_ssrf):
+        return False
     normalized = _normalize_addr(addr)
     if _allowed_networks and any(normalized in net for net in _allowed_networks):
         return False
     return any(normalized in net for net in _BLOCKED_NETWORKS)
 
 
-def resolve_url_target(url: str, *, allow_loopback: bool = False) -> tuple[bool, str, tuple[str, ...]]:
+def resolve_url_target(
+    url: str,
+    *,
+    allow_loopback: bool = False,
+    enforce_ssrf: bool | None = None,
+) -> tuple[bool, str, tuple[str, ...]]:
     """Validate a URL is safe to fetch: scheme, hostname, and resolved IPs.
 
     ``allow_loopback`` is intentionally narrow: it only permits literal
@@ -113,15 +140,22 @@ def resolve_url_target(url: str, *, allow_loopback: bool = False) -> tuple[bool,
     if allow_loopback and _is_allowed_loopback_target(hostname, addrs):
         return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
     for addr in addrs:
-        if _is_private(addr):
+        if _is_private(addr, enforce_ssrf=enforce_ssrf):
             return False, f"Blocked: {hostname} resolves to private/internal address {addr}", ()
 
     return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
 
 
-def validate_url_target(url: str, *, allow_loopback: bool = False) -> tuple[bool, str]:
+def validate_url_target(
+    url: str,
+    *,
+    allow_loopback: bool = False,
+    enforce_ssrf: bool | None = None,
+) -> tuple[bool, str]:
     """Validate a URL is safe to fetch: scheme, hostname, and resolved IPs."""
-    ok, error, _ = resolve_url_target(url, allow_loopback=allow_loopback)
+    ok, error, _ = resolve_url_target(
+        url, allow_loopback=allow_loopback, enforce_ssrf=enforce_ssrf
+    )
     return ok, error
 
 
@@ -253,6 +287,43 @@ class PinnedDNSAsyncTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self._inner.aclose()
+
+
+class PinnedDNSSyncTransport(httpx.BaseTransport):
+    """Synchronous HTTPX transport with validation and DNS pinning.
+
+    The resolver override is process-global, so connections are serialized only
+    while DNS is pinned. Response processing remains parallel.
+    """
+
+    _resolver_lock = threading.Lock()
+
+    def __init__(
+        self,
+        *,
+        allow_loopback: bool = False,
+        enforce_ssrf: bool | None = None,
+        inner: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._allow_loopback = allow_loopback
+        self._enforce_ssrf = enforce_ssrf
+        self._inner = inner or httpx.HTTPTransport()
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        ok, error, resolved_ips = resolve_url_target(
+            url,
+            allow_loopback=self._allow_loopback,
+            enforce_ssrf=self._enforce_ssrf,
+        )
+        if not ok:
+            raise UnsafeURLRequestError(error, request=request)
+        with self._resolver_lock:
+            with pin_resolved_url_dns(url, resolved_ips):
+                return self._inner.handle_request(request)
+
+    def close(self) -> None:
+        self._inner.close()
 
 
 def validate_resolved_url(url: str) -> tuple[bool, str]:

@@ -1,30 +1,24 @@
-# How to Connect an AI Agent to Chat Apps with navin
+# How to Connect an AI Agent to Chat Apps with Navin
 
-navin can run as a self-hosted chatbot or AI agent in Telegram, Discord,
-Slack, WeChat, Email, Mattermost, and other chat apps. The gateway receives chat
-messages, runs the agent, and sends replies back to the same channel.
+Navin can reply as a self-hosted chatbot or AI agent in Telegram, Discord, Slack, WhatsApp, Email, Mattermost, and other chat apps. Messages arrive while the desktop app is open; Navin runs the agent and sends replies back to the same channel.
 
 ## What you will build
 
-- a working local agent
-- one enabled chat channel
-- a running gateway
+- a working local agent in Navin
+- one enabled chat channel in Settings
 - a pairing-based approval flow or a narrow static allowlist
 
 ## When to use this
 
-Use chat apps when the agent should live where users already communicate:
-private DMs, team channels, group chats, email threads, or bot workspaces.
+Use chat apps when the agent should live where users already communicate: private DMs, team channels, group chats, email threads, or bot workspaces.
 
-## Install
+## Before you add a channel
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin webui
-```
+1. Open Navin and complete provider setup under **Settings → Providers** and **Settings → Models**.
+2. Send a short message in the desktop chat to confirm replies work.
+3. Keep Navin open while you test the channel.
 
-Send `Hello!` in the WebUI before adding a channel. Then choose one platform guide for the bot/account prerequisites:
+Then choose one platform guide for bot or account prerequisites:
 
 - [Telegram AI agent](./telegram-ai-agent.md)
 - [Discord AI agent](./discord-ai-agent.md)
@@ -33,61 +27,40 @@ Send `Hello!` in the WebUI before adding a channel. Then choose one platform gui
 - [Email AI agent](./email-ai-agent.md)
 - [Mattermost AI agent](./mattermost-ai-agent.md)
 
-## Minimal working example
+## Connect a channel in Settings
 
-Use the guided channel setup:
-
-1. Get the platform token, login state, webhook, or mailbox credentials.
-2. Open **Settings → Channels** in the WebUI.
+1. Get the platform token, login state, or mailbox credentials from that platform.
+2. Open **Settings → Channels** in Navin.
 3. Choose the platform and open its setup panel.
-4. Complete the credential or QR flow and install optional support if prompted.
-5. Restart when the WebUI requests it.
-6. Send a private test message.
-7. Approve the pairing request in the WebUI when a DM-capable channel asks for one.
+4. Paste credentials or complete the QR / login flow; install optional support if the app prompts you.
+5. Restart when Navin requests it.
+6. Send a private test message from the chat app.
+7. Approve the pairing request in Navin when a DM-capable channel asks for one.
 
-If your installed release does not show **Settings → Channels**, use the full [Chat Apps reference](../chat-apps.md#manual-setup-pattern) to configure the channel manually.
-
-Check status from the terminal when you need a lower-level confirmation:
-
-```bash
-navin channels status
-```
-
-The `navin webui` command already runs the gateway. For a chat-only or server deployment, start it directly:
-
-```bash
-navin gateway
-```
-
-Use the full [Chat Apps reference](../chat-apps.md) when you manage `config.json` directly or need platform-specific advanced settings.
+If your installed release does not show **Settings → Channels**, use the in-app help for Chat Apps or update Navin.
 
 ## Production notes
 
-- Keep the gateway running as a service for always-on chat apps.
+- Leave Navin running for always-on chat apps.
 - Use mention-only group policies before opening a bot to busy channels.
-- Use one channel at a time while debugging.
-- Prefer DMs for first tests; pairing only works in DMs, and group chats add
-  permissions and routing behavior.
+- Enable one channel at a time while debugging.
+- Prefer DMs for first tests; pairing only works in DMs, and group chats add permissions and routing behavior.
 
 ## Security notes
 
-- Prefer pairing or explicit allowlists; do not use `allowFrom: ["*"]` outside
-  an intentional sandbox.
+- Prefer pairing or explicit allowlists; do not allow everyone unless the bot is intentionally public or isolated.
 - Rotate bot tokens if they are pasted into logs or shared files.
 - Review file, shell, and web tool access before inviting other users.
 
 ## Troubleshooting
 
-- If `navin channels status` does not show the channel, the config key or
-  optional dependency is likely missing.
-- If the first DM returns a pairing code, approve the pending request in the WebUI or use `/pairing approve <code>` from an authorized chat.
-- If messages do not arrive, run `navin gateway --verbose` and compare
-  platform credentials, event permissions, and allow lists.
-- If group replies are unexpected, review that channel's group policy.
+- Channel missing in Settings: enable the platform panel again or restart Navin after optional channel support installs.
+- First DM returns a pairing code: approve the pending request in Navin (or with `/pairing approve <code>` from an already trusted chat).
+- Messages do not arrive: confirm credentials, that Navin is open, and that allow lists / group policies match your test.
+- Group replies unexpected: review that channel's group policy in Settings.
 
-## Related navin docs
+## Related docs
 
-- [Chat Apps](../chat-apps.md)
-- [Configuration](../configuration.md#channel-settings)
-- [Pairing](../configuration.md#pairing)
-- [Deployment](../deployment.md)
+- [`secure-local-ai-agent.md`](./secure-local-ai-agent.md)
+- [`../automations.md`](../automations.md)
+- [`long-running-ai-agent.md`](./long-running-ai-agent.md)

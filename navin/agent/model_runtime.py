@@ -11,6 +11,31 @@ from navin.providers.factory import ProviderSnapshot, build_provider_snapshot
 from navin.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
 
+def _known_media_slug(slug: str) -> bool:
+    """Exact match against the managed media catalog (no name guessing)."""
+    try:
+        from navin.providers.managed_catalog import known_media_slugs
+
+        return (slug or "").strip() in known_media_slugs()
+    except Exception:
+        return False
+
+
+def _media_slug_heuristic(slug: str) -> bool:
+    """Name-based hint for managed presets whose modality field was lost."""
+    try:
+        from navin.providers.managed_catalog import is_media_model_slug
+
+        return is_media_model_slug(slug)
+    except Exception:
+        return False
+
+
+def _is_unconfigured_signature(signature: tuple[object, ...] | None) -> bool:
+    """True for the setup-placeholder provider (no API key / endpoint yet)."""
+    return bool(signature) and signature[0] == "unconfigured"
+
+
 class ModelRuntimeResolver:
     """Own model selection and resolve it to immutable execution values.
 
@@ -26,11 +51,13 @@ class ModelRuntimeResolver:
         model_presets: Mapping[str, ModelPresetConfig] | None = None,
         provider_snapshot_loader: Callable[[], ProviderSnapshot] | None = None,
         preset_snapshot_loader: preset_helpers.PresetSnapshotLoader | None = None,
+        model_presets_loader: Callable[[], Mapping[str, ModelPresetConfig]] | None = None,
     ) -> None:
         self._runtime = initial_runtime
         self._model_presets = dict(model_presets or {})
         self._provider_snapshot_loader = provider_snapshot_loader
         self._preset_snapshot_loader = preset_snapshot_loader
+        self._model_presets_loader = model_presets_loader
         self._tracks_provider_generation = initial_runtime.model_preset is None
         self._default_selection_signature = preset_helpers.default_selection_signature(
             initial_runtime.snapshot_signature
@@ -84,16 +111,67 @@ class ModelRuntimeResolver:
         )
         return runtime
 
+    def _reload_presets(self) -> None:
+        """Pick up presets created or removed after boot, when a loader exists."""
+        if self._model_presets_loader is None:
+            return
+        try:
+            self._model_presets = dict(self._model_presets_loader())
+        except Exception:
+            pass  # keep the last known presets on loader failure
+
     def resolve_preset(self, name: str | None) -> LLMRuntime:
         """Resolve a named preset without changing the selected default."""
+        self._reload_presets()
         normalized = preset_helpers.normalize_preset_name(name, self._model_presets)
+        self._reject_media_preset(normalized)
         snapshot = preset_helpers.build_runtime_preset_snapshot(
             name=normalized,
             presets=self._model_presets,
             provider=self._runtime.provider,
             loader=self._preset_snapshot_loader,
         )
+        if _is_unconfigured_signature(snapshot.signature) and not _is_unconfigured_signature(
+            self._runtime.snapshot_signature
+        ):
+            # Same transient-failure tolerance as refresh(): a preset that
+            # resolves to the setup placeholder while a real provider is
+            # already running keeps the current runtime for this turn.
+            return self._runtime
         return self.resolve_snapshot(snapshot, model_preset=normalized)
+
+    def _reject_media_preset(self, name: str) -> None:
+        """Chat/agent turns never run on media generation models (any mode).
+
+        Image / video / TTS / music / STT models have no tool endpoints and
+        answer with media, not text: whatever mode (ask, agent, plan, review,
+        security, debug, ...) or plan the user has, they are only reachable
+        through their dedicated generation tools.
+
+        Scope: an explicit media modality always blocks; the exact managed
+        media list always blocks; the slug heuristic only applies to managed
+        ("navin") presets whose modality was lost. A user-added model on a
+        custom provider is never second-guessed by name - new slugs the
+        catalog does not know keep working in every mode.
+        """
+        preset = self._model_presets.get(name)
+        if preset is None:
+            return
+        modality = (getattr(preset, "modality", "text") or "text").strip().lower()
+        slug = (preset.model or "").strip()
+        provider = (getattr(preset, "provider", "") or "").strip().lower()
+        blocked = modality != "text"
+        if not blocked and slug:
+            blocked = _known_media_slug(slug) or (
+                provider == "navin" and _media_slug_heuristic(slug)
+            )
+        if blocked:
+            raise ValueError(
+                f"model_preset {name!r} ({slug or 'unknown model'}) is a "
+                f"{modality if modality != 'text' else 'media'} generation "
+                "model; it cannot run chat/agent turns. Pick a text model, "
+                "or use the dedicated generation tools for media."
+            )
 
     def select_preset(self, name: str | None) -> LLMRuntime:
         """Select a named preset as the default for future turns."""
@@ -106,9 +184,18 @@ class ModelRuntimeResolver:
         """Change the default model without reconstructing downstream consumers."""
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model must be a non-empty string")
+        cleaned = model.strip()
+        # Exact managed-media match only: a custom slug the catalog does not
+        # know must keep working, whatever its name looks like.
+        if _known_media_slug(cleaned):
+            raise ValueError(
+                f"model {cleaned!r} is a media generation model; it cannot "
+                "run chat/agent turns. Pick a text model, or use the "
+                "dedicated generation tools for media."
+            )
         self._runtime = replace(
             self._runtime,
-            model=model.strip(),
+            model=cleaned,
             model_preset=None,
         )
         return self._runtime
@@ -148,11 +235,28 @@ class ModelRuntimeResolver:
         if self._provider_snapshot_loader is None:
             return None
 
+        self._reload_presets()
         snapshot = self._provider_snapshot_loader()
+        if _is_unconfigured_signature(snapshot.signature) and not _is_unconfigured_signature(
+            self._runtime.snapshot_signature
+        ):
+            # The loader tolerates config errors by handing back the setup
+            # placeholder. Mid-session that mostly means a transient read
+            # failure (Settings rewriting the file, an env var briefly
+            # unresolved) - never demote a working runtime to the "please
+            # configure a provider" stand-in; keep the last good one.
+            return None
         default_selection = preset_helpers.default_selection_signature(snapshot.signature)
         active_preset = self._runtime.model_preset
         if active_preset and self._default_selection_signature in (None, default_selection):
-            runtime = self.resolve_preset(active_preset)
+            try:
+                runtime = self.resolve_preset(active_preset)
+            except (KeyError, ValueError):
+                # The active preset vanished or turned into a media model
+                # (catalog sync, config edit): fall back to the provider
+                # default instead of breaking every future turn.
+                active_preset = None
+                runtime = self.resolve_snapshot(snapshot)
         else:
             active_preset = None
             runtime = self.resolve_snapshot(snapshot)

@@ -1,14 +1,14 @@
 ---
 name: career-advisor
 description: Recommend career moves, skill investments, and trajectory options based on profile, market demand, and goals. Use for career decisions and development plans.
-metadata: {"navin":{"emoji":"🧗","category":"careers"}}
+metadata: {"navin":{"emoji":"🧗","category":"careers","default_for":"career"}}
 ---
 
 # Career Advisor
 
 ## Overview
 
-Career advice grounded in the person's actual profile and real market data — not generic listicles.
+Career advice grounded in the person's actual profile and real market data - not generic listicles.
 
 ## Analysis framework
 
@@ -31,13 +31,13 @@ Gap between current profile and target role, ranked by market value ÷ effort. C
 
 ## Workflow
 
-1. Interview the user: history, constraints (geography, family, finances), definition of success at 5 years.
-2. Run the market check on their 2–3 candidate directions.
+1. Interview the user: history, constraints (geography, family, finances), definition of success at 5 years. Read the Career profile via `career action=status`.
+2. Run the market check on their 2-3 candidate directions (public `web_search` only).
 3. Present the options table with a clear recommendation and reasoning.
 4. Build the 90-day plan: skills, visibility, network actions, with `cron` check-ins if wanted.
 
 ## Rules
 
-- Respect constraints as given — don't advise "just move to Dubai" casually.
+- Respect constraints as given - don't advise "just move to Dubai" casually.
 - Market claims come with sources and dates.
 - Ambition calibrated to evidence: encourage stretch, flag fantasy.

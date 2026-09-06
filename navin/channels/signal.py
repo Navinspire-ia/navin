@@ -31,7 +31,7 @@ from navin.utils.helpers import safe_filename, split_message
 class _Run:
     text: str
     styles: frozenset[str] = field(default_factory=frozenset)
-    opaque: bool = False  # code / table content — skip further pattern processing
+    opaque: bool = False  # code / table content - skip further pattern processing
 
 
 _SIG_CODE_BLOCK_RE = re.compile(r"```(?:\w+)?\n?([\s\S]*?)```")
@@ -384,7 +384,7 @@ class SignalChannel(BaseChannel):
         if self._sender_approved_via_pairing(sender_id):
             return True
         if not allow_list:
-            self.logger.warning("allow_from is empty — all access denied")
+            self.logger.warning("allow_from is empty - all access denied")
         return False
 
     def _sender_approved_via_pairing(self, sender_id: str) -> bool:

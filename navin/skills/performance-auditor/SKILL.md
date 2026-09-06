@@ -1,6 +1,6 @@
 ---
 name: performance-auditor
-description: Profile and optimize applications — hot paths, N+1 queries, blocking I/O, caching, bundle size, memory, startup time. Use for /turbo, "why is it slow?", or pre-launch performance passes.
+description: Profile and optimize applications - hot paths, N+1 queries, blocking I/O, caching, bundle size, memory, startup time. Use for /turbo, "why is it slow?", or pre-launch performance passes.
 metadata: {"navin":{"emoji":"⚡","category":"devops"}}
 ---
 
@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"⚡","category":"devops"}}
 
 ## Overview
 
-Find where time and memory actually go, prove it with measurements, and propose the highest-leverage optimizations. Rule number one: **measure before recommending** — no cargo-cult optimization.
+Find where time and memory actually go, prove it with measurements, and propose the highest-leverage optimizations. Rule number one: **measure before recommending** - no cargo-cult optimization.
 
 ## Hot spots by layer
 

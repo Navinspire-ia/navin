@@ -19,6 +19,72 @@ from typing import Any
 
 from filelock import FileLock
 
+# How long a freshly spawned child is watched before its start is believed. The
+# packaged build needs the longer window because it unpacks itself before it can
+# fail.
+_STARTUP_WATCH_S = 0.2
+_FROZEN_STARTUP_WATCH_S = 4.0
+_STARTUP_POLL_S = 0.25
+
+# What a PyInstaller bootloader leaves behind so its own re-exec does not unpack
+# the bundle a second time. Names differ across major versions; all are inert
+# when absent.
+_BOOTLOADER_ENV_KEYS = (
+    "_MEIPASS2",
+    "_PYI_ARCHIVE_FILE",
+    "_PYI_APPLICATION_HOME_DIR",
+    "_PYI_PARENT_PROCESS_LEVEL",
+)
+
+
+def child_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment for a child navin, with the bootloader's traces removed.
+
+    A packaged navin unpacks itself into a temporary directory and records that
+    directory in its environment. A child process that inherits those variables
+    concludes the unpacking already happened and goes looking for the bundled C
+    extensions somewhere that is not its own unpack directory. What the user
+    sees is ``ModuleNotFoundError`` naming a package that is visibly shipped -
+    ``pydantic_core._pydantic_core`` first, because it is imported early - from
+    a gateway that the CLI just reported as started.
+
+    The loader search path is rewritten for the same reason, and the bootloader
+    parks the caller's own value beside it; that one is put back rather than
+    dropped, because it may be the user's.
+    """
+    env = dict(os.environ if base is None else base)
+    if not getattr(sys, "frozen", False):
+        return env
+    for key in _BOOTLOADER_ENV_KEYS:
+        env.pop(key, None)
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        original = env.pop(f"{key}_ORIG", None)
+        if original is not None:
+            env[key] = original
+        else:
+            env.pop(key, None)
+    return env
+
+
+def child_command_prefix(executable: str | None = None) -> list[str]:
+    """The argv prefix that re-invokes navin as a child process.
+
+    A source install runs under an interpreter, which has to be told which
+    module to run. A PyInstaller build has no interpreter to hand: there,
+    ``sys.executable`` is the navin binary itself, and handing it ``-m navin``
+    makes it parse ``-m`` as an option and exit before doing anything. The
+    difference matters wherever navin writes a command down for something else
+    to run later - a systemd unit, a LaunchAgent, a detached child - because
+    the failure surfaces as a service that restarts forever, far from here.
+
+    Only the binary this process was frozen into is treated that way. A caller
+    naming a real interpreter still gets the module form.
+    """
+    resolved = executable or sys.executable
+    if getattr(sys, "frozen", False) and Path(resolved) == Path(sys.executable):
+        return [resolved]
+    return [resolved, "-m", "navin"]
+
 
 @dataclass(frozen=True)
 class ProcessStartOptions:
@@ -100,6 +166,27 @@ class ManagedProcessRuntime:
         state["started_at"] = _utc_now()
         runtime._write_state(state)
 
+    def _survives_startup(self, pid: int) -> bool:
+        """Watch a freshly spawned child long enough to see it fail.
+
+        A source install crashes on its first import, within the fifth of a
+        second this used to wait. A packaged one unpacks itself first and only
+        reaches that import seconds later, so the old wait always saw a live
+        process and reported a start that had not happened - the CLI printed a
+        URL and offered logs for a gateway that was already gone. Polling costs
+        the extra time only when the process does survive, which is the case
+        where the caller is about to wait on a port anyway.
+        """
+        budget = _FROZEN_STARTUP_WATCH_S if getattr(sys, "frozen", False) else _STARTUP_WATCH_S
+        waited = 0.0
+        while waited < budget:
+            step = min(_STARTUP_POLL_S, budget - waited)
+            self._sleep(step)
+            if not self._is_pid_running(pid):
+                return False
+            waited += step
+        return True
+
     def start_background(self, options: ProcessStartOptions) -> ProcessResult:
         """Start the configured command as a detached process."""
         with self._lifecycle_lock():
@@ -120,12 +207,12 @@ class ManagedProcessRuntime:
                 stdin=subprocess.DEVNULL,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
+                env=child_environment(),
                 **self._popen_platform_kwargs(),
             )
 
         pid = int(process.pid)
-        self._sleep(0.2)
-        if not self._is_pid_running(pid):
+        if not self._survives_startup(pid):
             return ProcessResult(False, self._message("exited_during_startup"), self.status())
 
         self._write_state(
@@ -181,7 +268,37 @@ class ManagedProcessRuntime:
             recoverable = {self._message("not_running"), self._message("state_stale")}
             if not stop_result.ok and stop_result.message not in recoverable:
                 return stop_result
+            self._reclaim_orphan_listeners(options, timeout_s=timeout_s)
             return self._start_background(options)
+
+    def _reclaim_orphan_listeners(self, options: ProcessStartOptions, *, timeout_s: int) -> None:
+        """Stop a navin process the state file forgot but that still holds our ports.
+
+        Without this a restart after a stale or rewritten state file started a
+        second gateway that died on "address already in use" while the old one
+        kept answering the health probe: the caller saw "restarted", and kept
+        running the old code.
+        """
+        try:
+            from navin.ports import check_ports
+
+            config = None
+            with suppress(Exception):
+                from navin.config.loader import load_config
+
+                config = load_config(Path(options.config_path) if options.config_path else None)
+            rows = check_ports(config, include_external=False)
+        except Exception:  # noqa: BLE001 - best effort; the start reports the bind failure
+            return
+        own = os.getpid()
+        seen: set[int] = set()
+        for row in rows:
+            listener = row.listener
+            pid = getattr(listener, "pid", None) if row.status == "navin" else None
+            if not pid or pid == own or pid in seen:
+                continue
+            seen.add(pid)
+            self._terminate(int(pid), timeout_s=timeout_s)
 
     def status(self, *, reason: str | None = None) -> ProcessStatus:
         """Return live status, clearing stale state when needed."""
@@ -341,7 +458,11 @@ class ManagedProcessRuntime:
             return True
         except OSError:
             return False
-        return True
+        # A zombie still answers kill(pid, 0). Treating it as live is how the
+        # watchdog refused to start a new gateway after SIGTERM: the old child
+        # was defunct, the port was closed, and start_background said
+        # already_running.
+        return not _pid_is_zombie(pid)
 
     def _process_identity(self, pid: int) -> str | int | None:
         if self.platform_name == "Windows":
@@ -387,6 +508,19 @@ class ManagedProcessRuntime:
 
     def _clear_state(self) -> None:
         self.paths.state_path.unlink(missing_ok=True)
+
+
+def _pid_is_zombie(pid: int) -> bool:
+    """True when *pid* exists but will never run again (Linux /proc)."""
+    try:
+        data = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    close = data.rfind(")")
+    if close < 0:
+        return False
+    fields = data[close + 1 :].split()
+    return bool(fields) and fields[0].upper() == "Z"
 
 
 def _platform_name() -> str:

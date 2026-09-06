@@ -117,7 +117,7 @@ CHANNEL_SETUP_SPECS: dict[str, ChannelSetupSpec] = {
         fields={
             "token": _field("secret"),
             "allowFrom": _field("list"),
-            "groupPolicy": _field("enum", choices=_GROUP_POLICIES),
+            "groupPolicy": _field("enum", choices=_DIRECT_GROUP_POLICIES),
         },
         required=(_required("token"),),
         official_url="https://t.me/BotFather",
@@ -218,13 +218,15 @@ CHANNEL_SETUP_SPECS: dict[str, ChannelSetupSpec] = {
             "group.allowFrom": _field("list"),
         },
         required=(_required("phoneNumber"),),
-        official_url="https://github.com/bbernhard/signal-cli-rest-api",
+        official_url="https://github.com/AsamK/signal-cli",
     ),
     "msteams": ChannelSetupSpec(
         fields={
             "appId": _field(),
             "appPassword": _field("secret"),
             "tenantId": _field(),
+            "host": _field(),
+            "port": _field("int"),
             "path": _field(),
             "allowFrom": _field("list"),
         },

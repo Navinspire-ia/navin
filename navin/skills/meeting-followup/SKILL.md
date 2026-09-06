@@ -14,7 +14,7 @@ The follow-up IS the meeting's output. Same-day minutes, owned actions, and an e
 
 ### 1. Minutes (internal)
 ```markdown
-## CR — <meeting> <date>
+## CR - <meeting> <date>
 Participants: ...
 ### Décisions
 ### Points discutés (facts, verbatim for commitments)
@@ -25,7 +25,7 @@ Participants: ...
 
 ### 2. Follow-up email (external, within 24h)
 - Thanks (one line, specific)
-- "Ce que nous avons retenu" — 3–5 bullets confirming their needs (mirrors their words)
+- "Ce que nous avons retenu" - 3-5 bullets confirming their needs (mirrors their words)
 - Agreed next steps with dates and owners
 - The ONE attachment/link promised (not five)
 - Confirm the next meeting date
@@ -38,7 +38,7 @@ Participants: ...
 ## Workflow
 
 1. Input: raw notes, transcript, or voice memo transcription; plus the meeting context.
-2. Extract: decisions ≠ discussions ≠ actions — keep them separated.
+2. Extract: decisions ≠ discussions ≠ actions - keep them separated.
 3. Draft minutes + email; the email is shorter and warmer than the minutes.
 4. User validates the external email before sending (`human-approval`); log everything.
 5. J+3: if a counterpart's action is pending silently, draft the gentle nudge.

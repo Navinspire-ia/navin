@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "navin-core"
+version = "0.1.0"
+description = "Native (Rust) hot paths for the navin agent tools"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.maturin]
+module-name = "navin_core"
+strip = true

@@ -47,7 +47,7 @@ def _resolve_transcription_url(api_base: str | None, default_url: str) -> str:
 
     Accepts either a chat-style base (e.g. ``https://api.groq.com/openai/v1``)
     or a complete URL already ending in ``/audio/transcriptions``. A chat-style
-    base — the form users naturally copy from their LLM provider config — gets
+    base - the form users naturally copy from their LLM provider config - gets
     the path appended instead of being POSTed verbatim and 404ing (#3637).
     """
     if not api_base:
@@ -206,7 +206,7 @@ async def _post_transcription_with_retry(
     """POST an audio file for transcription, retrying on transient errors.
 
     Retries on connect/read/timeout failures and on 408/429/5xx responses.
-    Other errors (including 4xx such as 401/403) return "" immediately — the
+    Other errors (including 4xx such as 401/403) return "" immediately - the
     caller's config is wrong and retrying only wastes quota.
 
     When ``language`` is provided, it is forwarded as the ``language``
@@ -323,6 +323,7 @@ async def _post_stepfun_asr_with_retry(
     model: str,
     provider_label: str,
     language: str | None = None,
+    partials: list[str] | None = None,
 ) -> str:
     """POST audio to StepFun ASR SSE endpoint and collect final text."""
     try:
@@ -388,12 +389,23 @@ async def _post_stepfun_asr_with_retry(
                             msg = payload.get("message", "unknown error")
                             logger.error("{} ASR error: {}", provider_label, msg)
                             return ""
+                        if event_type in {
+                            "transcript.text.delta",
+                            "transcript.text.partial",
+                        }:
+                            partial = payload.get("delta") or payload.get("text")
+                            if (
+                                partials is not None
+                                and isinstance(partial, str)
+                                and partial.strip()
+                            ):
+                                partials.append(partial)
                         if event_type == "transcript.text.done":
                             final_text = payload.get("text", "")
                             break
                     if final_text is not None:
                         return final_text
-                    # Stream ended without a final event — retry if attempts remain
+                    # Stream ended without a final event - retry if attempts remain
                     if attempt < _MAX_RETRIES:
                         logger.warning(
                             "{} transcription: no final event (attempt {}/{})",
@@ -524,6 +536,36 @@ def _assemblyai_speech_models(model: str | None) -> list[str]:
     return [part for part in (part.strip() for part in (model or "").split(",")) if part]
 
 
+def assemblyai_utterances(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map provider-native diarization into stable meeting turns."""
+    raw = payload.get("utterances")
+    if not isinstance(raw, list):
+        return []
+    turns: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+            continue
+        speaker = str(item.get("speaker") or "unknown").strip()
+        turns.append(
+            {
+                "speaker": f"Speaker {speaker}",
+                "text": str(item["text"]).strip(),
+                "start_ms": int(item.get("start") or 0),
+                "end_ms": int(item.get("end") or 0),
+                "confidence": item.get("confidence"),
+            }
+        )
+    return turns
+
+
+def assemblyai_labelled_text(payload: dict[str, Any]) -> str:
+    turns = assemblyai_utterances(payload)
+    if turns:
+        return "\n".join(f"{turn['speaker']}: {turn['text']}" for turn in turns)
+    text = payload.get("text")
+    return text if isinstance(text, str) else ""
+
+
 class AssemblyAITranscriptionProvider:
     """Voice transcription provider using AssemblyAI's asynchronous REST API."""
 
@@ -572,7 +614,12 @@ class AssemblyAITranscriptionProvider:
                 logger.error("AssemblyAI transcription error: upload_url missing")
                 return ""
 
-            body: dict[str, object] = {"audio_url": upload_url}
+            body: dict[str, object] = {
+                "audio_url": upload_url,
+                # This is acoustic, provider-native diarization. Other
+                # providers use the explicitly labelled LLM text fallback.
+                "speaker_labels": True,
+            }
             speech_models = _assemblyai_speech_models(self.model)
             if speech_models:
                 body["speech_models"] = speech_models
@@ -607,8 +654,7 @@ class AssemblyAITranscriptionProvider:
                     return ""
                 status = str(payload.get("status") or "").lower()
                 if status == "completed":
-                    text = payload.get("text")
-                    return text if isinstance(text, str) else ""
+                    return assemblyai_labelled_text(payload)
                 if status in {"error", "failed"}:
                     logger.error(
                         "AssemblyAI transcription failed: {}",
@@ -630,19 +676,27 @@ class OpenAITranscriptionProvider:
         api_base: str | None = None,
         language: str | None = None,
         model: str | None = None,
+        *,
+        provider_label: str = "OpenAI",
+        default_api_base: str = "https://api.openai.com/v1",
+        env_key: str = "OPENAI_API_KEY",
+        default_model: str = "whisper-1",
+        allow_missing_key: bool = False,
     ):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        resolved_key = api_key or (os.environ.get(env_key) if env_key else None)
+        self.api_key = resolved_key or ("local" if allow_missing_key else None)
         self.api_url = _resolve_transcription_url(
             api_base or os.environ.get("OPENAI_TRANSCRIPTION_BASE_URL"),
-            "https://api.openai.com/v1/audio/transcriptions",
+            f"{default_api_base.rstrip('/')}/audio/transcriptions",
         )
         self.language = language or None
-        self.model = model or "whisper-1"
-        logger.debug("OpenAI transcription endpoint: {}", self.api_url)
+        self.model = model or default_model
+        self.provider_label = provider_label
+        logger.debug("{} transcription endpoint: {}", provider_label, self.api_url)
 
     async def transcribe(self, file_path: str | Path) -> str:
         if not self.api_key:
-            logger.warning("OpenAI API key not configured for transcription")
+            logger.warning("{} API key not configured for transcription", self.provider_label)
             return ""
         path = Path(file_path)
         if not path.exists():
@@ -653,8 +707,77 @@ class OpenAITranscriptionProvider:
             api_key=self.api_key,
             path=path,
             model=self.model,
-            provider_label="OpenAI",
+            provider_label=self.provider_label,
             language=self.language,
+        )
+
+
+class OllamaTranscriptionProvider(OpenAITranscriptionProvider):
+    """STT via Ollama's OpenAI-compatible ``/audio/transcriptions`` endpoint."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model,
+            provider_label="Ollama",
+            default_api_base="http://localhost:11434/v1",
+            env_key="OLLAMA_API_KEY",
+            default_model="whisper",
+            allow_missing_key=True,
+        )
+
+
+class VllmTranscriptionProvider(OpenAITranscriptionProvider):
+    """STT via a vLLM (or similar) OpenAI-compatible transcription endpoint."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model,
+            provider_label="vLLM",
+            default_api_base="http://localhost:8000/v1",
+            env_key="VLLM_API_KEY",
+            default_model="whisper-large-v3",
+            allow_missing_key=True,
+        )
+
+
+class LmStudioTranscriptionProvider(OpenAITranscriptionProvider):
+    """STT via LM Studio's OpenAI-compatible ``/audio/transcriptions`` endpoint."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model,
+            provider_label="LM Studio",
+            default_api_base="http://localhost:1234/v1",
+            env_key="LM_STUDIO_API_KEY",
+            default_model="whisper",
+            allow_missing_key=True,
         )
 
 
@@ -719,19 +842,29 @@ class OpenRouterTranscriptionProvider:
         api_base: str | None = None,
         language: str | None = None,
         model: str | None = None,
+        *,
+        provider_label: str = "Speech",
+        env_key: str = "OPENROUTER_API_KEY",
+        default_model: str = "qwen/qwen3-asr-flash-2026-02-10",
     ):
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = api_key or (os.environ.get(env_key) if env_key else None)
         self.api_url = _resolve_transcription_url(
             api_base or os.environ.get("OPENROUTER_BASE_URL"),
             "https://openrouter.ai/api/v1/audio/transcriptions",
         )
         self.language = language or None
-        self.model = model or "openai/whisper-1"
-        logger.debug("OpenRouter transcription endpoint: {}", self.api_url)
+        self.model = model or default_model
+        # Deepgram Nova-3 on OpenRouter answers 200 with an empty text (while
+        # still billing the audio seconds) when no language is set. "multi"
+        # keeps automatic language detection and makes the model usable.
+        if "nova-3" in self.model and not self.language:
+            self.language = "multi"
+        self.provider_label = provider_label
+        logger.debug("{} transcription endpoint: {}", provider_label, self.api_url)
 
     async def transcribe(self, file_path: str | Path) -> str:
         if not self.api_key:
-            logger.warning("OpenRouter API key not configured for transcription")
+            logger.warning("{} API key not configured for transcription", self.provider_label)
             return ""
 
         path = Path(file_path)
@@ -744,8 +877,29 @@ class OpenRouterTranscriptionProvider:
             api_key=self.api_key,
             path=path,
             model=self.model,
-            provider_label="OpenRouter",
+            provider_label=self.provider_label,
             language=self.language,
+        )
+
+
+class NavinTranscriptionProvider(OpenRouterTranscriptionProvider):
+    """STT via the managed Navin OpenRouter key (Qwen ASR / curated list)."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        language: str | None = None,
+        model: str | None = None,
+    ):
+        super().__init__(
+            api_key=api_key,
+            api_base=api_base,
+            language=language,
+            model=model,
+            provider_label="Navin",
+            env_key="",
+            default_model="qwen/qwen3-asr-flash-2026-02-10",
         )
 
 
@@ -808,20 +962,29 @@ class StepFunTranscriptionProvider:
         logger.debug("StepFun transcription endpoint: {}", self.api_url)
 
     async def transcribe(self, file_path: str | Path) -> str:
+        text, _partials = await self.transcribe_with_partials(file_path)
+        return text
+
+    async def transcribe_with_partials(
+        self, file_path: str | Path
+    ) -> tuple[str, list[str]]:
         if not self.api_key:
             logger.warning("StepFun API key not configured for transcription")
-            return ""
+            return "", []
 
         path = Path(file_path)
         if not path.exists():
             logger.error("Audio file not found: {}", file_path)
-            return ""
+            return "", []
 
-        return await _post_stepfun_asr_with_retry(
+        partials: list[str] = []
+        text = await _post_stepfun_asr_with_retry(
             self.api_url,
             api_key=self.api_key,
             path=path,
             model=self.model,
             provider_label="StepFun",
             language=self.language,
+            partials=partials,
         )
+        return text, partials

@@ -1,0 +1,8 @@
+id: sales-forecast-agent
+name: Sales Forecast Agent
+enabled: true
+permissions:
+  - deals.read
+tools:
+  - get_schema
+  - query

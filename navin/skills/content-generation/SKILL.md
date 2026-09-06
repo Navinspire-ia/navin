@@ -1,6 +1,6 @@
 ---
 name: content-generation
-description: General-purpose content production — articles, reports, social posts, newsletters, product descriptions, and docs — with channel adaptation and quality control. Use as the entry point for "write me content" requests.
+description: General-purpose content production - articles, reports, social posts, newsletters, product descriptions, and docs - with channel adaptation and quality control. Use as the entry point for "write me content" requests.
 metadata: {"navin":{"emoji":"🧾","category":"writing"}}
 ---
 
@@ -26,7 +26,20 @@ Router + workhorse for content requests. Identify the content type, apply the ri
 
 ## Product descriptions
 
-Formula: outcome headline → 2–3 benefit bullets (each tied to a feature) → spec table → objection line (guarantee/compat) → CTA. Unique per product — no template stuffing for N products (use `exec` + data like `programmatic-seo` when generating in bulk).
+Formula: outcome headline → 2-3 benefit bullets (each tied to a feature) → spec table → objection line (guarantee/compat) → CTA. Unique per product - no template stuffing for N products (use `exec` + data like `programmatic-seo` when generating in bulk).
+
+## Visual stack (when the piece is not only words)
+
+| Livrable | Framework | Do not |
+|----------|-----------|--------|
+| Sales page / landing / site | Super render stack (`ui-ux-pro-max`): Motion + Lenis + Embla + Lucide + `three` + R3F + drei. Always a designed 3D layer. `@number-flow/react` if one KPI ticks. | CSS-only heroes. GSAP. Particles. Swiper. Three.js wallpaper. |
+| 3D product / spatial hero | Same Three.js stack. Postprocessing only on that hero. Still fallback. | Three.js as wallpaper. |
+| PPT / pitch / board deck | `presentation-designer` + `pptx-generator`. Architecture diagrams via `archify`. CSS motion tokens only. | Three.js or Motion on a slide (becomes a screenshot). |
+| Architecture / sequence / plan | `archify` (checked HTML + SVG). | Raw Mermaid as the deliverable. |
+| Packshots / 360 | `product-visuals` (`generate_image` / `generate_video`). | Fake 3D in PowerPoint. |
+| Studio HTML report | Track A UI: official DS + Motion + Three.js, `open_preview`, not PDF. | File Preview PDF-first. |
+
+Words still follow the routing table. A landing is copy (`copywriting-agent`) plus a real page (Motion). A deck is copy plus the PPT engine. Do not mix the two stacks.
 
 ## Quality control (every piece)
 

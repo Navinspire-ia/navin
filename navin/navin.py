@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from navin.agent.hook import AgentHook, SDKCaptureHook
-from navin.agent.hooks import create_file_edit_activity_hook
+from navin.agent.hooks import DEFAULT_HOOK_FACTORIES
 from navin.agent.loop import AgentLoop
 from navin.config.schema import Config
 from navin.providers.image_generation import image_gen_provider_configs
@@ -119,7 +119,7 @@ class Navin:
         loop = AgentLoop.from_config(
             config,
             image_generation_provider_configs=image_gen_provider_configs(config),
-            hook_factories=[create_file_edit_activity_hook],
+            hook_factories=list(DEFAULT_HOOK_FACTORIES),
         )
         return cls(loop, config=config)
 

@@ -1,0 +1,413 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-agent-builder",
+  "name": "AI Agent Builder",
+  "kind": "ai-product",
+  "category": "agents",
+  "source_github": "https://github.com/TransformerOptimus/SuperAGI",
+  "source_name": "SuperAGI",
+  "license": "MIT",
+  "stack": [
+    "Python",
+    "Next.js"
+  ],
+  "studied_from": "templates_apps/ai-agent-builder",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 3,
+    "package_count": 3
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "\" target=\"blank\"> What are we ? A dev-first open source autonomous AI agent framework enabling developers to build, manage & run useful autonomous agents. You can run concurrent agents seamlessly, extend agent capabilities with tools. The agents efficiently perform a variety of tasks and continually improve their performance with each subsequent run. \ud83d\udca1 Features - <b>Provision, Spawn & Deploy Autonomous AI Agents</b> - Create production-ready & scalable autonomous agents. - <b>Extend Agent Capabilities with Toolkits</b> - Add Toolkits from our marketplace"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": true,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "pip",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "gui/package.json",
+        "name": "super-agi",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "app",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "axios"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "gui/package.json",
+        "name": "super-agi",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.yaml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker-compose.yaml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yaml",
+      "docker-compose.image.example.yaml",
+      "docker-compose-gpu.yml",
+      "docker-compose-dev.yaml"
+    ],
+    "services": [
+      {
+        "name": "backend",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "celery",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "gui",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "super__redis",
+        "image": "redis/redis-stack-server:latest",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "super__postgres",
+        "image": "docker.io/library/postgres:15",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "proxy",
+        "image": "nginx:stable-alpine",
+        "ports": [
+          "3000:80"
+        ]
+      },
+      {
+        "name": "backend",
+        "image": "superagidev/superagi:main",
+        "ports": []
+      },
+      {
+        "name": "celery",
+        "image": "superagidev/superagi:main",
+        "ports": []
+      },
+      {
+        "name": "gui",
+        "image": "superagidev/superagi-frontend:main",
+        "ports": []
+      },
+      {
+        "name": "super__redis",
+        "image": "redis/redis-stack-server:latest",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "super__postgres",
+        "image": "docker.io/library/postgres:latest",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "proxy",
+        "image": "nginx:stable-alpine",
+        "ports": [
+          "3000:80"
+        ]
+      },
+      {
+        "name": "backend",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "celery",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "gui",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "super__redis",
+        "image": "redis/redis-stack-server:latest",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "super__postgres",
+        "image": "docker.io/library/postgres:15",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "proxy",
+        "image": "nginx:stable-alpine",
+        "ports": [
+          "3000:80"
+        ]
+      },
+      {
+        "name": "backend",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "celery",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "gui",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "super__redis",
+        "image": "redis/redis-stack-server:latest",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "super__postgres",
+        "image": "docker.io/library/postgres:latest",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "proxy",
+        "image": "nginx:stable-alpine",
+        "ports": [
+          "3000:80"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-agent-builder/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-agent-builder/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-agent-builder/overlay.json",
+    "agents": ".navin/apps/ai-agent-builder/agents/",
+    "env": ".env",
+    "frontend": "gui/package.json",
+    "backend": "requirements.txt",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "agent-creator",
+      "tool-builder-agent",
+      "workflow-agent",
+      "agent-evaluator",
+      "agent-debugger"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -93,7 +93,4 @@ navin gateway
 
 ## Related docs
 
-- [Chat Apps](./chat-apps.md)
-- [Security configuration](./configuration.md#security)
-- [Pairing](./configuration.md#pairing)
 - [Runtime self-inspection](./my-tool.md)

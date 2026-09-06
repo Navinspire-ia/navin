@@ -32,7 +32,7 @@ Turn exports (GA4, ads platforms, CRM, spreadsheets) into decisions: which chann
 ## Report skeleton
 
 ```markdown
-## Marketing scoreboard — <month>
+## Marketing scoreboard - <month>
 | Channel | Spend | Leads | CPL | Opps | Won | CAC | Notes |
 ### Insights
 ### Actions
@@ -41,5 +41,5 @@ Turn exports (GA4, ads platforms, CRM, spreadsheets) into decisions: which chann
 ## Rules
 
 - Distinguish correlation from causation explicitly.
-- If data is missing or dirty, say so — no invented precision.
+- If data is missing or dirty, say so - no invented precision.
 - Trends over single data points; always show the previous period.

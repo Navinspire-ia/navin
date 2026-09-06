@@ -1,0 +1,12 @@
+id: follow-up-agent
+name: Follow-up Agent
+enabled: true
+permissions:
+  - tasks.read
+  - tasks.write
+  - contacts.read
+tools:
+  - query
+  - mutate
+  - display_task_list
+  - complete_task

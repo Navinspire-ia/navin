@@ -1,7 +1,7 @@
 ---
 name: cv-builder
-description: Generate professional, ATS-compatible CVs from career information — structure, achievement phrasing, and clean formatting. Use to create or rebuild a CV.
-metadata: {"navin":{"emoji":"📋","category":"careers"}}
+description: Generate professional, ATS-compatible CVs from career information - structure, achievement phrasing, and clean formatting. Use to create or rebuild a CV.
+metadata: {"navin":{"emoji":"📋","category":"careers","default_for":"career"}}
 ---
 
 # CV Builder
@@ -19,11 +19,11 @@ Build CVs that pass ATS parsing and convince humans in the 30-second scan.
 
 ## Structure
 
-1. **Header** — name, title targeted, city, phone, email, LinkedIn
-2. **Summary** — 3 lines: profile + top strengths + target (skip for juniors)
-3. **Experience** — reverse chronological; per role: 3–6 achievement bullets
+1. **Header** - name, title targeted, city, phone, email, LinkedIn
+2. **Summary** - 3 lines: profile + top strengths + target (skip for juniors)
+3. **Experience** - reverse chronological; per role: 3-6 achievement bullets
 4. **Education / certifications**
-5. **Skills** — grouped (technical, languages, tools); honest levels
+5. **Skills** - grouped (technical, languages, tools); honest levels
 6. Optional: projects, publications, volunteering
 
 ## Achievement bullets (the core craft)
@@ -35,12 +35,12 @@ No number available? Use scope: team size, budget, users, frequency.
 
 ## Workflow
 
-1. Collect raw material: old CV (`pdf-ocr-extractor` if PDF), LinkedIn, or interview the user role by role.
-2. Clarify the target role — a CV without a target is a biography.
+1. Load the Career book first: `career action=status`. Use Master CV, experience, education, strengths and gaps already stored. If a file exists, `pdf-ocr-extractor` on a user PDF, or interview the user role by role. Write the rebuilt CV back with `career action=profile` `master_cv=...`.
+2. Clarify the target role - a CV without a target is a biography.
 3. Draft; rewrite every duty into an achievement.
 4. Length: 1 page < 8 years experience, 2 pages max otherwise.
 5. Produce DOCX via `docx-generator` + PDF export; run `proofreader`.
-6. For a specific offer, hand to `cv-tailoring` + `ats-analyzer`.
+6. For a specific offer, hand to `cv-tailoring` + `ats-analyzer`. On the Career desk, `career action=prepare` already writes a single-column professional DOCX (header, target, summary, skills, experience bullets, education, cover letter) in the language of the offer. Never invent an employer, date or tool.
 
 ## Rules
 

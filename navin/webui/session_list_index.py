@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from navin.config.paths import get_webui_dir
+from navin.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from navin.session.history_visibility import is_hidden_history_message
 from navin.session.manager import (
     _SESSION_LIST_PREVIEW_MAX_CHARS,
@@ -27,7 +29,13 @@ from navin.session.manager import (
 )
 
 _INDEX_VERSION = 2
+# Sidebar only needs recent chats. Shipping every jsonl on disk (900+) is
+# what used to block the event loop for 17s and take the UI down with it.
+_MAX_WEBUI_LISTED_SESSIONS = 200
 _INDEX_FILENAME = ".webui_session_index.json"
+# A metadata-only row is a few hundred bytes; anything bigger holds content.
+_BLANK_SESSION_MAX_BYTES = 4096
+_BLANK_SESSION_GRACE_S = 60.0
 _WEBUI_ACTIVITY_MTIME_NS = "webui_activity_mtime_ns"
 _WEBUI_ACTIVITY_SIZE = "webui_activity_size"
 _VISIBLE_TRANSCRIPT_ROLES = {"user", "assistant"}
@@ -42,7 +50,8 @@ def list_webui_sessions(session_manager: SessionManager) -> list[dict[str, Any]]
         except Exception as e:
             logger.debug("Failed to write WebUI session list index: {}", e)
     sessions = [_public_row(session_manager.sessions_dir, row) for row in rows]
-    return sorted(sessions, key=lambda row: row.get("updated_at", ""), reverse=True)
+    sessions.sort(key=lambda row: row.get("updated_at", ""), reverse=True)
+    return sessions[:_MAX_WEBUI_LISTED_SESSIONS]
 
 
 def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, Any]], bool]:
@@ -52,7 +61,11 @@ def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, An
         for row in existing_rows or []
         if isinstance(row.get("file"), str)
     }
-    paths = sorted(session_manager.sessions_dir.glob("*.jsonl"))
+    paths = [
+        path
+        for path in sorted(session_manager.sessions_dir.glob("*.jsonl"))
+        if not _drop_blank_session(path)
+    ]
     rows: list[dict[str, Any]] = []
     changed = existing_rows is None
 
@@ -72,6 +85,38 @@ def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, An
     if existing_rows is not None and rows != existing_rows:
         changed = True
     return rows, changed
+
+
+def _drop_blank_session(path: Path) -> bool:
+    """Delete and skip a session file that holds nothing at all.
+
+    A file with a single metadata row and no metadata is a chat that was never
+    opened by anyone: older gateways materialised one per WebSocket reconnect,
+    so a bad afternoon left hundreds of untitled rows in the sidebar. Files
+    younger than the grace delay are left alone so a chat being created right
+    now is never mistaken for one of them.
+    """
+    try:
+        stat = path.stat()
+        if stat.st_size > _BLANK_SESSION_MAX_BYTES:
+            return False
+        if time.time() - stat.st_mtime < _BLANK_SESSION_GRACE_S:
+            return False
+        lines = [
+            line
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
+        if len(lines) != 1:
+            return False
+        data = json.loads(lines[0])
+        if data.get("_type") != "metadata" or data.get("metadata"):
+            return False
+        path.unlink()
+    except Exception:
+        return False
+    logger.info("Removed empty session {}", path.name)
+    return True
 
 
 def _index_path(sessions_dir: Path) -> Path:
@@ -131,7 +176,15 @@ def _indexed_row_matches_file(row: dict[str, Any], path: Path) -> bool:
     )
 
 
+def _workspace_scope_from_metadata(metadata: Any) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get(WORKSPACE_SCOPE_METADATA_KEY)
+    return raw if isinstance(raw, dict) else None
+
+
 def _public_row(sessions_dir: Path, row: dict[str, Any]) -> dict[str, Any]:
+    raw_scope = row.get("workspace_scope")
     return {
         "key": row.get("key"),
         "created_at": row.get("created_at"),
@@ -139,6 +192,7 @@ def _public_row(sessions_dir: Path, row: dict[str, Any]) -> dict[str, Any]:
         "title": row.get("title", ""),
         "preview": row.get("preview", ""),
         "path": str(sessions_dir / str(row.get("file", ""))),
+        "workspace_scope": raw_scope if isinstance(raw_scope, dict) else None,
     }
 
 
@@ -256,6 +310,7 @@ def _indexed_row_for_session(session: Session, path: Path) -> dict[str, Any]:
         ),
         "title": _metadata_title(session.metadata),
         "preview": _preview_from_messages(session.messages),
+        "workspace_scope": _workspace_scope_from_metadata(session.metadata),
         "file": path.name,
         "mtime_ns": signature["mtime_ns"],
         "size": signature["size"],
@@ -329,6 +384,7 @@ def _scan_session_row(session_manager: SessionManager, path: Path) -> dict[str, 
                 ),
                 "title": _metadata_title(data.get("metadata", {})),
                 "preview": preview or fallback_preview,
+                "workspace_scope": _workspace_scope_from_metadata(data.get("metadata", {})),
                 "file": path.name,
                 "mtime_ns": signature["mtime_ns"],
                 "size": signature["size"],

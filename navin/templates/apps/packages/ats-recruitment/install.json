@@ -1,0 +1,855 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ats-recruitment",
+  "name": "ATS / Recruitment",
+  "kind": "business",
+  "category": "hr",
+  "source_github": "https://github.com/Vytral/harly",
+  "source_name": "Harly ATS",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/ats-recruitment",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 55,
+    "package_count": 12
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "A self-hosted, open-source applicant tracking system for teams that want control over their hiring stack. > **Public beta.** Harly is intended for small, self-hosted teams while the > product and deployment workflows continue to mature. Review the [release > readiness guide](docs/release-readiness.md), test upgrades on a disposable > installation, and verify backups before importing real candidate data. What is Harly? Harly is a self-hostable ATS for startups, agencies, and technical teams. It"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=22",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "web",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build --webpack",
+          "start": "next start",
+          "lint": "eslint . --max-warnings=0",
+          "test": "vitest run",
+          "test:watch": "vitest"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/emails/package.json",
+        "name": "@harly/emails",
+        "scripts": {
+          "build": "tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@harly/ui",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "packages/api/package.json",
+        "name": "@harly/api",
+        "scripts": {
+          "build": "tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "harly",
+        "scripts": {
+          "dev": "pnpm db:up && pnpm db:migrate && DOTENV_CONFIG_PATH=.env.local node -r dotenv/config ./node_modules/turbo/bin/turbo dev --filter=web",
+          "dev:web": "DOTENV_CONFIG_PATH=.env.local node -r dotenv/config ./node_modules/turbo/bin/turbo dev --filter=web",
+          "build": "DOTENV_CONFIG_PATH=.env.local node -r dotenv/config ./node_modules/turbo/bin/turbo build",
+          "lint": "turbo lint",
+          "test": "turbo test",
+          "docs:dev": "pnpm --dir apps/docs dev",
+          "db:up": "docker compose -f tooling/docker/compose.dev.yml up -d",
+          "db:down": "docker compose -f tooling/docker/compose.dev.yml down",
+          "db:generate": "pnpm --filter @harly/db db:generate",
+          "db:migrate": "pnpm --filter @harly/db db:migrate",
+          "db:studio": "pnpm --filter @harly/db db:studio",
+          "db:push": "pnpm --filter @harly/db db:push",
+          "db:seed": "pnpm --filter @harly/db db:seed"
+        },
+        "node_engine": ">=22",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "apps/marketing/package.json",
+        "name": "@harly/marketing",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "web",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build --webpack",
+          "start": "next start",
+          "lint": "eslint . --max-warnings=0",
+          "test": "vitest run",
+          "test:watch": "vitest"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/api/package.json",
+        "name": "@harly/api",
+        "scripts": {
+          "build": "tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/auth/package.json",
+        "name": "@harly/auth",
+        "scripts": {
+          "test": "vitest run"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/config/package.json",
+        "name": "@harly/config",
+        "scripts": {
+          "test": "vitest run"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/db/package.json",
+        "name": "@harly/db",
+        "scripts": {
+          "db:generate": "drizzle-kit generate",
+          "db:migrate": "drizzle-kit migrate",
+          "db:studio": "drizzle-kit studio",
+          "db:push": "drizzle-kit push",
+          "db:seed": "tsx scripts/seed.ts",
+          "db:seed:demo": "tsx scripts/seed-demo.ts",
+          "db:migrate:local": "tsx scripts/migrate.ts",
+          "db:backfill-usernames": "tsx scripts/backfill-usernames.ts",
+          "db:backfill-signature-fields": "tsx scripts/backfill-signature-fields.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "postgres"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/emails/package.json",
+        "name": "@harly/emails",
+        "scripts": {
+          "build": "tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/storage/package.json",
+        "name": "@harly/storage",
+        "scripts": {
+          "build": "tsc --noEmit"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@harly/ui",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/validators/package.json",
+        "name": "@harly/validators",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "tooling/harly/package.json",
+        "name": "@harly/cli",
+        "scripts": {
+          "build": "esbuild src/index.ts --bundle --packages=external --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+          "test": "pnpm build && node scripts/sync-release-assets.mjs --check && node --test test/*.test.mjs",
+          "test:backup-restore": "pnpm build && ./test/backup-restore.destructive.sh"
+        },
+        "node_engine": ">=20.12.0",
+        "deps_hint": []
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "compose.yaml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "compose.yaml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_APP_NAME",
+      "default": "Harly",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DOCUSIGN_BASE_URL",
+      "default": "https://account-d.docusign.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "DOCUSIGN_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DOCUSIGN_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_USER",
+      "default": "harly",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres user",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_PASSWORD",
+      "default": "replace-with-a-unique-random-password",
+      "required": true,
+      "secret": true,
+      "purpose": "Postgres password",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_DB",
+      "default": "harly",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres database name",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_PORT",
+      "default": "5432",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres port",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://harly:replace-with-a-unique-random-password@localhost:5432/harly",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "BETTER_AUTH_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "BETTER_AUTH_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_SETUP_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_INITIAL_ADMIN_EMAIL",
+      "default": "owner@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "MICROSOFT_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MICROSOFT_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "LINKEDIN_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LINKEDIN_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "STORAGE_PROVIDER",
+      "default": "local",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "UPLOADS_DIR",
+      "default": "uploads",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "STORAGE_UPLOAD_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_BUCKET",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_REGION",
+      "default": "auto",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_ACCESS_KEY_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_SECRET_ACCESS_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "S3_PUBLIC_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESEND_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_FROM",
+      "default": "noreply@harly.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "AI_ENCRYPTION_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CRON_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOG_LEVEL",
+      "default": "info",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_APP_MEMORY",
+      "default": "1536m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_POSTGRES_MEMORY",
+      "default": "768m",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_MIGRATE_MEMORY",
+      "default": "768m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_SCHEDULER_MEMORY",
+      "default": "256m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_CADDY_MEMORY",
+      "default": "256m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_CACHE_MAX_MB",
+      "default": "512",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_CACHE_MAX_AGE_DAYS",
+      "default": "7",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_LOG_MAX_SIZE",
+      "default": "10m",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_LOG_MAX_FILES",
+      "default": "3",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_DEV_MEMORY_MB",
+      "default": "1024",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "SLACK_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SLACK_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TURNSTILE_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "HARLY_DISABLE_WEBPACK_BUILD_WORKER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/web/next.config.ts"
+    },
+    {
+      "key": "NEXT_PHASE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/web/src/instrumentation.ts"
+    },
+    {
+      "key": "NEXT_RUNTIME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:apps/web/src/instrumentation.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "compose.yaml"
+    ],
+    "services": [
+      {
+        "name": "options",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "postgres",
+        "image": "postgres:16-bookworm",
+        "ports": []
+      },
+      {
+        "name": "migrate",
+        "image": "*harly-image",
+        "ports": []
+      },
+      {
+        "name": "app",
+        "image": "*harly-image",
+        "ports": []
+      },
+      {
+        "name": "scheduler",
+        "image": "*harly-image",
+        "ports": []
+      },
+      {
+        "name": "caddy",
+        "image": "caddy:2.10-alpine",
+        "ports": [
+          "80:80",
+          "443:443",
+          "443:443"
+        ]
+      },
+      {
+        "name": "docuseal",
+        "image": "docuseal/docuseal:latest",
+        "ports": []
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "seed": "npm run db:seed",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ats-recruitment/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "seed",
+        "run": "npm run db:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ats-recruitment/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ats-recruitment/overlay.json",
+    "agents": ".navin/apps/ats-recruitment/agents/",
+    "env": ".env",
+    "frontend": "apps/web/package.json",
+    "backend": "packages/api/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "recruiting-agent",
+      "cv-screening-agent",
+      "interview-agent",
+      "pipeline-agent",
+      "offer-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -1,6 +1,6 @@
 ---
 name: pricing-assistant
-description: Build pricing scenarios — options, margins, discount policies, and negotiation floors — for offers and deals. Use before pricing any proposal or negotiation.
+description: Build pricing scenarios - options, margins, discount policies, and negotiation floors - for offers and deals. Use before pricing any proposal or negotiation.
 metadata: {"navin":{"emoji":"🏷️","category":"sales"}}
 ---
 
@@ -13,7 +13,7 @@ Price from value and costs, not from fear. Prepare scenarios BEFORE the negotiat
 ## Pricing worksheet
 
 ```markdown
-## Pricing — <deal>
+## Pricing - <deal>
 ### Costs & floor
 - Delivery cost estimate (days × loaded rate + externals)
 - Walk-away floor (below this we decline)
@@ -32,7 +32,7 @@ Price from value and costs, not from fear. Prepare scenarios BEFORE the negotiat
 
 ## Discount doctrine
 
-- Never a naked discount — trade for: longer commitment, case study rights, prepayment, reduced scope, volume
+- Never a naked discount - trade for: longer commitment, case study rights, prepayment, reduced scope, volume
 - Concessions shrink (10% → 4% → 1%) to signal the floor is near
 - "C'est trop cher" → `objection-handler` AER first; price moves last
 
@@ -41,7 +41,7 @@ Price from value and costs, not from fear. Prepare scenarios BEFORE the negotiat
 1. Gather: scope, delivery estimate, client context (`account-research`), budget signals (`discovery-call-assistant`).
 2. Fill the worksheet; user validates costs, floor, and margins.
 3. Feed scenarios into `sales-proposal-writer`; brief the negotiator with the plan.
-4. Post-deal: log final price vs list — the discount history informs the next pricing round.
+4. Post-deal: log final price vs list - the discount history informs the next pricing round.
 
 ## Rules
 

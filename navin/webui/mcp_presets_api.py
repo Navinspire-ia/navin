@@ -87,6 +87,11 @@ class McpPreset:
     fields: tuple[McpPresetField, ...] = ()
     requires: str = ""
     note: str = ""
+    # Product modules that should surface this preset (e.g. career on #/tools).
+    modules: tuple[str, ...] = ()
+    # When True, gateway/agent startup writes this preset into tools.mcp_servers
+    # if missing (no required credential fields). Connection remains best-effort.
+    auto_enable: bool = False
 
 
 def _favicon_url(domain: str) -> str:
@@ -205,6 +210,52 @@ MCP_PRESETS: tuple[McpPreset, ...] = (
             tool_timeout=45,
         ),
         note="Hosted Exa MCP endpoint currently does not require an API key.",
+        modules=("career", "tenders"),
+    ),
+    McpPreset(
+        name="linkedin",
+        display_name="LinkedIn",
+        category="sales",
+        description=(
+            "Recommended option: stickerdaniel/linkedin-mcp-server "
+            "(uvx mcp-server-linkedin@latest). Company pages, people, posts, "
+            "inbox and jobs through your own logged-in browser session. "
+            "Tenders: buyer research, never a notice. Career: session jobs and "
+            "profile, never scrape, never Easy Apply. Not an official LinkedIn API."
+        ),
+        docs_url="https://github.com/stickerdaniel/linkedin-mcp-server",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="linkedin.com",
+        brand_color="#0A66C2",
+        requires="uvx (Astral uv) and a LinkedIn login in the local browser session",
+        server=MCPServerConfig(
+            type="stdio",
+            command="uvx",
+            args=["mcp-server-linkedin@latest"],
+            env={"UV_HTTP_TIMEOUT": "300"},
+            tool_timeout=180,
+        ),
+        note=(
+            "Recommended option on Tenders and Career. "
+            "Runs `uvx mcp-server-linkedin@latest`. "
+            "First tool call that needs auth opens a LinkedIn login window. "
+            "Or create the session first: `uvx mcp-server-linkedin@latest --login` "
+            "or `--import-from-browser` (Chrome, Brave, Edge, ...). "
+            "Profile lives in ~/.linkedin-mcp/. Official tools: get_person_profile, "
+            "get_my_profile, connect_with_person, get_sidebar_profiles, get_inbox, "
+            "get_conversation, search_conversations, send_message, get_company_profile, "
+            "get_company_posts, search_companies, get_company_employees, search_jobs, "
+            "get_saved_jobs, search_people, get_job_details, get_feed, search_posts, "
+            "close_session. "
+            "Tenders: job tools are hiring context only, never a notice. "
+            "Career: job tools read the user session, then import or prepare a CV. "
+            "Never scrape linkedin.com. Never Easy Apply. Never invent a notice. "
+            "Never post a public bid. "
+            "connect_with_person and send_message need confirm=true after the user agrees. "
+            "Not auto-enabled."
+        ),
+        modules=("tenders", "career"),
     ),
     McpPreset(
         name="microsoft-learn",
@@ -316,6 +367,35 @@ MCP_PRESETS: tuple[McpPreset, ...] = (
         note="Requires Figma Desktop Dev Mode MCP to be running locally.",
     ),
     McpPreset(
+        name="debugmcp",
+        display_name="DebugMCP",
+        category="devops",
+        description=(
+            "Live breakpoints, stack frames, variables, and expression evaluation "
+            "through the DebugMCP extension MCP server (real DAP debugging)."
+        ),
+        docs_url="https://github.com/microsoft/DebugMCP",
+        transport="streamableHttp",
+        install_supported=True,
+        auto_enable=True,
+        brand_domain="github.com",
+        brand_color="#007ACC",
+        requires="DebugMCP extension running in VS Code or Cursor",
+        server=MCPServerConfig(
+            type="streamableHttp",
+            url="http://127.0.0.1:3001/mcp",
+            tool_timeout=120,
+        ),
+        note=(
+            "Auto-enabled in Navin config at gateway/agent startup. Start the "
+            "DebugMCP extension for live tools; otherwise /debug falls back to "
+            "logs/pdb. Useful tools: add_breakpoint, start_debugging, "
+            "list_variable_names, get_variables_values, evaluate_expression, "
+            "step_*, continue_execution, pause_execution. Pair with /debug and "
+            "debug_repair(action=mcp_status)."
+        ),
+    ),
+    McpPreset(
         name="github",
         display_name="GitHub",
         category="code",
@@ -348,6 +428,736 @@ MCP_PRESETS: tuple[McpPreset, ...] = (
                 placeholder="ghp_...",
             ),
         ),
+        modules=("career", "code"),
+    ),
+    McpPreset(
+        name="notion",
+        display_name="Notion",
+        category="career",
+        description=(
+            "Official Notion MCP for Career notes, interview pages, and offer trackers. "
+            "Not a LinkedIn scraper."
+        ),
+        docs_url="https://developers.notion.com/docs/mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="notion.so",
+        brand_color="#111111",
+        requires="Node.js, npx, and a Notion internal integration token",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@notionhq/notion-mcp-server"],
+            tool_timeout=60,
+        ),
+        fields=(
+            McpPresetField(
+                name="notion_token",
+                label="Notion integration token",
+                target=("env", "NOTION_TOKEN"),
+                env_var="NOTION_TOKEN",
+                placeholder="ntn_...",
+            ),
+        ),
+        note=(
+            "Official @notionhq/notion-mcp-server. Pair with the career tool for the "
+            "live pipeline. Hosted alternative: https://mcp.notion.com/mcp. "
+            "Do not use Notion or any MCP to scrape LinkedIn or auto Easy Apply. "
+            "GitHub and Exa presets stay available for portfolio proof and public research. "
+            "Enable them on Tools (#/tools)."
+        ),
+        modules=("career",),
+    ),
+    McpPreset(
+        name="hubspot",
+        display_name="HubSpot",
+        category="sales",
+        description="CRM contacts, companies, deals, and notes for the Leads studio via HubSpot's MCP server.",
+        docs_url="https://developers.hubspot.com/docs/guides/crm/integrations/mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="hubspot.com",
+        brand_color="#FF7A59",
+        requires="Node.js, npx, and a HubSpot private app access token",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@hubspot/mcp-server"],
+            tool_timeout=60,
+        ),
+        fields=(
+            McpPresetField(
+                name="hubspot_access_token",
+                label="HubSpot private app token",
+                target=("env", "PRIVATE_APP_ACCESS_TOKEN"),
+                env_var="HUBSPOT_ACCESS_TOKEN",
+                placeholder="pat-na1-...",
+            ),
+        ),
+        note=(
+            "Scopes should cover CRM contacts, companies, and deals. "
+            "The Leads studio prefers this MCP over raw curl when configured; "
+            "workspace files under sales/crm/ remain the offline fallback. "
+            "Pair with HUNTER_API_KEY / APOLLO_API_KEY for verified emails via "
+            "lead-enrichment/scripts/enrich_leads.py, and Exa or Firecrawl for "
+            "deeper public web research."
+        ),
+    ),
+    McpPreset(
+        name="salesforce",
+        display_name="Salesforce",
+        category="sales",
+        description=(
+            "Query and update Salesforce CRM records (SOQL, contacts, accounts, "
+            "opportunities) via a token-based MCP. Official hosted Salesforce MCP "
+            "is OAuth PKCE and is not pasted into Navin v1."
+        ),
+        docs_url="https://github.com/imazhar101/salesforce-mcp-jsforce",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="salesforce.com",
+        brand_color="#00A1E0",
+        requires=(
+            "Node.js, npx, a Salesforce access token, and the org instance URL "
+            "(from `sf org display` or an External Client App OAuth grant)"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@imazhar101/salesforce-mcp-jsforce"],
+            env={"SF_READONLY": "1"},
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="sf_access_token",
+                label="Salesforce access token",
+                target=("env", "SF_ACCESS_TOKEN"),
+                env_var="SF_ACCESS_TOKEN",
+                placeholder="00D...",
+            ),
+            McpPresetField(
+                name="sf_instance_url",
+                label="Salesforce instance URL",
+                target=("env", "SF_INSTANCE_URL"),
+                env_var="SF_INSTANCE_URL",
+                secret=False,
+                placeholder="https://your-domain.my.salesforce.com",
+            ),
+            McpPresetField(
+                name="sf_readonly",
+                label="Read-only tools (1 = no writes)",
+                target=("env", "SF_READONLY"),
+                env_var="SF_READONLY",
+                secret=False,
+                required=False,
+                placeholder="1",
+            ),
+        ),
+        note=(
+            "Mint a token with `sf org display` or an External Client App. "
+            "Official Hosted MCP Servers (Setup → API Catalog, OAuth PKCE, "
+            "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/overview) "
+            "are not a paste-URL flow in Navin v1. Default SF_READONLY=1 strips "
+            "create/update/delete tools. Never delete CRM records; mark lost with reason. "
+            "Used by the Leads studio (`crm-update-agent`)."
+        ),
+    ),
+    McpPreset(
+        name="google-ads",
+        display_name="Google Ads",
+        category="ads",
+        description=(
+            "Query Google Ads accounts, campaigns, and metrics through Google's "
+            "official Ads MCP server (stdio via pipx)."
+        ),
+        docs_url="https://github.com/googleads/google-ads-mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="ads.google.com",
+        brand_color="#4285F4",
+        requires=(
+            "pipx, a Google Cloud project with the Google Ads API enabled, "
+            "Application Default Credentials with the adwords scope, and a "
+            "developer token with at least Explorer access"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="pipx",
+            args=[
+                "run",
+                "--spec",
+                "git+https://github.com/googleads/google-ads-mcp.git",
+                "google-ads-mcp",
+            ],
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="google_ads_developer_token",
+                label="Google Ads developer token",
+                target=("env", "GOOGLE_ADS_DEVELOPER_TOKEN"),
+                env_var="GOOGLE_ADS_DEVELOPER_TOKEN",
+                placeholder="your-developer-token",
+            ),
+            McpPresetField(
+                name="google_project_id",
+                label="Google Cloud project ID",
+                target=("env", "GOOGLE_PROJECT_ID"),
+                env_var="GOOGLE_PROJECT_ID",
+                secret=False,
+                placeholder="my-gcp-project",
+            ),
+            McpPresetField(
+                name="google_cloud_project",
+                label="GOOGLE_CLOUD_PROJECT (optional alias)",
+                target=("env", "GOOGLE_CLOUD_PROJECT"),
+                env_var="GOOGLE_CLOUD_PROJECT",
+                secret=False,
+                required=False,
+                placeholder="my-gcp-project",
+            ),
+            McpPresetField(
+                name="google_application_credentials",
+                label="ADC credentials JSON path",
+                target=("env", "GOOGLE_APPLICATION_CREDENTIALS"),
+                env_var="GOOGLE_APPLICATION_CREDENTIALS",
+                secret=False,
+                placeholder="/path/to/application_default_credentials.json",
+            ),
+            McpPresetField(
+                name="google_ads_login_customer_id",
+                label="Login customer ID (MCC, optional)",
+                target=("env", "GOOGLE_ADS_LOGIN_CUSTOMER_ID"),
+                env_var="GOOGLE_ADS_LOGIN_CUSTOMER_ID",
+                secret=False,
+                required=False,
+                placeholder="1234567890",
+            ),
+        ),
+        note=(
+            "Run once: gcloud auth application-default login "
+            "--scopes=https://www.googleapis.com/auth/adwords,"
+            "https://www.googleapis.com/auth/cloud-platform "
+            "(optionally --client-id-file=...). Point "
+            "GOOGLE_APPLICATION_CREDENTIALS at the printed ADC JSON path. "
+            "pipx must be on PATH for the gateway process. Cron/loop jobs reuse "
+            "these env values when the same gateway config is loaded. "
+            "Used by the Ads studio (Settings → MCP, Other modules → Ads)."
+        ),
+    ),
+    McpPreset(
+        name="meta-ads",
+        display_name="Meta Ads",
+        category="ads",
+        description=(
+            "Manage Meta (Facebook/Instagram) ads via Meta's hosted Ads MCP "
+            "at https://mcp.facebook.com/ads (reporting, campaigns, catalogs)."
+        ),
+        docs_url=(
+            "https://developers.facebook.com/documentation/ads-commerce/"
+            "ads-ai-connectors/ads-mcp-server/ads-mcp-server-get-started"
+        ),
+        transport="streamableHttp",
+        install_supported=True,
+        brand_domain="facebook.com",
+        brand_color="#1877F2",
+        requires=(
+            "Network access and a Meta user access token with ads scopes "
+            "(ads_read / ads_management / business_management, plus ads_mcp_management "
+            "when using a Meta developer app). No local pipx/npx required."
+        ),
+        server=MCPServerConfig(
+            type="streamableHttp",
+            url="https://mcp.facebook.com/ads",
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="meta_ads_authorization",
+                label="Authorization header (Bearer token)",
+                target=("header", "Authorization"),
+                env_var="META_ADS_ACCESS_TOKEN",
+                placeholder="Bearer EAAB...",
+            ),
+        ),
+        note=(
+            "Paste the full Authorization value including the Bearer prefix "
+            "(Graph API Explorer or your Meta app OAuth). Navin does not run "
+            "the browser OAuth popup for this remote MCP in v1. Account must "
+            "be enabled for Meta Ads MCP (phased rollout). Prefer read-only "
+            "scopes first; mutating tools can change live spend."
+        ),
+    ),
+    McpPreset(
+        name="tiktok-ads",
+        display_name="TikTok Ads",
+        category="ads",
+        description=(
+            "Query TikTok for Business campaigns, ad groups, ads, and reports "
+            "via the community tiktok-ads-mcp (stdio). Official TikTok MCP is "
+            "announced but not self-serve yet."
+        ),
+        docs_url="https://pypi.org/project/tiktok-ads-mcp/",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="tiktok.com",
+        brand_color="#010101",
+        requires=(
+            "uvx (Astral uv) and a TikTok Marketing API app with App ID, Secret, "
+            "and long-lived Access Token"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="uvx",
+            args=["tiktok-ads-mcp"],
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="tiktok_app_id",
+                label="TikTok App ID",
+                target=("env", "TIKTOK_APP_ID"),
+                env_var="TIKTOK_APP_ID",
+                secret=False,
+                placeholder="your-app-id",
+            ),
+            McpPresetField(
+                name="tiktok_secret",
+                label="TikTok App Secret",
+                target=("env", "TIKTOK_SECRET"),
+                env_var="TIKTOK_SECRET",
+                placeholder="your-app-secret",
+            ),
+            McpPresetField(
+                name="tiktok_access_token",
+                label="TikTok Access Token",
+                target=("env", "TIKTOK_ACCESS_TOKEN"),
+                env_var="TIKTOK_ACCESS_TOKEN",
+                placeholder="your-access-token",
+            ),
+        ),
+        note=(
+            "Create an app at the TikTok Marketing API portal, authorize "
+            "advertiser accounts, and mint an access token. Official TikTok "
+            "for Business MCP / Agentic Hub "
+            "(https://ads.tiktok.com/apps_and_agents/agentic-hub) is not a "
+            "public paste-URL endpoint yet - this preset uses the community "
+            "PyPI server until TikTok ships a hosted URL. Cron/loop needs the "
+            "same gateway env."
+        ),
+    ),
+    McpPreset(
+        name="reddit-ads",
+        display_name="Reddit Ads",
+        category="ads",
+        description=(
+            "Read (and optionally write) Reddit Ads API v3 campaigns, ad groups, "
+            "ads, and performance via mcp-server-reddit-ads (stdio, read-only by default)."
+        ),
+        docs_url="https://github.com/camlowe/mcp-server-reddit-ads",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="reddit.com",
+        brand_color="#FF4500",
+        requires=(
+            "Node.js, npx, and a Reddit Ads developer app with client ID, "
+            "client secret, and refresh token (ads:read; ads:manage only if writes enabled)"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "mcp-server-reddit-ads"],
+            env={"REDDIT_ADS_WRITE_TIER": "read"},
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="reddit_client_id",
+                label="Reddit client ID",
+                target=("env", "REDDIT_CLIENT_ID"),
+                env_var="REDDIT_CLIENT_ID",
+                secret=False,
+                placeholder="your-client-id",
+            ),
+            McpPresetField(
+                name="reddit_client_secret",
+                label="Reddit client secret",
+                target=("env", "REDDIT_CLIENT_SECRET"),
+                env_var="REDDIT_CLIENT_SECRET",
+                placeholder="your-client-secret",
+            ),
+            McpPresetField(
+                name="reddit_refresh_token",
+                label="Reddit refresh token",
+                target=("env", "REDDIT_REFRESH_TOKEN"),
+                env_var="REDDIT_REFRESH_TOKEN",
+                placeholder="your-refresh-token",
+            ),
+            McpPresetField(
+                name="reddit_ads_write_tier",
+                label="Write tier (read | safe | spend)",
+                target=("env", "REDDIT_ADS_WRITE_TIER"),
+                env_var="REDDIT_ADS_WRITE_TIER",
+                secret=False,
+                required=False,
+                placeholder="read",
+            ),
+            McpPresetField(
+                name="reddit_ads_account_id",
+                label="Default ads account id (optional)",
+                target=("env", "REDDIT_ADS_ACCOUNT_ID"),
+                env_var="REDDIT_ADS_ACCOUNT_ID",
+                secret=False,
+                required=False,
+                placeholder="a2_...",
+            ),
+        ),
+        note=(
+            "Register the app under ads.reddit.com → Business settings → "
+            "Developer Applications (redirect http://localhost:8080), then run "
+            "`npx mcp-server-reddit-ads auth` once to mint REDDIT_REFRESH_TOKEN. "
+            "Default write tier is read (no spend changes). Raise to safe/spend "
+            "only when you intend mutations."
+        ),
+    ),
+    McpPreset(
+        name="linkedin-ads",
+        display_name="LinkedIn Ads",
+        category="ads",
+        description=(
+            "Read LinkedIn Ads accounts, campaigns, targeting, and reports. "
+            "Needs a Marketing API access token (r_ads / r_ads_reporting)."
+        ),
+        docs_url="https://www.npmjs.com/package/@cesteral/linkedin-mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="linkedin.com",
+        brand_color="#0A66C2",
+        requires=(
+            "Node.js, npx, and a LinkedIn Marketing API access token with "
+            "r_ads / r_ads_reporting (Advertising API product approved)"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@cesteral/linkedin-mcp"],
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="linkedin_access_token",
+                label="LinkedIn Marketing API access token",
+                target=("env", "LINKEDIN_ACCESS_TOKEN"),
+                env_var="LINKEDIN_ACCESS_TOKEN",
+                placeholder="AQV...",
+            ),
+            McpPresetField(
+                name="linkedin_api_version",
+                label="LinkedIn-Version header (optional)",
+                target=("env", "LINKEDIN_API_VERSION"),
+                env_var="LINKEDIN_API_VERSION",
+                secret=False,
+                required=False,
+                placeholder="202409",
+            ),
+        ),
+        note=(
+            "Create an app at linkedin.com/developers, request the Advertising "
+            "API product, then mint a token with r_ads and r_ads_reporting. "
+            "Prefer read-only first: write tools can create campaigns and change "
+            "spend. Used by the Ads studio (Settings → MCP, Other modules → Ads)."
+        ),
+        modules=("ads",),
+    ),
+    McpPreset(
+        name="search-console",
+        display_name="Google Search Console",
+        category="seo",
+        description=(
+            "Read Search Console properties, queries, pages, and sitemaps "
+            "through the community mcp-search-console MCP (stdio via uvx)."
+        ),
+        docs_url="https://pypi.org/project/mcp-search-console/",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="search.google.com",
+        brand_color="#34A853",
+        requires=(
+            "uvx (from Astral uv) or pipx, plus either an OAuth Desktop "
+            "client_secrets.json or a service-account JSON with Search Console "
+            "access (read-only by default)"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="uvx",
+            args=["mcp-search-console"],
+            env={"GSC_ALLOW_DESTRUCTIVE": "false"},
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="gsc_oauth_client_secrets_file",
+                label="OAuth client_secrets.json path",
+                target=("env", "GSC_OAUTH_CLIENT_SECRETS_FILE"),
+                env_var="GSC_OAUTH_CLIENT_SECRETS_FILE",
+                secret=False,
+                required=False,
+                placeholder="/path/to/client_secrets.json",
+            ),
+            McpPresetField(
+                name="gsc_credentials_path",
+                label="Service account JSON path",
+                target=("env", "GSC_CREDENTIALS_PATH"),
+                env_var="GSC_CREDENTIALS_PATH",
+                secret=False,
+                required=False,
+                placeholder="/path/to/service_account.json",
+            ),
+            McpPresetField(
+                name="gsc_skip_oauth",
+                label="Skip OAuth (set true for service account)",
+                target=("env", "GSC_SKIP_OAUTH"),
+                env_var="GSC_SKIP_OAUTH",
+                secret=False,
+                required=False,
+                placeholder="true",
+            ),
+            McpPresetField(
+                name="gsc_data_state",
+                label="Data state (all or final)",
+                target=("env", "GSC_DATA_STATE"),
+                env_var="GSC_DATA_STATE",
+                secret=False,
+                required=False,
+                placeholder="all",
+            ),
+        ),
+        note=(
+            "Provide at least one credential path: OAuth "
+            "GSC_OAUTH_CLIENT_SECRETS_FILE or service-account "
+            "GSC_CREDENTIALS_PATH (set GSC_SKIP_OAUTH=true for SA). "
+            "Primary launcher is uvx; if uvx is missing, install uv "
+            "(https://docs.astral.sh/uv/) or run the same package via "
+            "pipx run mcp-search-console. Destructive site/sitemap tools stay "
+            "disabled (GSC_ALLOW_DESTRUCTIVE=false). Cron/loop jobs need the "
+            "same gateway env files."
+        ),
+    ),
+    McpPreset(
+        name="kubernetes",
+        display_name="Kubernetes",
+        category="devops",
+        description="Inspect and manage Kubernetes/OpenShift resources, pods, logs, events, and Helm through the Kubernetes MCP server.",
+        docs_url="https://github.com/containers/kubernetes-mcp-server",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="kubernetes.io",
+        brand_color="#326CE5",
+        requires="Node.js, npx, and a kubeconfig",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "kubernetes-mcp-server@latest"],
+            tool_timeout=60,
+        ),
+        note="Uses the current kubeconfig context. Avoid cluster-admin credentials on production clusters.",
+    ),
+    McpPreset(
+        name="argocd",
+        display_name="Argo CD",
+        category="devops",
+        description="GitOps operations: list, inspect, sync, and manage Argo CD applications, projects, and clusters.",
+        docs_url="https://github.com/argoproj-labs/mcp-for-argocd",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="argoproj.github.io",
+        brand_color="#EF7B4D",
+        requires="Node.js, npx, Argo CD URL and API token",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "argocd-mcp@latest", "stdio"],
+            tool_timeout=60,
+        ),
+        fields=(
+            McpPresetField(
+                name="argocd_base_url",
+                label="Argo CD base URL",
+                target=("env", "ARGOCD_BASE_URL"),
+                env_var="ARGOCD_BASE_URL",
+                secret=False,
+                placeholder="https://argocd.example.com",
+            ),
+            McpPresetField(
+                name="argocd_api_token",
+                label="Argo CD API token",
+                target=("env", "ARGOCD_API_TOKEN"),
+                env_var="ARGOCD_API_TOKEN",
+                placeholder="eyJhbGci...",
+            ),
+        ),
+    ),
+    McpPreset(
+        name="aws-api",
+        display_name="AWS",
+        category="devops",
+        description="Run AWS CLI operations across all services through AWS Labs' API MCP server.",
+        docs_url="https://awslabs.github.io/mcp/servers/aws-api-mcp-server/",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="aws.amazon.com",
+        brand_color="#FF9900",
+        requires="uvx and AWS credentials (profile or env vars)",
+        server=MCPServerConfig(
+            type="stdio",
+            command="uvx",
+            args=["awslabs.aws-api-mcp-server@latest"],
+            env={"FASTMCP_LOG_LEVEL": "ERROR"},
+            tool_timeout=90,
+        ),
+        fields=(
+            McpPresetField(
+                name="aws_region",
+                label="AWS region",
+                target=("env", "AWS_REGION"),
+                env_var="AWS_REGION",
+                secret=False,
+                required=False,
+                placeholder="eu-west-1",
+            ),
+            McpPresetField(
+                name="aws_profile",
+                label="AWS profile",
+                target=("env", "AWS_PROFILE"),
+                env_var="AWS_PROFILE",
+                secret=False,
+                required=False,
+                placeholder="default",
+            ),
+        ),
+        note="Uses your local AWS credentials. Mutating operations should stay behind approvals.",
+    ),
+    McpPreset(
+        name="azure",
+        display_name="Azure",
+        category="devops",
+        description="Operate Azure resources (AKS, storage, monitor, ARM) through Microsoft's Azure MCP server.",
+        docs_url="https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="azure.microsoft.com",
+        brand_color="#0078D4",
+        requires="Node.js, npx, and an authenticated az CLI session",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@azure/mcp@latest", "server", "start"],
+            tool_timeout=90,
+        ),
+        note="Authenticates with your local Azure credentials (az login).",
+    ),
+    McpPreset(
+        name="gcloud",
+        display_name="Google Cloud",
+        category="devops",
+        description="Run Google Cloud workflows (GCE, GKE, logging, storage) through Google's gcloud MCP server.",
+        docs_url="https://github.com/googleapis/gcloud-mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="cloud.google.com",
+        brand_color="#4285F4",
+        requires="Node.js, npx, and an authenticated gcloud CLI",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@google-cloud/gcloud-mcp"],
+            tool_timeout=90,
+        ),
+        note="Authenticates with your local gcloud credentials (gcloud auth login).",
+    ),
+    McpPreset(
+        name="grafana",
+        display_name="Grafana",
+        category="devops",
+        description="Query dashboards, datasources, alerts, and incidents through Grafana's MCP server.",
+        docs_url="https://github.com/grafana/mcp-grafana",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="grafana.com",
+        brand_color="#F46800",
+        requires="Docker, Grafana URL and service account token",
+        server=MCPServerConfig(
+            type="stdio",
+            command="docker",
+            args=[
+                "run",
+                "--rm",
+                "-i",
+                "-e",
+                "GRAFANA_URL",
+                "-e",
+                "GRAFANA_SERVICE_ACCOUNT_TOKEN",
+                "mcp/grafana",
+                "-t",
+                "stdio",
+            ],
+            tool_timeout=60,
+        ),
+        fields=(
+            McpPresetField(
+                name="grafana_url",
+                label="Grafana URL",
+                target=("env", "GRAFANA_URL"),
+                env_var="GRAFANA_URL",
+                secret=False,
+                placeholder="https://grafana.example.com",
+            ),
+            McpPresetField(
+                name="grafana_service_account_token",
+                label="Grafana service account token",
+                target=("env", "GRAFANA_SERVICE_ACCOUNT_TOKEN"),
+                env_var="GRAFANA_SERVICE_ACCOUNT_TOKEN",
+                placeholder="glsa_...",
+            ),
+        ),
+    ),
+    McpPreset(
+        name="gitlab",
+        display_name="GitLab",
+        category="devops",
+        description="Projects, merge requests, issues, pipelines, and wikis through the GitLab MCP server.",
+        docs_url="https://github.com/zereight/gitlab-mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="gitlab.com",
+        brand_color="#FC6D26",
+        requires="Node.js, npx, and a GitLab personal access token",
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@zereight/mcp-gitlab"],
+            tool_timeout=60,
+        ),
+        fields=(
+            McpPresetField(
+                name="gitlab_personal_access_token",
+                label="GitLab personal access token",
+                target=("env", "GITLAB_PERSONAL_ACCESS_TOKEN"),
+                env_var="GITLAB_PERSONAL_ACCESS_TOKEN",
+                placeholder="glpat-...",
+            ),
+            McpPresetField(
+                name="gitlab_api_url",
+                label="GitLab API URL",
+                target=("env", "GITLAB_API_URL"),
+                env_var="GITLAB_API_URL",
+                secret=False,
+                required=False,
+                placeholder="https://gitlab.com/api/v4",
+            ),
+        ),
+        note="Defaults to gitlab.com; set the API URL for self-hosted instances.",
     ),
     McpPreset(
         name="supabase",
@@ -378,6 +1188,64 @@ MCP_PRESETS: tuple[McpPreset, ...] = (
         note="MVP config starts read-only by default.",
     ),
 )
+
+
+def mcp_servers_denied_for_module(module: str | None) -> frozenset[str]:
+    """MCP servers whose ``modules`` field excludes the active studio desk.
+
+    Unscoped presets stay available everywhere. A missing module (CLI / Telegram)
+    keeps every configured server. LinkedIn is on Tenders and Career. Tenders
+    never sees Career-only Notion.
+    """
+    from navin.command.modules import normalize_product_module
+
+    normalized = normalize_product_module(module)
+    if normalized is None:
+        return frozenset()
+    denied = {
+        preset.name
+        for preset in MCP_PRESETS
+        if preset.modules and normalized not in preset.modules
+    }
+    return frozenset(denied)
+
+
+def mcp_deny_prefixes(module: str | None) -> frozenset[str]:
+    """Prefixes of wrapped MCP tool names to refuse for *module*."""
+    return frozenset(f"mcp_{name}_" for name in mcp_servers_denied_for_module(module))
+
+
+def ensure_auto_enabled_mcp_presets(config: Any) -> list[str]:
+    """Install zero-setup MCP presets into ``config.tools.mcp_servers`` if missing.
+
+    Only presets with ``auto_enable=True``, ``install_supported``, a server
+    definition, and no required credential fields are considered. Existing
+    entries are never overwritten (operator customization wins). Returns the
+    names that were added. Does not write disk - callers persist when needed.
+    """
+    tools = getattr(config, "tools", None)
+    if tools is None:
+        return []
+    if not bool(getattr(tools, "auto_enable_mcp_presets", True)):
+        return []
+    servers = getattr(tools, "mcp_servers", None)
+    if not isinstance(servers, dict):
+        return []
+
+    added: list[str] = []
+    for preset in MCP_PRESETS:
+        if not preset.auto_enable or not preset.install_supported or preset.server is None:
+            continue
+        if any(field.required for field in preset.fields):
+            continue
+        if preset.name in servers:
+            continue
+        servers[preset.name] = _with_managed_stdio_cwd(
+            preset.name,
+            _clone_server(preset.server),
+        )
+        added.append(preset.name)
+    return added
 
 
 def _query_first(query: QueryParams, key: str) -> str | None:
@@ -583,6 +1451,31 @@ def _resolve_field_value(
     return None
 
 
+def _normalize_bearer_authorization(value: str) -> str:
+    """Accept raw tokens or full ``Bearer <token>`` values for Meta Ads MCP."""
+    cleaned = value.strip()
+    if not cleaned:
+        return cleaned
+    if cleaned.lower().startswith("bearer "):
+        token = cleaned[7:].strip()
+        return f"Bearer {token}" if token else cleaned
+    return f"Bearer {cleaned}"
+
+
+def _search_console_has_credentials(cfg: MCPServerConfig | None) -> bool:
+    """GSC accepts either OAuth client secrets or a service-account JSON path."""
+    if cfg is None:
+        return False
+    oauth = (cfg.env.get("GSC_OAUTH_CLIENT_SECRETS_FILE") or "").strip()
+    sa = (cfg.env.get("GSC_CREDENTIALS_PATH") or "").strip()
+    if oauth or sa:
+        return True
+    return bool(
+        os.environ.get("GSC_OAUTH_CLIENT_SECRETS_FILE")
+        or os.environ.get("GSC_CREDENTIALS_PATH")
+    )
+
+
 def _materialize_server(
     preset: McpPreset,
     query: QueryParams,
@@ -602,11 +1495,17 @@ def _materialize_server(
         if target_kind == "env":
             cfg.env[target_name] = value
         elif target_kind == "header":
+            if target_name == "Authorization":
+                value = _normalize_bearer_authorization(value)
             cfg.headers[target_name] = value
         elif target_kind == "arg":
             cfg.args = _with_arg_value(list(cfg.args), target_name, value)
         elif target_kind == "url_param":
             cfg.url = _url_with_param(cfg.url, target_name, value)
+    if preset.name == "search-console" and not _search_console_has_credentials(cfg):
+        raise McpPresetError(
+            "Provide OAuth client_secrets.json or a service-account JSON path"
+        )
     return _with_managed_stdio_cwd(preset.name, cfg)
 
 
@@ -633,6 +1532,8 @@ def _status_for(preset: McpPreset, cfg: MCPServerConfig | None) -> str:
     if cfg is None:
         return "not_installed" if preset.install_supported else "coming_soon"
     if any(field.required and not _field_configured(field, cfg) for field in preset.fields):
+        return "missing_credentials"
+    if preset.name == "search-console" and not _search_console_has_credentials(cfg):
         return "missing_credentials"
     if cfg.command and not _command_available(cfg.command):
         return "missing_dependency"
@@ -768,6 +1669,7 @@ def _preset_payload(preset: McpPreset, configured_servers: dict[str, MCPServerCo
         "requires": preset.requires,
         "note": preset.note,
         "install_supported": preset.install_supported,
+        "auto_enable": preset.auto_enable,
         "installed": cfg is not None,
         "configured": configured,
         "available": configured and _config_available(cfg),
@@ -778,6 +1680,7 @@ def _preset_payload(preset: McpPreset, configured_servers: dict[str, MCPServerCo
         "connection_summary": _connection_summary(cfg),
         "enabled_tools": _tool_allowlist(cfg),
         "source": "preset",
+        "modules": list(preset.modules),
         "manifest": _preset_manifest(preset, logo_url=logo_url),
     }
 
@@ -910,7 +1813,7 @@ async def _close_mcp_stacks(stacks: Mapping[str, Any]) -> None:
 
 async def mcp_presets_test_action(query: QueryParams) -> dict[str, Any]:
     """Connect to an enabled MCP preset and report its tool surface."""
-    from navin.agent.tools.mcp import connect_mcp_servers
+    from navin.agent.tools.mcp import connect_mcp_servers, mcp_budget_notices
 
     name = (_query_first(query, "name") or "").strip()
     if not name:
@@ -983,6 +1886,11 @@ async def mcp_presets_test_action(query: QueryParams) -> dict[str, Any]:
                 "tool_names": tool_names[:_MAX_TEST_TOOLS],
                 "checked_at": _checked_at(),
             }
+            # A trimmed catalogue still connects, so the success message is the
+            # only place the operator would notice tools went missing.
+            overflow = mcp_budget_notices().get(name)
+            if overflow:
+                last_action["warning"] = overflow
         else:
             last_action = {
                 "ok": False,

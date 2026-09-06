@@ -14,14 +14,14 @@ Make change reversible before you make it hard to undo.
 
 Navin saves a checkpoint **automatically before every user prompt**: the conversation state plus the pre-edit content of every file the agent modifies with its file tools. Rewind with:
 
-- `/checkpoint` — list restore points (auto + manual)
-- `/checkpoint save <note>` — add a named restore point before a risky step
-- `/checkpoint restore <name> code` — revert the files the agent edited, keep the conversation
-- `/checkpoint restore <name> chat` — rewind the conversation, keep the code
-- `/checkpoint restore <name>` — rewind both
+- `/checkpoint` - list restore points (auto + manual)
+- `/checkpoint save <note>` - add a named restore point before a risky step
+- `/checkpoint restore <name> code` - revert the files the agent edited, keep the conversation
+- `/checkpoint restore <name> chat` - rewind the conversation, keep the code
+- `/checkpoint restore <name>` - rewind both
 
 Limits (recommend git for anything beyond these):
-- Shell-command changes (`rm`, `mv`, scripts) are **not** tracked — only edits made through the file tools
+- Shell-command changes (`rm`, `mv`, scripts) are **not** tracked - only edits made through the file tools
 - External/manual edits are not tracked
 - Checkpoints are session-local recovery, not version control
 

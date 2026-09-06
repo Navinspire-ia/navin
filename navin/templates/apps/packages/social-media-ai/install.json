@@ -1,0 +1,324 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "social-media-ai",
+  "name": "Social Media AI",
+  "kind": "ai-product",
+  "category": "social",
+  "source_github": "https://github.com/Anil-matcha/Free-AI-Social-Media-Scheduler",
+  "source_name": "Free AI Social Media Scheduler",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Prisma",
+    "PostgreSQL"
+  ],
+  "studied_from": "templates_apps/social-media-ai",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 13,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Free AI Social Media Scheduler A free, open-source AI social media scheduler built with Next.js. Upload videos, schedule posts, and publish directly to YouTube and TikTok \u2014 no subscription required. Self-hostable alternative to Buffer, Hootsuite, Later, and Sprout Social. > \ud83c\udfa8 **[Explore 50+ more open-source AI apps \u2192](https://github.com/Anil-matcha/awesome-generative-ai-apps)** Related Projects --- Supported Platforms Features - **Video Scheduling** \u2014 paste a media URL, pick a platform and time, publish automatically"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "free-ai-social-media-scheduler",
+        "scripts": {
+          "dev": "next dev",
+          "build": "prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "free-ai-social-media-scheduler",
+        "scripts": {
+          "dev": "next dev",
+          "build": "prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "free-ai-social-media-scheduler",
+        "scripts": {
+          "dev": "next dev",
+          "build": "prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://user:password@host:port/dbname?pgbouncer=true",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "DIRECT_URL",
+      "default": "postgresql://user:password@host:port/dbname",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXTAUTH_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Public app URL for NextAuth",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXTAUTH_SECRET",
+      "default": "your_nextauth_secret",
+      "required": true,
+      "secret": true,
+      "purpose": "NextAuth secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "default": "your_google_client_id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "default": "your_google_client_secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "MUAPIAPP_API_KEY",
+      "default": "your_muapi_api_key",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "WEBHOOK_URL",
+      "default": "your_webhook_url",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "your_stripe_secret_key",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "default": "your_stripe_publishable_key",
+      "required": false,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "your_stripe_webhook_secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:src/lib/prisma.js"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/social-media-ai/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/social-media-ai/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/social-media-ai/overlay.json",
+    "agents": ".navin/apps/social-media-ai/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "copy-agent",
+      "schedule-agent",
+      "publish-agent",
+      "analytics-agent",
+      "repurpose-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

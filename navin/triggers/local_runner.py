@@ -35,7 +35,10 @@ async def run_local_trigger_queue(
             recovered,
         )
     while True:
-        deliveries = store.claim_deliveries(limit=batch_size)
+        # A cross-process file lock plus a directory glob every poll: on a
+        # slow disk (WSL, network home) acquiring it froze the gateway loop
+        # for 1-2 s at a time, stalling every chat stream. Never on the loop.
+        deliveries = await asyncio.to_thread(store.claim_deliveries, limit=batch_size)
         if not deliveries:
             await asyncio.sleep(poll_interval_s)
             continue

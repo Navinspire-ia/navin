@@ -11,6 +11,11 @@ from loguru import logger
 from pydantic import BaseModel
 
 from navin.config.schema import Config, _resolve_tool_config_refs
+from navin.config.secrets import (
+    decrypt_config_data,
+    encrypt_config_data,
+    has_plaintext_secrets,
+)
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
@@ -52,20 +57,87 @@ def load_config(config_path: Path | None = None) -> Config:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+            rewrite_secrets = has_plaintext_secrets(data)
+            data = decrypt_config_data(data, path)
             data = _migrate_config(data)
             config = Config.model_validate(data)
         except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             raise ValueError(f"Failed to load config from {path}: {e}") from e
+        if rewrite_secrets:
+            try:
+                save_config(config, path)
+            except OSError as exc:
+                logger.warning("could not encrypt secrets in {}: {}", path, exc)
 
     _apply_ssrf_whitelist(config)
     return config
 
 
 def _apply_ssrf_whitelist(config: Config) -> None:
-    """Apply SSRF whitelist from config to the network security module."""
-    from navin.security.network import configure_ssrf_whitelist
+    """Apply the SSRF policy from config to the network security module."""
+    from navin.security.network import configure_ssrf_protection, configure_ssrf_whitelist
 
+    configure_ssrf_protection(config.tools.ssrf_protection)
     configure_ssrf_whitelist(config.tools.ssrf_whitelist)
+
+
+# Written even when they still match the default, because following a changed
+# default here would move or expose the user's data rather than merely adjust a
+# preference: the workspace is where every file the agent owns lives, the ports
+# are what external clients and the desktop launcher connect to, and the rest are
+# security decisions where an operator's explicit "no" must not become implicit.
+_PINNED_PATHS: tuple[tuple[str, ...], ...] = (
+    ("agents", "defaults", "workspace"),
+    ("api", "host"),
+    ("api", "port"),
+    ("gateway", "host"),
+    ("gateway", "port"),
+    ("tools", "webuiAllowRemotePackageInstall"),
+    ("tools", "exec", "allowPatterns"),
+    ("tools", "exec", "denyPatterns"),
+    # A declared connection is a statement about someone else's database; its
+    # engine and write permission have to survive verbatim.
+    ("tools", "database", "connections"),
+)
+
+
+def _pin(source: dict[str, Any], target: dict[str, Any], path: tuple[str, ...]) -> None:
+    """Copy one path from the full dump into the pruned one, if it exists."""
+    value: Any = source
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return
+        value = value[key]
+    if isinstance(value, (dict, list)) and not value:
+        # An empty list or mapping states nothing worth protecting, and writing
+        # it back would only clutter the file.
+        return
+    cursor = target
+    for key in path[:-1]:
+        nested = cursor.get(key)
+        if not isinstance(nested, dict):
+            nested = {}
+            cursor[key] = nested
+        cursor = nested
+    cursor[path[-1]] = value
+
+
+def _configured_values(config: Config) -> dict[str, Any]:
+    """Dump only what differs from the schema defaults, plus the pinned paths.
+
+    Writing every default froze them: an installation created today kept its
+    defaults forever, so improving one in the schema reached nobody who had
+    already run navin. Omitting them instead lets the file say what the user
+    chose and leaves the rest to follow navin's own defaults.
+
+    Note this cannot prune ``channels.*`` or custom providers, which are extra
+    fields with no declared default and are therefore always written in full.
+    """
+    full = config.model_dump(mode="json", by_alias=True)
+    pruned = config.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+    for path in _PINNED_PATHS:
+        _pin(full, pruned, path)
+    return pruned
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
@@ -79,14 +151,24 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = config.model_dump(mode="json", by_alias=True)
+    data = _configured_values(config)
     if config.providers.openai_codex.proxy is not None:
         data.setdefault("providers", {})["openaiCodex"] = {
             "proxy": config.providers.openai_codex.proxy,
         }
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    data = encrypt_config_data(data, path)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
+    if not payload.endswith("\n"):
+        payload += "\n"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def merge_missing_defaults(existing: Any, defaults: Any) -> Any:
@@ -193,6 +275,13 @@ def _migrate_config(data: dict) -> dict:
     exec_cfg = tools.get("exec", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
         tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+
+    # No migration for restrictToWorkspace. The default is off, and a value
+    # already on disk is left exactly as written: the boundary was briefly on by
+    # default and pinned, so some installs carry a "true" nobody chose, but
+    # nothing distinguishes those from a "true" an operator meant. Rewriting
+    # someone's security setting on a guess is worse than leaving a fence they
+    # can drop from the permissions panel in one click.
 
     # Move tools.myEnabled / tools.mySet → tools.my.{enable, allowSet}.
     # The old flat keys shipped in the initial MyTool landing; wrapping them in a

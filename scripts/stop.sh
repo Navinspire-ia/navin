@@ -1,5 +1,5 @@
 #!/bin/sh
-# navin stop — arrête tout le projet (gateway backend + frontend dev).
+# navin stop - arrête tout le projet (gateway backend + frontend dev).
 #
 # Usage:
 #   sh scripts/stop.sh              # arrête backend + frontend

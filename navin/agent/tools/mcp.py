@@ -6,16 +6,19 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 import urllib.parse
-from collections.abc import Awaitable, Callable
-from contextlib import AsyncExitStack, suppress
-from typing import Any, Mapping, Protocol
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import AsyncExitStack, contextmanager, suppress
+from typing import Any, Mapping, Protocol, TextIO
 from weakref import WeakKeyDictionary
 
 import httpx
 from loguru import logger
 
 from navin.agent.tools.base import Tool, ToolResult
+from navin.agent.tools.mcp_budget import ToolCandidate, apply_budget
 from navin.agent.tools.registry import ToolRegistry
 from navin.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -46,6 +49,10 @@ _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset((
 ))
 
 _WINDOWS_SHELL_LAUNCHERS: frozenset[str] = frozenset(("npx", "npm", "pnpm", "yarn", "bunx"))
+
+# Servers whose catalogue overflowed the context budget, kept so the UI can
+# surface the remedy rather than leaving a silently degraded agent behind.
+_BUDGET_NOTICES: dict[str, str] = {}
 
 # Characters allowed in tool names by model providers (Anthropic, OpenAI, etc.).
 # Replace anything outside [a-zA-Z0-9_-] with underscore and collapse runs.
@@ -168,6 +175,30 @@ def _sanitize_mcp_tool_name(name: str) -> str:
     return _limit_tool_name(_sanitize_name(name))
 
 
+_MAX_FAILURE_CHARS = 600
+
+
+def _describe_failure(exc: BaseException) -> str:
+    """Render an MCP failure so the agent can act on it.
+
+    Reporting only the class name turns the most common case - the server
+    rejecting the arguments, e.g. "Invalid params: missing required property
+    'path'" - into "(McpError)", which gives the agent nothing to correct and
+    invites it to retry the identical call. ``McpError`` carries the server's own
+    message and JSON-RPC code, so prefer those.
+    """
+    error = getattr(exc, "error", None)
+    message = str(getattr(error, "message", "") or "").strip()
+    code = getattr(error, "code", None)
+    if message:
+        suffix = f" [code {code}]" if code is not None else ""
+        return f"{message}{suffix}"[:_MAX_FAILURE_CHARS]
+    detail = str(exc).strip()
+    if not detail:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {detail}"[:_MAX_FAILURE_CHARS]
+
+
 def _is_transient(exc: BaseException) -> bool:
     """Check if an exception looks like a transient connection error."""
     return type(exc).__name__ in _TRANSIENT_EXC_NAMES
@@ -192,7 +223,7 @@ async def _probe_http_url(url: str, timeout: float = 3.0) -> bool:
     """Quick TCP probe to check if an HTTP MCP server is reachable.
 
     Avoids entering ``streamable_http_client`` / ``sse_client`` when the port is
-    closed — those transports use anyio task groups whose cleanup can raise
+    closed - those transports use anyio task groups whose cleanup can raise
     ``RuntimeError`` / ``ExceptionGroup`` that escape the caller's try/except
     and crash the event loop.
     """
@@ -261,6 +292,26 @@ async def _validate_mcp_request_url(request: httpx.Request) -> None:
 def _windows_command_basename(command: str) -> str:
     """Return the lowercase basename for a Windows command or path."""
     return command.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+
+
+def _stdio_server_env(extra: dict[str, str] | None) -> dict[str, str] | None:
+    """The child environment for a stdio MCP server.
+
+    The MCP SDK replaces the environment with ``env`` when it is provided:
+    a user adding a single API key would silently strip PATH and HOME from
+    the child, breaking ``npx``/``uvx`` launchers. Merge the user's variables
+    OVER the SDK's safe defaults instead, so custom vars add to the inherited
+    environment rather than replacing it.
+    """
+    if not extra:
+        return None
+    try:
+        from mcp.client.stdio import get_default_environment
+
+        base = get_default_environment()
+    except Exception:
+        base = {}
+    return {**base, **extra}
 
 
 def _normalize_windows_stdio_command(
@@ -423,7 +474,7 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
 def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
     """Build the compact tool result for an MCP call that returned image(s).
 
-    The base64 stays out of the model context entirely — only artifact paths and
+    The base64 stays out of the model context entirely - only artifact paths and
     metadata are returned, so the result is small and the channel can deliver the
     saved file via the message tool.
     """
@@ -442,6 +493,142 @@ def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
     return json.dumps(payload, ensure_ascii=False)
 
 
+# stickerdaniel/linkedin-mcp-server write tools. Tenders and Career need confirm=true.
+_LINKEDIN_CONFIRM_TOOLS: frozenset[str] = frozenset({"connect_with_person", "send_message"})
+# Server job tools. Tenders: hiring context, never a notice. Career: session read only.
+_LINKEDIN_JOB_TOOLS: frozenset[str] = frozenset(
+    {"search_jobs", "get_saved_jobs", "get_job_details"}
+)
+
+
+def linkedin_mcp_tool_description(server_name: str, tool_name: str, base: str) -> str:
+    """Prefix LinkedIn MCP tools with the session policy (Tenders + Career)."""
+    text = (base or tool_name).strip()
+    if server_name != "linkedin":
+        return text
+    if tool_name in _LINKEDIN_CONFIRM_TOOLS:
+        prefix = (
+            "LinkedIn write action. Needs confirm=true after the user agrees. "
+            "Never Easy Apply. Never invent a public notice from this action. "
+        )
+    elif tool_name in _LINKEDIN_JOB_TOOLS:
+        prefix = (
+            "LinkedIn job listing via the user session. Never Easy Apply. "
+            "Tenders: never treat this as a public notice. Buyer hiring context only. "
+            "Career: after this result, career action=ingest via=linkedin-mcp "
+            "so the book, loop and watch see the jobs. Never scrape. Never apply. "
+        )
+    else:
+        prefix = (
+            "LinkedIn session research (buyer research on Tenders). "
+            "Never scrape. Never invent a public notice from this result. "
+        )
+    if (
+        text.startswith("LinkedIn write")
+        or text.startswith("LinkedIn job")
+        or text.startswith("Tenders LinkedIn")
+        or text.startswith("LinkedIn session")
+    ):
+        return text
+    return prefix + text
+
+
+_LINKEDIN_USER_CONFIRM_RE = re.compile(
+    r"(?i)\b("
+    r"oui|yes|yeah|yep|"
+    r"d['’]accord|je confirme|confirm(?:e|ed|er|ez)?|"
+    r"envoie(?:r|z)?|send (?:it|this|the message|the invite)|"
+    r"vas[- ]y|fais[- ]le|go ahead|approved"
+    r")\b"
+)
+
+
+def linkedin_write_refusal(
+    server_name: str,
+    tool_name: str,
+    *,
+    confirm: Any = None,
+    user_text: str | None = None,
+    session_key: str | None = None,
+    heartbeat: bool = False,
+) -> str | None:
+    """Return a refusal message, or None when the LinkedIn write may run."""
+    if server_name != "linkedin" or tool_name not in _LINKEDIN_CONFIRM_TOOLS:
+        return None
+    if heartbeat or (session_key or "").strip().lower() == "heartbeat":
+        return (
+            "Refused on heartbeat. LinkedIn connect_with_person and send_message "
+            "never run from a silent check."
+        )
+    raw = str(confirm).strip().lower() in {"1", "true", "yes", "on"}
+    if not raw:
+        return (
+            "Refused without confirmation. LinkedIn connect_with_person and "
+            "send_message need the user to agree in chat. Ask them, then "
+            "call again with confirm=true after they say yes."
+        )
+    text = (user_text or "").strip()
+    if text.lower().startswith("you are executing periodic heartbeat"):
+        return (
+            "Refused on heartbeat. LinkedIn connect_with_person and send_message "
+            "never run from a silent check."
+        )
+    if not text or not _LINKEDIN_USER_CONFIRM_RE.search(text):
+        return (
+            "Refused. The user has not confirmed this LinkedIn action in their "
+            "last message. Ask them, then call again with confirm=true after they say yes."
+        )
+    return None
+
+
+def linkedin_mcp_tool_parameters(
+    server_name: str, tool_name: str, schema: dict[str, Any]
+) -> dict[str, Any]:
+    """Expose confirm=true on LinkedIn connect / send tools."""
+    if server_name != "linkedin" or tool_name not in _LINKEDIN_CONFIRM_TOOLS:
+        return schema
+    out = dict(schema)
+    props = dict(out.get("properties") or {})
+    if "confirm" not in props:
+        props["confirm"] = {
+            "type": "boolean",
+            "description": (
+                "Must be true after the user explicitly agrees to this LinkedIn action."
+            ),
+        }
+    out["properties"] = props
+    return out
+
+
+# A tool description is re-sent on every model call. Some servers ship
+# 5-10 KB of prose per tool; 2 KB (Claude Code's cap) keeps the first
+# paragraphs, which is where the contract is, and drops the essay.
+MCP_DESCRIPTION_MAX_CHARS = 2048
+MCP_PARAM_DESCRIPTION_MAX_CHARS = 600
+_CLIP_MARK = " ... (truncated)"
+
+
+def _clip_description(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - len(_CLIP_MARK))].rstrip() + _CLIP_MARK
+
+
+def _clip_schema_descriptions(schema: Any) -> Any:
+    """Cap every ``description`` string inside a JSON schema, in place-free."""
+    if isinstance(schema, dict):
+        out: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key == "description" and isinstance(value, str):
+                out[key] = _clip_description(value, MCP_PARAM_DESCRIPTION_MAX_CHARS)
+            else:
+                out[key] = _clip_schema_descriptions(value)
+        return out
+    if isinstance(schema, list):
+        return [_clip_schema_descriptions(item) for item in schema]
+    return schema
+
+
 class MCPToolWrapper(_MCPWrapperBase):
     """Wraps a single MCP server tool as a navin Tool."""
 
@@ -451,9 +638,20 @@ class MCPToolWrapper(_MCPWrapperBase):
         self._set_mcp_connection(session, server_name)
         self._original_name = tool_def.name
         self._name = _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
-        self._description = tool_def.description or tool_def.name
         raw_schema = tool_def.inputSchema or {"type": "object", "properties": {}}
-        self._parameters = _normalize_schema_for_openai(raw_schema)
+        self._description = _clip_description(
+            linkedin_mcp_tool_description(
+                server_name, tool_def.name, tool_def.description or tool_def.name
+            ),
+            MCP_DESCRIPTION_MAX_CHARS,
+        )
+        self._parameters = _clip_schema_descriptions(
+            linkedin_mcp_tool_parameters(
+                server_name,
+                tool_def.name,
+                _normalize_schema_for_openai(raw_schema),
+            )
+        )
         self._tool_timeout = tool_timeout
 
     @property
@@ -469,6 +667,21 @@ class MCPToolWrapper(_MCPWrapperBase):
         return self._parameters
 
     async def execute(self, **kwargs: Any) -> str:
+        if self._server_name == "linkedin" and self._original_name in _LINKEDIN_CONFIRM_TOOLS:
+            from navin.agent.tools.context import current_request_context, is_heartbeat_turn
+
+            ctx = current_request_context()
+            refused = linkedin_write_refusal(
+                self._server_name,
+                self._original_name,
+                confirm=kwargs.get("confirm"),
+                user_text=ctx.original_user_text if ctx is not None else None,
+                session_key=ctx.session_key if ctx is not None else None,
+                heartbeat=is_heartbeat_turn(),
+            )
+            if refused:
+                return ToolResult.error(refused)
+            kwargs = {key: value for key, value in kwargs.items() if key != "confirm"}
         retried_transient = False
         refreshed_session = False
         while True:
@@ -510,14 +723,14 @@ class MCPToolWrapper(_MCPWrapperBase):
                         )
                         await asyncio.sleep(1)  # Brief backoff before retry
                         continue
-                    # Second transient failure — give up with retry-specific message
+                    # Second transient failure - give up with retry-specific message
                     logger.exception(
                         "MCP tool '{}' failed after retry: {}",
                         self._name,
                         type(exc).__name__,
                     )
                     return ToolResult.error(
-                        f"(MCP tool call failed after retry: {type(exc).__name__})"
+                        f"(MCP tool call failed after retry: {_describe_failure(exc)})"
                     )
                 logger.exception(
                     "MCP tool '{}' failed: {}: {}",
@@ -526,10 +739,10 @@ class MCPToolWrapper(_MCPWrapperBase):
                     exc,
                 )
                 return ToolResult.error(
-                    f"(MCP tool call failed: {type(exc).__name__})"
+                    f"(MCP tool call failed: {_describe_failure(exc)})"
                 )
             else:
-                # Success — extract text and persist any image content as artifacts.
+                # Success - extract text and persist any image content as artifacts.
                 try:
                     rendered = self._render_call_result(result.content, kwargs)
                     if getattr(result, "isError", False):
@@ -543,7 +756,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                         exc,
                     )
                     return ToolResult.error(
-                        f"(MCP tool returned malformed content: {type(exc).__name__})"
+                        f"(MCP tool returned malformed content: {_describe_failure(exc)})"
                     )
 
     def _render_call_result(self, content: Any, arguments: Mapping[str, Any]) -> str:
@@ -552,7 +765,7 @@ class MCPToolWrapper(_MCPWrapperBase):
         Text is concatenated as before. Image blocks are decoded and saved as
         local artifacts (mirroring the built-in image generation tool) so the
         model can deliver them via the message tool instead of trying to forward
-        base64 — which would be truncated and bloat the context window.
+        base64 - which would be truncated and bloat the context window.
         """
         from mcp import types
 
@@ -648,13 +861,13 @@ class MCPResourceWrapper(_MCPWrapperBase):
                 logger.warning(
                     "MCP resource '{}' timed out after {}s", self._name, self._resource_timeout
                 )
-                return f"(MCP resource read timed out after {self._resource_timeout}s)"
+                return ToolResult.error(f"(MCP resource read timed out after {self._resource_timeout}s)")
             except asyncio.CancelledError:
                 task = asyncio.current_task()
                 if task is not None and task.cancelling() > 0:
                     raise
                 logger.warning("MCP resource '{}' was cancelled by server/SDK", self._name)
-                return "(MCP resource read was cancelled)"
+                return ToolResult.error("(MCP resource read was cancelled)")
             except Exception as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -678,14 +891,14 @@ class MCPResourceWrapper(_MCPWrapperBase):
                         self._name,
                         type(exc).__name__,
                     )
-                    return f"(MCP resource read failed after retry: {type(exc).__name__})"
+                    return ToolResult.error(f"(MCP resource read failed after retry: {_describe_failure(exc)})")
                 logger.exception(
                     "MCP resource '{}' failed: {}: {}",
                     self._name,
                     type(exc).__name__,
                     exc,
                 )
-                return f"(MCP resource read failed: {type(exc).__name__})"
+                return ToolResult.error(f"(MCP resource read failed: {_describe_failure(exc)})")
             else:
                 parts: list[str] = []
                 for block in result.contents:
@@ -762,13 +975,13 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 logger.warning(
                     "MCP prompt '{}' timed out after {}s", self._name, self._prompt_timeout
                 )
-                return f"(MCP prompt call timed out after {self._prompt_timeout}s)"
+                return ToolResult.error(f"(MCP prompt call timed out after {self._prompt_timeout}s)")
             except asyncio.CancelledError:
                 task = asyncio.current_task()
                 if task is not None and task.cancelling() > 0:
                     raise
                 logger.warning("MCP prompt '{}' was cancelled by server/SDK", self._name)
-                return "(MCP prompt call was cancelled)"
+                return ToolResult.error("(MCP prompt call was cancelled)")
             except McpError as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -783,7 +996,7 @@ class MCPPromptWrapper(_MCPWrapperBase):
                     exc.error.code,
                     exc.error.message,
                 )
-                return f"(MCP prompt call failed: {exc.error.message} [code {exc.error.code}])"
+                return ToolResult.error(f"(MCP prompt call failed: {_describe_failure(exc)})")
             except Exception as exc:
                 if await self._refresh_session_after_termination(
                     exc,
@@ -807,14 +1020,14 @@ class MCPPromptWrapper(_MCPWrapperBase):
                         self._name,
                         type(exc).__name__,
                     )
-                    return f"(MCP prompt call failed after retry: {type(exc).__name__})"
+                    return ToolResult.error(f"(MCP prompt call failed after retry: {_describe_failure(exc)})")
                 logger.exception(
                     "MCP prompt '{}' failed: {}: {}",
                     self._name,
                     type(exc).__name__,
                     exc,
                 )
-                return f"(MCP prompt call failed: {type(exc).__name__})"
+                return ToolResult.error(f"(MCP prompt call failed: {_describe_failure(exc)})")
             else:
                 parts: list[str] = []
                 for message in result.messages:
@@ -832,6 +1045,84 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 return "\n".join(parts) or "(no output)"
 
 
+def _register_within_budget(
+    server: str,
+    cfg: Any,
+    offered: list[Tool],
+    registry: ToolRegistry,
+) -> int:
+    """Register a server's capabilities up to its context budget.
+
+    Returns the number actually registered.  When the server overflows, the
+    notice is logged and kept so the UI can show the operator which server to
+    trim instead of leaving them with a quietly degraded agent.
+    """
+    candidates = [
+        ToolCandidate(name=tool.name, description=tool.description, schema=tool.parameters)
+        for tool in offered
+    ]
+    verdict = apply_budget(
+        server,
+        candidates,
+        max_tools=getattr(cfg, "max_tools", 0),
+        max_tokens=getattr(cfg, "max_tool_tokens", 0),
+    )
+
+    kept = {candidate.name for candidate in verdict.accepted}
+    for tool in offered:
+        if tool.name in kept:
+            registry.register(tool)
+            logger.debug("MCP: registered '{}' from server '{}'", tool.name, server)
+
+    if verdict.notice:
+        _BUDGET_NOTICES[server] = verdict.notice
+        logger.warning(verdict.notice)
+    else:
+        _BUDGET_NOTICES.pop(server, None)
+
+    return len(verdict.accepted)
+
+
+def mcp_budget_notices() -> dict[str, str]:
+    """Servers whose catalogue was trimmed, keyed by server name."""
+    return dict(_BUDGET_NOTICES)
+
+
+_STDERR_LINE_LIMIT = 2000
+
+
+@contextmanager
+def _server_stderr(name: str) -> Iterator[TextIO]:
+    """Give a stdio server a stderr of its own, echoed into the log under its name.
+
+    The MCP SDK defaults ``errlog`` to this process's own stderr and hands the
+    raw descriptor to the child, so anything the server writes there lands in
+    navin's terminal with no server name, no timestamp, and no log level. A
+    stale AWS token in one MCP server then reads as navin itself failing. A pipe
+    per server costs two descriptors and buys attribution.
+    """
+    read_fd, write_fd = os.pipe()
+    sink = os.fdopen(write_fd, "w", buffering=1, encoding="utf-8", errors="replace")
+
+    def pump() -> None:
+        # Closes read_fd on exit; EOF arrives once the child is gone and the
+        # parent's copy of the write end is closed below.
+        with os.fdopen(read_fd, "r", encoding="utf-8", errors="replace") as source:
+            for line in source:
+                text = line.rstrip()
+                if text:
+                    logger.info("MCP server '{}': {}", name, text[:_STDERR_LINE_LIMIT])
+
+    reader = threading.Thread(target=pump, name=f"mcp-stderr-{name}", daemon=True)
+    reader.start()
+    try:
+        yield sink
+    finally:
+        with suppress(Exception):
+            sink.close()
+        reader.join(timeout=5)
+
+
 async def connect_mcp_servers(
     mcp_servers: dict, registry: ToolRegistry
 ) -> dict[str, MCPConnection]:
@@ -841,10 +1132,16 @@ async def connect_mcp_servers(
     entered the MCP SDK contexts alive so reconnect and shutdown can close
     AnyIO cancel scopes from their owning task.
     """
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.sse import sse_client
-    from mcp.client.stdio import stdio_client
-    from mcp.client.streamable_http import streamable_http_client
+    try:
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client
+        from mcp.client.streamable_http import streamable_http_client
+    except Exception as exc:
+        raise RuntimeError(
+            f"MCP SDK import failed ({type(exc).__name__}: {exc}). "
+            "In a packaged build this usually means anyio/sniffio metadata is missing."
+        ) from exc
 
     async def open_single_server(name: str, cfg) -> tuple[str, AsyncExitStack | None]:
         server_stack = AsyncExitStack()
@@ -880,7 +1177,7 @@ async def connect_mcp_servers(
                 command, args, env = _normalize_windows_stdio_command(
                     cfg.command,
                     cfg.args,
-                    cfg.env or None,
+                    _stdio_server_env(cfg.env),
                 )
                 params = StdioServerParameters(
                     command=command,
@@ -888,7 +1185,13 @@ async def connect_mcp_servers(
                     env=env,
                     cwd=cfg.cwd or None,
                 )
-                read, write = await server_stack.enter_async_context(stdio_client(params))
+                # Entered first on purpose: the stack unwinds LIFO, so the child
+                # dies before the pipe closes and the reader gets its EOF. Swap
+                # these two and every shutdown waits out the reader's timeout.
+                errlog = server_stack.enter_context(_server_stderr(name))
+                read, write = await server_stack.enter_async_context(
+                    stdio_client(params, errlog=errlog)
+                )
             elif transport_type == "sse":
                 if not await _probe_http_url(cfg.url):
                     logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
@@ -947,10 +1250,15 @@ async def connect_mcp_servers(
             tools = await session.list_tools()
             enabled_tools = set(cfg.enabled_tools)
             allow_all_tools = "*" in enabled_tools
-            registered_count = 0
             matched_enabled_tools: set[str] = set()
             available_raw_names = [tool_def.name for tool_def in tools.tools]
             available_wrapped_names = [_sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}") for tool_def in tools.tools]
+
+            # Build every wrapper before registering any of it. The wrappers do
+            # no I/O, and seeing the whole catalogue at once is what lets the
+            # budget refuse a deterministic prefix instead of discovering the
+            # overflow halfway through registration.
+            offered: list[Tool] = []
             for tool_def in tools.tools:
                 wrapped_name = _sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}")
                 if (
@@ -964,10 +1272,9 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
-                registry.register(wrapper)
-                logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
-                registered_count += 1
+                offered.append(
+                    MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
+                )
                 if enabled_tools:
                     if tool_def.name in enabled_tools:
                         matched_enabled_tools.add(tool_def.name)
@@ -991,7 +1298,7 @@ async def connect_mcp_servers(
             # prompts have no equivalent name filter, so they must be skipped
             # whenever the operator specified a tool subset.  An empty list
             # (deny-all) or a list of specific tool names both indicate that
-            # the operator intended to restrict capabilities — registering
+            # the operator intended to restrict capabilities - registering
             # unrestricted resource/prompt wrappers would violate that intent.
             # The default ["*"] (allow-all) means no restriction was intended.
             register_extras = allow_all_tools
@@ -999,15 +1306,10 @@ async def connect_mcp_servers(
                 try:
                     resources_result = await session.list_resources()
                     for resource in resources_result.resources:
-                        wrapper = MCPResourceWrapper(
-                            session, name, resource, resource_timeout=cfg.tool_timeout
-                        )
-                        registry.register(wrapper)
-                        registered_count += 1
-                        logger.debug(
-                            "MCP: registered resource '{}' from server '{}'",
-                            wrapper.name,
-                            name,
+                        offered.append(
+                            MCPResourceWrapper(
+                                session, name, resource, resource_timeout=cfg.tool_timeout
+                            )
                         )
                 except Exception as e:
                     logger.debug(
@@ -1017,15 +1319,10 @@ async def connect_mcp_servers(
                 try:
                     prompts_result = await session.list_prompts()
                     for prompt in prompts_result.prompts:
-                        wrapper = MCPPromptWrapper(
-                            session, name, prompt, prompt_timeout=cfg.tool_timeout
-                        )
-                        registry.register(wrapper)
-                        registered_count += 1
-                        logger.debug(
-                            "MCP: registered prompt '{}' from server '{}'",
-                            wrapper.name,
-                            name,
+                        offered.append(
+                            MCPPromptWrapper(
+                                session, name, prompt, prompt_timeout=cfg.tool_timeout
+                            )
                         )
                 except Exception as e:
                     logger.debug(
@@ -1034,9 +1331,11 @@ async def connect_mcp_servers(
             else:
                 logger.info(
                     "MCP server '{}': skipping resource/prompt registration "
-                    "(enabledTools does not include '*' — only tools allowed)",
+                    "(enabledTools does not include '*' - only tools allowed)",
                     name,
                 )
+
+            registered_count = _register_within_budget(name, cfg, offered, registry)
 
             logger.info(
                 "MCP server '{}': connected, {} capabilities registered", name, registered_count
@@ -1102,10 +1401,22 @@ async def connect_mcp_servers(
         return name, connection
 
     server_stacks: dict[str, MCPConnection] = {}
+    # A hung stdio/npx handshake used to block the whole agent loop startup.
+    connect_timeout_s = 15.0
 
     for name, cfg in mcp_servers.items():
         try:
-            result = await connect_single_server(name, cfg)
+            result = await asyncio.wait_for(
+                connect_single_server(name, cfg),
+                timeout=connect_timeout_s,
+            )
+        except TimeoutError:
+            logger.warning(
+                "MCP server '{}' connect timed out after {}s - skipping for now",
+                name,
+                connect_timeout_s,
+            )
+            continue
         except Exception as e:
             logger.exception("MCP server '{}' connection failed: {}", name, e)
             continue
@@ -1121,14 +1432,37 @@ def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return {"mcp_presets": mcp_presets} if isinstance(mcp_presets, list) and mcp_presets else {}
 
 
+# A server that just refused is not attacked again on the very next message:
+# the connect probe runs before the turn's first token, and a dead endpoint in
+# the config (a debug server long gone, a machine that is off) used to cost a
+# few seconds on every single turn, forever. One attempt per window keeps the
+# tax to one turn a minute; an explicit /mcp reload still retries immediately.
+_FAILED_CONNECT_COOLDOWN_S = 60.0
+
+
+def _failed_connect_log(state: Any) -> dict[str, float]:
+    log = getattr(state, "_mcp_failed_at", None)
+    if log is None:
+        log = {}
+        state._mcp_failed_at = log
+    return log
+
+
 async def connect_missing_servers(state: Any, registry: ToolRegistry) -> None:
     """Connect configured MCP servers that are not currently live."""
     async with _reload_lock(state):
         if getattr(state, "_mcp_closing", False):
             return
-        missing_servers = {
-            name: cfg for name, cfg in state._mcp_servers.items() if name not in state._mcp_stacks
-        }
+        failed_at = _failed_connect_log(state)
+        now = time.monotonic()
+        missing_servers = {}
+        for name, cfg in state._mcp_servers.items():
+            if name in state._mcp_stacks:
+                continue
+            last_failure = failed_at.get(name)
+            if last_failure is not None and now - last_failure < _FAILED_CONNECT_COOLDOWN_S:
+                continue
+            missing_servers[name] = cfg
         if state._mcp_connecting or not missing_servers:
             return
         state._mcp_connecting = True
@@ -1140,14 +1474,33 @@ async def connect_missing_servers(state: Any, registry: ToolRegistry) -> None:
                 return
             state._mcp_stacks.update(connected)
             _attach_reconnect_handlers(state, registry, connected)
+            for name in missing_servers:
+                if name in connected:
+                    failed_at.pop(name, None)
+                else:
+                    failed_at[name] = time.monotonic()
             if connected:
                 logger.info("MCP connected servers: {}", sorted(connected))
             else:
-                logger.warning("No MCP servers connected successfully (will retry next message)")
+                logger.warning(
+                    "No MCP servers connected successfully (next attempt in {}s)",
+                    int(_FAILED_CONNECT_COOLDOWN_S),
+                )
         except asyncio.CancelledError:
             logger.warning("MCP connection cancelled (will retry next message)")
         except BaseException as e:
-            logger.warning("Failed to connect MCP servers (will retry next message): {}", e)
+            # Include the exception type: KeyError('anyio') / PackageNotFoundError
+            # otherwise collapses to a bare "'anyio'" in the log and looks opaque.
+            for name in missing_servers:
+                if name not in state._mcp_stacks:
+                    failed_at[name] = time.monotonic()
+            logger.warning(
+                "Failed to connect MCP servers (next attempt in {}s): {}: {}",
+                int(_FAILED_CONNECT_COOLDOWN_S),
+                type(e).__name__,
+                e,
+            )
+            logger.debug("MCP connect failure detail", exc_info=True)
         finally:
             state._mcp_connecting = False
 
@@ -1174,6 +1527,10 @@ async def reload_servers(state: Any, registry: ToolRegistry) -> dict[str, Any]:
                 "requires_restart": True,
                 "error": str(exc),
             }
+
+        # An explicit reload is the user saying "try again now": the failure
+        # cooldown must not swallow that retry.
+        _failed_connect_log(state).clear()
 
         current_servers = dict(state._mcp_servers)
         current_names = set(current_servers)

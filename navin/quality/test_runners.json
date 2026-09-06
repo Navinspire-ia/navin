@@ -1,0 +1,122 @@
+{
+  "docs": [
+    "Test runner table. DATA, not code: adding a runner means adding an entry",
+    "here. A user override at <config dir>/test_runners.json is merged in front",
+    "of this file.",
+    "",
+    "Per runner:",
+    "  language       informational label",
+    "  detect_paths   runner applies if any of these exist in the project",
+    "  detect_content [{file, contains}] - applies if the file contains the text",
+    "  workdir        subdirectory to run from (default: project root). The",
+    "                 first entry whose directory exists is used.",
+    "  binary         same resolution as linters.json (name / project_paths /",
+    "                 python_env), plus:",
+    "                   run_as_module  launch as '<interpreter> -m <module>'",
+    "                                  instead of the console script, using the",
+    "                                  interpreter next to the resolved binary.",
+    "                                  Needed for pytest: the console script",
+    "                                  omits the working directory from",
+    "                                  sys.path, so an uninstalled pkg/ + tests/",
+    "                                  project fails to collect.",
+    "  args           argv after the binary. Substitutions:",
+    "                   {report} temp file the runner writes results to",
+    "                   {root}   project root",
+    "  target_args    appended when the caller asks for a specific test target",
+    "  parser         'junit_xml'     standard JUnit XML report (most precise)",
+    "                 'go_json'       `go test -json` newline-delimited events",
+    "                 'jest_json'     `jest --json` report file",
+    "                 'cargo_text'    `cargo test` human output, panics included",
+    "                 'unittest_text' `unittest -v` output, tracebacks included",
+    "                 'summary'       counts only, from human output (last resort;",
+    "                                 it cannot name what failed, so prefer any",
+    "                                 parser above when adding a runner)",
+    "  summary_regex  for parser=summary: named groups passed/failed/skipped",
+    "  timeout_s      hard limit for the run",
+    "",
+    "Runners are ordered by the key name; detection decides what actually runs."
+  ],
+  "version": "2026-07-25",
+  "runners": {
+    "pytest": {
+      "language": "python",
+      "detect_paths": ["tests", "test", "pytest.ini", "conftest.py"],
+      "detect_content": [
+        { "file": "pyproject.toml", "contains": "[tool.pytest" },
+        { "file": "setup.cfg", "contains": "[tool:pytest]" }
+      ],
+      "binary": { "name": "pytest", "python_env": true, "run_as_module": "pytest" },
+      "args": ["-q", "--no-header", "-p", "no:cacheprovider", "--junit-xml={report}"],
+      "target_args": ["{target}"],
+      "parser": "junit_xml",
+      "timeout_s": 900
+    },
+    "vitest": {
+      "language": "javascript",
+      "detect_content": [{ "file": "package.json", "contains": "vitest" }],
+      "workdir": [".", "webui", "frontend"],
+      "binary": {
+        "name": "vitest",
+        "project_paths": [
+          "node_modules/.bin/vitest",
+          "webui/node_modules/.bin/vitest",
+          "frontend/node_modules/.bin/vitest"
+        ]
+      },
+      "args": ["run", "--reporter=junit", "--outputFile={report}"],
+      "target_args": ["{target}"],
+      "parser": "junit_xml",
+      "timeout_s": 900
+    },
+    "jest": {
+      "language": "javascript",
+      "detect_content": [{ "file": "package.json", "contains": "\"jest\"" }],
+      "workdir": [".", "webui", "frontend"],
+      "binary": {
+        "name": "jest",
+        "project_paths": [
+          "node_modules/.bin/jest",
+          "webui/node_modules/.bin/jest"
+        ]
+      },
+      "args": [
+        "--ci",
+        "--colors=false",
+        "--json",
+        "--testLocationInResults",
+        "--outputFile={report}"
+      ],
+      "target_args": ["{target}"],
+      "parser": "jest_json",
+      "timeout_s": 900
+    },
+    "go_test": {
+      "language": "go",
+      "detect_paths": ["go.mod"],
+      "binary": { "name": "go" },
+      "args": ["test", "-json", "./..."],
+      "target_args": ["{target}"],
+      "parser": "go_json",
+      "timeout_s": 900
+    },
+    "cargo_test": {
+      "language": "rust",
+      "detect_paths": ["Cargo.toml"],
+      "binary": { "name": "cargo" },
+      "args": ["test"],
+      "target_args": ["{target}"],
+      "parser": "cargo_text",
+      "timeout_s": 900
+    },
+    "unittest": {
+      "language": "python",
+      "detect_paths": ["tests", "test"],
+      "binary": { "name": "python3", "python_env": true },
+      "args": ["-m", "unittest", "discover", "-v"],
+      "target_args": ["{target}"],
+      "parser": "unittest_text",
+      "timeout_s": 900,
+      "fallback_only": true
+    }
+  }
+}

@@ -458,6 +458,13 @@ def extract_documents(
 
         if is_image_file(path_str):
             image_paths.append(path_str)
+        elif p.suffix.lower() == ".pdf":
+            # A scanned PDF has no text to extract; its pages travel as images
+            # (plus OCR text when an engine exists) instead of an empty body.
+            pdf_text, page_images = _pdf_document_parts(p)
+            if pdf_text is not None:
+                doc_texts.append(pdf_text)
+            image_paths.extend(page_images)
         else:
             extracted = extract_text(p)
             if extracted and not extracted.startswith("[error:"):
@@ -467,3 +474,33 @@ def extract_documents(
         text = text + "\n\n" + "\n\n".join(doc_texts)
 
     return text, image_paths
+
+
+def _pdf_document_parts(path: Path) -> tuple[str | None, list[str]]:
+    """``(text block, page image paths)`` for one attached PDF.
+
+    Text-layer PDFs come back as text only. PDFs whose extracted text is too
+    thin to be real (scans, photographed documents) come back as a note plus
+    rendered page images, so a vision model reads the pages themselves.
+    """
+    from navin.utils.pdf_pages import describe_pdf_pages, expand_scanned_pdf, looks_scanned
+
+    try:
+        result = extract_pdf_pages(
+            path,
+            max_pages=_MAX_PDF_ATTACHMENT_PAGES,
+            max_chars=_MAX_TEXT_LENGTH,
+        )
+    except Exception:
+        logger.exception("Failed to extract PDF {}", path)
+        return None, []
+
+    pages_read = result.end_page - result.start_page + 1 if result.total_pages else 0
+    if result.total_pages and looks_scanned(result.text, pages_read):
+        pages = expand_scanned_pdf(path, total_pages=result.total_pages)
+        return f"[File: {path.name}]\n{describe_pdf_pages(pages)}", list(pages.paths)
+
+    text = result.text
+    if result.end_page < result.total_pages - 1:
+        text += f"\n\n(Showing pages 1-{result.end_page + 1} of {result.total_pages}.)"
+    return f"[File: {path.name}]\n{text}", []

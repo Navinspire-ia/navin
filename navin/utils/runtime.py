@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,35 @@ _MAX_REPEAT_EXTERNAL_LOOKUPS = 2
 
 # Third same-target workspace violation in a turn escalates to "stop retrying".
 _MAX_REPEAT_WORKSPACE_VIOLATIONS = 2
+
+# With soft tool errors (fail_on_tool_error=False) the model self-heals by
+# retrying; this bounds how often the *same exact call* may fail before the
+# error message escalates to "change approach".
+_MAX_IDENTICAL_TOOL_FAILURES = 2
+# After this many identical failures, treat the call as a hard stop so a stuck
+# model cannot burn the whole turn repeating the same broken arguments.
+_HARD_STOP_IDENTICAL_TOOL_FAILURES = 5
+# Successful read-only calls are also bounded. Context clearing blanks old
+# results and tells the model it can re-run the tool; thinking models then
+# spend the whole step budget re-reading the same file (35x observed).
+_MAX_IDENTICAL_READONLY_CALLS = 2
+_READONLY_SPIN_TOOLS = frozenset(
+    {
+        "read_file",
+        "grep",
+        "list_dir",
+        "find_files",
+        "code_index",
+    }
+)
+_MUTATING_RESET_TOOLS = frozenset(
+    {
+        "apply_patch",
+        "edit_file",
+        "write_file",
+        "manage_files",
+    }
+)
 
 EMPTY_FINAL_RESPONSE_MESSAGE = (
     "I completed the tool steps but couldn't produce a final answer. "
@@ -28,13 +58,15 @@ BUDGET_EXHAUSTED_FINALIZATION_PROMPT = (
     "The tool-call budget for this turn is exhausted. Based only on the "
     "conversation and tool results above, provide a concise final response to "
     "the user. Do not call or request tools. Do not claim the task is complete "
-    "unless the evidence above clearly shows it is complete. State what was "
-    "done, what remains, and the best next step if anything is incomplete."
+    "unless the evidence above clearly shows it is complete. Structure the "
+    "reply as: (1) what was done - concrete files, commands, and board steps; "
+    "(2) what remains; (3) the best next step (e.g. ask the user to reply "
+    "'continue'). Keep it scannable and specific - no vague 'I worked on it'."
 )
 
 LENGTH_RECOVERY_PROMPT = (
     "Output limit reached. Continue exactly where you left off "
-    "— no recap, no apology. Break remaining work into smaller steps if needed."
+    "- no recap, no apology. Break remaining work into smaller steps if needed."
 )
 
 SUSTAINED_GOAL_CONTINUE_PROMPT = (
@@ -42,6 +74,75 @@ SUSTAINED_GOAL_CONTINUE_PROMPT = (
     "objective using your tools, or call update_goal with action='complete' "
     "if the work is truly finished."
 )
+
+DELIVERY_CONTINUE_PROMPT = (
+    "You ended the turn without calling any tools, so no deliverable was "
+    "created. This workflow requires tool execution. Continue now: follow the "
+    "Active Skills, call the tools needed to produce the real workspace file "
+    "(and any required images), and only then reply with the file path and a "
+    "short outline. Do not describe what you plan to do - do it."
+)
+
+VERIFY_BEFORE_DONE_CONTINUE_PROMPT = (
+    "You edited code but have not verified the result yet. Before claiming "
+    "Build/Debug work is done: re-run the failing repro if this is a debug "
+    "turn, then run `verify action=check` (or `lint` and `test_run` if verify "
+    "is unavailable), attach evidence, and close with a short summary. Do not "
+    "narrate success without those checks."
+)
+
+VERIFY_FAILED_CONTINUE_PROMPT = (
+    "Verification failed (lint errors and/or failing tests). You may not claim "
+    "the Build/Debug turn is done while verify is red. Run "
+    "`verify action=fix` (or targeted lint/test fixes), re-run "
+    "`verify action=check`, and only then summarize with green evidence. "
+    "Keep the patch minimal and in-scope."
+)
+
+NO_PROGRESS_CONTINUE_PROMPT = (
+    "You have been searching the codebase without making an edit or running "
+    "a check. Stop exploring. Either apply the fix now or answer the user "
+    "from evidence already in this turn. Do not call read_file, grep, "
+    "list_dir, or find_files again unless you need one new path."
+)
+
+NO_PROGRESS_STOP_FALLBACK = (
+    "I searched without making progress. Here is what I know so far; "
+    "reply to continue with a narrower target."
+)
+
+
+def build_delivery_continue_message(custom: str | None = None) -> dict[str, str]:
+    """Prompt the model to resume when a delivery workflow produced no tools."""
+    return {"role": "user", "content": custom or DELIVERY_CONTINUE_PROMPT}
+
+
+def build_verify_before_done_message(custom: str | None = None) -> dict[str, str]:
+    """Prompt the model to run verify/lint/tests before closing a Build turn."""
+    return {"role": "user", "content": custom or VERIFY_BEFORE_DONE_CONTINUE_PROMPT}
+
+
+def build_verify_failed_message(
+    custom: str | None = None,
+    *,
+    last_summary: str | None = None,
+) -> dict[str, str]:
+    """Prompt the model to fix a red verify before closing a Build turn.
+
+    ``last_summary`` is the recorded verify/lint/test output (already
+    truncated). Without it the model only hears "verify is red" and
+    re-guesses which tests failed.
+    """
+    body = custom or VERIFY_FAILED_CONTINUE_PROMPT
+    detail = (last_summary or "").strip()
+    if detail:
+        body = f"{body}\n\nLast verification output:\n{detail[:800]}"
+    return {"role": "user", "content": body}
+
+
+def build_no_progress_continue_message(custom: str | None = None) -> dict[str, str]:
+    """Nudge once when a turn has only been searching."""
+    return {"role": "user", "content": custom or NO_PROGRESS_CONTINUE_PROMPT}
 
 
 def empty_tool_result_message(tool_name: str) -> str:
@@ -87,6 +188,103 @@ def build_length_recovery_message() -> dict[str, str]:
 def build_goal_continue_message(custom: str | None = None) -> dict[str, str]:
     """Prompt the model to continue when a sustained goal is still active."""
     return {"role": "user", "content": custom or SUSTAINED_GOAL_CONTINUE_PROMPT}
+
+
+def _tool_failure_signature(tool_name: str, arguments: Any) -> str:
+    try:
+        payload = json.dumps(arguments, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        payload = str(arguments)
+    return f"{tool_name}:{payload}"
+
+
+def repeated_tool_failure_hint(
+    tool_name: str,
+    arguments: Any,
+    seen_counts: dict[str, int],
+) -> str | None:
+    """Escalating hint once the same exact tool call has failed repeatedly.
+
+    Soft tool errors keep the run alive so the model can self-correct, but an
+    unbounded retry loop burns iterations on a call that will never succeed.
+    Counting (tool, arguments) failures per turn keeps legitimate retries
+    with adjusted arguments free, while the verbatim repeat gets told to stop.
+    """
+    signature = _tool_failure_signature(tool_name, arguments)
+    count = seen_counts.get(signature, 0) + 1
+    seen_counts[signature] = count
+    if count < _MAX_IDENTICAL_TOOL_FAILURES:
+        return None
+    logger.warning(
+        "Tool {} failed {} times with identical arguments; escalating hint",
+        tool_name,
+        count,
+    )
+    if count >= _HARD_STOP_IDENTICAL_TOOL_FAILURES:
+        return (
+            f"\n\n[This exact {tool_name} call failed {count} times with identical "
+            "arguments. Further identical calls are blocked for this turn only - "
+            "change the arguments, use a different tool, or continue without it. "
+            "The agent run is NOT stopped.]"
+        )
+    return (
+        f"\n\n[This exact {tool_name} call has now failed {count} times. "
+        "Do not repeat it verbatim: change the arguments, use a different "
+        "tool, or report the blocker in your final answer.]"
+    )
+
+
+def repeated_tool_failure_is_hard_stop(
+    tool_name: str,
+    arguments: Any,
+    seen_counts: dict[str, int],
+) -> bool:
+    """True when the latest identical failure should abort further retries."""
+    signature = _tool_failure_signature(tool_name, arguments)
+    return seen_counts.get(signature, 0) >= _HARD_STOP_IDENTICAL_TOOL_FAILURES
+
+
+def reset_readonly_spin_counts(seen_counts: dict[str, int]) -> None:
+    """Drop read-only signatures after a successful edit so a re-read is allowed."""
+    stale = [
+        key
+        for key in seen_counts
+        if key.split(":", 1)[0] in _READONLY_SPIN_TOOLS
+    ]
+    for key in stale:
+        del seen_counts[key]
+
+
+def repeated_readonly_tool_error(
+    tool_name: str,
+    arguments: Any,
+    seen_counts: dict[str, int],
+) -> str | None:
+    """Block identical successful reads after a small per-turn budget.
+
+    Failures already escalate via ``repeated_tool_failure_hint``. This catches
+    the other loop: the same ``read_file`` / ``grep`` succeeding over and over
+    because the previous result was blanked from context.
+    """
+    if tool_name not in _READONLY_SPIN_TOOLS:
+        return None
+    signature = _tool_failure_signature(tool_name, arguments)
+    count = seen_counts.get(signature, 0) + 1
+    seen_counts[signature] = count
+    if count <= _MAX_IDENTICAL_READONLY_CALLS:
+        return None
+    logger.warning(
+        "Blocking repeated identical {} call after {} successes this turn",
+        tool_name,
+        count,
+    )
+    return (
+        f"Error: this exact {tool_name} call already ran "
+        f"{_MAX_IDENTICAL_READONLY_CALLS} times this turn with identical "
+        "arguments. The result is already in the conversation (or was "
+        "cleared after you saw it). Do not repeat it. Change the path or "
+        "pattern, edit the file, or answer from what you already have."
+    )
 
 
 def external_lookup_signature(tool_name: str, arguments: Any) -> str | None:

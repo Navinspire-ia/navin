@@ -7,8 +7,8 @@ from collections.abc import Awaitable, Callable, Iterable
 from navin.agent.automation_turns import AutomationTurnCoordinator
 from navin.bus.events import InboundMessage
 from navin.cron.session_turns import (
+    cron_job_id,
     cron_run_id,
-    cron_trigger,
     defer_cron_until_session_idle,
 )
 
@@ -50,8 +50,4 @@ def _should_defer_cron_turn(
 
 
 def _cron_job_id(msg: InboundMessage) -> str | None:
-    trigger = cron_trigger(msg.metadata)
-    if not trigger:
-        return None
-    value = trigger.get("job_id")
-    return value if isinstance(value, str) and value else None
+    return cron_job_id(msg.metadata)

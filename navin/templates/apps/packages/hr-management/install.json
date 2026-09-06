@@ -1,0 +1,253 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "hr-management",
+  "name": "HR Management",
+  "kind": "business",
+  "category": "hr",
+  "source_github": "https://github.com/HarshalLathiya/HR_Management_System",
+  "source_name": "DayFlow HRMS",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "TypeScript",
+    "Supabase"
+  ],
+  "studied_from": "templates_apps/hr-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 7,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "DayFlow HRMS A Human Resource Management System built with Next.js, TypeScript, Tailwind CSS, and Supabase. Prerequisites - Node.js (version 18 or higher) - Bun (recommended, version 1.2.15 or higher) or npm Installation 1. Clone the repository: git clone <repository-url> cd Odoo_Hackathon_Human_Resource_Management_System 2. Install dependencies: bun install Or if using npm: npm install Running the Project 1. Start the development server: bun run dev Or if using npm: npm run dev"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "bun",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "bun",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "dayflow-hrms",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "dayflow-hrms",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@supabase/supabase-js",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "supabase",
+      "required": true,
+      "docker_image": "supabase/postgres",
+      "port": 54321,
+      "env_url": "VITE_SUPABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    54321
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "JWT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "source:src/lib/auth.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:src/lib/supabase.ts"
+    },
+    {
+      "key": "NEXT_PUBLIC_SUPABASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Supabase API URL (Next)",
+      "from": "source:src/lib/supabase.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:src/app/api/auth/login/route.ts"
+    },
+    {
+      "key": "SUPABASE_SERVICE_ROLE_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Supabase service role (secret)",
+      "from": "source:src/lib/supabase.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/hr-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: bun install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-supabase",
+        "run": "If Makefile has `make start`, use it. Else `npx supabase start` or `npm run dev:demo`."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/hr-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/hr-management/overlay.json",
+    "agents": ".navin/apps/hr-management/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "hr-copilot",
+      "recruiting-agent",
+      "onboarding-agent",
+      "payroll-assistant",
+      "performance-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

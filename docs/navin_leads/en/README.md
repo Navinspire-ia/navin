@@ -1,20 +1,28 @@
-# Leads & Sales module — Overview
+# Leads & Sales module - Overview
 
-The **Leads** module (sidebar → **Leads**, route `#/leads`) is an elite B2B prospecting and sales desk. The agent hunts companies and decision-makers from open web sources, detects buying signals, qualifies and enriches every lead, builds the outreach, and formats everything for your CRM — with a source URL on every datum.
+The **Leads** module (sidebar → **Leads**, route `#/leads`) is a **senior SDR desk**: public hunting with search/scrape tools, buying signals, ICP/BANT-F scoring, prepared outreach (human send), CRM export. Every datum is sourced or `unverified`. Verified emails and live CRM sync depend on connectors.
+
+## Connectors for real leads
+
+| Need | Config |
+| --- | --- |
+| Verified emails | `HUNTER_API_KEY` and/or `APOLLO_API_KEY`, then `enrich_leads.py` |
+| Deep web research | **Exa** and/or **Firecrawl** MCP (Settings → MCP) |
+| Live CRM | **HubSpot** MCP and/or **Salesforce** MCP (`crm-update-agent` preloaded) |
+| Site corpora | `scrape` / `browser` tools; `/scrape` allowed from the Leads module |
+
+Without Hunter/Apollo keys, the agent still builds sourced lists with `unverified` email patterns - never fake "verified" addresses.
 
 ## How it works
 
-1. Open **Leads** in the sidebar.
-2. (Optional) Type a **brief** at the top: your ICP, product, territory, target volume. It is attached to every action.
-3. Pick an action card in one of the four groups — **Find**, **Qualify**, **Outreach**, **Pipeline** (see [Actions](./actions.md)).
-4. The chat opens and `/leads` is sent automatically with the action's specification and your brief.
-5. The agent researches, builds the deliverable (CSV or table saved to the workspace), and ends with the best-fit leads and suggested next moves.
-
-Direct usage in any chat:
+1. Open **Leads** in the sidebar (`#/leads`). Same store as Tauri, `navin leads`, and the `leads` tool.
+2. Set the ICP on the start screen, then **Start loop** (daily / weekdays / weekend / week / month + hour). Pause or change the hours anytime. The gateway hunts then watches on that calendar while Navin is up.
+3. Heartbeat only alerts (tier A, buying signals, due follow-ups). It never hunts and never sends a sequence.
+4. One-shot hunt, enrich, sequence and outreach stay on the desk or in chat. Do not create a chat cron that hunts or ticks.
 
 ```
 /leads find 30 HR-tech SaaS companies in France, 50-200 employees, with their heads of people
-/leads scan buying signals on the attached account list
+/leads enrich sales/prospects-*.csv then push tier A into HubSpot
 ```
 
 ## The `/leads` command
@@ -22,37 +30,39 @@ Direct usage in any chat:
 | | |
 | --- | --- |
 | Command | `/leads [icp\|company\|brief]` |
-| Lifecycle | Agent workflow (runs a full agent turn) |
-| Skills preloaded | `lead-prospector`, `buying-signals`, `lead-generation`, `lead-qualification`, `account-research`, `entity-research`, `outreach-sequencer`, `cold-email-writer`, `customer-persona-builder`, `pipeline-analyst` |
-| Output | Sourced lead lists (CSV/markdown), signal dashboards, outreach sequences, account sheets — saved in the workspace |
+| Skills preloaded | expert contract, critic, DQ, prospector, signals, generation, qualification, account/entity research, outreach, persona, pipeline, **lead-enrichment**, **crm-update-agent**, **deep-web-research**, **web-extractor** |
+| Board | Tracked run (`project-board`) |
+| Output | `sales/prospects-*.csv` (+ enriched/scored) + `leads-report-*.html` + expert gate |
 
-## What the agent can search
+## Scripts
 
-| Target | Sources used |
-| --- | --- |
-| Companies | Directories, official registries (OpenCorporates, Pappers, Companies House…), award lists, competitor ecosystems, event exhibitor lists |
-| People | Public profiles, team/leadership pages, press quotes, conference bios, article bylines, patents, GitHub orgs |
-| Jobs | Careers pages and job boards — postings reveal stack, projects, and pains verbatim |
-| Signals | Funding news, hiring sprees, leadership changes, expansions, tech changes, regulation deadlines |
-| Contact context | Published emails and patterns, official switchboards, social profiles — with confidence levels |
+```bash
+python navin/skills/lead-enrichment/scripts/enrich_leads.py --keys-check
+python navin/skills/lead-enrichment/scripts/enrich_leads.py sales/prospects.csv -o sales/prospects-enriched.csv --verify-existing
+python navin/skills/lead-qualification/scripts/score_leads.py sales/prospects-enriched.csv
+```
 
-## Data rules (what makes it trustworthy)
+## Data rules
 
-- **Every datum is sourced**: URL + collection date per field.
-- **Nothing invented**: unverified fields are marked `unverified`; email patterns carry a confidence level, never presented as verified addresses.
-- **Public sources only**: no login-walled scraping, robots and terms respected.
-- **Deduplicated**: same domain = same company; quality beats volume.
-
-## Continuous prospecting
-
-Combine with Navin's autonomy features:
-
-- `/goal watch for new funding rounds in French fintech and build a lead sheet weekly` — a sustained goal.
-- Cron jobs for scheduled signal scans and pipeline reviews.
-- `crm-update-agent` skill to push results into HubSpot/Salesforce when configured.
+- Every datum: source URL or `unverified`.
+- `email_status=verified` only from API proof (Hunter/Apollo).
+- Public sources only - no logged-in LinkedIn.
+- Domain dedupe; quality over volume.
 
 ## Tips
 
-- Feed it your best customers: "here are our 5 best clients, find 50 lookalikes".
-- Chain the groups in one chat: ICP → company search → people search → signals → sequence.
-- Ask for the CRM export last — it consolidates everything collected in the session.
+- Clear ICP + 5 best customers → better lookalikes.
+- Enable Exa/Firecrawl + Hunter before high-volume hunts.
+- Chain: ICP → hunt → enrich → score → CRM.
+
+## Desk reference
+
+| Page | Contents |
+| --- | --- |
+| [Desk](./desk.md) | One store, waterfall, BANT-F 80/55 |
+| [Start loop](./loop.md) | Start / stop / schedule, 20 s supervisor |
+| [Heartbeat](./heartbeat.md) | Watch only, 90 s grace, 20 s deadline |
+| [Desktop (Tauri)](./desktop.md) | Linux, Windows, macOS, `tsc` build |
+| [CLI and API](./cli-api.md) | `navin leads`, `/api/leads`, agent tool |
+| [Actions](./actions.md) | 17 Studio cards |
+| [Skills](./skills.md) | Skills + HubSpot / Salesforce MCP |

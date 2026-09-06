@@ -170,7 +170,7 @@ def login_github_copilot(
 class GitHubCopilotProvider(OpenAICompatProvider):
     """Provider that exchanges a stored GitHub OAuth token for Copilot access tokens."""
 
-    def __init__(self, default_model: str = "github-copilot/gpt-4.1"):
+    def __init__(self, default_model: str = ""):
         from navin.providers.registry import find_by_name
 
         self._copilot_access_token: str | None = None

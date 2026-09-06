@@ -26,6 +26,9 @@ AttachmentIngressResult = tuple[list[str], AttachmentRejection | None]
 
 _MAX_VIDEOS_PER_MESSAGE = 1
 _MAX_VIDEO_BYTES = 20 * 1024 * 1024
+# Audio is transcribed server-side, never sent to the chat model as bytes, so
+# it shares the video ceiling rather than the 6 MB image/document budget.
+_MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 _IMAGE_MIME_ALLOWED: frozenset[str] = frozenset({
     "image/png",
@@ -59,8 +62,25 @@ _DOCUMENT_MIME_ALLOWED: frozenset[str] = frozenset({
     "text/yaml",
 })
 
+# The containers every speech-to-text adapter accepts. ``audio/webm`` is left
+# out on purpose: saved as ``.webm`` it would be mistaken for a video.
+_AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
+    "audio/aac",
+    "audio/flac",
+    "audio/m4a",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/wave",
+    "audio/x-flac",
+    "audio/x-m4a",
+    "audio/x-wav",
+})
+
 _UPLOAD_MIME_ALLOWED: frozenset[str] = (
-    _IMAGE_MIME_ALLOWED | _VIDEO_MIME_ALLOWED | _DOCUMENT_MIME_ALLOWED
+    _IMAGE_MIME_ALLOWED | _VIDEO_MIME_ALLOWED | _AUDIO_MIME_ALLOWED | _DOCUMENT_MIME_ALLOWED
 )
 
 _DATA_URL_MIME_RE = re.compile(r"^data:([^;,]+)(?:;[^,]*)*;base64,", re.DOTALL)
@@ -102,7 +122,7 @@ def store_inbound_attachments(
             video_count += 1
         elif mime in _IMAGE_MIME_ALLOWED:
             image_count += 1
-        elif mime in _DOCUMENT_MIME_ALLOWED:
+        elif mime in _DOCUMENT_MIME_ALLOWED or mime in _AUDIO_MIME_ALLOWED:
             document_count += 1
     if image_count > limits.max_count:
         return [], "too_many_images"
@@ -134,14 +154,17 @@ def store_inbound_attachments(
         if mime not in _UPLOAD_MIME_ALLOWED:
             return abort("mime")
         is_video = mime in _VIDEO_MIME_ALLOWED
+        is_audio = mime in _AUDIO_MIME_ALLOWED
         is_document = mime in _DOCUMENT_MIME_ALLOWED
-        max_bytes = (
-            _MAX_VIDEO_BYTES if is_video
-            else limits.max_file_bytes
-        )
+        if is_video:
+            max_bytes = _MAX_VIDEO_BYTES
+        elif is_audio:
+            max_bytes = _MAX_AUDIO_BYTES
+        else:
+            max_bytes = limits.max_file_bytes
         name = (
             item.get("name")
-            if is_document and isinstance(item.get("name"), str)
+            if (is_document or is_audio) and isinstance(item.get("name"), str)
             else None
         )
         try:
@@ -159,7 +182,9 @@ def store_inbound_attachments(
         if saved is None:
             return abort("decode")
         paths.append(saved)
-        if not is_video:
+        # Video and audio never reach the model as bytes, so they stay out of
+        # the shared image/document total, exactly as the WebUI projects it.
+        if not is_video and not is_audio:
             try:
                 total_attachment_bytes += Path(saved).stat().st_size
             except OSError as exc:

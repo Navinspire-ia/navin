@@ -1,22 +1,22 @@
 ---
 name: application-tracker
-description: Track job applications — statuses, follow-ups, interviews, and reminders — in a structured pipeline. Use to keep a job search organized.
-metadata: {"navin":{"emoji":"🗂️","category":"careers"}}
+description: Track job applications - statuses, follow-ups, interviews, and reminders - in a structured pipeline. Use to keep a job search organized.
+metadata: {"navin":{"emoji":"🗂️","category":"careers","default_for":"career"}}
 ---
 
 # Application Tracker
 
 ## Overview
 
-A job search is a pipeline. Track every application's stage, next action, and deadline so nothing dies of silence.
+A job search is a pipeline. The live book is the Career store (`career` tool + `#/career`). Optional markdown notes are a backup, never a second source of truth.
 
 ## Pipeline stages
 
-`identified → applied → screening → interview 1..n → offer → accepted/declined/rejected/ghosted`
+`discovered → matched → ready → applied → replied → interview → offer → won / rejected`
 
 ## Tracker format
 
-Store in `career/applications.md` (or CSV for `spreadsheet-analyst` analysis):
+Prefer `career action=status` and `career action=stage`. The desk already writes `applications.md` next to the store on every save; read it with `career action=read file=applications.md`. Shape:
 
 ```markdown
 | Company | Role | Applied | Stage | Last contact | Next action | Due | Notes |
@@ -26,8 +26,8 @@ Per-application notes file for serious processes: contacts, interview notes, que
 
 ## Workflow
 
-1. Log each application at submission (auto when created via `job-search-agent` flow).
-2. Follow-up policy: no response after 7–10 business days → polite follow-up (`email-writer` pattern); one more at +7; then mark ghosted and move on.
+1. Log each application at submission (`career action=apply` or stage=applied).
+2. Follow-up policy: `followup-writer` + `career action=followup` wave=j3 then j7; then mark rejected/ghosted and move on.
 3. Schedule reminders with `cron` for: follow-ups due, interview prep (trigger `interview-coach` 2 days before), offer deadlines.
 4. Weekly review: pipeline stats (applied/response/interview rates), what's stuck, this week's actions.
 5. Post-decision: log the outcome and learnings (which channel/CV version converts best).
@@ -39,5 +39,5 @@ Per-application notes file for serious processes: contacts, interview notes, que
 
 ## Rules
 
-- Every live application has a "next action + date" — no passive rows.
+- Every live application has a "next action + date" - no passive rows.
 - Keep interview notes verbatim where possible; they're gold for negotiation later.

@@ -22,7 +22,8 @@ from loguru import logger
 from navin.apps.cli.catalog_filter import filter_cli_catalog, is_china_market_cli_app
 from navin.apps.protocol import app_manifest, compact_dict
 from navin.config.paths import get_runtime_subdir
-from navin.security.workspace_policy import is_path_within
+from navin.security.workspace_policy import is_path_within, project_rooted_path
+from navin.utils.proc import no_window_kwargs
 
 CLI_ANYTHING_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/registry.json"
 CLI_ANYTHING_PUBLIC_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/public_registry.json"
@@ -35,6 +36,30 @@ _CATALOG_SOURCES = (
     ("public", CLI_ANYTHING_PUBLIC_REGISTRY_URL, CLI_ANYTHING_RAW_BASE, True),
     ("extensions", NAVIN_EXTENSION_REGISTRY_URL, NAVIN_EXTENSION_RAW_BASE, False),
 )
+
+# shutil.which() scans every PATH entry; on WSL2 the mounted Windows dirs
+# (/mnt/c/...) make each lookup cost tens/hundreds of ms. Payload building
+# calls it once per catalog app, so cache results briefly.
+_WHICH_CACHE_TTL_SECONDS = 20.0
+_which_cache: dict[str, tuple[float, bool]] = {}
+
+
+def _which_available(entry_point: str) -> bool:
+    now = time.monotonic()
+    hit = _which_cache.get(entry_point)
+    if hit is not None and now - hit[0] < _WHICH_CACHE_TTL_SECONDS:
+        return hit[1]
+    ok = shutil.which(entry_point) is not None
+    _which_cache[entry_point] = (now, ok)
+    return ok
+
+
+def _invalidate_which_cache(entry_point: str | None = None) -> None:
+    if entry_point is None:
+        _which_cache.clear()
+    else:
+        _which_cache.pop(entry_point, None)
+
 
 _MAX_TOOL_OUTPUT_CHARS = 12_000
 _MAX_ARTIFACT_SCAN_PATHS = 4_000
@@ -633,7 +658,12 @@ class CliAppManager:
         return not _has_shell_meta(install_cmd)
 
     def _skill_path(self, name: str) -> Path:
-        return self.workspace / "skills" / _safe_skill_name(name) / "SKILL.md"
+        from navin import workspace_layout
+
+        return (
+            workspace_layout.workspace_skill_dir(self.workspace, _safe_skill_name(name))
+            / "SKILL.md"
+        )
 
     def _app_payload(
         self,
@@ -644,7 +674,7 @@ class CliAppManager:
         entry_point = str(app.get("entry_point") or "")
         install_supported = self._install_supported(app)
         is_installed = name in installed
-        available = bool(entry_point and shutil.which(entry_point))
+        available = bool(entry_point and _which_available(entry_point))
         if is_installed and available:
             status = "installed"
         elif is_installed:
@@ -814,10 +844,31 @@ class CliAppManager:
         return args[0]
 
     @staticmethod
-    def _pip_available() -> bool:
-        """Return True if pip is importable for the current interpreter."""
+    def _install_interpreter() -> str | None:
+        """The interpreter a pip-installed CLI tool should land in.
+
+        Never navin's own: a packaged build carries no pip and unpacks itself
+        read-only, so anything installed into it disappears at the next start.
+        A CLI tool belongs to the user's Python anyway.
+        """
+        from navin.python_runtime import external_python
+
+        return external_python()
+
+    @classmethod
+    def _pip_available(cls) -> bool:
+        """Return True if ``-m pip`` can be used for that interpreter."""
         from importlib.util import find_spec
 
+        from navin.python_runtime import packaged
+
+        interpreter = cls._install_interpreter()
+        if interpreter is None:
+            return False
+        if packaged():
+            # No import check is possible from here; pip's own error message is
+            # clearer than a guess would be.
+            return True
         return find_spec("pip") is not None
 
     def _pip_install_argv(self, app: dict[str, Any], *, update: bool = False) -> list[str]:
@@ -826,13 +877,19 @@ class CliAppManager:
             raise CliAppError("unsupported pip install command")
         tokens = shlex.split(install_cmd)
         args = tokens[2:] if tokens[:2] == ["pip", "install"] else tokens[4:]
+        interpreter = self._install_interpreter()
         pip_available = self._pip_available()
-        if pip_available:
-            prefix = [sys.executable, "-m", "pip", "install"]
+        if pip_available and interpreter:
+            prefix = [interpreter, "-m", "pip", "install"]
         elif shutil.which("uv"):
-            prefix = ["uv", "pip", "install", "--python", sys.executable]
+            prefix = ["uv", "pip", "install"]
+            if interpreter:
+                prefix += ["--python", interpreter]
         else:
-            raise CliAppError("pip is not available and uv is not installed")
+            raise CliAppError(
+                "no Python interpreter is available to install into: install Python, "
+                "or install uv"
+            )
         if update:
             if pip_available:
                 prefix.extend(["--upgrade", "--force-reinstall"])
@@ -845,12 +902,18 @@ class CliAppManager:
         app: dict[str, Any],
         installed_entry: dict[str, Any] | None = None,
     ) -> list[str]:
-        if self._pip_available():
-            prefix = [sys.executable, "-m", "pip", "uninstall", "-y"]
+        interpreter = self._install_interpreter()
+        if self._pip_available() and interpreter:
+            prefix = [interpreter, "-m", "pip", "uninstall", "-y"]
         elif shutil.which("uv"):
-            prefix = ["uv", "pip", "uninstall", "--python", sys.executable]
+            prefix = ["uv", "pip", "uninstall"]
+            if interpreter:
+                prefix += ["--python", interpreter]
         else:
-            raise CliAppError("pip is not available and uv is not installed")
+            raise CliAppError(
+                "no Python interpreter is available to uninstall from: install Python, "
+                "or install uv"
+            )
         distribution = str((installed_entry or {}).get("pip_distribution") or "").strip()
         if distribution:
             return [*prefix, distribution]
@@ -962,7 +1025,10 @@ class CliAppManager:
             argv,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
+            **no_window_kwargs(),
         )
         logger.info("CLI Apps: command exited with code {}: {}", result.returncode, command)
         output = (result.stderr or result.stdout or "").strip()
@@ -1080,6 +1146,7 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         installed[str(app["name"])] = entry
         self._save_installed(installed)
         self.install_skill(app)
+        _invalidate_which_cache(str(app.get("entry_point") or "") or None)
         return entry
 
     def install(self, name: str) -> dict[str, Any]:
@@ -1200,6 +1267,7 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         installed.pop(str(app["name"]), None)
         self._save_installed(installed)
         self.remove_skill(str(app["name"]))
+        _invalidate_which_cache(entry_point or None)
         if strategy == "bundled" and still_available:
             message = (
                 f"Removed {app['display_name']} from navin. {entry_point} "
@@ -1247,11 +1315,27 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         *,
         restrict_to_workspace: bool,
     ) -> Path:
-        cwd = Path(working_dir).expanduser() if working_dir else self.workspace
-        cwd = cwd.resolve(strict=False)
         workspace = self.workspace.resolve(strict=False)
+        if not working_dir:
+            return workspace
+        # A relative working_dir would otherwise be resolved against wherever
+        # navin was started, which has nothing to do with the project.
+        rooted = project_rooted_path(
+            working_dir,
+            workspace,
+            [workspace] if restrict_to_workspace else [],
+        )
+        cwd = Path(rooted).expanduser()
+        if not cwd.is_absolute():
+            cwd = workspace / cwd
+        cwd = cwd.resolve(strict=False)
         if restrict_to_workspace and not is_path_within(cwd, workspace):
             raise CliAppError("working_dir is outside the configured workspace")
+        if not cwd.is_dir():
+            raise CliAppError(
+                f"working_dir not found: {working_dir}. It is resolved against the "
+                "project root, so pass a path relative to the project."
+            )
         return cwd
 
     def _iter_artifact_candidates(self, cwd: Path) -> list[Path]:
@@ -1365,8 +1449,11 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=effective_timeout,
                 env=os.environ.copy(),
+                **no_window_kwargs(),
             )
         except subprocess.TimeoutExpired:
             return f"CLI app '{name}' timed out after {effective_timeout}s"

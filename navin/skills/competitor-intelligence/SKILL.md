@@ -23,7 +23,7 @@ Systematic watch on competitors: what changed, what it means, what to do. Comple
 
 ## Workflow
 
-1. Define the watchlist: 3–7 competitors, which signals matter for the user.
+1. Define the watchlist: 3-7 competitors, which signals matter for the user.
 2. Baseline snapshot per competitor stored in `intel/<competitor>.md` (offer, pricing, messaging, strengths/weaknesses).
 3. Schedule recurring checks with `cron` (weekly/biweekly), using `web_fetch` + `website-monitor` techniques for change detection.
 4. Only report *changes* + interpretation + suggested response.
@@ -32,11 +32,11 @@ Systematic watch on competitors: what changed, what it means, what to do. Comple
 ## Digest format
 
 ```markdown
-## Competitive digest — <date>
+## Competitive digest - <date>
 | Competitor | Change | So what | Suggested action |
 ```
 
 ## Rules
 
-- Public sources only — no pretexting, no fake accounts.
+- Public sources only - no pretexting, no fake accounts.
 - Interpretation is clearly separated from observed fact.

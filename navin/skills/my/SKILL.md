@@ -52,14 +52,14 @@ description: Inspect and optionally adjust the agent's runtime state. Use to che
 </rule>
 
 <rule>
-**Don't set workspace.** Does not update file tool boundaries — won't work.
+**Don't set workspace.** Does not update file tool boundaries - won't work.
 </rule>
 
 ## Constraints
 
-- All modifications in-memory only — restart resets everything
+- All modifications in-memory only - restart resets everything
 - Prefer `model_preset` for configured model choices. Direct `model` changes clear the active preset and should only be used when no preset exists.
-- Protected params have type/range validation: `max_iterations` (1–100), `context_window_tokens` (4096–1M), `model` (non-empty str)
+- Protected params have type/range validation: `max_iterations` (1-100), `context_window_tokens` (4096-1M), `model` (non-empty str)
 - If `tools.my.allow_set` is false, check only
 
 ## Related tools

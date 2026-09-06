@@ -1,213 +1,94 @@
-# AI Agent Memory in navin
+# Memory in Navin
 
-This page explains how navin implements long-term AI agent memory: session
-history, compressed archives, durable knowledge files, Dream consolidation, and
-Git-backed memory changes.
+Navin keeps long-term context for your projects so agents stay useful across sessions - without turning memory into a messy dump of notes.
 
-navin's memory is built on a simple belief: memory should feel alive, but it should not feel chaotic.
+Everything below happens inside the **Navin desktop app** (Windows, macOS, or Linux). You open Navin, work in chat and Settings - you do not need a terminal.
 
-Good memory is not a pile of notes. It is a quiet system of attention. It notices what is worth keeping, lets go of what no longer needs the spotlight, and turns lived experience into something calm, durable, and useful.
+## What memory is for
 
-That is the shape of memory in navin.
+Good memory notices what is worth keeping, lets go of noise, and turns lived experience into something calm and useful.
 
-## The Design
+Navin splits memory into layers:
 
-navin does not treat memory as one giant file.
+- the **live conversation** in the current chat
+- a **history archive** of compressed past turns
+- durable files such as **SOUL**, **USER**, and **MEMORY** for stable facts and style
+- optional **version history** when Dream updates those durable files
 
-It separates memory into layers, because different kinds of remembering deserve different tools:
+That keeps the moment light, and the long term reflective.
 
-- `session.messages` holds the living short-term conversation.
-- `memory/history.jsonl` is the running archive of compressed past turns.
-- `SOUL.md`, `USER.md`, and `memory/MEMORY.md` are the durable knowledge files.
-- `GitStore` records how those durable files change over time.
+## How it works in the app
 
-This keeps the system light in the moment, but reflective over time.
+### Short-term consolidation
 
-## The Flow
+When a conversation grows large, Navin summarizes older turns into the project history archive. You keep chatting; Navin manages context so the window does not explode.
 
-Memory moves through navin in two stages.
+### Dream
 
-### Stage 1: Consolidator
+**Dream** is the slower layer. On a schedule (and when you ask for it), Navin reads recent history plus your durable memory files, then updates those files carefully - small honest edits, not a full rewrite.
 
-When a conversation grows large enough to pressure the context window, navin does not try to carry every old message forever.
+You can guide Dream from chat with actions such as:
 
-Instead, the `Consolidator` summarizes the oldest safe slice of the conversation and appends that summary to `memory/history.jsonl`.
-
-This file is:
-
-- append-only
-- cursor-based
-- optimized for machine consumption first, human inspection second
-
-Each line is a JSON object:
-
-```json
-{"cursor": 42, "timestamp": "2026-04-03 00:02", "content": "- User prefers dark mode\n- Decided to use PostgreSQL"}
-```
-
-It is not the final memory. It is the material from which final memory is shaped.
-
-### Stage 2: Dream
-
-`Dream` is the slower, more thoughtful layer. It runs on a cron schedule by default and can also be triggered manually.
-
-Dream reads:
-
-- new entries from `memory/history.jsonl`
-- the current `SOUL.md`
-- the current `USER.md`
-- the current `memory/MEMORY.md`
-
-Then it edits the long-term files surgically in a single pass — not by rewriting everything, but by making the smallest honest change that keeps memory coherent.
-
-This is why navin's memory is not just archival. It is interpretive.
-
-## The Files
-
-```text
-workspace/
-├── SOUL.md              # The bot's long-term voice and communication style
-├── USER.md              # Stable knowledge about the user
-├── prompts/
-│   ├── README.md        # Notes for memory guidance files
-│   └── dream.md         # Optional instructions for how Dream organizes memory
-└── memory/
-    ├── MEMORY.md        # Project facts, decisions, and durable context
-    ├── history.jsonl    # Append-only history summaries
-    ├── .cursor          # Consolidator write cursor
-    ├── .dream_cursor    # Dream consumption cursor
-    └── .git/            # Version history for long-term memory files
-```
-
-These files play different roles:
-
-- `SOUL.md` remembers how navin should sound.
-- `USER.md` remembers who the user is and what they prefer.
-- `MEMORY.md` remembers what remains true about the work itself.
-- `history.jsonl` remembers what happened on the way there.
-
-## Why `history.jsonl`
-
-The old `HISTORY.md` format was pleasant for casual reading, but it was too fragile as an operational substrate.
-
-`history.jsonl` gives navin:
-
-- stable incremental cursors
-- safer machine parsing
-- easier batching
-- cleaner migration and compaction
-- a better boundary between raw history and curated knowledge
-
-You can still search it with familiar tools:
-
-```bash
-# grep
-grep -i "keyword" memory/history.jsonl
-
-# jq
-cat memory/history.jsonl | jq -r 'select(.content | test("keyword"; "i")) | .content' | tail -20
-
-# Python
-python -c "import json; [print(json.loads(l).get('content','')) for l in open('memory/history.jsonl','r',encoding='utf-8') if l.strip() and 'keyword' in l.lower()][-20:]"
-```
-
-The difference is philosophical as much as technical:
-
-- `history.jsonl` is for structure
-- `SOUL.md`, `USER.md`, and `MEMORY.md` are for meaning
-
-## Commands
-
-Memory is not hidden behind the curtain. Users can inspect and guide it.
-
-| Command | What it does |
+| In chat | What it does |
 |---------|--------------|
-| `/dream` | Run Dream immediately |
+| `/dream` | Run Dream now |
 | `/dream-log` | Show the latest Dream memory change |
-| `/dream-log <sha>` | Show a specific Dream change |
-| `/dream-restore` | List recent Dream memory versions |
-| `/dream-restore <sha>` | Restore memory to the state before a specific change |
-| `/dream-prompt` | Show how Dream is being guided for memory |
-| `/dream-prompt init` | Create an editable Dream memory guide at `prompts/dream.md` |
+| `/dream-restore` | Browse or restore a previous memory version |
+| `/dream-prompt` | Inspect or create a Dream guidance note for this project |
 
-These commands exist for a reason: automatic memory is powerful, but users should always retain the right to inspect, understand, and restore it.
+These are composer actions inside Navin, not system shell commands.
 
-## Versioned Memory
+## Where memory lives in a project
 
-After Dream changes long-term memory files, navin can record that change with `GitStore`.
-
-This gives memory a history of its own:
-
-- you can inspect what changed
-- you can compare versions
-- you can restore a previous state
-
-That turns memory from a silent mutation into an auditable process.
-
-## Guiding Dream
-
-Dream decides what to keep, update, or forget using navin's built-in memory instructions. Most users can leave this alone.
-
-If one workspace needs a different memory style, create an editable guide:
+When you open a project in Navin, memory files sit with that project on disk, for example:
 
 ```text
-/dream-prompt init
+your-project/
+├── SOUL.md              # How the agent should sound
+├── USER.md              # Stable facts about you
+├── prompts/
+│   └── dream.md         # Optional guidance for Dream
+└── memory/
+    ├── MEMORY.md        # Durable project facts and decisions
+    ├── history.jsonl    # Compressed history summaries
+    └── …                # Navin position markers and optional version history
 ```
 
-This creates:
+- **SOUL.md** - voice and communication style  
+- **USER.md** - who you are and what you prefer  
+- **MEMORY.md** - what remains true about the work  
+- **history** - what happened along the way  
 
-```text
-workspace/prompts/dream.md
-```
+Navin tracks its own read/write positions in that folder so consolidation and Dream stay in sync. You normally never edit those markers by hand.
 
-Edit that file in plain Markdown. When it has content, Dream follows it for this workspace before reading the latest conversation history. You do not need to paste history into the file; Dream adds the current `## Conversation History` block automatically.
+## Guiding Dream from the UI
 
-To return to navin's default behavior, delete `prompts/dream.md` or leave it empty.
+Most people leave Dream alone. If one project needs a different memory style:
 
-Each workspace has its own guide. Changing this file does not affect other navin workspaces.
+1. In chat, run `/dream-prompt init` (creates an editable guide for this project).
+2. Open `prompts/dream.md` from the project tree in Navin and edit it in plain Markdown.
+3. Leave it empty or delete it to return to Navin’s defaults.
 
-## Configuration
+Each project has its own guide. Changing one project does not affect others.
 
-Dream is configured under `agents.defaults.dream`:
+## Settings
 
-```json
-{
-  "agents": {
-    "defaults": {
-      "dream": {
-        "intervalH": 2,
-        "modelOverride": null,
-        "maxBatchSize": 20,
-        "maxIterations": 10
-      }
-    }
-  }
-}
-```
+Dream timing and related options live under agent defaults in **Settings** (Dream interval and advanced options). Prefer the Settings panels in the app; you do not need to hand-edit JSON for everyday use.
 
-| Field | Meaning |
-|-------|---------|
-| `intervalH` | How often Dream runs, in hours |
-| `cron` | Cron expression override (takes precedence over `intervalH`) |
-| `modelOverride` | Optional Dream-specific model override *(pending implementation)* |
-| `maxBatchSize` | *(Deprecated — not used)* |
-| `maxIterations` | *(Deprecated — not used)* |
+In practice:
 
-In practical terms:
+- set how often Dream runs
+- leave the model as the main agent unless you have a dedicated Dream model later
+- keep durable files readable - they are meant for you and for the agent
 
-- `intervalH` is the normal way to configure Dream frequency. Internally it runs as an `every` schedule.
-- `cron` overrides `intervalH` when set, allowing precise cron expressions (e.g. `0 */4 * * *`).
-- `modelOverride` is reserved for a future release. Currently Dream uses the same model as the main agent.
-- `maxBatchSize` and `maxIterations` are preserved for config compatibility but no longer affect behavior.
+## Versioned memory
 
-## In Practice
+After Dream changes long-term files, Navin can keep a history of those edits so you can inspect what changed and restore a previous state from the Dream log / restore actions in chat.
 
-What this means in daily use is simple:
+## In daily use
 
-- conversations can stay fast without carrying infinite context
-- durable facts can become clearer over time instead of noisier
-- the user can inspect and restore memory when needed
+- chats stay fast without infinite context
+- durable facts get clearer over time instead of noisier
+- you can inspect and restore memory when needed
 
-Memory should not feel like a dump. It should feel like continuity.
-
-That is what this design is trying to protect.
+Memory should feel like continuity - not a dump. That is what this design protects.

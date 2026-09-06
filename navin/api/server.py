@@ -224,7 +224,7 @@ async def _parse_multipart(request: web.Request) -> tuple[str, list[str], str | 
 
 
 async def handle_chat_completions(request: web.Request) -> web.Response:
-    """POST /v1/chat/completions — supports JSON and multipart/form-data."""
+    """POST /v1/chat/completions - supports JSON and multipart/form-data."""
     content_type = request.content_type or ""
     if not isinstance(content_type, str):
         content_type = ""

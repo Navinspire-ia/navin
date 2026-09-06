@@ -1,0 +1,248 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "real-estate",
+  "name": "Real Estate Platform",
+  "kind": "business",
+  "category": "real-estate",
+  "source_github": "https://github.com/AHMAD-JX/Hozn-RealEstate-Fullstack",
+  "source_name": "Hozn Real Estate",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Next.js",
+    "Express"
+  ],
+  "studied_from": "templates_apps/real-estate",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 5,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Hozn - Real Estate \ud83c\udfe1\ud83d\ude80 \ud83c\udf1f Overview **Hozn - Real Estate** is a **Full-Stack** real estate website built with **React, Next.js, TypeScript**, and a **Node.js (Express) backend**. The platform allows users to browse, list, and manage properties seamlessly. \ud83c\udfaf Features - \ud83d\udd25 **Modern UI/UX** with smooth animations - \ud83c\udfe0 **Property listing & management** - \ud83c\udfe0 **BUY & Sell Property listing ** - \ud83d\udd12 **User authentication** (Signup/Login) - \ud83d\udcca **Admin Dashboard** for managing users & listings - \ud83d\udce1 **Backend API** built with Express & Sequelize"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "HOZN-real-estate",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "real-estate-backend/package.json",
+        "name": "real-estate-backend",
+        "scripts": {
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "pg"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "HOZN-real-estate",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "real-estate-backend/package.json",
+        "name": "real-estate-backend",
+        "scripts": {
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "pg"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    5000,
+    5432
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "NEXT_PUBLIC_API_URL",
+      "default": "http://localhost:5000/api",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "README.md"
+    },
+    {
+      "key": "PORT",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "README.md"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://user:password@localhost:5432/realestate",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "README.md"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "your_jwt_secret",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "README.md"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:real-estate-backend/models/index.js"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/real-estate/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/real-estate/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/real-estate/overlay.json",
+    "agents": ".navin/apps/real-estate/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "real-estate-backend/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "real-estate-agent",
+      "lead-qualification-agent",
+      "property-matching-agent",
+      "visit-scheduling-agent",
+      "documentation-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

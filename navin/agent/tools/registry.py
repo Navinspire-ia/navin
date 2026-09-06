@@ -132,11 +132,19 @@ class ToolRegistry:
 
         params = self._coerce_params(tool, params)
         if not isinstance(params, dict):
+            schema = tool.parameters or {}
+            required = schema.get("required")
+            required_hint = (
+                " Required: " + ", ".join(str(r) for r in required) + "."
+                if isinstance(required, list) and required
+                else ""
+            )
             return tool, params, (
                 ToolResult.error(
                     f"Error: Tool '{name}' parameters must be a JSON object, got "
-                    f"{type(params).__name__}. Use named parameters like "
-                    'tool_name(param1="value1", param2="value2") matching the tool schema.'
+                    f"{type(params).__name__}. Send arguments as one valid JSON "
+                    "object with double-quoted keys and strings, matching the "
+                    f"tool schema.{required_hint}"
                 )
             )
 
@@ -165,14 +173,78 @@ class ToolRegistry:
         try:
             parsed = json.loads(stripped)
         except Exception:
-            return value
+            return cls._repair_json_arguments(stripped, fallback=value)
 
         return parsed
 
     @classmethod
+    def _repair_json_arguments(cls, stripped: str, *, fallback: Any) -> Any:
+        """Best-effort recovery of near-JSON tool arguments.
+
+        Models routinely emit large payloads (HTML, scripts, diffs) with
+        literal newlines/tabs inside JSON strings, or a stray unescaped
+        quote. Rejecting those turns every big write_file/exec into a
+        retry loop, so repair what can be repaired without guessing:
+
+        1. ``strict=False``: only tolerates raw control characters inside
+           strings - content comes through byte-identical.
+        2. ``json_repair``: quotes/commas/single-quote fixes; accepted only
+           when the payload looks complete (ends with a closer), so a
+           truncated ``content`` is never silently written to disk.
+        """
+        try:
+            parsed = json.loads(stripped, strict=False)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        if stripped.endswith(("}", "]")):
+            try:
+                import json_repair
+
+                parsed = json_repair.loads(stripped)
+                if isinstance(parsed, dict) and parsed:
+                    return parsed
+            except Exception:
+                pass
+
+        return fallback
+
+    @classmethod
+    def _wrap_single_string_param(cls, tool: Tool, params: Any) -> Any:
+        """Map a bare string onto the tool's only required string parameter.
+
+        ``exec`` called with a raw command line (a common failure shape from
+        smaller models) is unambiguous: there is exactly one required
+        parameter and it is a string. Multi-field tools (write_file, ...)
+        stay rejected - guessing which field the text belongs to is unsafe.
+        """
+        if not isinstance(params, str) or not params.strip():
+            return params
+        # A string that looks like a broken JSON object is a serialization
+        # bug, not a bare value - executing it verbatim would be worse than
+        # the error.
+        if params.lstrip().startswith(("{", "[")):
+            return params
+        schema = tool.parameters or {}
+        properties = schema.get("properties")
+        required = schema.get("required")
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            return params
+        if len(required) != 1:
+            return params
+        name = required[0]
+        prop = properties.get(name)
+        if not isinstance(prop, dict) or prop.get("type") != "string":
+            return params
+        return {name: params}
+
+    @classmethod
     def _coerce_params(cls, tool: Tool, params: Any) -> Any:
         params = cls._coerce_argument_value(params)
-        return cls._unwrap_arguments_payload(tool, params)
+        params = cls._unwrap_arguments_payload(tool, params)
+        return cls._wrap_single_string_param(tool, params)
 
     @classmethod
     def _unwrap_arguments_payload(cls, tool: Tool, params: Any) -> Any:

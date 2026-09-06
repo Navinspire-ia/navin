@@ -31,7 +31,7 @@ class AgentTurnHookSpec:
     metadata: dict[str, Any] | None = None
     session_key: str | None = None
     workspace: Path | None = None
-    tool_hint_max_length: int = 40
+    tool_hint_max_length: int = 120
     on_iteration: Callable[[int], None] | None = None
     registered_hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
     turn_hook_factories: list[AgentTurnHookFactory] = field(default_factory=list)
@@ -52,7 +52,17 @@ def build_agent_turn_hook(spec: AgentTurnHookSpec) -> AgentHook:
         on_iteration=spec.on_iteration,
     )
     if spec.ephemeral and not spec.run_extra_hooks_for_ephemeral:
-        return progress_hook
+        # An ephemeral turn drops the extra chain to stay cheap and quiet, but
+        # it still called the provider and was still paid for. Only the hooks
+        # that account for that spend opt back in; the factories stay unrun.
+        accounting = [
+            hook
+            for hook in (*spec.registered_hooks, *spec.turn_hooks)
+            if getattr(hook, "accounts_for_usage", False)
+        ]
+        if not accounting:
+            return progress_hook
+        return CompositeHook([progress_hook, *accounting])
 
     turn_context = AgentTurnHookContext(
         on_progress=spec.on_progress,
