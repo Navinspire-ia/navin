@@ -1,12 +1,12 @@
 #!/bin/sh
-# Stop gateway and/or Vite.
+# Status of gateway and/or Vite.
 #
 # Usage:
-#   sh scripts/stop.sh
-#   sh scripts/stop.sh backend
-#   sh scripts/stop.sh front
+#   sh scripts/status.sh
+#   sh scripts/status.sh backend
+#   sh scripts/status.sh front
 #
-# Make: make stop   /   make stop backend   /   make stop front
+# Make: make status   /   make status backend   /   make status front
 
 set -e
 
@@ -21,11 +21,11 @@ if ! parse_dev_args "$@"; then
     exit 0
 fi
 
-if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "front" ]; then
-    stop_front
-fi
+code=0
 if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "backend" ]; then
-    stop_backend
+    status_backend || code=1
 fi
-
-ok "Arret termine ($SCOPE)."
+if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "front" ]; then
+    status_front || code=1
+fi
+exit "$code"

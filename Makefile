@@ -1,7 +1,9 @@
-.PHONY: help check doctor install uninstall start stop restart status linux appimage appimage-release pacman electron-linux electron-appimage electron-appimage-release electron-dev macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
+.PHONY: help check doctor install uninstall start stop restart status start-fg
+.PHONY: linux appimage appimage-release pacman electron-linux electron-appimage electron-appimage-release electron-dev macos desktop-exe desktop-dmg windows aws-upload aws-upload-temp local-releases
 .PHONY: publish-forgejo publish-github publish-github-dry publish-remotes
 .PHONY: start-bg stop-bg restart-bg logs logs-clear _ensure_navin set-version
 .PHONY: lint clean clean-logs clean-all clean_python_cache native desktop-parity
+.PHONY: front backend
 
 .DEFAULT_GOAL := help
 
@@ -24,30 +26,56 @@ RUFF := $(VENV)/bin/ruff
 WEBUI_PORT ?= $(shell python3 -c "import json, pathlib; p=pathlib.Path.home()/'.navin'/'config.json';\
 	print((json.load(open(p)).get('channels') or {}).get('websocket', {}).get('port', 8765) if p.is_file() else 8765)" 2>/dev/null || echo 8765)
 GATEWAY_PORT ?= $(shell python3 -c "import json, pathlib; p=pathlib.Path.home()/'.navin'/'config.json';\
-	print((json.load(open(p)).get('gateway') or {}).get('port', 18791) if p.is_file() else 18791)" 2>/dev/null || echo 18791)
+	print((json.load(open(p)).get('gateway') or {}).get('port', 18790) if p.is_file() else 18790)" 2>/dev/null || echo 18790)
 PORT ?= $(WEBUI_PORT)
 HEALTH_URL ?= http://127.0.0.1:$(WEBUI_PORT)/health
 
 LOG_DIR ?= $(CURDIR)/logs
 
+# make start front / make stop backend (mots extra = scope, cibles no-op)
+front backend:
+	@:
+
+HAS_FRONT := $(filter front,$(MAKECMDGOALS))
+HAS_BACK := $(filter backend,$(MAKECMDGOALS))
+ifeq ($(HAS_FRONT),front)
+  ifeq ($(HAS_BACK),backend)
+    DEV_SCOPE := all
+  else
+    DEV_SCOPE := front
+  endif
+else
+  ifeq ($(HAS_BACK),backend)
+    DEV_SCOPE := backend
+  else
+    DEV_SCOPE := all
+  endif
+endif
+
 help:
-	@echo "$(CYAN)Navin Backend - commandes disponibles:$(NC)"
+	@echo "$(CYAN)Navin - commandes disponibles:$(NC)"
 	@echo ""
-	@echo "  Installation:"
-	@echo "    install          Créer .venv et installer le package (editable + dev)"
-	@echo "    uninstall        Supprimer le .venv"
-	@echo "    doctor           Vérifier les outils système (node, ffmpeg, jq, ...)"
+	@echo "  Install / run (une commande suffit):"
+	@echo "    install          System + backend (.venv) + frontend (npm ci)"
+	@echo "    start            Gateway + WebUI dev (background)"
+	@echo "    stop             Tout arreter"
+	@echo "    restart          Tout relancer"
+	@echo "    status           Etat gateway + Vite"
+	@echo "    install|start|stop|restart|status front|backend"
+	@echo "    start-fg         Gateway seul, premier plan"
+	@echo "    uninstall        Supprimer .venv (+ node_modules si scope all/front)"
+	@echo "    doctor           Verifier les outils systeme"
 	@echo ""
-	@echo "  Gateway (foreground):"
-	@echo "    start            Démarrer navin gateway"
-	@echo "    stop             Arrêter le gateway"
-	@echo "    restart          Redémarrer le gateway"
-	@echo "    status           Vérifier si le gateway tourne"
+	@echo "  Scripts equivalents:"
+	@echo "    sh scripts/install.sh [front|backend]"
+	@echo "    sh scripts/start.sh [front|backend] [--install] [--fg]"
+	@echo "    sh scripts/stop.sh [front|backend]"
+	@echo "    sh scripts/restart.sh [front|backend]"
 	@echo ""
-	@echo "  Gateway (background):"
-	@echo "    start-bg         Démarrer en background"
-	@echo "    stop-bg          Arrêter le process background"
-	@echo "    restart-bg       Redémarrer en background"
+	@echo "  Gateway (aliases):"
+	@echo "    start-bg         Alias de: make start backend"
+	@echo "    stop-bg          Alias de: make stop backend"
+	@echo "    restart-bg       Alias de: make restart backend"
 	@echo "    logs             Suivre les logs gateway"
 	@echo ""
 	@echo "  Développement:"
@@ -96,23 +124,13 @@ help:
 	@echo "    clean            Cache Python + logs locaux"
 	@echo "    clean-all        clean + uninstall"
 	@echo ""
-	@echo "  Tout-en-un (backend + frontend):"
-	@echo "    sh scripts/start.sh   Installer si besoin + tout démarrer (options: --backend, --front, --fg, --install)"
-	@echo "    sh scripts/stop.sh    Tout arrêter"
-	@echo ""
 	@echo "$(BLUE)Gateway: $(HEALTH_URL)$(NC)"
 
 check:
 	@command -v $(PYTHON) >/dev/null 2>&1 || { echo "$(RED)python3 non installé$(NC)"; exit 1; }
 
-install: check
-	@echo "$(CYAN)Installation backend Navin...$(NC)"
-	@if [ ! -d "$(VENV)" ]; then $(PYTHON) -m venv "$(VENV)"; fi
-	@$(PIP) install -U pip
-	@$(PIP) install -e ".[dev]"
-	@$(VENV)/bin/python -c "from navin.agent.tools.sandbox import ensure_native_sandbox; p = ensure_native_sandbox(); print('navin-sandbox:', p or 'MISSING - install rustup then make native')"
-	@echo "$(GREEN)✓ Backend installé ($(VENV))$(NC)"
-	@$(NAVIN) doctor || true
+install:
+	@sh scripts/install.sh $(DEV_SCOPE)
 
 # Même diagnostic que dans les versions packagées: une seule implémentation.
 doctor: _ensure_navin
@@ -248,8 +266,14 @@ aws-upload-media: media-assets
 	@bash scripts/publish-media-templates-to-s3.sh
 
 uninstall:
-	@rm -rf "$(VENV)"
-	@echo "$(GREEN)✓ .venv supprimé$(NC)"
+	@if [ "$(DEV_SCOPE)" = "all" ] || [ "$(DEV_SCOPE)" = "backend" ]; then \
+		rm -rf "$(VENV)"; \
+		echo "$(GREEN).venv supprime$(NC)"; \
+	fi
+	@if [ "$(DEV_SCOPE)" = "all" ] || [ "$(DEV_SCOPE)" = "front" ]; then \
+		rm -rf "$(CURDIR)/webui/node_modules"; \
+		echo "$(GREEN)webui/node_modules supprime$(NC)"; \
+	fi
 
 _ensure_navin:
 	@if [ ! -x "$(NAVIN)" ]; then \
@@ -257,61 +281,29 @@ _ensure_navin:
 		exit 1; \
 	fi
 
-start: _ensure_navin
-	@echo "$(GREEN)Démarrage navin gateway (gateway $(GATEWAY_PORT), webui $(WEBUI_PORT))...$(NC)"
-	@$(NAVIN) gateway --port "$(GATEWAY_PORT)"
+start:
+	@sh scripts/start.sh $(DEV_SCOPE)
 
-stop: _ensure_navin
-	@$(NAVIN) gateway stop
+start-fg:
+	@sh scripts/start.sh backend --fg
 
-restart: stop start
+stop:
+	@sh scripts/stop.sh $(DEV_SCOPE)
 
-status: _ensure_navin
-	@$(NAVIN) gateway status
-	@if curl -sfS "$(HEALTH_URL)" >/dev/null 2>&1; then \
-		echo "$(GREEN)✓ Health OK: $(HEALTH_URL)$(NC)"; \
-	else \
-		echo "$(YELLOW)Health: $(HEALTH_URL) ne répond pas$(NC)"; \
-	fi
+restart:
+	@sh scripts/restart.sh $(DEV_SCOPE)
 
-start-bg: _ensure_navin
-	@echo "$(GREEN)Démarrage navin gateway en background (gateway $(GATEWAY_PORT), webui $(WEBUI_PORT))...$(NC)"
-	@out=`$(NAVIN) gateway --background --port "$(GATEWAY_PORT)" 2>&1`; code=$$?; \
-	echo "$$out"; \
-	if [ $$code -ne 0 ] && ! echo "$$out" | grep -q "already_running"; then exit $$code; fi
-	@ready=0; \
-	for _ in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -sfS "$(HEALTH_URL)" >/dev/null 2>&1; then ready=1; break; fi; \
-		sleep 1; \
-	done; \
-	if [ "$$ready" = "1" ]; then \
-		echo "$(GREEN)✓ Health OK: $(HEALTH_URL)$(NC)"; \
-	else \
-		echo "$(RED)✗ Gateway non joignable sur $(HEALTH_URL)$(NC)"; \
-		echo "$(YELLOW)Cause fréquente: aucune clé API / modèle dans ~/.navin/config.json$(NC)"; \
-		echo "$(YELLOW)Logs: $(NAVIN) gateway logs --no-follow$(NC)"; \
-		$(NAVIN) gateway logs --no-follow --tail 30 2>/dev/null || true; \
-		exit 1; \
-	fi
+status:
+	@sh scripts/status.sh $(DEV_SCOPE)
 
-stop-bg: stop
+start-bg:
+	@sh scripts/start.sh backend
 
-restart-bg: _ensure_navin
-	@# Do not force --port $(PORT): that flag is the gateway health port
-	# (gateway.port), not channels.websocket.port. Forcing 8765 broke installs
-	# whose WebUI listens on 8766 and left Vite proxying into a dead port.
-	@$(NAVIN) gateway restart --port "$(GATEWAY_PORT)"
-	@ready=0; \
-	for _ in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -sfS "$(HEALTH_URL)" >/dev/null 2>&1; then ready=1; break; fi; \
-		if curl -sfS "http://127.0.0.1:$(GATEWAY_PORT)/health" >/dev/null 2>&1; then ready=1; break; fi; \
-		sleep 1; \
-	done; \
-	if [ "$$ready" != "1" ]; then \
-		echo "$(RED)✗ Restart OK côté CLI mais health KO - voir: make logs$(NC)"; \
-		echo "$(YELLOW)WebUI health: $(HEALTH_URL)  Gateway health: http://127.0.0.1:$(GATEWAY_PORT)/health$(NC)"; \
-		exit 1; \
-	fi
+stop-bg:
+	@sh scripts/stop.sh backend
+
+restart-bg:
+	@sh scripts/restart.sh backend
 
 logs: _ensure_navin
 	@$(NAVIN) gateway logs

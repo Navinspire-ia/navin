@@ -1,4 +1,5 @@
 #!/bin/sh
+# Runs the `navin` CLI installed in this image (navinspire-ai/navin-agi).
 dir="$HOME/.navin"
 if [ -d "$dir" ] && [ ! -w "$dir" ]; then
     owner_uid=$(stat -c %u "$dir" 2>/dev/null || stat -f %u "$dir" 2>/dev/null)

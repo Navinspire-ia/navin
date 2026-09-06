@@ -50,15 +50,23 @@ In `~/.navin/config.json`, merge:
 
 ### 3. Start the gateway
 
-In one terminal:
+From the repository root:
 
 ```bash
-navin gateway
+make start backend
 ```
+
+Or in one terminal: `navin gateway`.
 
 ### 4. Start the WebUI dev server
 
-In another terminal:
+From the repository root:
+
+```bash
+make start front
+```
+
+Or:
 
 ```bash
 cd webui

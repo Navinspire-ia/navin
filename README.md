@@ -222,18 +222,23 @@ Download from [navin.live/download](https://navin.live/download).
 ```bash
 git clone https://github.com/navinspire-ai/navin-agi.git
 cd navin-agi
-sh scripts/start.sh --install
+make install
+make start
 ```
 
-This starts the local web UI. Configure providers and models in Settings, then start working. Stop with `sh scripts/stop.sh`.
-
-From the `navin-agi` directory you can launch the CLI directly, without activating the venv:
+`make install` installs everything (system deps if needed, backend, WebUI). `make start` starts the gateway and the local web UI.
 
 ```bash
-.venv/bin/navin-cli
+make stop
 ```
 
-Windows: `.venv\Scripts\navin-cli`
+Same thing with scripts: `sh scripts/install.sh` then `sh scripts/start.sh`. One shot: `sh scripts/start.sh --install`.
+
+`make start backend` is the gateway only. `make start front` is the Vite UI only. Restart: `make restart`.
+
+From the repo: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
+
+Details: [Installation](./docs/Installation.md).
 
 ## Agents
 

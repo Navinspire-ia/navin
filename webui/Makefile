@@ -90,12 +90,14 @@ start:
 stop:
 	@if [ -f "$(FRONTEND_PID)" ]; then \
 		pid=`cat "$(FRONTEND_PID)"`; \
-		kill $$pid 2>/dev/null || true; \
+		if [ -n "$$pid" ]; then \
+			kill $$pid 2>/dev/null || true; \
+			pkill -P $$pid 2>/dev/null || true; \
+			sleep 1; \
+			kill -9 $$pid 2>/dev/null || true; \
+		fi; \
 		rm -f "$(FRONTEND_PID)"; \
 	fi
-	@pkill -f "$(VITE_MATCH)" 2>/dev/null || true
-	@sleep 1
-	@pkill -9 -f "$(VITE_MATCH)" 2>/dev/null || true
 	@for p in `lsof -ti :$(PORT) 2>/dev/null`; do kill $$p 2>/dev/null || true; done
 	@echo "$(GREEN)✓ Frontend arrêté$(NC)"
 
