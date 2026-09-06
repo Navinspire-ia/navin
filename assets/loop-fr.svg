@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="168" viewBox="0 0 900 168" role="img" aria-label="Objectif, Plan, Action, Verification, Memoire, Apprentissage, Continuer">
+  <rect width="900" height="168" rx="20" fill="#0b0c10"/>
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="650" text-anchor="middle">
+    <rect x="16" y="36" width="112" height="44" rx="22" fill="#12141a" stroke="#0369ff" stroke-width="1.5"/>
+    <text x="72" y="64" fill="#f3efe6">Objectif</text>
+    <path d="M134 58h14" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+    <path d="M144 53l6 5-6 5" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="156" y="36" width="88" height="44" rx="22" fill="#12141a" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="200" y="64" fill="#f3efe6">Plan</text>
+    <path d="M250 58h14" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+    <path d="M260 53l6 5-6 5" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="272" y="36" width="96" height="44" rx="22" fill="#12141a" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="320" y="64" fill="#f3efe6">Action</text>
+    <path d="M374 58h14" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+    <path d="M384 53l6 5-6 5" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="396" y="36" width="124" height="44" rx="22" fill="#12141a" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="458" y="64" fill="#f3efe6">Vérifier</text>
+    <path d="M526 58h14" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+    <path d="M536 53l6 5-6 5" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="548" y="36" width="112" height="44" rx="22" fill="#12141a" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="604" y="64" fill="#f3efe6">Mémoire</text>
+    <path d="M666 58h14" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+    <path d="M676 53l6 5-6 5" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <rect x="688" y="36" width="196" height="44" rx="22" fill="#12141a" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="786" y="64" fill="#f3efe6">Apprendre</text>
+  </g>
+  <path d="M786 80v22" stroke="#54d4cd" stroke-width="2" stroke-linecap="round"/>
+  <path d="M781 96l5 6 5-6" fill="none" stroke="#54d4cd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="330" y="108" width="240" height="40" rx="20" fill="#0369ff"/>
+  <text x="450" y="134" text-anchor="middle" fill="#ffffff" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="15" font-weight="700">Continuer  º</text>
+  <path d="M330 128 H72" stroke="#0369ff" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+  <path d="M72 128 V80" stroke="#0369ff" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+  <path d="M67 88l5-8 5 8" fill="none" stroke="#0369ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+</svg>
