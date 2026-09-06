@@ -1,0 +1,1378 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens - monochrome (black / white / gray only). */
+@layer base {
+  :root {
+    color-scheme: light;
+    --background: 0 0% 99%;
+    --foreground: 0 0% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --primary: 0 0% 12%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 16%;
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 42%;
+    --accent: 0 0% 93%;
+    --accent-foreground: 0 0% 14%;
+    --destructive: 0 78% 56%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 88%;
+    --input: 0 0% 88%;
+    --ring: 0 0% 24%;
+    --brand-teal: 0 0% 45%;
+    --inline-token-highlight: 0 0% 22%;
+    --radius: 0.65rem;
+    --sidebar: 0 0% 97%;
+    --sidebar-foreground: 0 0% 14%;
+    --sidebar-accent: 0 0% 92%;
+    --sidebar-accent-foreground: 0 0% 12%;
+    --sidebar-border: 0 0% 88%;
+    --scrollbar-thumb: hsl(var(--muted-foreground) / 0.26);
+    --scrollbar-thumb-hover: hsl(var(--muted-foreground) / 0.42);
+    /* Composer mode accents - distinct hues (no shared blue).
+       Ask=violet, Plan=blue, Review=amber, Security=red, Debug=teal. */
+    --composer-ask: 262 72% 52%;
+    --composer-ask-fg: 262 65% 36%;
+    --composer-ask-soft: 262 90% 96%;
+    --composer-plan: 217 91% 52%;
+    --composer-plan-fg: 217 80% 38%;
+    --composer-plan-soft: 214 95% 95%;
+    --composer-review: 32 95% 48%;
+    --composer-review-fg: 28 90% 32%;
+    --composer-review-soft: 36 100% 95%;
+    --composer-security: 0 84% 50%;
+    --composer-security-fg: 0 75% 36%;
+    --composer-security-soft: 0 86% 96%;
+    --composer-debug: 168 72% 34%;
+    --composer-debug-fg: 168 78% 24%;
+    --composer-debug-soft: 168 50% 94%;
+    /* Active mode tokens (overridden by .composer-mode-* on the shell). */
+    --composer-mode: 217 91% 52%;
+    --composer-mode-fg: 217 80% 38%;
+    --composer-mode-soft: 214 95% 95%;
+    /* Activity journal tones - one hue per operation family, shared by the
+       journal rows, the header digest and the live "now" line. Light values
+       keep at least 4.5:1 on white. */
+    --tone-explore: 85 75% 28%;
+    --tone-read: 201 90% 32%;
+    --tone-edit: 163 88% 25%;
+    --tone-shell: 20 88% 38%;
+    --tone-cli: 193 80% 31%;
+    --tone-mcp: 295 70% 38%;
+    --tone-skill: 263 68% 48%;
+    --tone-task: 30 90% 34%;
+    --tone-git: 175 75% 26%;
+    --tone-browser: 244 58% 50%;
+    --tone-tool: 221 78% 45%;
+    --tone-error: 0 72% 42%;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --background: 0 0% 8%;
+    --foreground: 0 0% 96%;
+    --card: 0 0% 11%;
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 11%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 0 0% 92%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 62%;
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 90%;
+    --destructive: 0 62% 38%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 70%;
+    --brand-teal: 0 0% 60%;
+    --inline-token-highlight: 0 0% 78%;
+    --sidebar: 0 0% 9.5%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 0 0% 18%;
+    --scrollbar-thumb: hsl(var(--muted-foreground) / 0.28);
+    --scrollbar-thumb-hover: hsl(var(--muted-foreground) / 0.44);
+    --composer-ask: 262 78% 72%;
+    --composer-ask-fg: 262 90% 82%;
+    --composer-ask-soft: 262 32% 16%;
+    --composer-plan: 213 94% 68%;
+    --composer-plan-fg: 213 96% 78%;
+    --composer-plan-soft: 217 40% 16%;
+    --composer-review: 34 96% 58%;
+    --composer-review-fg: 34 98% 72%;
+    --composer-review-soft: 32 40% 14%;
+    --composer-security: 0 84% 62%;
+    --composer-security-fg: 0 90% 74%;
+    --composer-security-soft: 0 40% 15%;
+    --composer-debug: 168 65% 50%;
+    --composer-debug-fg: 168 72% 70%;
+    --composer-debug-soft: 168 32% 13%;
+    --composer-mode: 213 94% 68%;
+    --composer-mode-fg: 213 96% 78%;
+    --composer-mode-soft: 217 40% 16%;
+    --tone-explore: 84 72% 56%;
+    --tone-read: 199 85% 62%;
+    --tone-edit: 160 62% 54%;
+    --tone-shell: 27 92% 62%;
+    --tone-cli: 188 80% 56%;
+    --tone-mcp: 292 84% 72%;
+    --tone-skill: 255 88% 76%;
+    --tone-task: 43 96% 64%;
+    --tone-git: 172 64% 52%;
+    --tone-browser: 234 86% 74%;
+    --tone-tool: 213 92% 68%;
+    --tone-error: 0 88% 70%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  * {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::selection {
+    @apply bg-primary/15;
+  }
+}
+
+@layer utilities {
+  .host-drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .host-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  html.native-host,
+  html.native-host body,
+  html.native-host #root {
+    background: transparent;
+  }
+
+  html.native-host body {
+    overflow: hidden;
+  }
+
+  /*
+   * WebKitGTK / WKWebView zoom uses transform: scale on <html>. Scale paints
+   * outside the layout box and WebKit then makes the document scrollable,
+   * which hides the composer and the Code status bar. Shrink the box in
+   * ui-zoom.ts and clip here so the shell stays one viewport, like WebView2.
+   */
+  html.ui-css-scale-zoom,
+  html.ui-css-scale-zoom body,
+  html.ui-css-scale-zoom #root {
+    overflow: hidden !important;
+    max-height: 100%;
+  }
+
+  .host-window-shell {
+    --host-glass-spot: hsl(var(--background) / 0.42);
+    --host-glass-start: hsl(var(--sidebar) / 0.5);
+    --host-glass-end: hsl(var(--sidebar) / 0.3);
+    background:
+      radial-gradient(
+        circle at 18% 0%,
+        var(--host-glass-spot),
+        transparent 34rem
+      ),
+      linear-gradient(
+        180deg,
+        var(--host-glass-start),
+        var(--host-glass-end)
+      );
+    background-attachment: fixed, fixed;
+    -webkit-backdrop-filter: saturate(185%) blur(34px);
+    backdrop-filter: saturate(185%) blur(34px);
+  }
+
+  /* Flat, opaque sidebar like Cursor: no blur, no gradient, no inset seam. */
+  .host-sidebar-glass {
+    background: hsl(var(--sidebar));
+  }
+
+  .dark .host-window-shell {
+    --host-glass-spot: hsl(var(--foreground) / 0.06);
+    --host-glass-start: hsl(var(--sidebar) / 0.48);
+    --host-glass-end: hsl(var(--sidebar) / 0.3);
+  }
+
+  html.native-host * {
+    scrollbar-width: none;
+    scrollbar-gutter: auto !important;
+  }
+
+  html.native-host *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  /*
+   * The chat model picker and the Questions card must keep a visible,
+   * usable scrollbar even when the desktop chrome (`native-host` /
+   * `?hostChrome=1`) hides every other one. Other + a typed answer makes
+   * that card taller than the composer dock.
+   */
+  html.native-host [data-model-picker-scroll],
+  html.native-host [data-choice-prompt-scroll],
+  html.native-host [data-menu-scroll],
+  html.native-host [data-panel-scroll] {
+    scrollbar-width: thin !important;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent !important;
+  }
+
+  html.native-host [data-model-picker-scroll]::-webkit-scrollbar,
+  html.native-host [data-choice-prompt-scroll]::-webkit-scrollbar,
+  html.native-host [data-menu-scroll]::-webkit-scrollbar,
+  html.native-host [data-panel-scroll]::-webkit-scrollbar {
+    display: block !important;
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  html.native-host [data-model-picker-scroll]::-webkit-scrollbar-thumb,
+  html.native-host [data-choice-prompt-scroll]::-webkit-scrollbar-thumb,
+  html.native-host [data-menu-scroll]::-webkit-scrollbar-thumb,
+  html.native-host [data-panel-scroll]::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 8px;
+  }
+
+  /*
+   * Desk workbenches (Tenders, Career, Trading, Leads, Marketing, Scraping,
+   * Montage, Notes, Meeting, CRM, Code) are long forms and books: a hidden
+   * scrollbar reads as "this page does not scroll". Keep a thin one on every
+   * scroll container under the desk host, the chat column stays bare.
+   */
+  html.native-host [data-desk-scroll-host] [class*="overflow-auto"],
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"],
+  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"],
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"] {
+    scrollbar-width: thin !important;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent !important;
+  }
+
+  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar,
+  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar {
+    display: block !important;
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar-thumb,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar-thumb,
+  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar-thumb,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 8px;
+  }
+
+  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar-track,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar-track,
+  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar-track,
+  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /*
+   * WebKitGTK (Linux AppImage / .deb / .rpm / .pkg.tar.zst): backdrop-filter and
+   * `hsl(token / alpha)` either paint transparent or re-blur the whole
+   * window on every view change. Solid paint keeps clicks and menus as
+   * snappy as the Chromium web UI. Comma hsl() is the form this engine
+   * actually parses.
+   */
+  html.webkit-gtk,
+  html.webkit-gtk body,
+  html.webkit-gtk #root {
+    background-color: hsl(0, 0%, 99%);
+  }
+
+  html.webkit-gtk.dark,
+  html.webkit-gtk.dark body,
+  html.webkit-gtk.dark #root {
+    background-color: hsl(0, 0%, 8%);
+  }
+
+  html.webkit-gtk.native-host,
+  html.webkit-gtk.native-host body,
+  html.webkit-gtk.native-host #root {
+    background-color: hsl(0, 0%, 99%);
+  }
+
+  html.webkit-gtk.dark.native-host,
+  html.webkit-gtk.dark.native-host body,
+  html.webkit-gtk.dark.native-host #root {
+    background-color: hsl(0, 0%, 8%);
+  }
+
+  html.webkit-gtk *,
+  html.webkit-gtk *::before,
+  html.webkit-gtk *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* WebKitGTK synthesizes bold and paints heavy stems. Do not drop the
+     real weights to 300 (that would thin the whole UI). Just forbid fake
+     bold/italic and use the same antialias as the web build. */
+  html.webkit-gtk body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis: none;
+  }
+
+  html.webkit-gtk .host-window-shell,
+  html.webkit-gtk .host-sidebar-glass {
+    background-attachment: scroll !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  html.webkit-gtk .host-window-shell {
+    background: hsl(0, 0%, 99%) !important;
+  }
+
+  html.webkit-gtk .host-sidebar-glass {
+    background: hsl(0, 0%, 97%) !important;
+  }
+
+  html.webkit-gtk.dark .host-window-shell {
+    background: hsl(0, 0%, 8%) !important;
+  }
+
+  html.webkit-gtk.dark .host-sidebar-glass {
+    background: hsl(0, 0%, 9.5%) !important;
+  }
+
+  /*
+   * All WebKit engines (macOS WKWebView + Linux WebKitGTK): backdrop-filter
+   * on menus re-blurs the window on hover, which looks like flicker. The
+   * local Chrome web UI stays stable. Solid paint, same as Chromium.
+   */
+  html.webkit-engine [role="menu"],
+  html.webkit-engine [role="listbox"],
+  html.webkit-engine [data-radix-popper-content-wrapper] > div {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  html.webkit-gtk [role="menu"],
+  html.webkit-gtk [role="listbox"],
+  html.webkit-gtk [data-radix-popper-content-wrapper] > div {
+    background-color: hsl(0, 0%, 100%) !important;
+    background-image: none !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18) !important;
+  }
+
+  html.webkit-gtk.dark [role="menu"],
+  html.webkit-gtk.dark [role="listbox"],
+  html.webkit-gtk.dark [data-radix-popper-content-wrapper] > div {
+    background-color: hsl(0, 0%, 11%) !important;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45) !important;
+  }
+
+  .shadow-inner-right {
+    box-shadow: inset -9px 0 6px -1px rgb(0 0 0 / 0.02);
+  }
+
+  /* Chat reading scale. "Density" in Settings moves these two numbers; every
+     chat text (assistant prose, user pill, narration) reads them so the whole
+     thread scales together. */
+  :root,
+  [data-chat-density="comfortable"] {
+    --chat-font-size: 14px;
+    --chat-line-height: 1.65;
+    --cjk-line-height: var(--chat-line-height);
+  }
+  [data-chat-density="compact"] {
+    --chat-font-size: 13px;
+    --chat-line-height: 1.55;
+    --cjk-line-height: var(--chat-line-height);
+  }
+
+  /* ---------------------------------------------------------------------
+     Assistant markdown: one typographic system (Cursor-like reading rhythm).
+     Sizes are in em so the whole answer follows --chat-font-size. Colors
+     come from our tokens on purpose: Tailwind Typography's gray palette is
+     overridden for both the light and the inverted (dark) variable sets, so
+     the body reads with the same --foreground as the rest of the app.
+     --------------------------------------------------------------------- */
+  .markdown-content {
+    --md-body: hsl(var(--foreground) / 0.92);
+    --md-strong: hsl(var(--foreground));
+    --md-muted: hsl(var(--foreground) / 0.62);
+    --md-rule: hsl(var(--border));
+    --md-code-bg: hsl(var(--foreground) / 0.085);
+    --md-code-ring: hsl(var(--foreground) / 0.035);
+    --md-quote-bar: hsl(var(--foreground) / 0.18);
+    --md-table-head: hsl(var(--foreground) / 0.035);
+
+    --tw-prose-body: var(--md-body);
+    --tw-prose-headings: var(--md-strong);
+    --tw-prose-lead: var(--md-body);
+    --tw-prose-bold: var(--md-strong);
+    --tw-prose-counters: var(--md-muted);
+    --tw-prose-bullets: var(--md-muted);
+    --tw-prose-hr: var(--md-rule);
+    --tw-prose-quotes: var(--md-body);
+    --tw-prose-quote-borders: var(--md-quote-bar);
+    --tw-prose-captions: var(--md-muted);
+    --tw-prose-code: var(--md-strong);
+    --tw-prose-th-borders: var(--md-rule);
+    --tw-prose-td-borders: hsl(var(--border) / 0.7);
+    --tw-prose-invert-body: var(--md-body);
+    --tw-prose-invert-headings: var(--md-strong);
+    --tw-prose-invert-lead: var(--md-body);
+    --tw-prose-invert-bold: var(--md-strong);
+    --tw-prose-invert-counters: var(--md-muted);
+    --tw-prose-invert-bullets: var(--md-muted);
+    --tw-prose-invert-hr: var(--md-rule);
+    --tw-prose-invert-quotes: var(--md-body);
+    --tw-prose-invert-quote-borders: var(--md-quote-bar);
+    --tw-prose-invert-captions: var(--md-muted);
+    --tw-prose-invert-code: var(--md-strong);
+    --tw-prose-invert-th-borders: var(--md-rule);
+    --tw-prose-invert-td-borders: hsl(var(--border) / 0.7);
+
+    color: var(--md-body);
+    font-size: var(--chat-font-size, 14px);
+    line-height: var(--chat-line-height, 1.65);
+  }
+
+  .markdown-content > :first-child {
+    @apply mt-0;
+  }
+  .markdown-content > :last-child {
+    @apply mb-0;
+  }
+
+  /* Headings: bold, clearly above the body, generous air above so sections
+     read as sections ("Résultat", "Modifications", "Vérification"). */
+  .markdown-content :where(h1, h2, h3, h4, h5, h6) {
+    color: var(--md-strong);
+    font-weight: 700;
+    letter-spacing: -0.012em;
+    line-height: 1.3;
+    text-wrap: balance;
+    margin-top: 1.55em;
+    margin-bottom: 0.5em;
+  }
+  .markdown-content :where(h1) {
+    font-size: 1.36em;
+  }
+  .markdown-content :where(h2) {
+    font-size: 1.22em;
+  }
+  .markdown-content :where(h3) {
+    font-size: 1.1em;
+    font-weight: 650;
+    margin-top: 1.4em;
+    margin-bottom: 0.4em;
+  }
+  .markdown-content :where(h4, h5, h6) {
+    font-size: 1em;
+    font-weight: 650;
+    margin-top: 1.3em;
+    margin-bottom: 0.35em;
+  }
+  /* A heading right after a heading (title + subtitle) stays attached. */
+  .markdown-content :where(h1, h2, h3, h4) + :where(h2, h3, h4, h5, h6) {
+    margin-top: 0.6em;
+  }
+
+  .markdown-content :where(p) {
+    margin-top: 0.72em;
+    margin-bottom: 0.72em;
+    text-wrap: pretty;
+  }
+  .markdown-content :where(strong) {
+    color: var(--md-strong);
+    font-weight: 650;
+  }
+  .markdown-content :where(em) {
+    color: inherit;
+  }
+
+  /* Lists: tight rhythm, markers a notch quieter than the text. */
+  .markdown-content :where(ul, ol) {
+    margin-top: 0.55em;
+    margin-bottom: 0.7em;
+    padding-left: 1.45em;
+  }
+  .markdown-content :where(ul) {
+    list-style-type: disc;
+  }
+  .markdown-content :where(ul ul) {
+    list-style-type: circle;
+  }
+  .markdown-content :where(li) {
+    margin-top: 0.3em;
+    margin-bottom: 0.3em;
+    padding-left: 0.1em;
+    text-wrap: pretty;
+  }
+  .markdown-content :where(li)::marker {
+    color: var(--md-muted);
+  }
+  .markdown-content :where(ol > li)::marker {
+    font-variant-numeric: tabular-nums;
+  }
+  .markdown-content :where(li > p) {
+    margin-top: 0.3em;
+    margin-bottom: 0.3em;
+  }
+  .markdown-content :where(li > ul, li > ol) {
+    margin-top: 0.3em;
+    margin-bottom: 0.3em;
+  }
+  .markdown-content .contains-task-list {
+    @apply list-none pl-0;
+  }
+  .markdown-content .task-list-item {
+    @apply list-none pl-0;
+  }
+
+  /* Inline code: a quiet chip, slightly smaller than the text around it. */
+  .markdown-content :where(:not(pre) > code) {
+    color: var(--md-strong);
+    font-weight: 400;
+    font-size: 0.86em;
+    letter-spacing: 0;
+    background: var(--md-code-bg);
+    box-shadow: inset 0 0 0 1px var(--md-code-ring);
+    border-radius: 5px;
+    padding: 0.12em 0.36em;
+    overflow-wrap: anywhere;
+  }
+  .markdown-content :where(h1, h2, h3, h4, h5, h6) code {
+    font-size: 0.86em;
+    font-weight: inherit;
+  }
+
+  /* Quotes: a bar and a softer voice, no typographic quote marks. */
+  .markdown-content :where(blockquote) {
+    margin-top: 0.9em;
+    margin-bottom: 0.9em;
+    padding: 0.15em 0 0.15em 0.95em;
+    border-left: 2px solid var(--md-quote-bar);
+    color: hsl(var(--foreground) / 0.78);
+    font-style: normal;
+    font-weight: 400;
+  }
+  .markdown-content :where(blockquote p:first-of-type)::before,
+  .markdown-content :where(blockquote p:last-of-type)::after {
+    content: none;
+  }
+  .markdown-content :where(blockquote p) {
+    margin-top: 0.35em;
+    margin-bottom: 0.35em;
+  }
+
+  .markdown-content :where(hr) {
+    margin-top: 1.6em;
+    margin-bottom: 1.6em;
+    border-color: var(--md-rule);
+  }
+
+  /* Tables: framed, header tinted, cells with real padding. */
+  .markdown-content :where(table) {
+    margin-top: 0.9em;
+    margin-bottom: 0.9em;
+    font-size: 0.95em;
+    line-height: 1.5;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid var(--md-rule);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .markdown-content :where(thead) {
+    background: var(--md-table-head);
+    border-bottom-width: 0;
+  }
+  .markdown-content :where(th) {
+    color: var(--md-strong);
+    font-weight: 650;
+    text-align: left;
+    padding: 0.5em 0.85em;
+    border-bottom: 1px solid var(--md-rule);
+    vertical-align: bottom;
+  }
+  .markdown-content :where(td) {
+    padding: 0.5em 0.85em;
+    border-bottom: 1px solid hsl(var(--border) / 0.7);
+    vertical-align: top;
+  }
+  .markdown-content :where(tbody tr:last-child td) {
+    border-bottom: 0;
+  }
+  .markdown-content :where(th:first-child, td:first-child) {
+    padding-left: 0.85em;
+  }
+  .markdown-content :where(th:last-child, td:last-child) {
+    padding-right: 0.85em;
+  }
+  .markdown-content :where(td code, th code) {
+    font-size: 0.88em;
+  }
+
+  .markdown-content :where(a) {
+    font-weight: 500;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  .markdown-content :where(img, video) {
+    border-radius: 8px;
+  }
+
+  .markdown-content :where(kbd) {
+    font-family: inherit;
+    font-size: 0.82em;
+    font-weight: 500;
+    color: var(--md-strong);
+    border-radius: 5px;
+    padding: 0.1em 0.4em;
+    box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.16), 0 1px 0 hsl(var(--foreground) / 0.12);
+  }
+
+  /* L→R sheen clipped to live activity labels. The highlight lives inside
+     the glyphs, not in the row background, so dark mode stays quiet. */
+  @keyframes streaming-text-sheen-ltr {
+    0% {
+      background-position: 140% 50%;
+    }
+    100% {
+      background-position: -40% 50%;
+    }
+  }
+  .streaming-text-sheen {
+    position: relative;
+    color: hsl(var(--muted-foreground));
+  }
+  .file-reference-sheen {
+    color: inherit;
+  }
+  .streaming-text-sheen::after {
+    content: attr(data-sheen-text);
+    position: absolute;
+    inset: 0;
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    color: transparent;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      transparent 38%,
+      hsl(var(--foreground) / 0.98) 50%,
+      transparent 62%,
+      transparent 100%
+    );
+    background-size: 260% 100%;
+    background-position: 140% 50%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: streaming-text-sheen-ltr 2.8s ease-in-out infinite;
+  }
+  .dark .streaming-text-sheen::after {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      transparent 38%,
+      hsl(var(--foreground) / 0.98) 50%,
+      transparent 62%,
+      transparent 100%
+    );
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .streaming-text-sheen::after {
+      animation: none;
+      content: "";
+    }
+  }
+
+  @keyframes composer-status-strip-enter {
+    0% {
+      max-height: 0;
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+    72% {
+      max-height: var(--composer-strip-max-height, 46px);
+      opacity: 1;
+      transform: translateY(-1px) scale(1.004);
+    }
+    100% {
+      max-height: var(--composer-strip-max-height, 46px);
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes composer-status-strip-exit {
+    0% {
+      max-height: var(--composer-strip-max-height, 46px);
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      max-height: 0;
+      opacity: 0;
+      transform: translateY(8px) scale(0.99);
+    }
+  }
+  .composer-status-strip {
+    transform-origin: bottom center;
+    will-change: max-height, opacity, transform;
+  }
+  .composer-status-strip[data-state="enter"] {
+    animation: composer-status-strip-enter 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .composer-status-strip[data-state="exit"] {
+    animation: composer-status-strip-exit 180ms ease-in both;
+  }
+  @keyframes run-pulse-dot {
+    0%,
+    100% {
+      transform: scale(0.9);
+      opacity: 0.76;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 1;
+    }
+  }
+  @keyframes run-pulse-ring {
+    0% {
+      transform: scale(0.42);
+      opacity: 0.34;
+    }
+    100% {
+      transform: scale(1.28);
+      opacity: 0;
+    }
+  }
+  @keyframes task-progress-slide {
+    0% {
+      left: -35%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+  /* Sidebar "agent running" glyph: four dots, one dims at a time, clockwise. */
+  @keyframes chat-run-dot {
+    0%,
+    100% {
+      opacity: 0.9;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.18;
+      transform: scale(0.72);
+    }
+  }
+  .run-pulse-icon {
+    color: hsl(var(--brand-teal));
+  }
+  .run-pulse-icon__ring,
+  .run-pulse-icon__dot {
+    display: block;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  .run-pulse-icon__ring {
+    position: absolute;
+    height: 12px;
+    width: 12px;
+    background: hsl(var(--brand-teal) / 0.22);
+    animation: run-pulse-ring 1.55s ease-out infinite;
+  }
+  .run-pulse-icon__dot {
+    height: 6px;
+    width: 6px;
+    background: currentColor;
+    box-shadow: 0 0 0 1px hsl(var(--brand-teal) / 0.14);
+    animation: run-pulse-dot 1.55s ease-in-out infinite;
+  }
+  @keyframes queued-prompt-row-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .queued-prompt-row {
+    animation: queued-prompt-row-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .composer-status-strip {
+      will-change: auto;
+    }
+    .composer-status-strip[data-state] {
+      animation: none;
+    }
+    .run-pulse-icon,
+    .run-pulse-icon * {
+      animation: none;
+    }
+    .run-pulse-icon__ring {
+      opacity: 0.18;
+      transform: scale(1);
+    }
+    .run-pulse-icon__dot {
+      opacity: 1;
+      transform: scale(1);
+    }
+    .queued-prompt-row {
+      animation: none;
+    }
+  }
+
+  /** Goal halo - Navin primary + teal. */
+  @keyframes goal-shell-glow-breathe {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.22))
+        drop-shadow(0 0 24px hsl(var(--brand-teal) / 0.14));
+    }
+    50% {
+      filter: drop-shadow(0 0 17px hsl(var(--primary) / 0.32))
+        drop-shadow(0 0 38px hsl(var(--brand-teal) / 0.2));
+    }
+  }
+  .goal-shell-glow {
+    animation: goal-shell-glow-breathe 4.8s ease-in-out infinite;
+  }
+
+  /* Concrete HSL triples (not nested var()) so hsl(var(--composer-mode)/a) works. */
+  .composer-mode-ask {
+    --composer-mode: 262 72% 52%;
+    --composer-mode-fg: 262 65% 36%;
+    --composer-mode-soft: 262 90% 96%;
+  }
+  .composer-mode-plan {
+    --composer-mode: 217 91% 52%;
+    --composer-mode-fg: 217 80% 38%;
+    --composer-mode-soft: 214 95% 95%;
+  }
+  .composer-mode-review {
+    --composer-mode: 32 95% 48%;
+    --composer-mode-fg: 28 90% 32%;
+    --composer-mode-soft: 36 100% 95%;
+  }
+  .composer-mode-security {
+    --composer-mode: 0 84% 50%;
+    --composer-mode-fg: 0 75% 36%;
+    --composer-mode-soft: 0 86% 96%;
+  }
+  .composer-mode-debug {
+    --composer-mode: 168 72% 34%;
+    --composer-mode-fg: 168 78% 24%;
+    --composer-mode-soft: 168 50% 94%;
+  }
+  .composer-mode-montage {
+    --composer-mode: 340 75% 48%;
+    --composer-mode-fg: 340 70% 34%;
+    --composer-mode-soft: 340 90% 96%;
+  }
+  .dark .composer-mode-ask {
+    --composer-mode: 262 78% 72%;
+    --composer-mode-fg: 262 90% 82%;
+    --composer-mode-soft: 262 32% 16%;
+  }
+  .dark .composer-mode-plan {
+    --composer-mode: 213 94% 68%;
+    --composer-mode-fg: 213 96% 78%;
+    --composer-mode-soft: 217 40% 16%;
+  }
+  .dark .composer-mode-review {
+    --composer-mode: 34 96% 58%;
+    --composer-mode-fg: 34 98% 72%;
+    --composer-mode-soft: 32 40% 14%;
+  }
+  .dark .composer-mode-security {
+    --composer-mode: 0 84% 62%;
+    --composer-mode-fg: 0 90% 74%;
+    --composer-mode-soft: 0 40% 15%;
+  }
+  .dark .composer-mode-debug {
+    --composer-mode: 168 65% 50%;
+    --composer-mode-fg: 168 72% 70%;
+    --composer-mode-soft: 168 32% 13%;
+  }
+  .dark .composer-mode-montage {
+    --composer-mode: 340 72% 62%;
+    --composer-mode-fg: 340 90% 78%;
+    --composer-mode-soft: 340 36% 14%;
+  }
+
+  /* Legacy alias kept for any leftover plan-only references. */
+  .composer-plan-shell,
+  .composer-mode-shell {
+    border-color: hsl(var(--composer-mode) / 0.55) !important;
+    box-shadow:
+      0 0 0 1px hsl(var(--composer-mode) / 0.22),
+      0 12px 32px hsl(var(--composer-mode) / 0.14);
+  }
+  .dark .composer-plan-shell,
+  .dark .composer-mode-shell {
+    border-color: hsl(var(--composer-mode) / 0.6) !important;
+    box-shadow:
+      0 0 0 1px hsl(var(--composer-mode) / 0.28),
+      0 16px 36px hsl(var(--composer-mode) / 0.2);
+  }
+  .composer-plan-shell:focus-within,
+  .composer-mode-shell:focus-within {
+    border-color: hsl(var(--composer-mode) / 0.8) !important;
+  }
+  .composer-plan-shell::after,
+  .composer-mode-shell::after {
+    border-color: hsl(var(--composer-mode) / 0.65) !important;
+  }
+  @keyframes goal-shell-glow-breathe-dark {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 12px hsl(var(--primary) / 0.28))
+        drop-shadow(0 0 28px hsl(var(--brand-teal) / 0.16));
+    }
+    50% {
+      filter: drop-shadow(0 0 20px hsl(var(--primary) / 0.42))
+        drop-shadow(0 0 42px hsl(var(--brand-teal) / 0.24));
+    }
+  }
+  .dark .goal-shell-glow {
+    animation-name: goal-shell-glow-breathe-dark;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .goal-shell-glow {
+      animation: none;
+      filter: drop-shadow(0 0 14px hsl(var(--primary) / 0.24));
+    }
+    .dark .goal-shell-glow {
+      filter: drop-shadow(0 0 14px hsl(var(--brand-teal) / 0.32));
+    }
+  }
+
+  @keyframes cli-app-linked-sheen {
+    0% {
+      transform: translateX(-140%) skewX(-14deg);
+      opacity: 0;
+    }
+    18% {
+      opacity: 0.7;
+    }
+    72%,
+    100% {
+      transform: translateX(140%) skewX(-14deg);
+      opacity: 0;
+    }
+  }
+  .cli-app-linked-chip::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(var(--foreground) / 0.14) 46%,
+      hsl(var(--background) / 0.7) 50%,
+      hsl(var(--foreground) / 0.12) 54%,
+      transparent 100%
+    );
+    animation: cli-app-linked-sheen 1.25s ease-out 1;
+  }
+  .dark .cli-app-linked-chip::after {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(var(--foreground) / 0.12) 46%,
+      hsl(var(--background) / 0.5) 50%,
+      hsl(var(--foreground) / 0.1) 54%,
+      transparent 100%
+    );
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cli-app-linked-chip::after {
+      animation: none;
+      content: none;
+    }
+  }
+
+  /* Subtle scrollbar that doesn't fight the dark background. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 9999px;
+  }
+  .scrollbar-track-transparent {
+    scrollbar-gutter: stable;
+  }
+  .scrollbar-track-transparent::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /*
+   * Mobile responsive safety net - keep the chat viewport + composer inside a
+   * narrow viewport (see #4693). These are containment rules: long markdown
+   * (URLs, branch names, file paths, code, tables) wraps or scrolls inside its
+   * own box instead of forcing the whole column - and thus the page - wider
+   * than 100vw. Desktop layout is unchanged; the rules only engage when content
+   * would otherwise overflow. Fenced code blocks keep their own internal
+   * horizontal scroll (CodeBlock and the markdown <pre> wrappers already set
+   * overflow-x: auto), so clipping the thread column horizontally is safe.
+   */
+
+  /* Prose container: allow it to shrink within its column and break long words
+     so long URLs / paths never stretch the conversation wider than 100vw. */
+  .markdown-content {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-wrap: break-word;
+  }
+
+  /* Long links and inline code break rather than stretch the column. */
+  .markdown-content a,
+  .markdown-content code {
+    overflow-wrap: anywhere;
+    word-wrap: break-word;
+  }
+
+  /* Fenced / pre blocks scroll inside their own box, never the page. */
+  .markdown-content pre,
+  .not-prose pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  /* Wide markdown tables scroll horizontally within the conversation column.
+     Tables are wrapped in an overflow-x:auto <div> by the markdown renderer's
+     custom `table` component (see MarkdownTextRenderer); min-w-max on the
+     <table> keeps natural column widths so it scrolls instead of shrinking. */
+
+  /* Clip any residual horizontal bleed at the thread column edge. Vertical
+     scrolling and internal code-block scroll are unaffected. */
+  .thread-viewport-scrollbar {
+    overflow-x: hidden;
+  }
+
+  .thread-viewport {
+    container-name: thread-viewport;
+    container-type: inline-size;
+  }
+
+  .thread-prompt-rail {
+    display: none;
+    left: 1.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .thread-prompt-rail {
+      display: block;
+    }
+  }
+
+  @container thread-viewport (max-width: 59rem) {
+    .thread-prompt-rail {
+      display: none;
+    }
+  }
+
+  /* Installed PWA / narrow phone: keep the shell inside the dynamic viewport
+     and avoid horizontal bleed when the soft keyboard or notch insets change. */
+  @media (max-width: 639px) {
+    html,
+    body,
+    #root {
+      height: 100%;
+      max-width: 100vw;
+      overflow-x: hidden;
+    }
+
+    .thread-viewport,
+    .thread-viewport-scrollbar {
+      max-width: 100%;
+    }
+
+    [data-testid="thread-composer-dock"] {
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+  }
+}
+
+/* Team composer: live formatted text, compact so it sits in the chat bar. */
+.team-composer .tiptap {
+  outline: none;
+}
+.team-composer .tiptap p.is-editor-empty:first-child::before {
+  color: hsl(var(--muted-foreground) / 0.7);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.team-composer .tiptap strong { font-weight: 650; }
+.team-composer .tiptap em { font-style: italic; }
+.team-composer .tiptap s { text-decoration: line-through; }
+.team-composer .tiptap code {
+  border-radius: 0.25rem;
+  background: hsl(var(--muted));
+  font-size: 0.85em;
+  padding: 0.05rem 0.25rem;
+}
+.team-composer .tiptap pre {
+  border-radius: 0.4rem;
+  background: hsl(var(--muted));
+  font-size: 0.8em;
+  padding: 0.4rem 0.55rem;
+}
+.team-composer .tiptap ul { list-style: disc; padding-left: 1.1rem; }
+.team-composer .tiptap ol { list-style: decimal; padding-left: 1.1rem; }
+.team-composer .tiptap blockquote {
+  border-left: 2px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  padding-left: 0.55rem;
+}
+.team-composer .tiptap a {
+  color: hsl(199 80% 40%);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Thinking traces: muted body, dusty violet bold/headings, quiet code.
+   Unlayered so it beats dark:prose-invert and markdown --tw-prose-* tokens. */
+.markdown-content.reasoning-prose {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: hsl(0 0% 38%);
+  --cjk-line-height: 1.75;
+  --tw-prose-body: hsl(0 0% 38%);
+  --tw-prose-lead: hsl(0 0% 38%);
+  --tw-prose-headings: hsl(262 42% 38%);
+  --tw-prose-bold: hsl(262 36% 40%);
+  --tw-prose-links: hsl(213 52% 38%);
+  --tw-prose-code: hsl(160 28% 32%);
+  --tw-prose-quotes: hsl(0 0% 38%);
+  --tw-prose-counters: hsl(0 0% 46%);
+  --tw-prose-bullets: hsl(0 0% 52%);
+}
+
+.dark .markdown-content.reasoning-prose {
+  color: hsl(0 0% 62%);
+  --tw-prose-body: hsl(0 0% 62%);
+  --tw-prose-lead: hsl(0 0% 62%);
+  --tw-prose-headings: hsl(262 42% 74%);
+  --tw-prose-bold: hsl(262 32% 72%);
+  --tw-prose-links: hsl(213 42% 68%);
+  --tw-prose-code: hsl(160 20% 62%);
+  --tw-prose-quotes: hsl(0 0% 62%);
+  --tw-prose-counters: hsl(0 0% 52%);
+  --tw-prose-bullets: hsl(0 0% 46%);
+}
+
+.markdown-content.reasoning-prose p,
+.markdown-content.reasoning-prose li {
+  color: inherit;
+}
+
+.markdown-content.reasoning-prose h1,
+.markdown-content.reasoning-prose h2,
+.markdown-content.reasoning-prose h3,
+.markdown-content.reasoning-prose h4 {
+  color: hsl(262 48% 36%);
+  font-weight: 600;
+}
+
+.dark .markdown-content.reasoning-prose h1,
+.dark .markdown-content.reasoning-prose h2,
+.dark .markdown-content.reasoning-prose h3,
+.dark .markdown-content.reasoning-prose h4 {
+  color: hsl(262 48% 76%);
+}
+
+.markdown-content.reasoning-prose strong,
+.markdown-content.reasoning-prose b {
+  color: hsl(262 38% 38%);
+  font-weight: 600;
+}
+
+.dark .markdown-content.reasoning-prose strong,
+.dark .markdown-content.reasoning-prose b {
+  color: hsl(262 32% 72%);
+}
+
+.markdown-content.reasoning-prose code {
+  background-color: hsl(160 18% 46% / 0.08);
+  color: hsl(160 28% 32%);
+  font-weight: 500;
+}
+
+.dark .markdown-content.reasoning-prose code {
+  background-color: hsl(160 14% 50% / 0.1);
+  color: hsl(160 20% 64%);
+}
+
+.markdown-content.reasoning-prose pre code {
+  background-color: transparent;
+  color: inherit;
+}
+
+/* Opacity-only Radix menu presence. tailwindcss-animate's `animate-out`
+   writes `transform: translate3d(0,0,0)` on the content; WebKitGTK flattens
+   that against the popper wrapper's translate, so Effort / model / session
+   menus blink at the origin on outside-click instead of fading in place.
+   Keep a named animation so Radix Presence waits for the fade. */
+@keyframes navin-menu-in {
+  from { opacity: 0; }
+}
+@keyframes navin-menu-out {
+  to { opacity: 0; }
+}
+.navin-menu-presence {
+  animation: navin-menu-in 150ms ease-out;
+}
+.navin-menu-presence[data-state="closed"] {
+  animation: navin-menu-out 150ms ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .navin-menu-presence,
+  .navin-menu-presence[data-state="closed"] {
+    animation: none;
+  }
+}
+
+/* Tender book: fit the pane, hide secondary columns as the container shrinks. */
+.tenders-notice-table {
+  container-name: tenders-notice-table;
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+
+.tenders-notice-table table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.tenders-notice-table .tenders-notice-col-score {
+  width: 4.5rem;
+}
+
+.tenders-notice-table .tenders-notice-col-status {
+  width: 5.75rem;
+}
+
+.tenders-notice-table .tenders-notice-col-deadline {
+  width: 7.25rem;
+}
+
+.tenders-notice-table .tenders-notice-col-place {
+  width: 6.75rem;
+}
+
+.tenders-notice-table .tenders-notice-col-budget {
+  width: 7.5rem;
+}
+
+.tenders-notice-table .tenders-notice-col-duration {
+  width: 7rem;
+}
+
+.tenders-notice-table .tenders-notice-col-buyer {
+  width: 9rem;
+}
+
+.tenders-notice-table .tenders-notice-col-actions {
+  width: 3.25rem;
+}
+
+@container tenders-notice-table (max-width: 46rem) {
+  .tenders-notice-table .tenders-notice-col-budget,
+  .tenders-notice-table .tenders-notice-col-duration {
+    display: none;
+  }
+}
+
+@container tenders-notice-table (max-width: 34rem) {
+  .tenders-notice-table .tenders-notice-col-place,
+  .tenders-notice-table .tenders-notice-col-buyer {
+    display: none;
+  }
+}
+
+@container tenders-notice-table (max-width: 26rem) {
+  .tenders-notice-table .tenders-notice-col-status {
+    display: none;
+  }
+}

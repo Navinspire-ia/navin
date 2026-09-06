@@ -29,7 +29,7 @@ if [ "${NAVIN_PUBLIC_PUSH:-}" != "1" ]; then
   exit 1
 fi
 
-private_re='^(site/|src/|desktop/|desktop-electron/|os/|webui/|templates/|deploy/docker/site|packaging/aws/|packaging/linux/|packaging/macos/|packaging/windows/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|scripts/publish-os-to-s3\.sh|scripts/publish-templates-to-s3\.sh|scripts/publish-media-templates-to-s3\.sh|scripts/s3-bucket-policy\.json)'
+private_re='^(site/|src/|desktop/|desktop-electron/|os/|templates/|tmp-preview-fixture/|deploy/docker/site|packaging/aws/|packaging/linux/|packaging/macos/|packaging/windows/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|scripts/publish-os-to-s3\.sh|scripts/publish-templates-to-s3\.sh|scripts/publish-media-templates-to-s3\.sh|scripts/s3-bucket-policy\.json)'
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -z "${local_sha:-}" ] && continue

@@ -183,6 +183,9 @@ meetily/
 # Etat local de l'agent Navin (memoire/persona), jamais versionne.
 .navin/
 
+# Fixtures de preview locales, jamais versionnees ni publiees.
+tmp-preview-fixture/
+
 # Masters media generes localement (~350 Mo) puis publies sur S3 via
 # make aws-upload-media. Seul catalog.json reste versionne.
 templates/media/assets/

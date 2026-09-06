@@ -211,8 +211,8 @@ assert_no_private_leak() {
   [ -e "$dest/desktop" ] && leaked="${leaked}desktop "
   [ -e "$dest/desktop-electron" ] && leaked="${leaked}desktop-electron "
   [ -e "$dest/os" ] && leaked="${leaked}os "
-  [ -e "$dest/webui" ] && leaked="${leaked}webui "
   [ -e "$dest/templates" ] && leaked="${leaked}templates "
+  [ -e "$dest/tmp-preview-fixture" ] && leaked="${leaked}tmp-preview-fixture "
   [ -e "$dest/packaging/aws" ] && leaked="${leaked}packaging/aws "
   [ -e "$dest/navin/license_client.py" ] && leaked="${leaked}license_client "
   [ -e "$dest/navin/license_sync.py" ] && leaked="${leaked}license_sync "
@@ -303,7 +303,7 @@ publish_github() {
     git -C "$WORKTREE" diff --cached --stat | tail -n 50
     echo
     echo "Fichiers privés absents de l'index (contrôle) :"
-    git -C "$WORKTREE" ls-files | grep -E '^(site/|src/|desktop/|desktop-electron/|os/|webui/|templates/|packaging/aws/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|scripts/publish-.*-s3\.sh)' && die "fuite" || echo "  aucun (site / desktop / os / AWS / navin.live)"
+    git -C "$WORKTREE" ls-files | grep -E '^(site/|src/|desktop/|desktop-electron/|os/|templates/|tmp-preview-fixture/|packaging/aws/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|scripts/publish-.*-s3\.sh)' && die "fuite" || echo "  aucun (site / desktop / os / AWS / navin.live)"
     git -C "$WORKTREE" reset --hard HEAD >/dev/null
     return 0
   fi

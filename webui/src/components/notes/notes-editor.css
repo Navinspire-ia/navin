@@ -1,0 +1,314 @@
+/* Tiptap editor surface for the Notes module. Scoped under .notes-editor so
+   it cannot leak into chat markdown or other workbenches. */
+
+.notes-editor .tiptap {
+  outline: none;
+  min-height: 100%;
+  padding: 0 0 40vh;
+  font-size: 15px;
+  line-height: 1.7;
+  color: hsl(var(--foreground));
+  caret-color: hsl(var(--primary));
+}
+
+.notes-editor .notes-wikilink {
+  cursor: pointer;
+  border-radius: 0.25rem;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.35);
+  text-underline-offset: 0.16em;
+}
+
+.notes-editor .notes-wikilink:hover,
+.notes-editor .notes-wikilink:focus-visible {
+  background: hsl(var(--primary) / 0.18);
+  outline: 2px solid hsl(var(--primary) / 0.55);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notes-editor *,
+  .notes-editor *::before,
+  .notes-editor *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+.notes-editor .tiptap > * + * {
+  margin-top: 0.55em;
+}
+
+.notes-editor .tiptap h1 {
+  font-size: 1.7em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-top: 1.1em;
+}
+
+.notes-editor .tiptap h2 {
+  font-size: 1.35em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-top: 1em;
+}
+
+.notes-editor .tiptap h3 {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-top: 0.9em;
+}
+
+.notes-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: hsl(var(--muted-foreground) / 0.65);
+}
+
+.notes-editor .tiptap blockquote {
+  border-left: 3px solid hsl(var(--border));
+  padding-left: 0.9em;
+  color: hsl(var(--muted-foreground));
+}
+
+.notes-editor .tiptap ul,
+.notes-editor .tiptap ol {
+  padding-left: 1.4em;
+}
+
+.notes-editor .tiptap ul {
+  list-style: disc;
+}
+
+.notes-editor .tiptap ol {
+  list-style: decimal;
+}
+
+.notes-editor .tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.1em;
+}
+
+.notes-editor .tiptap ul[data-type="taskList"] li {
+  display: flex;
+  gap: 0.55em;
+  align-items: flex-start;
+}
+
+.notes-editor .tiptap ul[data-type="taskList"] li > label {
+  margin-top: 0.28em;
+  user-select: none;
+}
+
+.notes-editor .tiptap ul[data-type="taskList"] li > label input {
+  accent-color: hsl(var(--primary));
+  width: 0.95em;
+  height: 0.95em;
+  cursor: pointer;
+}
+
+.notes-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: hsl(var(--muted-foreground));
+  text-decoration: line-through;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.5);
+}
+
+.notes-editor .tiptap code {
+  background: hsl(var(--muted) / 0.7);
+  border-radius: 5px;
+  padding: 0.12em 0.35em;
+  font-size: 0.88em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.notes-editor .tiptap pre {
+  background: hsl(var(--muted) / 0.55);
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 10px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+}
+
+.notes-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.notes-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.4em 0;
+}
+
+.notes-editor .tiptap a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.4);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.notes-editor .tiptap img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border) / 0.5);
+}
+
+.notes-editor .tiptap img.ProseMirror-selectednode {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+.notes-editor .tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  margin: 0.6em 0;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.notes-editor .tiptap th,
+.notes-editor .tiptap td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.35em 0.6em;
+  vertical-align: top;
+  position: relative;
+  min-width: 4em;
+}
+
+.notes-editor .tiptap th {
+  background: hsl(var(--muted) / 0.5);
+  font-weight: 600;
+  text-align: left;
+}
+
+.notes-editor .tiptap .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: hsl(var(--primary) / 0.12);
+  pointer-events: none;
+}
+
+.notes-editor .tiptap mark {
+  background: hsl(48 96% 76%);
+  border-radius: 3px;
+  padding: 0 0.15em;
+}
+
+.dark .notes-editor .tiptap mark {
+  background: hsl(45 80% 38%);
+  color: hsl(var(--foreground));
+}
+
+/* Agent blocks: a task the note can launch. */
+.notes-editor .notes-agent-block {
+  border: 1px solid hsl(var(--primary) / 0.35);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 0.6em 0;
+}
+
+.notes-editor .notes-agent-block-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.4em 0.8em;
+  background: hsl(var(--primary) / 0.08);
+  border-bottom: 1px solid hsl(var(--primary) / 0.25);
+  color: hsl(var(--primary));
+  font-size: 11.5px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.notes-editor .notes-agent-block-title {
+  flex: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.notes-editor .notes-agent-block-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  border-radius: 6px;
+  padding: 0.25em 0.7em;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  transition: opacity 120ms ease;
+}
+
+.notes-editor .notes-agent-block-run:hover {
+  opacity: 0.85;
+}
+
+.notes-editor .notes-agent-block pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  background: hsl(var(--muted) / 0.35);
+}
+
+/* Syntax highlighting (lowlight, highlight.js class names). */
+.notes-editor .hljs-comment,
+.notes-editor .hljs-quote {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.notes-editor .hljs-keyword,
+.notes-editor .hljs-selector-tag,
+.notes-editor .hljs-type {
+  color: hsl(262 60% 58%);
+}
+
+.notes-editor .hljs-string,
+.notes-editor .hljs-regexp,
+.notes-editor .hljs-attr {
+  color: hsl(140 45% 42%);
+}
+
+.notes-editor .hljs-number,
+.notes-editor .hljs-literal {
+  color: hsl(24 80% 50%);
+}
+
+.notes-editor .hljs-title,
+.notes-editor .hljs-name,
+.notes-editor .hljs-function {
+  color: hsl(210 80% 52%);
+}
+
+.dark .notes-editor .hljs-keyword,
+.dark .notes-editor .hljs-selector-tag,
+.dark .notes-editor .hljs-type {
+  color: hsl(262 80% 74%);
+}
+
+.dark .notes-editor .hljs-string,
+.dark .notes-editor .hljs-regexp,
+.dark .notes-editor .hljs-attr {
+  color: hsl(140 55% 62%);
+}
+
+.dark .notes-editor .hljs-number,
+.dark .notes-editor .hljs-literal {
+  color: hsl(24 90% 65%);
+}
+
+.dark .notes-editor .hljs-title,
+.dark .notes-editor .hljs-name,
+.dark .notes-editor .hljs-function {
+  color: hsl(210 90% 70%);
+}

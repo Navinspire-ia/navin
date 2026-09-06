@@ -1,0 +1,13 @@
+[
+  { "id": "web", "url": "https://navin.live/docs" },
+  { "id": "sirene", "url": "https://recherche-entreprises.api.gouv.fr/docs/" },
+  { "id": "pappers", "url": "https://www.pappers.fr/api/documentation" },
+  { "id": "companies_house", "url": "https://developer.company-information.service.gov.uk/" },
+  { "id": "places", "url": "https://developers.google.com/maps/documentation/places/web-service" },
+  { "id": "apollo", "url": "https://docs.apollo.io/" },
+  { "id": "pdl", "url": "https://docs.peopledatalabs.com/" },
+  { "id": "hunter", "url": "https://hunter.io/api-documentation/v2" },
+  { "id": "crunchbase", "url": "https://data.crunchbase.com/docs" },
+  { "id": "opencorporates", "url": "https://api.opencorporates.com/documentation/API-Reference" },
+  { "id": "linkedin", "url": "https://www.linkedin.com" }
+]
