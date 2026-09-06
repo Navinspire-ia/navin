@@ -2,7 +2,7 @@
 
 <h2 align="center">
   <img src="./assets/navin-mark.svg" alt="" width="42" height="42" valign="middle">
-  <strong>NAVIN <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
+  <strong>NAVIN</strong>
   &nbsp;&nbsp;
   <strong>100% Free Open Source <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
 </h2>
