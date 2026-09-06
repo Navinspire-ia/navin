@@ -1241,6 +1241,30 @@ class Config(BaseSettings):
         from navin.config.paths import resolve_workspace_setting
         return resolve_workspace_setting(self.agents.defaults.workspace)
 
+    def _byok_match_for_hidden_navin(
+        self, forced: str
+    ) -> tuple["ProviderConfig | None", str | None]:
+        """Reuse leftover ``provider: navin`` as OpenRouter after the BYOK cut.
+
+        ``navin-cli`` used to crash with engine offline: the preset still said
+        ``navin``, the registry no longer has that slot, and ``make_provider``
+        raised. The leftover key (often an OpenRouter wire URL) stays usable
+        without putting Navin back in Settings.
+        """
+        if forced.replace("-", "_").lower() != "navin":
+            return None, None
+        from navin.optional_live import live_modules_available
+
+        if live_modules_available():
+            return None, None
+        openrouter = getattr(self.providers, "openrouter", None)
+        leftover = getattr(self.providers, "navin", None)
+        if isinstance(openrouter, ProviderConfig) and openrouter.api_key:
+            return openrouter, "openrouter"
+        if isinstance(leftover, ProviderConfig) and leftover.api_key:
+            return leftover, "openrouter"
+        return None, None
+
     def _match_provider(
         self, model: str | None = None,
         *,
@@ -1273,6 +1297,9 @@ class Config(BaseSettings):
             custom = _custom_provider_by_name(forced)
             if custom is not None:
                 return custom
+            remapped = self._byok_match_for_hidden_navin(forced)
+            if remapped[1]:
+                return remapped
             return None, None
 
         model_lower = (model or resolved.model).lower()

@@ -3,46 +3,31 @@
 Navin is released under the MIT License (see `LICENSE`). This file lists
 third-party and upstream components that remain under their own licenses.
 
----
+## Bundled software
 
-## nanobot
+### FFmpeg
 
-Original project: https://github.com/HKUDS/nanobot
+Navin may redistribute FFmpeg as a separate executable for media processing.
 
-Copyright (c) 2025-present Xubin Ren and the nanobot contributors
+The exact FFmpeg license applicable to each distributed binary depends on
+the configuration and components used to build that binary.
 
-An early portion of the runtime includes code derived from nanobot (MIT).
-Navin is an original product of Navinspire IA. The notices below are kept
-so that upstream attribution stays with any redistributed copies.
+FFmpeg is generally licensed under LGPL-2.1-or-later, while builds enabling
+GPL components are distributed under GPL-2.0-or-later or another applicable
+GPL version depending on their configuration.
 
-### MIT License
+For each Navin release, the exact FFmpeg build, source, license and checksum
+are recorded in `packaging/ffmpeg-manifest.json`.
 
-Copyright (c) 2025-present Xubin Ren and the nanobot contributors
+Upstream: https://ffmpeg.org/
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## UI and assets
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-## Tabler Icons - interface icons (MIT)
+### Tabler Icons
 
 - Source: https://github.com/tabler/tabler-icons
 - Origin: redistributed with upstream nanobot web assets where applicable
+- License: MIT
 
 ```text
 MIT License
@@ -68,12 +53,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
----
-
-## KaTeX - math rendering (MIT)
+### KaTeX
 
 - Source: https://github.com/KaTeX/KaTeX
 - Origin: redistributed with upstream nanobot web assets where applicable
+- License: MIT
 
 ```text
 The MIT License (MIT)
@@ -99,12 +83,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
----
-
-## KaTeX Fonts - math typography (SIL OFL 1.1)
+### KaTeX Fonts
 
 - Source: https://github.com/KaTeX/KaTeX/tree/main/src/fonts
 - Origin: redistributed with upstream nanobot web assets where applicable
+- License: SIL OFL 1.1
 
 The fonts are redistributed unmodified.
 
@@ -207,14 +190,50 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
----
+## Upstream-derived components
 
-## browser-use
+### nanobot
+
+Original project: https://github.com/HKUDS/nanobot
+
+Copyright (c) 2025-present Xubin Ren and the nanobot contributors
+
+An early portion of the runtime includes code derived from nanobot (MIT).
+Navin is an original product of Navinspire IA. This notice is kept so that
+upstream attribution stays with any redistributed copies.
+
+```text
+MIT License
+
+Copyright (c) 2025-present Xubin Ren and the nanobot contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Optional integrations
+
+### browser-use
 
 - Package: `browser-use`
 - Version pin: see `pyproject.toml` optional extra `browser`
 - Upstream: https://github.com/browser-use/browser-use
-- Licence: MIT
+- License: MIT
 
 ```text
 MIT License
@@ -241,66 +260,6 @@ SOFTWARE.
 ```
 
 Navin may integrate `browser-use` for optional browser-agent capabilities.
-
----
-
-## FFmpeg (GPL-3.0-or-later)
-
-Navin desktop builds redistribute an unmodified static **FFmpeg** executable
-(`ffmpeg`, or `ffmpeg.exe` on Windows) inside the application bundle, under
-`tools/`. Navin uses it to assemble videos, export social formats, transcode
-browser recordings, and sample frames from a video attached to a conversation.
-
-- Upstream project: https://ffmpeg.org
-- Copyright (c) 2000-present the FFmpeg developers
-- Licence: **GNU General Public License, version 3 or later**
-- Full licence text: `licenses/ffmpeg-COPYING.GPLv3.txt` in the installed
-  application, and `desktop/src-tauri/resources/licenses/` in this repository.
-
-The redistributed binaries are prebuilt by third parties, pinned by SHA-256 in
-`packaging/ffmpeg-manifest.json`:
-
-| Platform | Build provider |
-| --- | --- |
-| Linux x86-64, arm64 | https://johnvansickle.com/ffmpeg/ |
-| Windows x86-64 | https://www.gyan.dev/ffmpeg/builds/ |
-| Windows arm64 | https://github.com/BtbN/FFmpeg-Builds |
-| macOS x86-64 | https://evermeet.cx/ffmpeg/ |
-| macOS arm64 | https://www.osxexperts.net/ |
-
-The Docker image is installed with pip and has no such bundle, so it takes
-FFmpeg from the Debian `ffmpeg` package instead. Its corresponding source is
-published by Debian at https://sources.debian.org/src/ffmpeg/ and the written
-offer below applies to it as well.
-
-### Relationship to Navin
-
-FFmpeg is redistributed as a **separate, unmodified executable**. Navin invokes
-it as a subprocess through its documented command-line interface and does not
-link against, statically or dynamically, any FFmpeg library. Navin is therefore
-a separate work released under the MIT License, while the
-FFmpeg executable remains entirely under the GPL.
-
-### Written offer for corresponding source
-
-In accordance with section 6 of the GNU General Public License version 3,
-Navinspire IA hereby offers, to any third party who received a Navin
-distribution containing the FFmpeg executable, a complete machine-readable copy
-of the corresponding source code of that FFmpeg build, for a period of three
-years from the date of that distribution, for a charge no more than the cost of
-physically performing the distribution.
-
-To exercise this offer, write to **contact@navinspire.com** with the subject
-"FFmpeg source request", indicating your Navin version, your platform, and the
-SHA-256 of the FFmpeg executable shipped with your installation. The
-corresponding source is also published by each build provider listed above, and
-by the FFmpeg project at https://git.ffmpeg.org/ffmpeg.git.
-
-You may replace the bundled executable: Navin resolves `ffmpeg` from the `PATH`
-before using the bundled one, so installing your own build takes precedence
-without repackaging the application.
-
----
 
 ## Other runtime dependencies
 

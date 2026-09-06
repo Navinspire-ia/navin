@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import unittest
 
-from navin.config.schema import Config, ModelPresetConfig, ProvidersConfig
+from navin.config.schema import Config, ModelPresetConfig, ProviderConfig, ProvidersConfig
+from navin.agent.loop import AgentLoop
+from navin.config.loader import set_config_path
 from navin.providers.factory import make_provider
 from navin.optional_live import live_modules_available
 from navin.providers.registry import PROVIDERS, find_by_name
@@ -122,6 +124,41 @@ class EnvAliasTest(unittest.TestCase):
                         self.assertEqual(config.get_api_key(model), f"env-{env_name}")
                     finally:
                         os.environ.pop(env_name, None)
+
+
+class HiddenNavinBootTest(unittest.TestCase):
+    def test_leftover_navin_preset_uses_openrouter_on_public_tree(self) -> None:
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        with isolated_provider_env():
+            config = Config()
+            config.agents.defaults.provider = "navin"
+            config.agents.defaults.model = "z-ai/glm-5.3-flash"
+            config.providers.navin = ProviderConfig(
+                api_key="sk-or-leftover",
+                api_base="https://openrouter.ai/api/v1",
+            )
+            self.assertEqual(config.get_provider_name("z-ai/glm-5.3-flash"), "openrouter")
+            provider = make_provider(config)
+            self.assertNotEqual(type(provider).__name__, "UnconfiguredProvider")
+
+    def test_from_config_starts_when_navin_has_no_key(self) -> None:
+        if live_modules_available():
+            self.skipTest("live account enabled")
+        import tempfile
+        from pathlib import Path
+
+        with isolated_provider_env():
+            with tempfile.TemporaryDirectory() as tmp:
+                set_config_path(Path(tmp) / "config.json")
+                try:
+                    config = Config()
+                    config.agents.defaults.provider = "navin"
+                    config.agents.defaults.model = "z-ai/glm-5.3-flash"
+                    loop = AgentLoop.from_config(config)
+                    self.assertEqual(type(loop.provider).__name__, "UnconfiguredProvider")
+                finally:
+                    set_config_path(Path.home() / ".navin" / "config.json")
 
 
 class MistralQuirksTest(unittest.TestCase):

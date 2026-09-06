@@ -904,7 +904,15 @@ class AgentLoop:
         from navin.plan_limits import effective_concurrent_agents, effective_steps_per_task
 
         defaults = config.agents.defaults
-        provider = extra.pop("provider", None) or make_provider(config)
+        provider = extra.pop("provider", None)
+        if provider is None:
+            try:
+                provider = make_provider(config)
+            except ValueError as exc:
+                from navin.providers.unconfigured import UnconfiguredProvider
+
+                logger.warning("Provider not ready at boot: {}", exc)
+                provider = UnconfiguredProvider(reason=str(exc))
         resolved = config.resolve_preset()
         model = extra.pop("model", None) or resolved.model
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
@@ -929,9 +937,15 @@ class AgentLoop:
             added_mcp = ensure_auto_enabled_mcp_presets(config)
             if added_mcp:
                 try:
-                    from navin.config.loader import save_config as _save_config
+                    from navin.config.loader import get_config_path, load_config, save_config
 
-                    _save_config(config)
+                    path = get_config_path()
+                    if path.exists():
+                        live = load_config(path)
+                        if ensure_auto_enabled_mcp_presets(live):
+                            save_config(live, path)
+                    else:
+                        save_config(config, path)
                 except Exception:
                     pass
                 from loguru import logger as _logger
