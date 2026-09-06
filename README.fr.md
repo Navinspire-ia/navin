@@ -1,12 +1,9 @@
 <div align="center">
 
-<h1>
-  <img src="./assets/navin-mark.svg" alt="" width="44" height="44" align="absmiddle">
-  Navin
-</h1>
+<h1 align="center"><img src="./assets/navin-mark.svg" alt="" width="48" height="48" valign="middle"> Navin</h1>
 
-<p>
-  <img src="./assets/agi.gif" alt="Navin AGI" width="420">
+<p align="center">
+  <img src="./assets/agi.gif" alt="Navin AGI" width="560">
 </p>
 
 **100% gratuit. Open source. Autonome. Conçu vers l'AGI.**
@@ -33,7 +30,7 @@ Votre machine. Vos modèles. Votre agent.
 </div>
 
 <p align="center">
-  <img src="./assets/navin.gif" alt="Navin Studio" width="900">
+  <img src="./assets/navin.png" alt="Navin Studio" width="900">
 </p>
 
 ## Pourquoi Navin ?
@@ -43,7 +40,7 @@ La plupart des outils IA s'arrêtent après une réponse.
 Navin prend un objectif et continue de travailler.
 
 <p align="center">
-  <img src="./assets/loop-fr.svg" alt="Objectif, Plan, Action, Vérifier, Mémoire, Apprendre, Continuer" width="900">
+  <img src="./assets/loop-fr.png" alt="Objectif, Plan, Action, Verifier, Memoire, Apprendre, Continuer" width="900">
 </p>
 
 Navin tourne en application desktop et en CLI, fonctionne en local, accepte vos propres clés API et peut utiliser des centaines de modèles texte et multimodaux.
