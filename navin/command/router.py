@@ -54,10 +54,10 @@ class CommandRouter:
     """Pure dict-based command dispatch.
 
     Three tiers checked in order:
-      1. *priority* — exact-match commands handled before the dispatch lock
+      1. *priority* - exact-match commands handled before the dispatch lock
          (e.g. /stop, /restart).
-      2. *exact* — exact-match commands handled inside the dispatch lock.
-      3. *prefix* — longest-prefix-first match (e.g. "/team ").
+      2. *exact* - exact-match commands handled inside the dispatch lock.
+      3. *prefix* - longest-prefix-first match (e.g. "/leads ").
     """
 
     def __init__(self) -> None:

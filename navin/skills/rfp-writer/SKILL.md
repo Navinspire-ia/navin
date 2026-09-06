@@ -1,6 +1,6 @@
 ---
 name: rfp-writer
-description: Respond to RFPs, RFQs, tenders, and cahiers des charges — compliance matrix, requirement mapping, and structured answers. Use for formal procurement responses.
+description: Respond to RFPs, RFQs, tenders, and cahiers des charges - compliance matrix, requirement mapping, and structured answers. Use for formal procurement responses.
 metadata: {"navin":{"emoji":"🏛️","category":"writing"}}
 ---
 
@@ -15,16 +15,17 @@ Tenders are won on compliance first, differentiation second. Miss one mandatory 
 ### 1. Deconstruct the RFP
 - Extract every requirement into a **compliance matrix**: `| # | Requirement | Mandatory? | Our answer | Evidence | Page |`
 - Flag: deadlines, format rules, page limits, required certificates, submission method
-- List admin documents needed (registres, attestations, références — critical in DZ/Gulf public tenders)
+- List admin documents needed (registres, attestations, références - critical in DZ/Gulf public tenders)
 
 ### 2. Bid/no-bid check
-Score: can we deliver? do we have references? is price competitive? do we know the buyer? — advise honestly.
+Score: can we deliver? do we have references? is price competitive? do we know the buyer? - advise honestly.
 
 ### 3. Write the response
-- Follow *their* structure and numbering exactly — evaluators score against a grid
-- Answer each requirement explicitly ("Compliant — here's how…"), never by omission
+- Follow *their* structure and numbering exactly - evaluators score against a grid
+- Answer each requirement explicitly ("Compliant - here's how"), never by omission
 - Differentiators woven into answers, not in a separate brochure section
-- Reuse vetted content blocks (past responses, `case-study-writer` outputs) — adapted, not pasted
+- Reuse vetted content blocks (past responses, `case-study-writer` outputs) - adapted, not pasted
+- On the Tenders desk, `tenders action=write` already builds a professional dossier in the **notice language**: cover, contents, letter, executive summary, company, need, approach, vision, functional, technical, methodology, KPIs, RACI/risks, governance, planning, budget, references, compliance matrix. Study that pack first. Do not invent a certificate, price or reference.
 
 ### 4. Review
 - Compliance matrix 100% green before polish
@@ -33,7 +34,7 @@ Score: can we deliver? do we have references? is price competitive? do we know t
 
 ## Workflow tools
 
-Extract requirements from PDFs with `pdf-ocr-extractor`; produce final docs with `docx-generator`/`pdf-generator`; track deadlines with `cron` reminders; watch new tenders with `tender-monitor`.
+Extract requirements from PDFs with `pdf-ocr-extractor`; produce final docs with `docx-generator`/`pdf-generator`; draw architecture / methodology / sequence diagrams with `archify`; track deadlines with `cron` reminders; watch new tenders with `tender-monitor`.
 
 ## Rules
 

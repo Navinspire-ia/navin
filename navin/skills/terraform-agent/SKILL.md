@@ -20,6 +20,6 @@ Infrastructure as code with plan-first safety. Never apply blindly to shared sta
 
 ## Rules
 
-- State backends and credentials stay in env/backends — not in chat.
+- State backends and credentials stay in env/backends - not in chat.
 - Prefer smallest module change that solves the request.
 - Pair with `human-approval` before `apply`.

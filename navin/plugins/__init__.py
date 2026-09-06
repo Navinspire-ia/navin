@@ -2,9 +2,9 @@
 
 A plugin is a directory under ``~/.navin/plugins/<name>/`` containing any of:
 
-- ``plugin.json``          — manifest (name, version, description, author, homepage)
-- ``skills/<skill>/SKILL.md`` — skills loaded next to builtin/workspace skills
-- ``mcp.json``             — ``{"mcpServers": {...}}`` merged into the tools config
+- ``plugin.json``          - manifest (name, version, description, author, homepage)
+- ``skills/<skill>/SKILL.md`` - skills loaded next to builtin/workspace skills
+- ``mcp.json``             - ``{"mcpServers": {...}}`` merged into the tools config
                              (commands can use npx, uvx, docker, any binary)
 
 Install from a local directory or a git repository, enable/disable without

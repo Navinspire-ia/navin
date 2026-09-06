@@ -35,12 +35,10 @@ import asyncio
 
 from navin import Navin
 
-
 async def main() -> None:
     async with Navin.from_config() as bot:
         result = await bot.run("List the top-level files in this workspace.")
     print(result.content)
-
 
 asyncio.run(main())
 ```
@@ -69,7 +67,3 @@ asyncio.run(main())
 
 ## Related navin docs
 
-- [Navin Python SDK](../python-sdk.md)
-- [OpenAI-Compatible API](../openai-api.md)
-- [Configuration](../configuration.md)
-- [Concepts](../concepts.md)

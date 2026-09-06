@@ -25,6 +25,20 @@ def _get_token_encoding() -> Any:
     return tiktoken.get_encoding("cl100k_base")
 
 
+def estimate_text_tokens(text: str) -> int:
+    """Estimate the tokens a plain string contributes to a prompt.
+
+    Falls back to a characters-per-token ratio when tiktoken is unavailable, so
+    callers that budget context can always get a number rather than an error.
+    """
+    if not text:
+        return 0
+    try:
+        return len(_get_token_encoding().encode(text))
+    except Exception:
+        return max(1, len(text) // 4)
+
+
 def _cache_tools_token_count(
     tools_id: int,
     fingerprint: tuple[int, ...],
@@ -92,12 +106,12 @@ def strip_think(text: str) -> str:
       1. Well-formed `<think>...</think>`, `<thinking>...</thinking>`,
          and `<thought>...</thought>` blocks.
       2. Streaming prefixes where the block is never closed.
-      3. *Malformed* opening tags missing the `>` — e.g. `<think广场…`. The
+      3. *Malformed* opening tags missing the `>` - e.g. `<think广场…`. The
          model sometimes emits the tag name directly followed by user-facing
          content with no delimiter; without this step the literal `<think`
          leaks into the rendered message.
       4. Harmony-style channel markers like `<channel|>` / `<|channel|>`
-         **at the start of the text** — conservative to avoid eating
+         **at the start of the text** - conservative to avoid eating
          explanatory prose that mentions these tokens.
       5. Orphan closing tags `</think>` / `</thinking>` / `</thought>`
          **at the very start or end of the text** only, for the same reason.
@@ -118,7 +132,7 @@ def strip_think(text: str) -> str:
     # Malformed opening tags: `<think` / `<thinking` / `<thought` where the next char is
     # NOT one that could continue a valid tag / identifier name. Explicitly
     # listing ASCII tag-name chars (letters, digits, `_`, `-`, `:`) plus
-    # `>` / `/` — we can't use `\w` here because in Python's default
+    # `>` / `/` - we can't use `\w` here because in Python's default
     # Unicode regex mode it matches CJK characters too, which would defeat
     # the primary fix for `<think广场…` leaks.
     text = re.sub(rf"<{_THINKING_TAG}(?![A-Za-z0-9_\-:>/])", "", text)
@@ -155,7 +169,7 @@ def extract_think(text: str) -> tuple[str | None, str]:
 
     Returns ``(thinking_text, cleaned_text)``. Only closed blocks are
     extracted; unclosed streaming prefixes are stripped from the cleaned
-    text but not surfaced — :func:`strip_think` handles that case.
+    text but not surfaced - :func:`strip_think` handles that case.
     """
     parts: list[str] = []
     for m in re.finditer(rf"<(?P<tag>{_THINKING_TAG})>([\s\S]*?)</(?P=tag)>", text):
@@ -248,10 +262,77 @@ def detect_image_mime(data: bytes) -> str | None:
     return None
 
 
+# Longest side a model image may have. Anthropic downsizes past 1 568 px and
+# rejects past 8 000; a 2 560 px screenshot costs ~5k tokens where 2 000 px
+# still keeps UI text legible. Claude Code caps at the same 2 000.
+IMAGE_MAX_SIDE_PX = 2000
+# Payload cap before re-encoding: the base64 request body is 4/3 of this and
+# every provider accepts a 4 MB image; a 12 MB full-page PNG is refused by
+# some and slow for all.
+IMAGE_MAX_BYTES = 4 * 1024 * 1024
+_IMAGE_SHRINK_SKIP_MIMES = frozenset({"image/svg+xml", "image/gif"})
+
+
+def shrink_image_for_model(raw: bytes, mime: str) -> tuple[bytes, str, str | None]:
+    """``(bytes, mime, note)`` sized for a model request, or the input untouched.
+
+    Scales the longest side to :data:`IMAGE_MAX_SIDE_PX` and re-encodes past
+    :data:`IMAGE_MAX_BYTES`. PNG stays PNG when it fits (screenshot text stays
+    crisp); anything still too large becomes JPEG. The note tells the model
+    the pixel coordinates it sees are the scaled ones. Any decode failure
+    returns the original so a strange file never blocks a read.
+    """
+    if mime in _IMAGE_SHRINK_SKIP_MIMES:
+        return raw, mime, None
+    try:
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as image:
+            width, height = image.size
+            scale = min(1.0, IMAGE_MAX_SIDE_PX / max(width, height, 1))
+            if scale >= 1.0 and len(raw) <= IMAGE_MAX_BYTES:
+                return raw, mime, None
+            image.load()
+            if scale < 1.0:
+                new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+                image = image.resize(new_size, Image.LANCZOS)
+            else:
+                new_size = (width, height)
+            has_alpha = image.mode in ("RGBA", "LA") or (
+                image.mode == "P" and "transparency" in image.info
+            )
+            encoded: bytes | None = None
+            out_mime = mime
+            if mime in ("image/png", "image/webp"):
+                buffer = io.BytesIO()
+                image.save(buffer, format="PNG", optimize=True)
+                if buffer.tell() <= IMAGE_MAX_BYTES:
+                    encoded, out_mime = buffer.getvalue(), "image/png"
+            if encoded is None:
+                buffer = io.BytesIO()
+                rgb = image.convert("RGB") if image.mode != "RGB" or has_alpha else image
+                rgb.save(buffer, format="JPEG", quality=85, optimize=True)
+                encoded, out_mime = buffer.getvalue(), "image/jpeg"
+    except Exception:
+        return raw, mime, None
+    if new_size == (width, height) and len(encoded) >= len(raw):
+        return raw, mime, None
+    if new_size != (width, height):
+        note = f"(image scaled to {new_size[0]}x{new_size[1]} from {width}x{height})"
+    else:
+        note = f"(image re-encoded as {out_mime.split('/')[-1]} to fit the request)"
+    return encoded, out_mime, note
+
+
 def build_image_content_blocks(
     raw: bytes, mime: str, path: str, label: str
 ) -> list[dict[str, Any]]:
     """Build native image blocks plus a short text label."""
+    raw, mime, note = shrink_image_for_model(raw, mime)
+    if note:
+        label = f"{label} {note}"
     b64 = base64.b64encode(raw).decode()
     return [
         {
@@ -730,6 +811,9 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
     """Sync bundled templates to workspace. Creates missing files without overwriting user files."""
     from importlib.resources import files as pkg_files
 
+    from navin import workspace_layout
+    from navin.project_scaffold import ensure_navin_project_pack
+
     try:
         tpl = pkg_files("navin") / "templates"
     except Exception:
@@ -747,13 +831,35 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         dest.write_text(content, encoding="utf-8")
         added.append(str(dest.relative_to(workspace)))
 
+    # 1) Project continuity hub first (.navin like .cursor / .claude).
+    added.extend(ensure_navin_project_pack(workspace))
+
+    # 2) Legacy projects: move root-level brain files into .navin/ before
+    #    scaffolding, so nothing is duplicated and nothing stays at the root.
+    workspace_layout.migrate_layout(workspace)
+
+    # 3) Shared agent brain inside .navin/ (one brain for every studio; the
+    #    project root stays clean of Navin's own operational files).
+    navin_base = workspace_layout.navin_dir(workspace)
     for item in tpl.iterdir():
         if item.name.endswith(".md") and not item.name.startswith("."):
-            _write(item, workspace / item.name)
-    _write(tpl / "memory" / "MEMORY.md", workspace / "memory" / "MEMORY.md")
-    _write(tpl / "prompts" / "README.md", workspace / "prompts" / "README.md")
-    _write(None, workspace / "memory" / "history.jsonl")
-    (workspace / "skills").mkdir(exist_ok=True)
+            _write(item, navin_base / item.name)
+    _write(tpl / "memory" / "MEMORY.md", workspace_layout.memory_file(workspace))
+    _write(tpl / "prompts" / "README.md", workspace_layout.prompts_dir(workspace) / "README.md")
+    _write(None, workspace_layout.memory_dir(workspace) / "history.jsonl")
+    workspace_layout.coalesce_owned_skills(workspace)
+    metadata_dir = workspace_layout.metadata_dir(workspace)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    metadata_index = metadata_dir / "index.json"
+    if not metadata_index.exists():
+        metadata_index.write_text('{"files": {}}\n', encoding="utf-8")
+        added.append(str(metadata_index.relative_to(workspace)))
+    checkpoints = workspace_layout.checkpoints_dir(workspace)
+    checkpoints.mkdir(parents=True, exist_ok=True)
+    checkpoint_ignore = checkpoints / ".gitignore"
+    if not checkpoint_ignore.exists():
+        checkpoint_ignore.write_text("*\n!.gitignore\n", encoding="utf-8")
+        added.append(str(checkpoint_ignore.relative_to(workspace)))
 
     if added and not silent:
         from rich.console import Console
@@ -768,16 +874,43 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         gs = GitStore(
             workspace,
             tracked_files=[
-                "SOUL.md",
-                "USER.md",
-                "memory/MEMORY.md",
+                ".navin/SOUL.md",
+                ".navin/USER.md",
+                ".navin/memory/MEMORY.md",
             ],
         )
-        gs.init()
+        if not gs.init() and gs.is_initialized() and gs.owns_gitignore():
+            # Pre-migration stores ignore .navin/ in their .gitignore.
+            # owns_gitignore() keeps project repos' own .gitignore untouched.
+            gs.refresh_gitignore()
     except Exception:
         logger.exception("Failed to initialize git store for {}", workspace)
 
     return added
+
+
+def ensure_project_scaffold(project_path: Path | str, *, silent: bool = True) -> list[str]:
+    """Ensure a project directory has the durable Navin scaffold (idempotent).
+
+    Creates the ``.navin/`` continuity pack (board, agents, rules, resume) plus
+    the shared brain (SOUL / USER / MEMORY) inside ``.navin/`` without
+    overwriting user content. Safe on every project open. Skips Navin system
+    storage when used as a project root.
+    """
+    from navin.config.paths import is_navin_internal_path
+
+    root = Path(project_path).expanduser()
+    try:
+        root = root.resolve(strict=False)
+    except OSError:
+        return []
+    if not root.is_dir() or is_navin_internal_path(root):
+        return []
+    try:
+        return sync_workspace_templates(root, silent=silent)
+    except Exception:
+        logger.exception("Failed to scaffold project {}", root)
+        return []
 
 
 def load_bundled_template(template_name: str) -> str | None:

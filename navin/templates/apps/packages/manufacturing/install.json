@@ -1,0 +1,370 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "manufacturing",
+  "name": "Manufacturing / MRP",
+  "kind": "business",
+  "category": "manufacturing",
+  "source_github": "https://github.com/bryanadamg/terras-erp",
+  "source_name": "Teras ERP",
+  "license": "MIT",
+  "stack": [
+    "FastAPI",
+    "Next.js",
+    "PostgreSQL"
+  ],
+  "studied_from": "templates_apps/manufacturing",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 11,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Teras ERP **Teras ERP** is a high-performance, enterprise-grade Enterprise Resource Planning system built for textile manufacturing and high-volume inventory operations. The stack is **FastAPI + PostgreSQL** on the backend and **Next.js 14 + React 18** on the frontend, purpose-engineered for factory-floor speed and data integrity. --- Key Modules Manufacturing & MES Teras ERP models production as a three-tier hierarchy \u2014 **Production Run \u2192 Manufacturing Order \u2192 Work Order**: - **Production Runs (PR):** Top-level planning document. A run carries one or mo"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": true,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "pip",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "terras-erp-frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "test:e2e": "playwright test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "backend/requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "terras-erp-frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "test:e2e": "playwright test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "backend/requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "backend/requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.prod.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker-compose.prod.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "POSTGRES_USER",
+      "default": "erp",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres user",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_PASSWORD",
+      "default": "change_this_to_secure_password",
+      "required": true,
+      "secret": true,
+      "purpose": "Postgres password",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_DB",
+      "default": "erp",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres database name",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_HOST",
+      "default": "db",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres host",
+      "from": ".env.example"
+    },
+    {
+      "key": "POSTGRES_PORT",
+      "default": "5432",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres port",
+      "from": ".env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://redis:6379/0",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "SECRET_KEY",
+      "default": "change_this_to_secure_random_string",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "BACKEND_CORS_ORIGINS",
+      "default": "http://localhost:3000,http://localhost:3030",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_API_BASE",
+      "default": "http://localhost:8000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.prod.yml",
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "db",
+        "image": "postgres:15-alpine",
+        "ports": []
+      },
+      {
+        "name": "backend",
+        "image": "my-org/terras-erp-backend:latest",
+        "ports": []
+      },
+      {
+        "name": "frontend",
+        "image": "containrrr/watchtower",
+        "ports": [
+          "80:3000"
+        ]
+      },
+      {
+        "name": "api",
+        "image": "",
+        "ports": [
+          "8000:8000"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:7-alpine",
+        "ports": []
+      },
+      {
+        "name": "db",
+        "image": "postgres:15",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "frontend",
+        "image": "",
+        "ports": [
+          "3030:3000"
+        ]
+      },
+      {
+        "name": "tunnel",
+        "image": "cloudflare/cloudflared:latest",
+        "ports": []
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/manufacturing/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/manufacturing/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/manufacturing/overlay.json",
+    "agents": ".navin/apps/manufacturing/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "backend/requirements.txt",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "mrp-agent",
+      "production-agent",
+      "quality-agent",
+      "procurement-agent",
+      "inventory-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

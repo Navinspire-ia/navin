@@ -5,10 +5,10 @@ Do NOT guess paths. Route each fact to its canonical file:
 
 | File | Path | Content |
 |------|------|---------|
-| SOUL.md | `SOUL.md` | Agent behavior rules, guardrails, interaction patterns, tool-use strategy |
-| USER.md | `USER.md` | Personal attributes: identity, preferences, habits, communication style (language, length, tone) |
-| MEMORY.md | `memory/MEMORY.md` | Project context: goals, architecture, strategic decisions, infrastructure overview, integrated services |
-| SKILL.md | `skills/<name>/SKILL.md` | Reusable workflow templates with concrete steps, commands, and examples ([SKILL] entries only) |
+| SOUL.md | `.navin/SOUL.md` | Agent behavior rules, guardrails, interaction patterns, tool-use strategy |
+| USER.md | `.navin/USER.md` | Personal attributes: identity, preferences, habits, communication style (language, length, tone) |
+| MEMORY.md | `.navin/memory/MEMORY.md` | Project context: goals, architecture, strategic decisions, infrastructure overview, integrated services |
+| SKILL.md | `.navin/skills/<name>/SKILL.md` | Reusable workflow templates with concrete steps, commands, and examples ([SKILL] entries only) |
 
 **Routing examples:**
 - "User prefers concise replies" → USER.md
@@ -25,9 +25,9 @@ Do NOT guess paths. Route each fact to its canonical file:
 Cross-boundary rule: no technical configs in USER.md, no user facts in SOUL.md, no operational details in MEMORY.md. If a fact fits multiple files, keep the most specific copy and remove the rest.
 
 ## MECE enforcement
-- USER.md: personal attributes (identity, preferences, habits, communication style) — no technical configs, no project context
-- SOUL.md: agent behavior rules, guardrails, interaction patterns, tool-use strategy — no user facts
-- MEMORY.md: project context (goals, architecture, strategic decisions, infrastructure overview, integrated services) — no operational details (commands, flags, tokens, URLs)
+- USER.md: personal attributes (identity, preferences, habits, communication style) - no technical configs, no project context
+- SOUL.md: agent behavior rules, guardrails, interaction patterns, tool-use strategy - no user facts
+- MEMORY.md: project context (goals, architecture, strategic decisions, infrastructure overview, integrated services) - no operational details (commands, flags, tokens, URLs)
 - SKILL.md: reusable workflow templates with concrete steps, commands, and examples
 - If a fact belongs in multiple files, keep it in the most specific one and remove from others
 
@@ -49,15 +49,15 @@ Always strip these bracketed tags from saved memory content.
 ## Delete-or-keep
 
 **Always delete:**
-- Same fact at multiple locations — keep canonical copy only
+- Same fact at multiple locations - keep canonical copy only
 - Merged/closed PR notes, resolved incidents, superseded info
 - Verbose entries restatable in fewer words
 - Overlapping or nested sections covering the same topic
 - Operational details (commands, flags, tokens, URLs) that belong in a skill file
-- Facts easily discoverable via a quick web search (standard library APIs, common CLI flags, public documentation, generic tutorials) — memory is for context the user *can't* look up
+- Facts easily discoverable via a quick web search (standard library APIs, common CLI flags, public documentation, generic tutorials) - memory is for context the user *can't* look up
 
 **Likely delete** (apply judgment):
-- Same fact at different detail levels — keep most complete version only
+- Same fact at different detail levels - keep most complete version only
 - Debugging steps unlikely to recur
 - Ephemeral facts past their useful life
 - Tool/service details already captured in a skill or documented upstream
@@ -93,16 +93,16 @@ When removing: prefer deleting individual items over entire sections.
 Flag [SKILL] only when ALL are true: repeatable workflow appeared 2+ times, involves clear steps (not vague preferences), substantial enough for its own instruction set. Check existing skills to avoid redundancy.
 
 For [SKILL] entries:
-- Create `skills/<name>/SKILL.md`; reference `{{ skill_creator_path }}` for format
+- Create `.navin/skills/<name>/SKILL.md`; reference `{{ skill_creator_path }}` for format
 - YAML frontmatter (name, description), under 2000 words: when to use, steps, output format, example
-- Do NOT overwrite existing skills — if overlapping, merge delta into the existing skill
+- Do NOT overwrite existing skills - if overlapping, merge delta into the existing skill
 - Skills are instruction sets with concrete values, commands, and examples. MEMORY.md keeps strategic context and high-level facts only.
 
 ## Editing
-- Current contents of SOUL.md, USER.md, and memory/MEMORY.md are embedded in this prompt under "Current Memory Files". Edit those files directly; do not rely on a remembered version of a file.
+- Current contents of .navin/SOUL.md, .navin/USER.md, and .navin/memory/MEMORY.md are embedded in this prompt under "Current Memory Files". Edit those files directly; do not rely on a remembered version of a file.
 - Batch changes into as few calls as possible. Surgical edits only.
 
 ## Verification
-Your final summary may reference only edits confirmed by a successful tool result — that result is your proof of every change. Do not narrate edits you did not make. If a tool call failed, was skipped, or fell back to a different approach, state the failure plainly instead of claiming success. The durable audit record (`/dream-log`) is derived from the real file diff, not from this summary, so any claim not backed by an actual edit will be absent from the record.
+Your final summary may reference only edits confirmed by a successful tool result - that result is your proof of every change. Do not narrate edits you did not make. If a tool call failed, was skipped, or fell back to a different approach, state the failure plainly instead of claiming success. The durable audit record (`/dream-log`) is derived from the real file diff, not from this summary, so any claim not backed by an actual edit will be absent from the record.
 
-Do not add: current weather, transient status, temporary errors, conversational filler, public documentation, standard library APIs, common configuration defaults, generic tutorials — anything a quick web search would surface.
+Do not add: current weather, transient status, temporary errors, conversational filler, public documentation, standard library APIs, common configuration defaults, generic tutorials - anything a quick web search would surface.

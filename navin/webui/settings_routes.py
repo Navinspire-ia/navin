@@ -12,6 +12,7 @@ import inspect
 import json
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from websockets.http11 import Request as WsRequest
@@ -28,35 +29,71 @@ from navin.optional_features import (
     optional_dependency_groups,
 )
 from navin.pairing import approve_code, deny_code, list_pending
+from navin.providers.ollama_setup import OllamaSetupError
+from navin.providers.omniroute_setup import OmniRouteSetupError
+from navin.update import (
+    UpdateError,
+    check_for_update,
+    download_update,
+    install_update,
+    update_status,
+)
+from navin.webui.channel_login import (
+    ChannelLoginError,
+    cancel_channel_login,
+    login_snapshot,
+    start_channel_login,
+)
 from navin.webui.channel_validation import validate_channel_config
 from navin.webui.cli_apps_api import cli_apps_action, cli_apps_payload
 from navin.webui.http_utils import is_local_browser_request as _is_local_browser_request
 from navin.webui.http_utils import query_first as _query_first
 from navin.webui.mcp_presets_api import mcp_presets_settings_action
 from navin.webui.navin_features_api import navin_features_action, navin_features_payload
+from navin.webui.ollama_setup_api import ollama_setup_action, ollama_setup_status
+from navin.webui.omniroute_setup_api import omniroute_setup_action, omniroute_setup_status
+from navin.webui.route_cache import CoalescingCache
 from navin.webui.settings_api import (
     WebUISettingsError,
     create_model_configuration,
     decorate_settings_payload,
+    delete_model_configuration,
+    import_model_configurations,
     login_oauth_provider,
     logout_oauth_provider,
+    oauth_login_status,
     provider_models_payload,
+    reasoning_effort_values_payload,
     settings_payload,
     settings_usage_payload,
+    test_provider_connection,
     update_agent_settings,
     update_api_settings,
     update_image_generation_settings,
     update_model_configuration,
+    update_model_route,
+    update_music_generation_settings,
     update_network_safety_settings,
     update_provider_settings,
     update_transcription_settings,
     update_video_generation_settings,
+    update_voice_settings,
     update_web_search_settings,
 )
-from navin.webui.version_check import check_for_update
 
 QueryParams = dict[str, list[str]]
 
+# The update check is a network round trip; reusing it for a few minutes is
+# invisible to the user and keeps the shared thread pool free.
+_VERSION_CHECK_CACHE_TTL_S = 300.0
+# The model catalog fetch reaches navin.live. Awaited on the gateway loop it
+# froze every request and the WebSocket for the resolver's 10 s each time the
+# WSL network dropped (26 stalls of 10 to 20 s in one log; "engine not
+# reachable" in every window). It now runs in its own thread: the route waits
+# this long for a fresh catalog, then serves the current one while the sync
+# finishes in the background and lands on the next read.
+_CATALOG_SYNC_WAIT_S = 2.5
+_CATALOG_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-catalog")
 _MCP_VALUES_HEADER = "X-Navin-MCP-Values"
 _MCP_VALUES_HEADER_MAX_BYTES = 64 * 1024
 _CHANNEL_VALUES_HEADER = "X-Navin-Channel-Values"
@@ -65,6 +102,17 @@ _API_SERVICE_VALUES_HEADER = "X-Navin-API-Service-Values"
 _API_SERVICE_VALUES_HEADER_MAX_BYTES = 8 * 1024
 
 _SKIP_FIELD = object()
+
+
+def _sync_model_catalog_now() -> bool:
+    """Fetch and apply the managed catalog; runs in ``_CATALOG_EXECUTOR``."""
+    config = load_config()
+    if not config.model_catalog.enabled:
+        return False
+    from navin.providers.managed_catalog import sync_managed_catalog
+
+    return sync_managed_catalog(config, force=True, min_interval_s=0)
+
 
 _MCP_PRESET_ACTIONS_BY_PATH = {
     "/api/settings/mcp-presets/enable": "enable",
@@ -103,26 +151,60 @@ class WebUISettingsRouter:
         self._runtime_capabilities = runtime_capabilities
         self._channel_feature_action = channel_feature_action
         self._restart_sections: set[str] = set()
+        # The update check reaches the network and every window asks for it.
+        self._route_cache = CoalescingCache()
+        # One catalog sync at a time; concurrent Settings opens share it.
+        self._catalog_sync: asyncio.Future[bool] | None = None
 
     async def dispatch(self, connection: Any, request: WsRequest, path: str) -> Response | None:
         if path == "/api/settings":
-            return self._handle_settings(request)
+            return await self._handle_settings(request)
         if path == "/api/settings/usage":
             return self._handle_settings_usage(request)
+        if path == "/api/settings/reasoning-effort-values":
+            return self._handle_settings_reasoning_effort_values(request)
         if path == "/api/settings/update":
             return self._handle_settings_update(request)
         if path == "/api/settings/model-configurations/create":
             return self._handle_settings_model_configuration_create(request)
+        if path == "/api/settings/model-configurations/import":
+            return self._handle_settings_model_configuration_import(request)
         if path == "/api/settings/model-configurations/update":
             return self._handle_settings_model_configuration_update(request)
+        if path == "/api/settings/model-configurations/delete":
+            return self._handle_settings_model_configuration_delete(request)
+        if path == "/api/settings/model-routes/update":
+            return self._handle_settings_model_route_update(request)
         if path == "/api/settings/provider/update":
             return self._handle_settings_provider_update(request)
+        if path == "/api/settings/provider/test":
+            return await self._handle_settings_provider_test(request)
         if path == "/api/settings/provider-models":
             return await self._handle_settings_provider_models(request)
         if path == "/api/settings/provider/oauth-login":
             return await self._handle_settings_provider_oauth(request, "login")
         if path == "/api/settings/provider/oauth-logout":
             return await self._handle_settings_provider_oauth(request, "logout")
+        if path == "/api/settings/provider/oauth-status":
+            return await self._handle_settings_provider_oauth(request, "status")
+        if path == "/api/settings/ollama":
+            return await self._handle_settings_ollama(request)
+        if path == "/api/settings/ollama/install":
+            return await self._handle_settings_ollama_action(request, "install")
+        if path == "/api/settings/ollama/start":
+            return await self._handle_settings_ollama_action(request, "start")
+        if path == "/api/settings/ollama/pull":
+            return await self._handle_settings_ollama_action(request, "pull")
+        if path == "/api/settings/ollama/configure":
+            return await self._handle_settings_ollama_action(request, "configure")
+        if path == "/api/settings/omniroute":
+            return await self._handle_settings_omniroute(request)
+        if path == "/api/settings/omniroute/install":
+            return await self._handle_settings_omniroute_action(request, "install")
+        if path == "/api/settings/omniroute/start":
+            return await self._handle_settings_omniroute_action(request, "start")
+        if path == "/api/settings/omniroute/configure":
+            return await self._handle_settings_omniroute_action(request, "configure")
         if path == "/api/settings/web-search/update":
             return self._handle_settings_web_search_update(request)
         if path == "/api/settings/api-service":
@@ -135,8 +217,12 @@ class WebUISettingsRouter:
             return self._handle_settings_image_generation_update(request)
         if path == "/api/settings/video-generation/update":
             return self._handle_settings_video_generation_update(request)
+        if path == "/api/settings/music-generation/update":
+            return self._handle_settings_music_generation_update(request)
         if path == "/api/settings/transcription/update":
             return self._handle_settings_transcription_update(request)
+        if path == "/api/settings/voice/update":
+            return self._handle_settings_voice_update(request)
         if path == "/api/settings/network-safety/update":
             return self._handle_settings_network_safety_update(request)
         if path == "/api/settings/cli-apps":
@@ -159,6 +245,12 @@ class WebUISettingsRouter:
             return await self._handle_settings_channel_validate(request)
         if path == "/api/settings/channels/configure":
             return await self._handle_settings_channel_configure(connection, request)
+        if path == "/api/settings/channels/login/start":
+            return await self._handle_settings_channel_login_start(request)
+        if path == "/api/settings/channels/login/status":
+            return await self._handle_settings_channel_login_status(request)
+        if path == "/api/settings/channels/login/cancel":
+            return await self._handle_settings_channel_login_cancel(request)
         if path == "/api/settings/pairing":
             return self._handle_settings_pairing(request)
         if path == "/api/settings/pairing/approve":
@@ -169,6 +261,14 @@ class WebUISettingsRouter:
             return await self._handle_settings_mcp_presets(request)
         if path == "/api/settings/version-check":
             return await self._handle_settings_version_check(request)
+        if path == "/api/settings/update-status":
+            return self._handle_settings_update_status(request)
+        if path == "/api/settings/update-download":
+            return await self._handle_settings_update_download(request)
+        if path == "/api/settings/update-install":
+            return await self._handle_settings_update_install(connection, request)
+        if path == "/api/settings/update-preferences":
+            return self._handle_settings_update_preferences(request)
         mcp_action = _MCP_PRESET_ACTIONS_BY_PATH.get(path)
         if mcp_action is not None:
             return await self._handle_settings_mcp_presets(request, mcp_action)
@@ -230,9 +330,35 @@ class WebUISettingsRouter:
                 merged[key] = [text]
         return merged
 
-    def _handle_settings(self, request: WsRequest) -> Response:
+    async def _sync_catalog_bounded(self) -> None:
+        """Refresh the managed catalog without ever parking the gateway loop.
+
+        Waits at most ``_CATALOG_SYNC_WAIT_S`` for the fetch; past that the
+        current catalog is served and the sync keeps running in its thread so
+        the next Settings read sees the result.
+        """
+        loop = asyncio.get_running_loop()
+        future = self._catalog_sync
+        if future is None or future.done():
+            future = loop.run_in_executor(_CATALOG_EXECUTOR, _sync_model_catalog_now)
+            self._catalog_sync = future
+        try:
+            await asyncio.wait_for(asyncio.shield(future), timeout=_CATALOG_SYNC_WAIT_S)
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "model catalog sync still running after {:.1f}s; serving the current catalog",
+                _CATALOG_SYNC_WAIT_S,
+            )
+        except Exception as exc:
+            self.logger.warning("model catalog sync failed: {}", exc)
+
+    async def _handle_settings(self, request: WsRequest) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
+        query = self._query(request)
+        sync_raw = (_query_first(query, "sync_catalog") or _query_first(query, "syncCatalog") or "").strip().lower()
+        if sync_raw in {"1", "true", "yes"}:
+            await self._sync_catalog_bounded()
         return self._json_response(
             self._with_restart_state(
                 settings_payload(
@@ -246,6 +372,15 @@ class WebUISettingsRouter:
         if not self._authorized(request):
             return self._unauthorized()
         return self._json_response(settings_usage_payload())
+
+    def _handle_settings_reasoning_effort_values(self, request: WsRequest) -> Response:
+        """Thinking ladder for the provider+model the Models form currently shows."""
+        if not self._authorized(request):
+            return self._unauthorized()
+        query = self._query(request)
+        provider = (_query_first(query, "provider") or "").strip()
+        model = (_query_first(query, "model") or "").strip()
+        return self._json_response(reasoning_effort_values_payload(provider, model))
 
     def _handle_settings_pairing(self, request: WsRequest) -> Response:
         if not self._authorized(request):
@@ -305,11 +440,38 @@ class WebUISettingsRouter:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
 
+    def _handle_settings_model_configuration_import(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = import_model_configurations(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload))
+
     def _handle_settings_model_configuration_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
         try:
             payload = update_model_configuration(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload))
+
+    def _handle_settings_model_configuration_delete(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = delete_model_configuration(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload))
+
+    def _handle_settings_model_route_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_model_route(self._query(request))
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
@@ -322,6 +484,18 @@ class WebUISettingsRouter:
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload, section="image"))
+
+    async def _handle_settings_provider_test(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await asyncio.to_thread(test_provider_connection, self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        except Exception:
+            self.logger.exception("failed to test provider connection")
+            return self._error_response(500, "failed to test provider connection")
+        return self._json_response(payload)
 
     async def _handle_settings_provider_models(self, request: WsRequest) -> Response:
         if not self._authorized(request):
@@ -346,11 +520,77 @@ class WebUISettingsRouter:
         try:
             if action == "login":
                 payload = await asyncio.to_thread(login_oauth_provider, query)
+            elif action == "status":
+                payload = await asyncio.to_thread(oauth_login_status, query)
             else:
                 payload = await asyncio.to_thread(logout_oauth_provider, query)
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
+
+    async def _handle_settings_ollama(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await asyncio.to_thread(ollama_setup_status)
+        except Exception:
+            self.logger.exception("failed to load Ollama status")
+            return self._error_response(500, "failed to load Ollama status")
+        return self._json_response(payload)
+
+    async def _handle_settings_ollama_action(
+        self,
+        request: WsRequest,
+        action: str,
+    ) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await asyncio.to_thread(
+                ollama_setup_action,
+                action,
+                self._query(request),
+            )
+        except OllamaSetupError as e:
+            return self._error_response(e.status, e.message)
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        except Exception:
+            self.logger.exception("Ollama action '{}' failed", action)
+            return self._error_response(500, f"Ollama {action} failed")
+        return self._json_response(payload)
+
+    async def _handle_settings_omniroute(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await asyncio.to_thread(omniroute_setup_status)
+        except Exception:
+            self.logger.exception("failed to load OmniRoute status")
+            return self._error_response(500, "failed to load OmniRoute status")
+        return self._json_response(payload)
+
+    async def _handle_settings_omniroute_action(
+        self,
+        request: WsRequest,
+        action: str,
+    ) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = await asyncio.to_thread(
+                omniroute_setup_action,
+                action,
+                self._query(request),
+            )
+        except OmniRouteSetupError as e:
+            return self._error_response(e.status, e.message)
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        except Exception:
+            self.logger.exception("OmniRoute action '{}' failed", action)
+            return self._error_response(500, f"OmniRoute {action} failed")
+        return self._json_response(payload)
 
     def _handle_settings_web_search_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):
@@ -507,11 +747,29 @@ class WebUISettingsRouter:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload, section="video"))
 
+    def _handle_settings_music_generation_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_music_generation_settings(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload, section="voice"))
+
     def _handle_settings_transcription_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
         try:
             payload = update_transcription_settings(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload))
+
+    def _handle_settings_voice_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_voice_settings(self._query(request))
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
@@ -735,6 +993,38 @@ class WebUISettingsRouter:
             return self._error_response(500, "failed to validate channel settings")
         return self._json_response(payload)
 
+    async def _handle_settings_channel_login_start(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        query = self._query(request)
+        name = (_query_first(query, "name") or "").strip()
+        force = (_query_first(query, "force") or "").strip().lower() in {"1", "true", "yes"}
+        try:
+            payload = await start_channel_login(name, force=force)
+        except ChannelLoginError as e:
+            return self._error_response(e.status, e.message)
+        except Exception:
+            self.logger.exception("failed to start channel login for '{}'", name)
+            return self._error_response(500, "failed to start channel login")
+        return self._json_response(payload)
+
+    async def _handle_settings_channel_login_status(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        name = (_query_first(self._query(request), "name") or "").strip()
+        return self._json_response(login_snapshot(name))
+
+    async def _handle_settings_channel_login_cancel(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        name = (_query_first(self._query(request), "name") or "").strip()
+        try:
+            payload = await cancel_channel_login(name)
+        except Exception:
+            self.logger.exception("failed to cancel channel login for '{}'", name)
+            return self._error_response(500, "failed to cancel channel login")
+        return self._json_response(payload)
+
     def _parse_channel_values_header(self, request: WsRequest) -> dict[str, Any]:
         raw = request.headers.get(_CHANNEL_VALUES_HEADER)
         if not raw:
@@ -895,12 +1185,67 @@ class WebUISettingsRouter:
         if not self._authorized(request):
             return self._unauthorized()
         try:
-            update_info = await asyncio.to_thread(check_for_update)
-        except Exception:
-            self.logger.exception("version check failed")
-            return self._error_response(500, "version check failed")
+            force = _query_first(self._query(request), "force") in {"1", "true"}
+            payload = await self._route_cache.get(
+                "settings:version-check",
+                lambda: asyncio.to_thread(check_for_update, force=force),
+                ttl=_VERSION_CHECK_CACHE_TTL_S,
+                force=force,
+            )
+            return self._json_response(payload)
+        except UpdateError as exc:
+            return self._error_response(exc.status, str(exc))
+
+    def _handle_settings_update_status(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        return self._json_response(update_status())
+
+    async def _handle_settings_update_download(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            return self._json_response(await asyncio.to_thread(download_update))
+        except UpdateError as exc:
+            return self._error_response(exc.status, str(exc))
+
+    async def _handle_settings_update_install(
+        self,
+        connection: Any,
+        request: WsRequest,
+    ) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if not _is_local_browser_request(connection, request.headers):
+            return self._error_response(403, "updates can only be installed locally")
+        try:
+            return self._json_response(await asyncio.to_thread(install_update))
+        except UpdateError as exc:
+            return self._error_response(exc.status, str(exc))
+
+    def _handle_settings_update_preferences(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        query = self._query(request)
+        config = load_config()
+        channel = _query_first(query, "channel")
+        auto_check = _query_first(query, "autoCheck")
+        skipped = _query_first(query, "skippedVersion")
+        if channel is not None:
+            if channel not in {"stable", "beta"}:
+                return self._error_response(400, "invalid update channel")
+            config.updates.channel = channel
+        if auto_check is not None:
+            if auto_check not in {"true", "false", "1", "0"}:
+                return self._error_response(400, "invalid autoCheck value")
+            config.updates.auto_check = auto_check in {"true", "1"}
+        if skipped is not None:
+            config.updates.skipped_version = skipped.strip()
+        save_config(config)
         return self._json_response({
-            "updateAvailable": update_info,
+            "autoCheck": config.updates.auto_check,
+            "channel": config.updates.channel,
+            "skippedVersion": config.updates.skipped_version,
         })
 
 

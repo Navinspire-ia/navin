@@ -30,7 +30,7 @@ Produce a high-signal digest that a future turn (or subagent) can resume from.
 
 1. Skim the conversation / docs for decisions and artifacts.
 2. Write a **Resume Brief** using the template below.
-3. Offer to store durable facts in memory only when the user wants persistence (Dream manages long-term memory files — do not silently rewrite them).
+3. Offer to store durable facts in memory only when the user wants persistence (Dream manages long-term memory files - do not silently rewrite them).
 4. For handoff to `spawn`, paste the Resume Brief into the subagent `task`.
 
 ## Resume Brief template

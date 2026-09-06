@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 class AutoCompact:
     _RECENT_SUFFIX_MESSAGES = 8
     _INTERNAL_SESSION_PREFIXES = ("dream:",)
+    # Small sessions cost almost nothing to replay in full; truncating them
+    # only trades fidelity for no measurable token savings. Idle compaction
+    # kicks in once the idle tail is actually heavy.
+    _MIN_IDLE_TAIL_MESSAGES = 24
+    _MIN_IDLE_TAIL_CHARS = 16_000
 
     def __init__(self, sessions: SessionManager, consolidator: Consolidator,
                  session_ttl_minutes: int = 0):
@@ -40,6 +45,8 @@ class AutoCompact:
         tail = list(session.messages[session.last_consolidated:])
         if not tail:
             return False
+        if not self._tail_is_heavy(tail):
+            return False
         probe = Session(
             key=session.key,
             messages=tail,
@@ -55,9 +62,27 @@ class AutoCompact:
         messages_to_remove = result.dropped[result.already_consolidated_count:]
         return bool(messages_to_remove)
 
+    @classmethod
+    def _tail_is_heavy(cls, tail: list[dict]) -> bool:
+        if len(tail) >= cls._MIN_IDLE_TAIL_MESSAGES:
+            return True
+        chars = 0
+        for message in tail:
+            content = message.get("content")
+            if isinstance(content, str):
+                chars += len(content)
+            elif content is not None:
+                chars += len(str(content))
+            if chars >= cls._MIN_IDLE_TAIL_CHARS:
+                return True
+        return False
+
     @staticmethod
     def _format_summary(text: str, last_active: datetime) -> str:
-        return f"Previous conversation summary (last active {last_active.isoformat()}):\n{text}"
+        return (
+            f"State of this work when it was last touched, "
+            f"{last_active.isoformat()}:\n{text}"
+        )
 
     @classmethod
     def _is_internal_session(cls, key: str) -> bool:

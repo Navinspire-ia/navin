@@ -1,0 +1,118 @@
+name: CI
+
+# Runs on pull requests and on demand only: plain pushes must not burn CI
+# minutes on the full multi-OS matrix.
+on:
+  pull_request:
+  workflow_dispatch:
+
+# A newer run on the same ref supersedes the one it interrupts.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  backend:
+    name: tests ${{ matrix.os }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Windows failing must not hide the macOS result: the point of the matrix
+      # is to learn about every platform in one run.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Windows'
+
+      # The studio extra pulls heavy optional stacks (pandas, matplotlib, …);
+      # keep CI on the core document readers instead.
+      - name: Install
+        run: python -m pip install -e ".[dev-tools,documents]"
+
+      - name: Report the environment
+        run: |
+          python -c "import sys, platform; print(sys.version); print(platform.platform())"
+          python -m pytest --version
+
+      - name: Doctor connectivity (no live server)
+        run: navin doctor --workspace .
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      # Two release bars beyond unit tests: the keyword corpus (fast heuristic
+      # coverage) and the live agent-loop corpus, which drives the real
+      # AgentRunner with real tools in a fixture workspace on every OS of the
+      # matrix - a cross-platform certification of loop, policy and file tools.
+      - name: Eval gates (keyword + live agent loop)
+        run: |
+          python -m navin.evals.runner navin/evals/datasets/code_agent_v1.jsonl --scoreboard --gate
+          python -m navin.evals.agent_loop --scoreboard --gate
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev-tools]"
+      - run: python -m ruff check navin/ tests/
+
+  frontend:
+    name: webui
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  windows-wsl:
+    name: Windows IDE + WSL
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev-tools,documents]"
+      - name: WSL status
+        continue-on-error: true
+        run: wsl --status; wsl -l -v
+      - name: IDE WSL routing, watcher, ConPTY
+        run: python -m pytest tests/test_windows_wsl_ide.py tests/test_wsl.py tests/test_git_argv.py tests/test_terminal_session.py tests/test_checkpoints_wsl.py -q

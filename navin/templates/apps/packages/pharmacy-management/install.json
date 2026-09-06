@@ -1,0 +1,423 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "pharmacy-management",
+  "name": "Pharmacy",
+  "kind": "business",
+  "category": "healthcare",
+  "source_github": "https://github.com/GirumY4/pharma-net-platform",
+  "source_name": "Pharma-Net",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node",
+    "Express",
+    "MongoDB"
+  ],
+  "studied_from": "templates_apps/pharmacy-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 26,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "--- Table of Contents 1. [Project Overview](#-project-overview) 2. [System Architecture](#-system-architecture) 3. [Features](#-features) 4. [Tech Stack](#-tech-stack) 5. [Project Structure](#-project-structure) 6. [Getting Started](#-getting-started) 7. [Environment Variables](#-environment-variables) 8. [API Overview](#-api-overview) 9. [User Roles & Access Control](#-user-roles--access-control) 10. [Database Schema](#-database-schema) 11. [Compliance & Data Integrity](#-compliance--data-integrity)"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "pharma-net-frontend",
+        "scripts": {
+          "dev": "vite",
+          "build": "tsc -b && vite build",
+          "lint": "eslint ."
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "pharma-net-backend",
+        "scripts": {
+          "dev": "tsx --watch src/server.ts",
+          "build": "tsc",
+          "start": "node dist/server.js",
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "pharma-net-backend",
+        "scripts": {
+          "dev": "tsx --watch src/server.ts",
+          "build": "tsc",
+          "start": "node dist/server.js",
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "pharma-net-frontend",
+        "scripts": {
+          "dev": "vite",
+          "build": "tsc -b && vite build",
+          "lint": "eslint ."
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "react",
+          "vite"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    }
+  ],
+  "ports": [
+    5000,
+    27017
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "README.md"
+    },
+    {
+      "key": "PORT",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "README.md"
+    },
+    {
+      "key": "MONGO_URI",
+      "default": "mongodb://localhost:27017/pharma-net",
+      "required": false,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "README.md"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "your_super_secret_jwt_key_here",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "README.md"
+    },
+    {
+      "key": "JWT_EXPIRATION",
+      "default": "8h",
+      "required": false,
+      "secret": false,
+      "purpose": "Auth / secret",
+      "from": "README.md"
+    },
+    {
+      "key": "PASSWORD_SALT_ROUNDS",
+      "default": "12",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "ALERT_THRESHOLD",
+      "default": "20        # Low-stock warning level (units)",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "EXPIRY_DAYS_THRESHOLD",
+      "default": "90  # Near-expiry warning window (days)",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "ADMIN_EMAIL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/scripts/seed-admin.ts"
+    },
+    {
+      "key": "ADMIN_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "source:backend/src/scripts/seed-admin.ts"
+    },
+    {
+      "key": "BCRYPT_SALT_ROUNDS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:backend/src/modules/auth/auth.service.ts"
+    },
+    {
+      "key": "CORS_ORIGIN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:backend/src/app.ts"
+    },
+    {
+      "key": "FROM_EMAIL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "FROM_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "FRONTEND_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:backend/src/modules/auth/auth.controller.ts"
+    },
+    {
+      "key": "MONGODB_DB_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": "source:backend/src/config/db.ts"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "source:backend/src/config/db.ts"
+    },
+    {
+      "key": "SITE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:frontend/vite.config.ts"
+    },
+    {
+      "key": "SMTP_EMAIL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "SMTP_HOST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "SMTP_PASSWORD",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "SMTP_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:backend/src/utils/sendEmail.ts"
+    },
+    {
+      "key": "VERCEL_PROJECT_PRODUCTION_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:frontend/vite.config.ts"
+    },
+    {
+      "key": "VERCEL_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:frontend/vite.config.ts"
+    },
+    {
+      "key": "VITE_API_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:frontend/src/services/api.ts"
+    },
+    {
+      "key": "VITE_SITE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:frontend/vite.config.ts"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/pharmacy-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/pharmacy-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/pharmacy-management/overlay.json",
+    "agents": ".navin/apps/pharmacy-management/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "backend/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "pharmacy-assistant",
+      "inventory-agent",
+      "procurement-agent",
+      "expiry-monitoring-agent",
+      "sales-analytics-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -48,17 +48,63 @@ def get_webui_dir() -> Path:
     return get_runtime_subdir("webui")
 
 
+def get_default_workspace_path() -> Path:
+    """Default agent workspace: a visible, build-friendly folder in the home dir.
+
+    ``~/.navin`` stays reserved for Navin's own storage (config, sessions,
+    history). Projects must never live in a hidden dot-folder: some toolchains
+    skip or misbehave inside them, and the path is confusing when shown as a
+    "project" in the UI. ``Path.home()`` keeps this correct on Windows, macOS
+    and Linux alike.
+    """
+    return Path.home() / "NavinProjects"
+
+
+def _legacy_default_workspace_path() -> Path:
+    """The pre-rename default (``~/.navin/workspace``), kept for detection only."""
+    return Path.home() / ".navin" / "workspace"
+
+
+def resolve_workspace_setting(workspace: str | None = None) -> Path:
+    """Resolve a configured workspace value without creating it.
+
+    A configured workspace still pointing at the legacy ``~/.navin/workspace``
+    default is redirected to the new default: the internal folder must never be
+    used (or shown) as a project workspace again.
+    """
+    path = Path(workspace).expanduser() if workspace else get_default_workspace_path()
+    if path.resolve(strict=False) == _legacy_default_workspace_path().resolve(strict=False):
+        return get_default_workspace_path()
+    return path
+
+
 def get_workspace_path(workspace: str | None = None) -> Path:
     """Resolve and ensure the agent workspace path."""
-    path = Path(workspace).expanduser() if workspace else Path.home() / ".navin" / "workspace"
-    return ensure_dir(path)
+    return ensure_dir(resolve_workspace_setting(workspace))
+
+
+def is_navin_internal_path(path: str | Path | None) -> bool:
+    """True when a path lives inside a ``.navin`` folder (Navin system storage).
+
+    Such a path must never be offered or displayed as a project workspace:
+    ``.navin`` belongs to the system (config, sessions, history), not to the
+    user's projects.
+    """
+    if not path:
+        return False
+    normalized = str(path).replace("\\", "/")
+    return any(part == ".navin" for part in normalized.split("/"))
 
 
 def is_default_workspace(workspace: str | Path | None) -> bool:
     """Return whether a workspace resolves to navin's default workspace path."""
-    current = Path(workspace).expanduser() if workspace is not None else Path.home() / ".navin" / "workspace"
-    default = Path.home() / ".navin" / "workspace"
-    return current.resolve(strict=False) == default.resolve(strict=False)
+    if workspace is None:
+        return True
+    current = Path(workspace).expanduser().resolve(strict=False)
+    return current in (
+        get_default_workspace_path().resolve(strict=False),
+        _legacy_default_workspace_path().resolve(strict=False),
+    )
 
 
 def get_cli_history_path() -> Path:

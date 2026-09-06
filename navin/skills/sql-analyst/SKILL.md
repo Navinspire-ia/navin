@@ -12,7 +12,7 @@ Question → SQL → verified answer. Show the query and caveats.
 
 ## Tools
 
-Run SQL through the built-in `db_query` tool (SQLite files via `sqlite_path`, or named PostgreSQL/Supabase/MySQL/MariaDB connections from `tools.database.connections`). Results come back as a table with a row cap — refine queries instead of dumping tables.
+Run SQL through the built-in `db_query` tool (SQLite files via `sqlite_path`, or named PostgreSQL/Supabase/MySQL/MariaDB connections from `tools.database.connections`). Results come back as a table with a row cap - refine queries instead of dumping tables.
 
 ## Workflow
 

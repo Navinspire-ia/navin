@@ -112,6 +112,29 @@ def goal_state_ws_blob(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     return {"active": False}
 
 
+# A sustained goal may legitimately exceed NAVIN_LLM_TIMEOUT_S, but "longer"
+# must never become "forever": with the wall clock disabled, one hung request
+# held the session lock until the gateway restarted, and a goal session is
+# exactly the one nobody is watching. Half an hour is beyond any legitimate
+# single model response yet still finite; the provider's retry ladder turns
+# the timeout into a retryable error instead of a dead session.
+_GOAL_LLM_TIMEOUT_ENV = "NAVIN_GOAL_LLM_TIMEOUT_S"
+_GOAL_LLM_TIMEOUT_DEFAULT_S = 1800.0
+
+
+def _goal_llm_timeout_s() -> float:
+    """The sustained-goal wall clock; 0 keeps the historical opt-out."""
+    import os
+
+    raw = os.environ.get(_GOAL_LLM_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _GOAL_LLM_TIMEOUT_DEFAULT_S
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return _GOAL_LLM_TIMEOUT_DEFAULT_S
+
+
 def runner_wall_llm_timeout_s(
     sessions: SessionManager,
     session_key: str | None,
@@ -121,12 +144,15 @@ def runner_wall_llm_timeout_s(
 ) -> float | None:
     """Wall-clock cap for :class:`~navin.agent.runner.AgentRunner` when streaming an LLM.
 
-    Returns ``0.0`` to disable ``asyncio.wait_for`` around the request when this is a
-    sustained-goal turn; ``None`` means use ``NAVIN_LLM_TIMEOUT_S``. Pass in-memory
-    ``metadata`` when the caller already holds :attr:`~navin.session.manager.Session.metadata`
-    for this turn.
+    A sustained-goal turn gets a long finite cap (default 30 min, tunable via
+    ``NAVIN_GOAL_LLM_TIMEOUT_S``, 0 to disable); ``None`` means use
+    ``NAVIN_LLM_TIMEOUT_S``. Pass in-memory ``metadata`` when the caller
+    already holds :attr:`~navin.session.manager.Session.metadata` for this
+    turn.
     """
     meta: Mapping[str, Any] | None = metadata
     if meta is None and session_key:
         meta = sessions.get_or_create(session_key).metadata
-    return 0.0 if sustained_goal_turn(meta, message_metadata=message_metadata) else None
+    if sustained_goal_turn(meta, message_metadata=message_metadata):
+        return _goal_llm_timeout_s()
+    return None

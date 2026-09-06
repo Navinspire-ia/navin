@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"🔀","category":"intelligence"}}
 
 ## Overview
 
-Help choose the right model configuration for the job. You cannot always switch models mid-turn yourself — recommend Settings → Models / Providers presets when a change is needed.
+Help choose the right model configuration for the job. You cannot always switch models mid-turn yourself - recommend Settings → Models / Providers presets when a change is needed.
 
 ## Decision factors
 
@@ -21,9 +21,28 @@ Help choose the right model configuration for the job. You cannot always switch 
 | Strict JSON / tool-heavy loops | Models known-good with tools |
 | On-prem / privacy | Local (Ollama / vLLM / LM Studio) |
 
-## Task-based routing (/pilot)
+## Task-based routing (`modelRoutes`)
 
-Navin supports per-task model presets. If the user creates presets named `search`, `plan`, `review`, `security`, `dev`, `fast`, `deep`, or `docs` in Settings → Models, the `/pilot <task>` command switches to the matching preset instantly:
+Navin maps **roles** to **named presets** in Settings → Models → Task routing (`modelRoutes` in config). Values are preset keys (e.g. `primary`, `economy`), not free-form labels.
+
+### Automatic (preferred)
+
+Workflow slash commands pick the routed preset for that turn:
+
+| Role | Commands (examples) |
+|------|---------------------|
+| `plan` | `/blueprint`, `/board` |
+| `dev` | `/forge`, `/mobile`, `/ops` |
+| `deep` | `/risklens` |
+| `security` | `/fortify`, `/probe`, `/pentest`, … |
+| `review` | `/inspect`, `/turbo` |
+| `docs` | `/studio`, `/seo`, `/leads`, `/campaign`, `/atlas`, `/report` |
+| `search` | `/scrape` |
+| `fast` | `/pulse` (+ Code editor assist) |
+
+So `/forge` uses the `dev` route automatically - the user does not need `/pilot` first.
+
+### Manual (`/pilot`)
 
 | Task | Suggested preset profile |
 |------|--------------------------|
@@ -34,7 +53,7 @@ Navin supports per-task model presets. If the user creates presets named `search
 | `fast` | minimal latency for quick edits |
 | `deep` | maximum capability regardless of cost |
 
-Recommend `/pilot` when the user's workflow phase changes (e.g. moving from planning to implementation), and `/checkpoint save` before switching mid-task so the state is recoverable.
+`/pilot <task>` switches the session preset in memory. Recommend it for free-form chat when the phase changes without a workflow command, and `/checkpoint save` before switching mid-task.
 
 ## Workflow
 
@@ -42,13 +61,15 @@ Recommend `/pilot` when the user's workflow phase changes (e.g. moving from plan
 2. Check the **current** model from context / Settings snapshot if available.
 3. Recommend:
    - stay on current model, or
-   - switch via `/model <preset>` or `/pilot <task>` when a matching preset exists, or
-   - create the missing preset in **Settings → Models**.
+   - run the matching workflow command so auto-routing applies, or
+   - switch via `/model <preset>` / `/pilot <task>`, or
+   - create the missing preset and assign it under **Settings → Models → Task routing**.
 4. Explain **why** in one short paragraph (cost vs quality vs latency).
-5. If the user must switch: point them to **Settings → Models** (or Providers) and continue with best effort on the current model until they switch.
+5. If the user must configure a route: point them to **Settings → Models → Task routing** and continue with best effort on the current model until they save.
 
 ## Anti-patterns
 
 - Blindly recommending the most expensive model
 - Suggesting a provider that is not configured
+- Telling the user to `/pilot` before `/forge` / `/blueprint` when Task routing is already configured (those workflows auto-route)
 - Changing approach mid-task without saying the model is the bottleneck

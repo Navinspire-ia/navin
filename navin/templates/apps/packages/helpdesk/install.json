@@ -1,0 +1,465 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "helpdesk",
+  "name": "Helpdesk",
+  "kind": "business",
+  "category": "support",
+  "source_github": "https://github.com/imaradesk/imaradesk-os",
+  "source_name": "ImaraDesk",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Django",
+    "Python"
+  ],
+  "studied_from": "templates_apps/helpdesk",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 27,
+    "package_count": 3
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "ImaraDesk An open-source helpdesk and ticket management system built with Django and React. Features - **Ticket Management** - Create, assign, and track support tickets with customizable statuses and priorities - **Email-to-Ticket** - Automatically convert incoming emails into support tickets with IMAP/POP3 polling - **SLA Tracking** - Define service level agreements and monitor response/resolution times with auto-apply triggers - **Knowledge Base** - Build a self-service knowledge base with categories, approvals, and versioning"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": true,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "pip",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "imaradesk",
+        "scripts": {
+          "dev": "vite",
+          "build": "vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "imaradesk",
+        "scripts": {
+          "dev": "vite",
+          "build": "vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "package",
+        "path": ".vite/deps/package.json",
+        "name": "deps",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "mysql",
+      "required": true,
+      "docker_image": "mysql:8",
+      "port": 3306,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    587,
+    3000,
+    3306,
+    5432,
+    6379
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "SECRET_KEY",
+      "default": "your-secret-key-here-change-in-production",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEBUG",
+      "default": "True",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOWED_HOSTS",
+      "default": "localhost,127.0.0.1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "APP_NAME",
+      "default": "ImaraDesk",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PRIMARY_DOMAIN",
+      "default": "localhost:8000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_ENGINE",
+      "default": "django.db.backends.postgresql",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_NAME",
+      "default": "imaradesk",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_USER",
+      "default": "postgres",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_PASSWORD",
+      "default": "your-password",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_HOST",
+      "default": "127.0.0.1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_PORT",
+      "default": "5432",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": ".env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://localhost:6379/0",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_HOST",
+      "default": "smtp.example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_PORT",
+      "default": "587",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_USE_SSL",
+      "default": "False",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_HOST_USER",
+      "default": "your-email@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "EMAIL_HOST_PASSWORD",
+      "default": "your-email-password",
+      "required": true,
+      "secret": true,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEFAULT_FROM_EMAIL",
+      "default": "noreply@example.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEFAULT_FROM_NAME",
+      "default": "ImaraDesk",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CORS_ALLOWED_ORIGINS",
+      "default": "http://localhost:8000,http://127.0.0.1:8000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CSRF_TRUSTED_ORIGINS",
+      "default": "http://localhost:8000,http://127.0.0.1:8000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DB_OPTIONS_INIT_COMMAND",
+      "default": "SET sql_mode='STRICT_TRANS_TABLES",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "SESSION_COOKIE_DOMAIN",
+      "default": ".yourdomain.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "DB_CONNECT_RETRIES",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:check_db.py"
+    },
+    {
+      "key": "DB_CONNECT_RETRY_DELAY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:check_db.py"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/helpdesk/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mysql",
+        "run": "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/helpdesk/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/helpdesk/overlay.json",
+    "agents": ".navin/apps/helpdesk/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "pyproject.toml",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "support-agent",
+      "ticket-triage-agent",
+      "knowledge-agent",
+      "sla-agent",
+      "customer-success-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

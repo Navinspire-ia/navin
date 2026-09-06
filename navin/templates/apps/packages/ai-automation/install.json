@@ -1,0 +1,335 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-automation",
+  "name": "AI Automation",
+  "kind": "ai-product",
+  "category": "automation",
+  "source_github": "https://github.com/mage-ai/mage-ai",
+  "source_name": "Mage AI",
+  "license": "Apache-2.0",
+  "stack": [
+    "Python",
+    "React"
+  ],
+  "studied_from": "templates_apps/ai-automation",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 2,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Mage OSS Build modern data pipelines locally \u2014 fast, visual, and production-ready. Mage OSS is a self-hosted development environment designed to help teams create production-grade data pipelines with confidence. Ideal for automating ETL tasks, architecting data flow, or orchestrating transformations \u2014 all in a fast, notebook-style interface powered by modular code. When it\u2019s time to scale, [Mage Pro](https://mage.ai) \u2014 our core platform \u2014 unlocks enterprise orchestration, collaboration, and AI-powered workflows."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": true,
+    "docker": true,
+    "package_manager": "poetry",
+    "make": true,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "poetry",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "poetry",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "make",
+      "why": "Project Makefile (start / install / seed)"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "mage_ai/frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "build": "next build",
+          "dev": "npx next dev",
+          "install_and_test": "yarn install && yarn type",
+          "lint": "next lint",
+          "start": "next start",
+          "build-storybook": "storybook build -s ./public",
+          "test": "playwright test",
+          "test:h": "playwright test --headed",
+          "test:ci": "playwright test -c playwright.config.ci.ts",
+          "test:report": "playwright show-report"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "mage_integrations/pyproject.toml",
+          "requirements.txt",
+          "mage_integrations/requirements.txt",
+          "mage_ai/data_preparation/templates/repo/requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "mage_ai/frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "build": "next build",
+          "dev": "npx next dev",
+          "install_and_test": "yarn install && yarn type",
+          "lint": "next lint",
+          "start": "next start",
+          "build-storybook": "storybook build -s ./public",
+          "test": "playwright test",
+          "test:h": "playwright test --headed",
+          "test:ci": "playwright test -c playwright.config.ci.ts",
+          "test:report": "playwright show-report"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "framer-motion",
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "mage_integrations/pyproject.toml",
+          "requirements.txt",
+          "mage_integrations/requirements.txt",
+          "mage_ai/data_preparation/templates/repo/requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "build",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "environment",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "ports",
+        "image": "",
+        "ports": [
+          "6789:6789"
+        ]
+      },
+      {
+        "name": "volumes",
+        "image": "node:18-alpine",
+        "ports": []
+      },
+      {
+        "name": "ports",
+        "image": "",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "volumes",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "server",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "app",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "server_spark",
+        "image": "mage/data_spark",
+        "ports": []
+      },
+      {
+        "name": "app_spark",
+        "image": "mage/data_spark",
+        "ports": []
+      },
+      {
+        "name": "py",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "lsp",
+        "image": "",
+        "ports": [
+          "8765:8765"
+        ]
+      },
+      {
+        "name": "database",
+        "image": "pgvector/pgvector:0.6.0-pg16",
+        "ports": [
+          "5432:5432"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-automation/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-automation/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-automation/overlay.json",
+    "agents": ".navin/apps/ai-automation/agents/",
+    "env": ".env",
+    "frontend": "mage_ai/frontend/package.json",
+    "backend": "pyproject.toml",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "automation-agent",
+      "integration-agent",
+      "workflow-builder",
+      "failure-recovery-agent",
+      "operations-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

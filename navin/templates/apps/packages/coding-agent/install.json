@@ -1,0 +1,523 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "coding-agent",
+  "name": "Coding Agent",
+  "kind": "ai-product",
+  "category": "agents",
+  "source_github": "https://github.com/All-Hands-AI/OpenHands",
+  "source_name": "OpenHands",
+  "license": "MIT",
+  "stack": [
+    "Python",
+    "React"
+  ],
+  "studied_from": "templates_apps/coding-agent",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 35,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Run OpenHands, Claude Code, Codex, Gemini, or any ACP-compatible agent across local, remote, and cloud backends. OpenHands Agent Canvas turns your coding agents into a self-hosted, always-on engineering team. It's a developer control center for starting conversations and automating everyday tasks \u2014 like generating reports that publish to Slack or automatically decomposing GitHub issues into tasks. It runs locally on your machine by default, but can connect to multiple \u201cagent backends\u201d, e.g. running agents in Docker containers, on VMs, or within your comp"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=22.12.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "@openhands/agent-canvas",
+        "scripts": {
+          "dev": "node --env-file-if-exists=.env scripts/dev-with-automation.mjs",
+          "dev:static": "node --env-file-if-exists=.env scripts/dev-static.mjs",
+          "dev:extra-backend": "node --env-file-if-exists=.env scripts/dev-extra-backend.mjs",
+          "dev:minimal": "node --env-file-if-exists=.env scripts/dev-safe.mjs",
+          "dev:frontend": "npm run make-i18n && cross-env VITE_MOCK_API=false react-router dev",
+          "dev:mock": "npm run make-i18n && cross-env VITE_MOCK_API=true react-router dev",
+          "build": "npm run build:app",
+          "build:mock": "npm run make-i18n && cross-env VITE_MOCK_API=true react-router build",
+          "start": "npx sirv-cli build/ --single",
+          "test": "npm run make-i18n && vitest run",
+          "test:e2e": "playwright test --pass-with-no-tests",
+          "test:e2e:live": "node --env-file-if-exists=.env tests/e2e/live/scripts/run-live-e2e.mjs",
+          "test:e2e:mock-llm": "playwright test --config=playwright.mock-llm.config.ts",
+          "test:e2e:mock-llm:docker": "playwright test --config=playwright.mock-llm-docker.config.ts",
+          "test:coverage": "npm run make-i18n && vitest run --coverage",
+          "test:mutation": "npm run make-i18n && stryker run",
+          "test:mutation:diff": "npm run make-i18n && node scripts/stryker-diff.mjs",
+          "test:mutation:incremental": "npm run make-i18n && stryker run --incremental",
+          "dev_wsl": "VITE_WATCH_USE_POLLING=true vite",
+          "prelint": "npm run make-i18n",
+          "lint": "npm run typecheck && eslint src && prettier --check src/**/*.{ts,tsx}",
+          "lint:fix": "eslint src --fix && prettier --write src/**/*.{ts,tsx}",
+          "build:app": "npm run make-i18n && react-router build",
+          "build:lib": "npm run make-i18n && react-router typegen && cross-env BUILD_LIB=true vite build && tsc -p tsconfig.lib.json",
+          "build:docker": "node scripts/docker-build.mjs",
+          "example:acp-docker:env": "node scripts/gen-acp-docker-env.mjs",
+          "build:desktop": "npm run build:app && node scripts/download-uv.mjs && node scripts/download-node.mjs && electron-builder --config electron-builder.config.mjs --publish never",
+          "build:desktop:universal": "npm run build:app && node scripts/download-uv.mjs && node scripts/download-node.mjs && cross-env ELECTRON_ARCH=universal electron-builder --config electron-builder.config.mjs --publish never"
+        },
+        "node_engine": ">=22.12.0",
+        "deps_hint": [
+          "axios",
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "@openhands/agent-canvas",
+        "scripts": {
+          "dev": "node --env-file-if-exists=.env scripts/dev-with-automation.mjs",
+          "dev:static": "node --env-file-if-exists=.env scripts/dev-static.mjs",
+          "dev:extra-backend": "node --env-file-if-exists=.env scripts/dev-extra-backend.mjs",
+          "dev:minimal": "node --env-file-if-exists=.env scripts/dev-safe.mjs",
+          "dev:frontend": "npm run make-i18n && cross-env VITE_MOCK_API=false react-router dev",
+          "dev:mock": "npm run make-i18n && cross-env VITE_MOCK_API=true react-router dev",
+          "build": "npm run build:app",
+          "build:mock": "npm run make-i18n && cross-env VITE_MOCK_API=true react-router build",
+          "start": "npx sirv-cli build/ --single",
+          "test": "npm run make-i18n && vitest run",
+          "test:e2e": "playwright test --pass-with-no-tests",
+          "test:e2e:live": "node --env-file-if-exists=.env tests/e2e/live/scripts/run-live-e2e.mjs",
+          "test:e2e:mock-llm": "playwright test --config=playwright.mock-llm.config.ts",
+          "test:e2e:mock-llm:docker": "playwright test --config=playwright.mock-llm-docker.config.ts",
+          "test:coverage": "npm run make-i18n && vitest run --coverage",
+          "test:mutation": "npm run make-i18n && stryker run",
+          "test:mutation:diff": "npm run make-i18n && node scripts/stryker-diff.mjs",
+          "test:mutation:incremental": "npm run make-i18n && stryker run --incremental",
+          "dev_wsl": "VITE_WATCH_USE_POLLING=true vite",
+          "prelint": "npm run make-i18n",
+          "lint": "npm run typecheck && eslint src && prettier --check src/**/*.{ts,tsx}",
+          "lint:fix": "eslint src --fix && prettier --write src/**/*.{ts,tsx}",
+          "build:app": "npm run make-i18n && react-router build",
+          "build:lib": "npm run make-i18n && react-router typegen && cross-env BUILD_LIB=true vite build && tsc -p tsconfig.lib.json",
+          "build:docker": "node scripts/docker-build.mjs",
+          "example:acp-docker:env": "node scripts/gen-acp-docker-env.mjs",
+          "build:desktop": "npm run build:app && node scripts/download-uv.mjs && node scripts/download-node.mjs && electron-builder --config electron-builder.config.mjs --publish never",
+          "build:desktop:universal": "npm run build:app && node scripts/download-uv.mjs && node scripts/download-node.mjs && cross-env ELECTRON_ARCH=universal electron-builder --config electron-builder.config.mjs --publish never"
+        },
+        "node_engine": ">=22.12.0",
+        "deps_hint": [
+          "axios",
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "electron/package.json",
+        "name": "agent-canvas",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "none",
+      "required": false,
+      "docker_image": "",
+      "port": 0,
+      "env_url": "",
+      "compose": [],
+      "bootstrap": [
+        "No server database detected. Uses local files or browser storage. Confirm in README before adding Docker."
+      ]
+    }
+  ],
+  "ports": [
+    3000
+  ],
+  "env_files": [
+    ".env.sample",
+    "examples/acp-docker/.env.example"
+  ],
+  "env": [
+    {
+      "key": "VITE_BACKEND_HOST",
+      "default": "127.0.0.1:8000\" # Host:port used by the Vite dev proxy",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.sample"
+    },
+    {
+      "key": "VITE_BACKEND_BASE_URL",
+      "default": "http://127.0.0.1:8000\" # Base URL used by browser-side direct requests",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.sample"
+    },
+    {
+      "key": "VITE_FRONTEND_PORT",
+      "default": "3001\" # Port to run the frontend application",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": ".env.sample"
+    },
+    {
+      "key": "VITE_USE_TLS",
+      "default": "false\" # Use HTTPS/WSS for proxied backend connections",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.sample"
+    },
+    {
+      "key": "VITE_INSECURE_SKIP_VERIFY",
+      "default": "false\" # Skip TLS certificate verification for proxied backend requests",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.sample"
+    },
+    {
+      "key": "VITE_MOCK_API",
+      "default": "false\" # Enable/disable API mocking with MSW",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.sample"
+    },
+    {
+      "key": "PROJECTS_PATH",
+      "default": "$HOME/projects\"  # directory containing your project folders",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "BUILD_LIB",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:vite.config.ts"
+    },
+    {
+      "key": "ELECTRON_ARCH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:electron-builder.config.mjs"
+    },
+    {
+      "key": "LIVE_E2E_BACKEND_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:playwright.live.config.ts"
+    },
+    {
+      "key": "LIVE_E2E_FRONTEND_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "source:playwright.live.config.ts"
+    },
+    {
+      "key": "LIVE_E2E_RECORD_VIDEO",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:playwright.live.config.ts"
+    },
+    {
+      "key": "LIVE_E2E_SESSION_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:playwright.live.config.ts"
+    },
+    {
+      "key": "MOCK_ACP_CONTAINER_PYTHON",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_ACP_CONTAINER_SCRIPT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_AGENT_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_BACKEND_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_CONTAINER_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_DOCKER_GLOBAL_TIMEOUT_MS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_DOCKER_IMAGE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_FOLDER_WORKSPACE_CONTAINER_DIR",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_FOLDER_WORKSPACE_HOST_DIR",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_INGRESS_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_PUBLIC_MODE_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_PUBLIC_MODE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_PYTHON",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_SESSION_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_SKILL_REPOS_CONTAINER_DIR",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "MOCK_LLM_USER_SKILLS_HOST_DIR",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "VERCEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:react-router.config.ts"
+    },
+    {
+      "key": "VITEST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:vite.config.ts"
+    },
+    {
+      "key": "VITE_BASE_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:react-router.config.ts"
+    },
+    {
+      "key": "VITE_SESSION_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:playwright.mock-llm-docker.config.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "examples/acp-docker/docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "agent-server",
+        "image": "${AGENT_SERVER_IMAGE:-ghcr.io/openhands/agent-server:latest-python}",
+        "ports": [
+          "8010:8000"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/coding-agent/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.sample to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/coding-agent/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/coding-agent/overlay.json",
+    "agents": ".navin/apps/coding-agent/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "coding-agent",
+      "review-agent",
+      "test-agent",
+      "terminal-agent",
+      "pr-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

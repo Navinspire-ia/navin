@@ -17,6 +17,7 @@ from navin.process_runtime import (
     ProcessRuntimePaths,
     ProcessStartOptions,
     ProcessStatus,
+    child_command_prefix,
 )
 
 GatewayStartOptions = ProcessStartOptions
@@ -27,9 +28,7 @@ RuntimeResult = ProcessResult
 def build_gateway_command(python_executable: str, options: GatewayStartOptions) -> list[str]:
     """Build a foreground gateway command for process supervisors."""
     command = [
-        python_executable,
-        "-m",
-        "navin",
+        *child_command_prefix(python_executable),
         "gateway",
         "--foreground",
         "--port",

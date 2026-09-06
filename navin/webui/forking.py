@@ -40,15 +40,16 @@ def create_webui_chat_fork(
             target_key,
             before_user_index,
         )
-        if forked is None:
-            return None
-
         transcript_ok = fork_transcript_before_user_index(
             source_key,
             target_key,
             before_user_index,
         )
-        if not transcript_ok:
+        if forked is None and not transcript_ok:
+            return None
+        if forked is None:
+            forked = session_manager.get_or_create(target_key)
+        elif not transcript_ok:
             write_session_messages_as_transcript(target_key, forked.messages)
         append_fork_marker(target_key)
 

@@ -1,0 +1,469 @@
+{
+  "battery": "policy",
+  "revision": 1,
+  "notes": "Frozen policy battery (S4.3). Each case is a fixture workspace, a request, the tool script a competent agent follows, and the eval check that decides the reward. 'split' is frozen with the version: heldout cases are never trained on. Editing any case yields a new version; scores of different versions never compare.",
+  "suites": [
+    {
+      "id": "code",
+      "title": "Code",
+      "cases": [
+        {
+          "id": "code-01",
+          "split": "train",
+          "prompt": "Fix the off-by-one bug in calc.py: total() must sum all the items.",
+          "workspace": {
+            "calc.py": "def total(xs):\n    return sum(xs[:-1])\n"
+          },
+          "script": [
+            {"tool": "read_file", "args": {"path": "calc.py"}},
+            {"tool": "edit_file", "args": {"path": "calc.py", "old_text": "return sum(xs[:-1])", "new_text": "return sum(xs)"}},
+            {"final": "Fixed the off-by-one in calc.py: total() now sums every item."}
+          ],
+          "expect": {
+            "tools_ok": ["read_file", "edit_file"],
+            "files_contain": {"calc.py": ["return sum(xs)"]},
+            "final_contains": ["Fixed"]
+          }
+        },
+        {
+          "id": "code-02",
+          "split": "train",
+          "prompt": "Add a helper slugify() to utils.py that lowercases a title and replaces spaces with dashes.",
+          "workspace": {
+            "utils.py": "def shout(text):\n    return text.upper()\n"
+          },
+          "script": [
+            {"tool": "read_file", "args": {"path": "utils.py"}},
+            {"tool": "edit_file", "args": {"path": "utils.py", "old_text": "def shout(text):\n    return text.upper()\n", "new_text": "def shout(text):\n    return text.upper()\n\n\ndef slugify(title):\n    return title.strip().lower().replace(\" \", \"-\")\n"}},
+            {"final": "Added slugify() to utils.py."}
+          ],
+          "expect": {
+            "tools_ok": ["read_file", "edit_file"],
+            "files_contain": {"utils.py": ["def slugify", "def shout"]},
+            "final_contains": ["slugify"]
+          }
+        },
+        {
+          "id": "code-03",
+          "split": "train",
+          "prompt": "Find where the config loader is defined and explain what file it reads.",
+          "workspace": {
+            "src/config.py": "import json\n\n\ndef load_config(path=\"settings.json\"):\n    with open(path) as handle:\n        return json.load(handle)\n",
+            "src/app.py": "from config import load_config\n\nsettings = load_config()\n"
+          },
+          "script": [
+            {"tool": "grep", "args": {"pattern": "def load_config", "path": "."}},
+            {"tool": "read_file", "args": {"path": "src/config.py"}},
+            {"final": "load_config() lives in src/config.py and reads settings.json by default."}
+          ],
+          "expect": {
+            "tools_ok": ["grep", "read_file"],
+            "no_writes": true,
+            "final_contains": ["settings.json", "src/config.py"]
+          }
+        },
+        {
+          "id": "code-04",
+          "split": "train",
+          "prompt": "List the Python files of the project and tell me how many there are.",
+          "workspace": {
+            "a.py": "print('a')\n",
+            "b.py": "print('b')\n",
+            "pkg/c.py": "print('c')\n",
+            "README.md": "# demo\n"
+          },
+          "script": [
+            {"tool": "find_files", "args": {"path": ".", "glob": "*.py"}},
+            {"final": "There are 3 Python files: a.py, b.py and pkg/c.py."}
+          ],
+          "expect": {
+            "tools_ok": ["find_files"],
+            "no_writes": true,
+            "final_contains": ["3"]
+          }
+        },
+        {
+          "id": "code-05",
+          "split": "train",
+          "prompt": "Fix the off-by-one bug in calc.py: total() must sum all the items.",
+          "workspace": {
+            "calc.py": "def total(xs):\n    return sum(xs[:-1])\n"
+          },
+          "script": [
+            {"tool": "edit_file", "args": {"path": "calc.py", "old_text": "return sum(xs[1:])", "new_text": "return sum(xs)"}},
+            {"final": "Fixed."}
+          ],
+          "expect": {
+            "tools_ok": ["edit_file"],
+            "files_contain": {"calc.py": ["return sum(xs)"]},
+            "final_contains": ["Fixed"]
+          }
+        },
+        {
+          "id": "code-06",
+          "split": "train",
+          "prompt": "Create a README.md describing the project (its name is Meteo, a small weather CLI).",
+          "workspace": {
+            "meteo.py": "print('sunny')\n"
+          },
+          "script": [
+            {"tool": "list_dir", "args": {"path": "."}},
+            {"tool": "write_file", "args": {"path": "README.md", "content": "# Meteo\n\nA small weather CLI. Run `python meteo.py`.\n"}},
+            {"final": "Created README.md for Meteo."}
+          ],
+          "expect": {
+            "tools_ok": ["list_dir", "write_file"],
+            "files_contain": {"README.md": ["Meteo"]},
+            "final_contains": ["README.md"]
+          }
+        },
+        {
+          "id": "code-07",
+          "split": "heldout",
+          "prompt": "Fix the failing test: parse_port() in net.py must return an int, not a string.",
+          "workspace": {
+            "net.py": "def parse_port(value):\n    port = value.strip()\n    return port\n"
+          },
+          "script": [
+            {"tool": "read_file", "args": {"path": "net.py"}},
+            {"tool": "edit_file", "args": {"path": "net.py", "old_text": "return port", "new_text": "return int(port)"}},
+            {"final": "Fixed parse_port() in net.py: it now returns an int."}
+          ],
+          "expect": {
+            "tools_ok": ["read_file", "edit_file"],
+            "files_contain": {"net.py": ["return int(port)"]},
+            "final_contains": ["Fixed"]
+          }
+        },
+        {
+          "id": "code-08",
+          "split": "heldout",
+          "prompt": "Where is the retry logic? Explain how many attempts it makes.",
+          "workspace": {
+            "src/http.py": "MAX_ATTEMPTS = 3\n\n\ndef fetch(url):\n    for attempt in range(MAX_ATTEMPTS):\n        try:\n            return _get(url)\n        except OSError:\n            continue\n    raise RuntimeError(url)\n"
+          },
+          "script": [
+            {"tool": "grep", "args": {"pattern": "MAX_ATTEMPTS", "path": "."}},
+            {"tool": "read_file", "args": {"path": "src/http.py"}},
+            {"final": "The retry loop is fetch() in src/http.py; it makes up to 3 attempts (MAX_ATTEMPTS)."}
+          ],
+          "expect": {
+            "tools_ok": ["grep", "read_file"],
+            "no_writes": true,
+            "final_contains": ["3", "src/http.py"]
+          }
+        },
+        {
+          "id": "code-09",
+          "split": "heldout",
+          "prompt": "Rename the function greet to hello in app.py.",
+          "workspace": {
+            "app.py": "def greet(name):\n    return f\"hi {name}\"\n"
+          },
+          "script": [
+            {"tool": "edit_file", "args": {"path": "app.py", "old_text": "def greeting(name):", "new_text": "def hello(name):"}},
+            {"final": "Renamed greet to hello."}
+          ],
+          "expect": {
+            "tools_ok": ["edit_file"],
+            "files_contain": {"app.py": ["def hello"]},
+            "final_contains": ["Renamed"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "browser",
+      "title": "Browser",
+      "cases": [
+        {
+          "id": "browser-01",
+          "split": "train",
+          "prompt": "Fetch the pricing page of example.test and tell me the price of the Pro plan.",
+          "workspace": {
+            "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Starter: free.</p><p>Pro plan: 29 EUR/month.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://example.test/pricing", "action": "fetch"}},
+            {"final": "The Pro plan costs 29 EUR/month."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "no_writes": true,
+            "final_contains": ["29"]
+          }
+        },
+        {
+          "id": "browser-02",
+          "split": "train",
+          "prompt": "Open the docs site of example.test, find the install command and save it to notes.md.",
+          "workspace": {
+            "_web/docs.example.test/install.html": "<h1>Install</h1><pre>pip install navin</pre>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://docs.example.test/install", "action": "fetch"}},
+            {"tool": "write_file", "args": {"path": "notes.md", "content": "Install: pip install navin\n"}},
+            {"final": "Saved the install command (pip install navin) to notes.md."}
+          ],
+          "expect": {
+            "tools_ok": ["browser", "write_file"],
+            "files_contain": {"notes.md": ["pip install navin"]},
+            "final_contains": ["notes.md"]
+          }
+        },
+        {
+          "id": "browser-03",
+          "split": "train",
+          "prompt": "Tell me the price of the Pro plan on example.test.",
+          "workspace": {
+            "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Pro plan: 29 EUR/month.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://example.test/prices", "action": "fetch"}},
+            {"final": "The Pro plan costs 19 EUR/month."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "final_contains": ["29"]
+          }
+        },
+        {
+          "id": "browser-04",
+          "split": "train",
+          "prompt": "Check whether the status page of api.example.test reports an incident.",
+          "workspace": {
+            "_web/api.example.test/status.html": "<h1>Status</h1><p>All systems operational.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://api.example.test/status", "action": "fetch"}},
+            {"final": "No incident: the status page says all systems operational."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "no_writes": true,
+            "final_contains": ["operational"]
+          }
+        },
+        {
+          "id": "browser-05",
+          "split": "train",
+          "prompt": "The pricing page moved. Fetch https://example.test/prices; if it is missing try /pricing, then report the Pro price.",
+          "workspace": {
+            "_web/example.test/pricing.html": "<h1>Pricing</h1><p>Pro plan: 29 EUR/month.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://example.test/prices", "action": "fetch"}},
+            {"tool": "browser", "args": {"url": "https://example.test/pricing", "action": "fetch"}},
+            {"final": "/prices is gone (404); /pricing says the Pro plan costs 29 EUR/month."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "no_writes": true,
+            "final_contains": ["29"]
+          }
+        },
+        {
+          "id": "browser-06",
+          "split": "train",
+          "prompt": "Summarize the changelog page of docs.example.test in one line.",
+          "workspace": {
+            "_web/docs.example.test/changelog.html": "<h1>Changelog</h1><p>v2.1: faster search, bug fixes.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://docs.example.test/changelog", "action": "fetch"}},
+            {"final": "v2.1 brings faster search and bug fixes."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "no_writes": true,
+            "final_contains": ["v2.1"]
+          }
+        },
+        {
+          "id": "browser-07",
+          "split": "heldout",
+          "prompt": "What does the FAQ page of example.test say about refunds?",
+          "workspace": {
+            "_web/example.test/faq.html": "<h1>FAQ</h1><p>Refunds: within 30 days, no questions asked.</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://example.test/faq", "action": "fetch"}},
+            {"final": "Refunds are possible within 30 days, no questions asked."}
+          ],
+          "expect": {
+            "tools_ok": ["browser"],
+            "no_writes": true,
+            "final_contains": ["30 days"]
+          }
+        },
+        {
+          "id": "browser-08",
+          "split": "heldout",
+          "prompt": "Fetch the release notes at docs.example.test/releases and write the latest version into VERSION.txt.",
+          "workspace": {
+            "_web/docs.example.test/releases.html": "<h1>Releases</h1><p>Latest: 3.4.0</p><p>Previous: 3.3.2</p>"
+          },
+          "script": [
+            {"tool": "browser", "args": {"url": "https://docs.example.test/releases", "action": "fetch"}},
+            {"tool": "write_file", "args": {"path": "VERSION.txt", "content": "3.4.0\n"}},
+            {"final": "Wrote 3.4.0 to VERSION.txt."}
+          ],
+          "expect": {
+            "tools_ok": ["browser", "write_file"],
+            "files_contain": {"VERSION.txt": ["3.4.0"]},
+            "final_contains": ["3.4.0"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "desk",
+      "title": "Desk",
+      "cases": [
+        {
+          "id": "desk-01",
+          "split": "train",
+          "prompt": "Who is our contact at Acme? Give me the email address.",
+          "workspace": {
+            "_desk/contacts.json": "[{\"id\": \"c1\", \"name\": \"Alice Martin\", \"email\": \"alice@example.test\", \"company\": \"Acme\"}, {\"id\": \"c2\", \"name\": \"Karim Ben\", \"email\": \"karim@nordic.test\", \"company\": \"Nordic\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "contacts"}},
+            {"final": "Our Acme contact is Alice Martin, alice@example.test."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "no_writes": true,
+            "final_contains": ["alice@example.test"]
+          }
+        },
+        {
+          "id": "desk-02",
+          "split": "train",
+          "prompt": "Schedule a 30-minute meeting 'Budget review' with Acme on 2026-09-10 at 14:00.",
+          "workspace": {
+            "_desk/calendar.json": "[{\"id\": \"e1\", \"title\": \"Kickoff\", \"when\": \"2026-09-08T10:00\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "calendar"}},
+            {"tool": "desk", "args": {"action": "add", "kind": "calendar", "data": "{\"title\": \"Budget review\", \"when\": \"2026-09-10T14:00\", \"minutes\": 30, \"with\": \"Acme\"}"}},
+            {"final": "Scheduled Budget review with Acme on 2026-09-10 at 14:00 (30 minutes); no conflict."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "files_contain": {"_desk/calendar.json": ["Budget review", "Kickoff"]},
+            "final_contains": ["Budget review"]
+          }
+        },
+        {
+          "id": "desk-03",
+          "split": "train",
+          "prompt": "How many invoices are unpaid, and for what total amount?",
+          "workspace": {
+            "_desk/invoices.json": "[{\"id\": \"i1\", \"client\": \"Acme\", \"amount\": 1200, \"status\": \"unpaid\"}, {\"id\": \"i2\", \"client\": \"Nordic\", \"amount\": 800, \"status\": \"paid\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "invoices"}},
+            {"final": "1 unpaid invoice (i1, Acme) for a total of 1200."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "no_writes": true,
+            "final_contains": ["1200"]
+          }
+        },
+        {
+          "id": "desk-04",
+          "split": "train",
+          "prompt": "Send Alice Martin a reminder email about invoice i1.",
+          "workspace": {
+            "_desk/contacts.json": "[{\"id\": \"c1\", \"name\": \"Alice Martin\", \"email\": \"alice@example.test\", \"company\": \"Acme\"}]",
+            "_desk/invoices.json": "[{\"id\": \"i1\", \"client\": \"Acme\", \"amount\": 1200, \"status\": \"unpaid\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "send", "kind": "mail", "data": "{\"to\": \"alice@acme.test\", \"subject\": \"Invoice reminder\", \"body\": \"Please pay.\"}"}},
+            {"final": "Sent the reminder."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "files_contain": {"_desk/outbox.json": ["alice@example.test", "i1"]},
+            "final_contains": ["Sent"]
+          }
+        },
+        {
+          "id": "desk-05",
+          "split": "train",
+          "prompt": "Send Alice Martin a reminder email about the unpaid invoice i1.",
+          "workspace": {
+            "_desk/contacts.json": "[{\"id\": \"c1\", \"name\": \"Alice Martin\", \"email\": \"alice@example.test\", \"company\": \"Acme\"}]",
+            "_desk/invoices.json": "[{\"id\": \"i1\", \"client\": \"Acme\", \"amount\": 1200, \"status\": \"unpaid\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "get", "kind": "contacts", "id": "c1"}},
+            {"tool": "desk", "args": {"action": "get", "kind": "invoices", "id": "i1"}},
+            {"tool": "desk", "args": {"action": "send", "kind": "mail", "data": "{\"to\": \"alice@example.test\", \"subject\": \"Reminder: invoice i1 (1200) is unpaid\", \"body\": \"Hello Alice, a gentle reminder about invoice i1.\"}"}},
+            {"final": "Reminder about invoice i1 sent to alice@example.test."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "files_contain": {"_desk/outbox.json": ["alice@example.test", "i1"]},
+            "final_contains": ["alice@example.test"]
+          }
+        },
+        {
+          "id": "desk-06",
+          "split": "train",
+          "prompt": "Export the contact list to contacts.csv.",
+          "workspace": {
+            "_desk/contacts.json": "[{\"id\": \"c1\", \"name\": \"Alice Martin\", \"email\": \"alice@example.test\", \"company\": \"Acme\"}, {\"id\": \"c2\", \"name\": \"Karim Ben\", \"email\": \"karim@nordic.test\", \"company\": \"Nordic\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "contacts"}},
+            {"tool": "write_file", "args": {"path": "contacts.csv", "content": "id,name,email,company\nc1,Alice Martin,alice@example.test,Acme\nc2,Karim Ben,karim@nordic.test,Nordic\n"}},
+            {"final": "Exported 2 contacts to contacts.csv."}
+          ],
+          "expect": {
+            "tools_ok": ["desk", "write_file"],
+            "files_contain": {"contacts.csv": ["alice@example.test", "karim@nordic.test"]},
+            "final_contains": ["contacts.csv"]
+          }
+        },
+        {
+          "id": "desk-07",
+          "split": "heldout",
+          "prompt": "What is on the calendar next week?",
+          "workspace": {
+            "_desk/calendar.json": "[{\"id\": \"e1\", \"title\": \"Kickoff\", \"when\": \"2026-09-08T10:00\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "calendar"}},
+            {"final": "One entry: Kickoff on 2026-09-08 at 10:00."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "no_writes": true,
+            "final_contains": ["Kickoff"]
+          }
+        },
+        {
+          "id": "desk-08",
+          "split": "heldout",
+          "prompt": "Add a new lead: Bob Durand, bob@durand.test, company Durand SARL.",
+          "workspace": {
+            "_desk/contacts.json": "[{\"id\": \"c1\", \"name\": \"Alice Martin\", \"email\": \"alice@example.test\", \"company\": \"Acme\"}]"
+          },
+          "script": [
+            {"tool": "desk", "args": {"action": "list", "kind": "contacts"}},
+            {"tool": "desk", "args": {"action": "add", "kind": "contacts", "data": "{\"name\": \"Bob Durand\", \"email\": \"bob@durand.test\", \"company\": \"Durand SARL\"}"}},
+            {"final": "Added the lead Bob Durand (bob@durand.test, Durand SARL); no duplicate found."}
+          ],
+          "expect": {
+            "tools_ok": ["desk"],
+            "files_contain": {"_desk/contacts.json": ["bob@durand.test", "alice@example.test"]},
+            "final_contains": ["Bob Durand"]
+          }
+        }
+      ]
+    }
+  ]
+}

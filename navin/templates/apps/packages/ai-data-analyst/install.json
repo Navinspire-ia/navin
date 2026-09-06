@@ -1,0 +1,354 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-data-analyst",
+  "name": "AI Data Analyst",
+  "kind": "ai-product",
+  "category": "analytics",
+  "source_github": "https://github.com/eosphoros-ai/DB-GPT",
+  "source_name": "DB-GPT",
+  "license": "MIT",
+  "stack": [
+    "Python",
+    "Web UI"
+  ],
+  "studied_from": "templates_apps/ai-data-analyst",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 6,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "<img src=\"./assets/LOGO_SMALL.png\" alt=\"Logo\" style=\"vertical-align: middle; height: 24px;\" /> DB-GPT: Open-Source Agentic AI Data Assistant [**Documents**](http://docs.dbgpt.cn/docs/overview/) | [**Contact Us**](https://github.com/eosphoros-ai/DB-GPT/blob/main/README.zh.md#%E8%81%94%E7%B3%BB%E6%88%91%E4%BB%AC) | [**Community**](https://github.com/eosphoros-ai/community) | [**Paper**](https://arxiv.org/pdf/2312.17449.pdf) > **An open-source AI data assistant that connects to your data, writes SQL and code, runs skills in sandboxed environments, and turns"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": true,
+    "docker": true,
+    "package_manager": "uv",
+    "make": true,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "uv",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "uv",
+      "why": "Install Python deps"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "make",
+      "why": "Project Makefile (start / install / seed)"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "web/package.json",
+        "name": "db-gpt-web",
+        "scripts": {
+          "start": "NODE_OPTIONS=--max_old_space_size=8192 next start",
+          "dev": "NODE_OPTIONS=--max_old_space_size=16384 next dev",
+          "build": "NODE_OPTIONS=--max_old_space_size=8192 next build",
+          "build:prod": "APP_ENV=prod  NODE_OPTIONS=--max_old_space_size=8192 next build",
+          "lint": "eslint '**/*.{ts,tsx}' --fix",
+          "test": "npm run test:react-final && npm run test:final-presentation",
+          "test:react-final": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --strict --outDir node_modules/.cache/react-final-tests utils/react-agent-final.ts utils/react-agent-final.test.ts && node node_modules/.cache/react-final-tests/react-agent-final.test.js",
+          "test:final-presentation": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --strict --outDir node_modules/.cache/final-presentation-tests utils/final-presentation.ts utils/final-presentation.test.ts && node node_modules/.cache/final-presentation-tests/final-presentation.test.js"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "framer-motion",
+          "mysql2",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "packages/dbgpt-app/pyproject.toml",
+          "packages/dbgpt-accelerator/dbgpt-acc-flash-attn/pyproject.toml",
+          "packages/dbgpt-accelerator/dbgpt-acc-auto/pyproject.toml",
+          "packages/dbgpt-ext/pyproject.toml",
+          "packages/dbgpt-serve/pyproject.toml"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "web/package.json",
+        "name": "db-gpt-web",
+        "scripts": {
+          "start": "NODE_OPTIONS=--max_old_space_size=8192 next start",
+          "dev": "NODE_OPTIONS=--max_old_space_size=16384 next dev",
+          "build": "NODE_OPTIONS=--max_old_space_size=8192 next build",
+          "build:prod": "APP_ENV=prod  NODE_OPTIONS=--max_old_space_size=8192 next build",
+          "lint": "eslint '**/*.{ts,tsx}' --fix",
+          "test": "npm run test:react-final && npm run test:final-presentation",
+          "test:react-final": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --strict --outDir node_modules/.cache/react-final-tests utils/react-agent-final.ts utils/react-agent-final.test.ts && node node_modules/.cache/react-final-tests/react-agent-final.test.js",
+          "test:final-presentation": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --strict --outDir node_modules/.cache/final-presentation-tests utils/final-presentation.ts utils/final-presentation.test.ts && node node_modules/.cache/final-presentation-tests/final-presentation.test.js"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "framer-motion",
+          "mysql2",
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "pyproject.toml",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "pyproject.toml",
+          "packages/dbgpt-app/pyproject.toml",
+          "packages/dbgpt-accelerator/dbgpt-acc-flash-attn/pyproject.toml",
+          "packages/dbgpt-accelerator/dbgpt-acc-auto/pyproject.toml",
+          "packages/dbgpt-ext/pyproject.toml",
+          "packages/dbgpt-serve/pyproject.toml"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mysql",
+      "required": true,
+      "docker_image": "mysql:8",
+      "port": 3306,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    3306
+  ],
+  "env_files": [
+    "web/.env.template"
+  ],
+  "env": [
+    {
+      "key": "API_BASE_URL",
+      "default": "http://127.0.0.1:5670",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "web/.env.template"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "sk-xxx \\",
+      "required": false,
+      "secret": false,
+      "purpose": "OpenAI API key",
+      "from": "README.md"
+    },
+    {
+      "key": "MOONSHOT_API_KEY",
+      "default": "sk-xxx \\",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "MINIMAX_API_KEY",
+      "default": "sk-xxx \\",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "OUTPUT_DIR",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:skills/walmart-sales-analyzer/scripts/generate_store_avg_comparison.py"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml",
+      "docker/compose_examples/observability/docker-compose.yml",
+      "docker/datasources/hive/docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "db",
+        "image": "mysql/mysql-server",
+        "ports": [
+          "3306:3306"
+        ]
+      },
+      {
+        "name": "webserver",
+        "image": "eosphorosai/dbgpt-openai:latest",
+        "ports": [
+          "5670:5670"
+        ]
+      },
+      {
+        "name": "jaeger",
+        "image": "jaegertracing/all-in-one:1.58",
+        "ports": [
+          "16686:16686",
+          "6831:6831",
+          "4318:4318",
+          "4317:4317",
+          "14268:14268"
+        ]
+      },
+      {
+        "name": "controller",
+        "image": "eosphorosai/dbgpt-openai:latest",
+        "ports": []
+      },
+      {
+        "name": "llm-worker",
+        "image": "eosphorosai/dbgpt-openai:latest",
+        "ports": []
+      },
+      {
+        "name": "embedding-worker",
+        "image": "eosphorosai/dbgpt-openai:latest",
+        "ports": []
+      },
+      {
+        "name": "webserver",
+        "image": "eosphorosai/dbgpt-openai:latest",
+        "ports": [
+          "5670:5670"
+        ]
+      },
+      {
+        "name": "hiveserver2",
+        "image": "apache/hive:4.0.1",
+        "ports": [
+          "10000:10000",
+          "10002:10002"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-data-analyst/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy web/.env.template to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "db-mysql",
+        "run": "docker compose up -d mysql || docker run -d --name navin-mysql -e MYSQL_ROOT_PASSWORD=navin -e MYSQL_DATABASE=app -p 3306:3306 mysql:8"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-data-analyst/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-data-analyst/overlay.json",
+    "agents": ".navin/apps/ai-data-analyst/agents/",
+    "env": ".env",
+    "frontend": "web/package.json",
+    "backend": "pyproject.toml",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "sql-agent",
+      "data-analyst-agent",
+      "visualization-agent",
+      "dashboard-agent",
+      "report-generator"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

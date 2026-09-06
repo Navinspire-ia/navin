@@ -1,0 +1,4 @@
+{"id": "smoke-ping", "input": "hello / ping the agent", "expect_contains": ["pong", "navin mock reply"]}
+{"id": "smoke-readme", "input": "Summarize the README for this project", "expect_contains": ["summary of the readme"]}
+{"id": "smoke-files", "input": "List files in the workspace root", "expect_contains": ["files:", "main.py"]}
+{"id": "smoke-fix", "input": "Please fix the TypeError in the stack trace", "expect_contains": ["suggested fix applied"]}

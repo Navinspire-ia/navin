@@ -24,7 +24,7 @@ class CommitInfo:
 
     def format(self, diff: str = "") -> str:
         """Format this commit for display, optionally with a diff."""
-        header = f"## {self.message.splitlines()[0]}\n`{self.sha}` — {self.timestamp}\n"
+        header = f"## {self.message.splitlines()[0]}\n`{self.sha}` - {self.timestamp}\n"
         if diff:
             return f"{header}\n```diff\n{diff}\n```"
         return f"{header}\n(no file changes)"
@@ -82,22 +82,7 @@ class GitStore:
 
             porcelain.init(str(self._workspace))
 
-            # Write .gitignore (merge with existing if present)
-            gitignore = self._workspace / ".gitignore"
-            dream_entries = self._build_gitignore()
-            if gitignore.exists():
-                existing = gitignore.read_text(encoding="utf-8")
-                existing_lines = set(existing.splitlines())
-                new_lines = [
-                    line
-                    for line in dream_entries.splitlines()
-                    if line not in existing_lines
-                ]
-                if new_lines:
-                    merged = existing.rstrip("\n") + "\n" + "\n".join(new_lines) + "\n"
-                    gitignore.write_text(merged, encoding="utf-8")
-            else:
-                gitignore.write_text(dream_entries, encoding="utf-8")
+            self.refresh_gitignore()
 
             # Ensure tracked files exist (touch them if missing) so the initial
             # commit has something to track.
@@ -121,6 +106,45 @@ class GitStore:
             logger.exception("Git store init failed for {}", self._workspace)
             return False
 
+    def owns_gitignore(self) -> bool:
+        """Whether the workspace .gitignore is the store-generated one.
+
+        A memory-store .gitignore always starts with ``/*``. A project's own
+        .gitignore must never be merged with store rules: injecting ``/*``
+        there would hide the user's entire tree from git.
+        """
+        gitignore = self._workspace / ".gitignore"
+        try:
+            lines = gitignore.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        first = next((line.strip() for line in lines if line.strip()), "")
+        return first == "/*"
+
+    def refresh_gitignore(self) -> None:
+        """Write/merge the store .gitignore so the tracked files stay visible.
+
+        Also called on already-initialized stores after a layout change (e.g.
+        memory files moving under ``.navin/``): the old .gitignore ignores the
+        new locations, which would silently disable Dream commits. Callers on
+        pre-existing repositories must check :meth:`owns_gitignore` first.
+        """
+        gitignore = self._workspace / ".gitignore"
+        dream_entries = self._build_gitignore()
+        if gitignore.exists():
+            existing = gitignore.read_text(encoding="utf-8")
+            existing_lines = set(existing.splitlines())
+            new_lines = [
+                line
+                for line in dream_entries.splitlines()
+                if line not in existing_lines
+            ]
+            if new_lines:
+                merged = existing.rstrip("\n") + "\n" + "\n".join(new_lines) + "\n"
+                gitignore.write_text(merged, encoding="utf-8")
+        else:
+            gitignore.write_text(dream_entries, encoding="utf-8")
+
     # -- daily operations ------------------------------------------------------
 
     def auto_commit(self, message: str) -> str | None:
@@ -141,7 +165,33 @@ class GitStore:
                 return None
 
             msg_bytes = message.encode("utf-8") if isinstance(message, str) else message
-            porcelain.add(str(self._workspace), paths=self._tracked_files)
+            present = [
+                rel for rel in self._tracked_files
+                if (self._workspace / rel).exists()
+            ]
+            # The store owns .gitignore; refresh_gitignore() may have updated
+            # it (layout change), and leaving it unstaged would keep status
+            # dirty forever, turning every Dream run into an empty commit.
+            if (self._workspace / ".gitignore").exists():
+                present.append(".gitignore")
+            if present:
+                porcelain.add(str(self._workspace), paths=present)
+            # Stage deletions of files that vanished from their tracked spot
+            # (legacy root files migrated into .navin/): otherwise the status
+            # check above stays dirty forever and every Dream run re-commits.
+            missing = [
+                path.decode("utf-8") if isinstance(path, bytes) else str(path)
+                for path in st.unstaged
+                if not (
+                    self._workspace
+                    / (path.decode("utf-8") if isinstance(path, bytes) else str(path))
+                ).exists()
+            ]
+            if missing:
+                try:
+                    porcelain.remove(str(self._workspace), paths=missing, cached=True)
+                except Exception:
+                    logger.debug("could not stage deletions: {}", missing)
             sha_bytes = porcelain.commit(
                 str(self._workspace),
                 message=msg_bytes,
@@ -198,15 +248,23 @@ class GitStore:
         return False
 
     def _build_gitignore(self) -> str:
-        """Generate .gitignore content from tracked files."""
-        dirs: set[str] = set()
+        """Generate .gitignore content from tracked files.
+
+        Nested tracked paths (e.g. ``.navin/memory/MEMORY.md``) need every
+        ancestor directory re-included and then re-ignored (`!dir/` + `dir/*`),
+        because git cannot re-include a file whose parent stays excluded.
+        """
+        dirs: list[str] = []
         for f in self._tracked_files:
-            parent = str(Path(f).parent)
-            if parent != ".":
-                dirs.add(parent)
+            prefix = ""
+            for part in Path(f).parts[:-1]:
+                prefix = f"{prefix}{part}/"
+                if prefix not in dirs:
+                    dirs.append(prefix)
         lines = ["/*"]
         for d in sorted(dirs):
-            lines.append(f"!{d}/")
+            lines.append(f"!{d}")
+            lines.append(f"{d}*")
         for f in self._tracked_files:
             lines.append(f"!{f}")
         lines.append("!.gitignore")
@@ -316,7 +374,7 @@ class GitStore:
     def summarize_working_tree(self, paths: list[str]) -> str:
         """Structured summary of working-tree changes vs HEAD for *paths*.
 
-        Pure filesystem/git ground truth — never LLM narrative — suitable as a
+        Pure filesystem/git ground truth - never LLM narrative - suitable as a
         truthful audit record. Returns "" when the repo is not initialized or
         none of *paths* differ from HEAD.
 
@@ -504,7 +562,7 @@ class GitStore:
                     logger.warning("Git revert: cannot revert root commit {}", commit)
                     return None
 
-                # Use the parent's tree — this undoes the commit's changes
+                # Use the parent's tree - this undoes the commit's changes
                 parent_obj = repo[commit_obj.parents[0]]
                 tree = repo[parent_obj.tree]
 

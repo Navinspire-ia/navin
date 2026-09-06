@@ -1,0 +1,30 @@
+{
+  "include": ["navin", "tests", "hatch_build.py"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
+    ".diagnostics",
+    ".navin",
+    ".venv",
+    ".venv-x86",
+    "artifacts",
+    "build",
+    "crates",
+    "desktop",
+    "desktop-electron",
+    "dist",
+    "docs",
+    "marketing",
+    "os",
+    "packaging",
+    "site",
+    "templates",
+    "templates_apps",
+    "webui"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic"
+}

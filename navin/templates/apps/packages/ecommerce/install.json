@@ -1,0 +1,321 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ecommerce",
+  "name": "E-commerce Platform",
+  "kind": "business",
+  "category": "commerce",
+  "source_github": "https://github.com/medusajs/medusa",
+  "source_name": "Medusa",
+  "license": "MIT",
+  "stack": [
+    "Node.js",
+    "TypeScript",
+    "React"
+  ],
+  "studied_from": "curated+templates_apps/ecommerce",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 11,
+    "package_count": 1,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Medusa is a commerce framework. The GitHub clone is the monorepo, not a store. Create a runnable app with `npx create-medusa-app@latest`. Needs Postgres + Redis. Admin on :9000, storefront on :8000."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=20.0.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "yarn",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "yarn",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "apps/storefront/package.json",
+        "name": "medusa-storefront",
+        "scripts": {
+          "dev": "next dev -p 8000",
+          "build": "next build",
+          "start": "next start"
+        },
+        "node_engine": ">=20",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "apps/backend/package.json",
+        "name": "medusa-backend",
+        "scripts": {
+          "dev": "npx medusa develop",
+          "start": "npx medusa start",
+          "build": "npx medusa build"
+        },
+        "node_engine": ">=20",
+        "deps_hint": [
+          "express"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "create-medusa-app",
+        "scripts": {
+          "create": "npx create-medusa-app@latest"
+        },
+        "node_engine": ">=20",
+        "deps_hint": [
+          "express",
+          "ioredis"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-medusa-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres -e POSTGRES_DB=medusa-store -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready -U postgres, then npx medusa db:migrate."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": true,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-medusa-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    8000,
+    9000,
+    5432,
+    6379
+  ],
+  "env_files": [
+    ".env"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://postgres:postgres@127.0.0.1:5432/medusa-store",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "curated"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": true,
+      "secret": false,
+      "purpose": "Redis event bus / cache",
+      "from": "curated"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "change-me-jwt",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "curated"
+    },
+    {
+      "key": "COOKIE_SECRET",
+      "default": "change-me-cookie",
+      "required": true,
+      "secret": true,
+      "purpose": "Cookie signing secret",
+      "from": "curated"
+    },
+    {
+      "key": "STORE_CORS",
+      "default": "http://localhost:8000",
+      "required": true,
+      "secret": false,
+      "purpose": "Storefront origin",
+      "from": "curated"
+    },
+    {
+      "key": "ADMIN_CORS",
+      "default": "http://localhost:9000",
+      "required": true,
+      "secret": false,
+      "purpose": "Admin origin",
+      "from": "curated"
+    },
+    {
+      "key": "AUTH_CORS",
+      "default": "http://localhost:9000,http://localhost:8000",
+      "required": true,
+      "secret": false,
+      "purpose": "Auth allowed origins",
+      "from": "curated"
+    },
+    {
+      "key": "PORT",
+      "default": "9000",
+      "required": false,
+      "secret": false,
+      "purpose": "Medusa HTTP port",
+      "from": "curated"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "curated"
+    },
+    {
+      "key": "MEDUSA_WORKER_MODE",
+      "default": "server",
+      "required": false,
+      "secret": false,
+      "purpose": "server or worker",
+      "from": "curated"
+    },
+    {
+      "key": "DISABLE_MEDUSA_ADMIN",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "Build admin with the server",
+      "from": "curated"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [
+      {
+        "name": "postgres",
+        "image": "postgres:16-alpine",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:7-alpine",
+        "ports": [
+          "6379:6379"
+        ]
+      }
+    ],
+    "dockerfile": false,
+    "note": "No compose in the framework clone. Start Postgres + Redis, then create-medusa-app."
+  },
+  "launch": {
+    "build": "npx medusa build",
+    "dev": "npx medusa develop",
+    "create": "npx create-medusa-app@latest",
+    "migrate": "npx medusa db:migrate",
+    "seed": "npx medusa db:seed"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ecommerce/install.json. This clone is the Medusa monorepo, not a store."
+      },
+      {
+        "id": "db-postgres",
+        "run": "Start Postgres 16 on :5432 (user/password postgres, db medusa-store)."
+      },
+      {
+        "id": "db-redis",
+        "run": "Start Redis 7 on :6379."
+      },
+      {
+        "id": "create-app",
+        "run": "npx create-medusa-app@latest --db-url postgres://postgres:postgres@127.0.0.1:5432/medusa-store"
+      },
+      {
+        "id": "env",
+        "run": "In the generated app .env set DATABASE_URL, REDIS_URL, JWT_SECRET, COOKIE_SECRET, STORE_CORS, ADMIN_CORS, AUTH_CORS."
+      },
+      {
+        "id": "migrate",
+        "run": "npx medusa db:migrate && npx medusa db:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ecommerce/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npx medusa develop (API+admin :9000). Storefront: cd apps/storefront && npm run dev (:8000)."
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ecommerce/overlay.json",
+    "agents": ".navin/apps/ecommerce/agents/",
+    "env": ".env",
+    "frontend": "apps/storefront (Next.js storefront from create-medusa-app)",
+    "backend": "apps/backend or project root (Medusa API + admin)",
+    "theme": "Do not rewrite the medusajs/medusa monorepo. Change the generated store app.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "ecommerce-manager",
+      "sales-agent",
+      "product-agent",
+      "inventory-agent",
+      "support-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap.",
+  "auto_start": false
+}

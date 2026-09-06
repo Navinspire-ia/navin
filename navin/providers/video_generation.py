@@ -5,9 +5,11 @@ async clients, one per provider, all returning raw video bytes that the
 tool layer persists as artifacts.
 
 Supported providers:
-- ``gemini``  — Google Veo via the Generative Language API (predictLongRunning)
-- ``openai``  — OpenAI Sora via the ``/v1/videos`` API
-- ``minimax`` — MiniMax Hailuo via ``/v1/video_generation`` task polling
+- ``gemini``  - Google Veo via the Generative Language API (predictLongRunning)
+- ``openai``  - OpenAI Sora via the ``/v1/videos`` API
+- ``minimax`` - MiniMax Hailuo via ``/v1/video_generation`` task polling
+- ``openrouter`` / ``navin`` - OpenRouter ``/v1/videos`` (Seedance, Veo, …)
+- ``ollama`` / ``vllm`` / ``lm_studio`` - local OpenAI-compatible ``/v1/videos`` servers
 """
 
 from __future__ import annotations
@@ -20,12 +22,21 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from navin.providers.image_generation import image_path_to_inline_data
+from navin.providers.image_generation import (
+    image_path_to_data_url,
+    image_path_to_inline_data,
+)
 from navin.providers.registry import find_by_name
 
 _DEFAULT_TIMEOUT_S = 60.0
 _DEFAULT_POLL_INTERVAL_S = 5.0
 _DEFAULT_MAX_WAIT_S = 600.0
+
+_OPENROUTER_ATTRIBUTION_HEADERS = {
+    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "X-OpenRouter-Title": "navin",
+    "X-OpenRouter-Categories": "cli-agent,personal-agent",
+}
 
 _VEO_ASPECT_RATIOS = {"16:9", "9:16"}
 _SORA_ASPECT_RATIO_SIZES = {
@@ -547,3 +558,229 @@ class MiniMaxVideoGenerationClient(VideoGenerationProvider):
 register_video_gen_provider(GeminiVideoGenerationClient)
 register_video_gen_provider(MiniMaxVideoGenerationClient)
 register_video_gen_provider(OpenAIVideoGenerationClient)
+
+
+class OpenRouterVideoGenerationClient(VideoGenerationProvider):
+    """OpenRouter async video API (``POST /api/v1/videos`` + poll)."""
+
+    provider_name = "openrouter"
+    missing_key_message = (
+        "Video generation API key is not configured. "
+        "Add a key in Settings → Video, or connect a paid Navin plan."
+    )
+    default_timeout = 120.0
+
+    def _default_base_url(self) -> str:
+        return "https://openrouter.ai/api/v1"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_image: str | None = None,
+        aspect_ratio: str | None = None,
+        duration_seconds: int | None = None,
+        resolution: str | None = None,
+    ) -> GeneratedVideoResponse:
+        if not self.api_key:
+            raise VideoGenerationError(self.missing_key_message)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            **_OPENROUTER_ATTRIBUTION_HEADERS,
+            **self.extra_headers,
+        }
+        body: dict[str, Any] = {"model": model, "prompt": prompt}
+        if aspect_ratio:
+            body["aspect_ratio"] = aspect_ratio
+        if duration_seconds:
+            body["duration"] = int(duration_seconds)
+        if resolution:
+            body["resolution"] = resolution
+        if reference_image:
+            body["frame_images"] = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_path_to_data_url(reference_image)},
+                    "frame_type": "first_frame",
+                }
+            ]
+        body.update(self.extra_body)
+
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            start = await self._request(
+                client,
+                "POST",
+                f"{self.api_base}/videos",
+                headers=headers,
+                json_body=body,
+                error_label="Video generation",
+            )
+            job = start.json()
+            polling_url = job.get("polling_url")
+            video_id = job.get("id")
+            if not polling_url and video_id:
+                polling_url = f"{self.api_base}/videos/{video_id}"
+            if not polling_url:
+                raise VideoGenerationError(
+                    f"Video provider did not return a polling URL: {str(job)[:500]}"
+                )
+
+            async def check():
+                status = await self._request(
+                    client,
+                    "GET",
+                    str(polling_url),
+                    headers=headers,
+                    error_label="Video status",
+                )
+                data = status.json()
+                state = str(data.get("status") or "").lower()
+                if state in {"completed", "complete", "succeeded", "success"}:
+                    return data
+                if state in {"failed", "error", "cancelled", "canceled"}:
+                    detail = data.get("error") or state
+                    raise VideoGenerationError(
+                        f"Video generation failed: {detail}"
+                    )
+                return None
+
+            data = await self._poll(check, error_label="Video generation")
+
+            job_id = str(data.get("id") or video_id or "").strip()
+            urls: list[str] = []
+            for key in ("unsigned_urls", "urls", "signed_urls"):
+                raw_urls = data.get(key)
+                if isinstance(raw_urls, list):
+                    urls.extend(u for u in raw_urls if isinstance(u, str) and u)
+
+            # Prefer the configured API base + job id. Provider "unsigned_urls"
+            # often point at /videos/{id}/content and still require Bearer auth;
+            # a bare GET returns 401 ("auth cookie").
+            download_headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                **_OPENROUTER_ATTRIBUTION_HEADERS,
+                **self.extra_headers,
+            }
+            content_url = self._resolve_video_content_url(job_id, urls)
+            if not content_url:
+                raise VideoGenerationError(
+                    f"Video generation completed without a download URL: {str(data)[:500]}"
+                )
+
+            content = await self._request(
+                client,
+                "GET",
+                content_url,
+                headers=download_headers,
+                error_label="Video download",
+            )
+            raw = content.content
+
+        return GeneratedVideoResponse(
+            video=raw, mime=_detect_video_mime(raw), raw=data
+        )
+
+    def _resolve_video_content_url(self, job_id: str, urls: list[str]) -> str:
+        """Build an authenticated content URL on our configured API base."""
+        if job_id:
+            return f"{self.api_base.rstrip('/')}/videos/{job_id}/content"
+        for url in urls:
+            # Rewrite absolute provider content URLs onto api_base so managed
+            # keys always hit the same host that created the job.
+            marker = "/videos/"
+            if marker in url and "/content" in url:
+                tail = url.split(marker, 1)[1]
+                return f"{self.api_base.rstrip('/')}{marker}{tail}"
+            if url.startswith(self.api_base):
+                return url
+        return urls[0] if urls else ""
+
+
+class NavinVideoGenerationClient(OpenRouterVideoGenerationClient):
+    """Video generation via the managed Navin OpenRouter key (Seedance, etc.)."""
+
+    provider_name = "navin"
+    missing_key_message = (
+        "Navin managed key is not configured. Connect a paid plan, "
+        "or switch Video settings to your own provider."
+    )
+
+
+register_video_gen_provider(OpenRouterVideoGenerationClient)
+register_video_gen_provider(NavinVideoGenerationClient)
+
+
+class LocalOpenAICompatibleVideoGenerationClient(OpenAIVideoGenerationClient):
+    """OpenAI-compatible ``/videos`` API for local servers (Ollama, vLLM, …).
+
+    API key is optional: many local stacks accept a dummy Bearer token or none.
+    """
+
+    missing_key_message = ""
+    _local_api_key = "local"
+
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        reference_image: str | None = None,
+        aspect_ratio: str | None = None,
+        duration_seconds: int | None = None,
+        resolution: str | None = None,
+    ) -> GeneratedVideoResponse:
+        if not self.api_base:
+            raise VideoGenerationError(
+                f"{self.provider_name} video API base is not configured. "
+                f"Set providers.{self.provider_name}.apiBase."
+            )
+        # Reuse the OpenAI videos client with a local placeholder key when unset.
+        previous = self.api_key
+        if not previous:
+            self.api_key = self._local_api_key
+        try:
+            return await super().generate(
+                prompt=prompt,
+                model=model,
+                reference_image=reference_image,
+                aspect_ratio=aspect_ratio,
+                duration_seconds=duration_seconds,
+                resolution=resolution,
+            )
+        finally:
+            self.api_key = previous
+
+
+class OllamaVideoGenerationClient(LocalOpenAICompatibleVideoGenerationClient):
+    """Video generation via Ollama's OpenAI-compatible ``/v1/videos`` surface."""
+
+    provider_name = "ollama"
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:11434/v1"
+
+
+class VllmVideoGenerationClient(LocalOpenAICompatibleVideoGenerationClient):
+    """Video generation via a vLLM (or similar) OpenAI-compatible ``/videos`` API."""
+
+    provider_name = "vllm"
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:8000/v1"
+
+
+class LmStudioVideoGenerationClient(LocalOpenAICompatibleVideoGenerationClient):
+    """Video generation via LM Studio's OpenAI-compatible ``/v1/videos`` surface."""
+
+    provider_name = "lm_studio"
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:1234/v1"
+
+
+register_video_gen_provider(OllamaVideoGenerationClient)
+register_video_gen_provider(VllmVideoGenerationClient)
+register_video_gen_provider(LmStudioVideoGenerationClient)

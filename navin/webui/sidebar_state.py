@@ -15,7 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-from navin.config.paths import get_webui_dir
+from navin.config.paths import get_webui_dir, is_navin_internal_path
 
 WEBUI_SIDEBAR_STATE_SCHEMA_VERSION = 1
 _MAX_STATE_FILE_BYTES = 256 * 1024
@@ -26,10 +26,39 @@ _MAX_TITLE_LEN = 160
 _MAX_TAG_LEN = 40
 _ALLOWED_DENSITIES = {"comfortable", "compact"}
 _ALLOWED_SORTS = {"updated_desc", "created_desc", "title_asc"}
+# The theme is a browser preference, but the CLI has to know it before any
+# browser exists: a Chromium app window paints its own title bar from the
+# browser theme, decided by a launch flag, and ignores anything the page says.
+# Kept here rather than only in localStorage so the frame matches the app.
+_ALLOWED_THEMES = {"dark", "light"}
 
 
 def webui_sidebar_state_path() -> Path:
     return get_webui_dir() / "sidebar-state.json"
+
+
+_ALLOWED_CHAT_MODULES = frozenset(
+    {
+        "chat",
+        "dev",
+        "code",
+        "risklens",
+        "scraping",
+        "content",
+        "marketing",
+        "montage",
+        "ads",
+        "seo",
+        "leads",
+        "tenders",
+        "career",
+        "trading",
+        "meeting",
+        "ops",
+        "notes",
+        "crm",
+    }
+)
 
 
 def default_webui_sidebar_state() -> dict[str, Any]:
@@ -37,17 +66,21 @@ def default_webui_sidebar_state() -> dict[str, Any]:
         "schema_version": WEBUI_SIDEBAR_STATE_SCHEMA_VERSION,
         "pinned_keys": [],
         "archived_keys": [],
+        "chat_order": [],
         "title_overrides": {},
         "project_name_overrides": {},
         "tags_by_key": {},
+        "module_by_key": {},
+        "module_by_path": {},
         "collapsed_groups": {},
         "recent_projects": [],
         "view": {
             "density": "comfortable",
             "show_previews": False,
-            "show_timestamps": False,
+            "show_timestamps": True,
             "show_archived": False,
             "sort": "updated_desc",
+            "theme": "dark",
         },
         "updated_at": None,
     }
@@ -115,6 +148,51 @@ def _clean_tags_by_key(value: Any) -> dict[str, list[str]]:
     return out
 
 
+def _clean_module_by_key(value: Any) -> dict[str, str]:
+    """Last shell module where each chat was used (``dev`` for Code, …)."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, raw_module in list(value.items())[:_MAX_MAP_ITEMS]:
+        cleaned_key = _clean_string(key)
+        cleaned_module = _clean_string(raw_module, max_len=40)
+        if cleaned_key is None or cleaned_module is None:
+            continue
+        module = cleaned_module.lower()
+        if module not in _ALLOWED_CHAT_MODULES:
+            continue
+        if module == "code":
+            module = "dev"
+        out[cleaned_key] = module
+    return out
+
+
+def _clean_module_by_path(value: Any) -> dict[str, str]:
+    """Module a project folder belongs to, so launching it opens the right one.
+
+    Keyed by absolute folder path with a trailing slash stripped, because the
+    same folder reaches us both ways depending on which picker sent it.
+    """
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, raw_module in list(value.items())[:_MAX_MAP_ITEMS]:
+        cleaned_key = _clean_string(key)
+        cleaned_module = _clean_string(raw_module, max_len=40)
+        if cleaned_key is None or cleaned_module is None:
+            continue
+        if is_navin_internal_path(cleaned_key):
+            continue
+        module = cleaned_module.lower()
+        if module not in _ALLOWED_CHAT_MODULES:
+            continue
+        if module == "code":
+            module = "dev"
+        path = cleaned_key.replace("\\", "/").rstrip("/") or cleaned_key
+        out[path] = module
+    return out
+
+
 _MAX_RECENT_PROJECTS = 20
 
 
@@ -128,6 +206,10 @@ def _clean_recent_projects(value: Any) -> list[dict[str, str]]:
             continue
         path = _clean_string(item.get("path"))
         if path is None or path in seen:
+            continue
+        # Never remember the internal .navin storage as a "project": it kept
+        # resurfacing as a recent entry in every project picker.
+        if is_navin_internal_path(path):
             continue
         seen.add(path)
         name = _clean_string(item.get("name"), max_len=_MAX_TITLE_LEN) or ""
@@ -143,7 +225,9 @@ def _clean_view(value: Any) -> dict[str, Any]:
         return dict(default)
     density = value.get("density")
     sort = value.get("sort")
+    theme = value.get("theme")
     return {
+        "theme": theme if theme in _ALLOWED_THEMES else default["theme"],
         "density": density if density in _ALLOWED_DENSITIES else default["density"],
         "show_previews": bool(value.get("show_previews", default["show_previews"])),
         "show_timestamps": bool(value.get("show_timestamps", default["show_timestamps"])),
@@ -159,11 +243,14 @@ def normalize_webui_sidebar_state(raw: Any) -> dict[str, Any]:
     state = default_webui_sidebar_state()
     state["pinned_keys"] = _clean_string_list(raw.get("pinned_keys"))
     state["archived_keys"] = _clean_string_list(raw.get("archived_keys"))
+    state["chat_order"] = _clean_string_list(raw.get("chat_order"))
     state["title_overrides"] = _clean_title_overrides(raw.get("title_overrides"))
     state["project_name_overrides"] = _clean_title_overrides(
         raw.get("project_name_overrides")
     )
     state["tags_by_key"] = _clean_tags_by_key(raw.get("tags_by_key"))
+    state["module_by_key"] = _clean_module_by_key(raw.get("module_by_key"))
+    state["module_by_path"] = _clean_module_by_path(raw.get("module_by_path"))
     state["collapsed_groups"] = _clean_bool_map(raw.get("collapsed_groups"))
     state["recent_projects"] = _clean_recent_projects(raw.get("recent_projects"))
     state["view"] = _clean_view(raw.get("view"))
@@ -186,6 +273,13 @@ def read_webui_sidebar_state() -> dict[str, Any]:
         logger.warning("read webui sidebar state failed {}: {}", path, e)
         return default_webui_sidebar_state()
     return normalize_webui_sidebar_state(raw)
+
+
+def webui_theme() -> str:
+    """The theme last chosen in the WebUI, for callers that run before it does."""
+    view = read_webui_sidebar_state().get("view") or {}
+    theme = view.get("theme")
+    return theme if theme in _ALLOWED_THEMES else "dark"
 
 
 def write_webui_sidebar_state(raw: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 ---
 name: cicd-agent
-description: Work with GitHub Actions, GitLab CI, and deployment pipelines — inspect runs, fix workflows, and gate releases. Use gh when available for Actions.
+description: Work with GitHub Actions, GitLab CI, and deployment pipelines - inspect runs, fix workflows, and gate releases. Use gh when available for Actions.
 metadata: {"navin":{"emoji":"🚀","category":"devops"}}
 ---
 

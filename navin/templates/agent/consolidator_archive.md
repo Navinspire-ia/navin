@@ -10,10 +10,10 @@ Output one fact per line in this format:
 - [mark] fact content
 
 Marks (choose the best match):
-- [permanent] Core preferences, personal traits, habits — never becomes stale
-- [durable] Technical discoveries, project knowledge, config details — valid for months
-- [ephemeral] Active task state, temporary decisions — may change in weeks
-- [correction] Correction to a previous memory — state what changed
+- [permanent] Core preferences, personal traits, habits - never becomes stale
+- [durable] Technical discoveries, project knowledge, config details - valid for months
+- [ephemeral] Active task state, temporary decisions - may change in weeks
+- [correction] Correction to a previous memory - state what changed
 - [skip] Does not meet SNIP criteria, is conversational filler, is code/source facts derivable from the repo, or is only useful as an audit breadcrumb
 
 Priority: user corrections and preferences > solutions > decisions > events > environment facts. The most valuable memory prevents the user from having to repeat themselves.

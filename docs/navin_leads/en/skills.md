@@ -2,34 +2,37 @@
 
 ## Preloaded by `/leads`
 
-| Skill | Purpose |
+| Skill | Role |
 | --- | --- |
-| `lead-prospector` | Expert company/people/contact hunting from open sources, fully sourced output. **New, built for this module.** |
-| `buying-signals` | Detects and scores funding, hiring, tech-change and leadership signals; maps each to an outreach angle. **New, built for this module.** |
-| `lead-generation` | ICP-based prospect list building with sourcing plays. |
-| `lead-qualification` | BANT-F scoring and tiering. |
-| `account-research` | Pre-meeting account sheets. |
-| `entity-research` | Deep research on a single company or person. |
-| `outreach-sequencer` | Multi-touch, multi-channel sequences. |
-| `cold-email-writer` | Outbound emails that get replies. |
+| `studio-expert-contract` | Senior contract: evidence, compliance, PASS/WARN/BLOCK gate. |
+| `critic-reviewer` | Critical review before delivery. |
+| `data-quality-agent` | Lead CSV quality control. |
+| `lead-prospector` | Company/people/contact hunt (search + scrape). |
+| `buying-signals` | Funding/hiring/tech/leadership signals with angles. |
+| `lead-generation` | ICP-based list building. |
+| `lead-qualification` | BANT-F/ICP scoring (+ `score_leads.py`). |
+| `account-research` | Account sheets before meetings. |
+| `entity-research` | Deep company/person research. |
+| `outreach-sequencer` | Multi-touch cadences (prepare only, human sends). |
+| `cold-email-writer` | Personalized outbound emails. |
 | `customer-persona-builder` | Buying committee personas. |
 | `pipeline-analyst` | Pipeline health and weighted forecasts. |
+| `lead-enrichment` | Hunter/Apollo via `enrich_leads.py` when keys exist. |
+| `crm-update-agent` | Push HubSpot/Salesforce or `sales/crm/` files. |
+| `deep-web-research` | Multi-source deep research. |
+| `web-extractor` | Structured extraction from public pages. |
 
-## Complementary skills
+## Complementary skills / MCP
 
-| Skill | Purpose |
+| Item | Role |
 | --- | --- |
-| `crm-update-agent` | Pushing leads and activities into HubSpot/Salesforce or files. |
-| `discovery-call-assistant` | Live discovery call support. |
+| Exa / Firecrawl MCP | Public search and crawl (Settings → MCP). |
+| HubSpot MCP | Live contacts/companies/deals. |
+| Salesforce MCP | Live CRM via `salesforce` (`SF_ACCESS_TOKEN` + instance URL, read-only default). |
+| `discovery-call-assistant` | Live discovery call help. |
 | `objection-handler` | AER playbooks and battlecards. |
-| `meeting-followup` | Post-meeting summaries and next steps. |
-| `pricing-assistant` | Pricing scenarios and floors. |
-| `sales-proposal-writer` / `proposal-writer` | Client-ready proposals. |
-| `contract-reviewer` / `contract-extractor` | Clause risks and structured extraction. |
-| `tender-monitor` | Public tender watch. |
-| `competitor-intelligence` | Monitoring competitor moves. |
-| `deep-web-research` / `web-extractor` | Multi-source research and structured page extraction. |
-| `linkedin-optimizer` | Profile optimization for social selling. |
-| `fact-checker` | Verifying claims before outreach. |
+| `meeting-followup` | Post-meeting notes. |
+| `competitor-intelligence` | Competitor watch. |
+| `fact-checker` | Claim checks before outreach. |
 
-Skills load automatically with `/leads`; invoke any of them explicitly for a focused task ("use pipeline-analyst on this quarter's deals").
+Skills load automatically with `/leads`.

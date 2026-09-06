@@ -4,14 +4,18 @@
 
 | Skill | Purpose |
 | --- | --- |
-| `seo-technical-auditor` | Technical audits: crawlability, indexability, structured data, performance signals. |
-| `keyword-research` | Keyword discovery, intent mapping, difficulty estimation, clustering. |
+| `studio-expert-contract` | Senior desk contract: evidence, deliverables, PASS/WARN/BLOCK gate. |
+| `critic-reviewer` | Critical review before delivery. |
+| `seo-technical-auditor` | Grounded technical audits (+ `audit_score.py`). |
+| `keyword-research` | Intent mapping, qualitative difficulty, clustering (volumes via API only). |
 | `on-page-seo-optimizer` | Page-level optimization: meta, headings, content, internal links. |
-| `seo-content-writer` | SEO-optimized articles and briefs with entity coverage. |
-| `backlink-strategy` | Link acquisition plans and outreach. |
-| `competitor-seo-analysis` | Competitor gap analysis. |
-| `local-seo` | Local pack, business profile, citations, localized pages. |
+| `seo-content-writer` | SEO articles/briefs with schema and visuals. |
+| `backlink-strategy` | Internal mesh and realistic acquisition. |
+| `competitor-seo-analysis` | Sourced SERP gap analysis. |
+| `local-seo` | Local pack, NAP, citations, localized pages. |
 | `geo-ai-search-optimizer` | Optimization for AI answer engines (GEO). |
+| `seo-data-provider` | Volumes/KD/backlinks via DataForSEO or Semrush when env keys exist. |
+| `image-generation` | Hero and section images for full SEO articles (or listed prompts if image tools are off). |
 
 ## Complementary skills
 

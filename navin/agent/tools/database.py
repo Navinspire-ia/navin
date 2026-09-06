@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import Field
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
+from navin.agent.tools.path_utils import project_rooted_path
 from navin.agent.tools.schema import (
     IntegerSchema,
     StringSchema,
@@ -83,7 +84,7 @@ def _format_rows(columns: list[str], rows: list[tuple], *, truncated: bool) -> s
     out = "\n".join(lines)
     summary = f"\n\n{len(rows)} row(s)"
     if truncated:
-        summary += " (truncated — refine the query or raise max_rows)"
+        summary += " (truncated - refine the query or raise max_rows)"
     return out + summary
 
 
@@ -184,6 +185,15 @@ def _run_mysql(
         write_timeout=int(timeout),
     )
     try:
+        if not allow_writes:
+            # The prefix check upstream is a courtesy, not a guard: MySQL 8
+            # accepts WITH ... DELETE/UPDATE, which it classifies as read-only.
+            # SQLite gets mode=ro and Postgres conn.read_only; here the server
+            # enforces it too, provided the query runs inside a transaction,
+            # which conn.begin() guarantees regardless of autocommit settings.
+            with conn.cursor() as guard:
+                guard.execute("SET SESSION TRANSACTION READ ONLY")
+            conn.begin()
         with conn.cursor() as cursor:
             cursor.execute(query, params or None)
             columns = [d[0] for d in cursor.description] if cursor.description else []
@@ -259,22 +269,52 @@ class DatabaseTool(Tool):
             "writes only on connections with allowWrites=true."
         )
 
-    def _resolve_sqlite_path(self, raw: str) -> str:
+    def _resolve_sqlite_path(self, raw: str, *, param: str = "sqlite_path") -> str:
+        """Resolve an agent-supplied sqlite path, confined to the workspace."""
         access = current_tool_workspace(self.workspace, restrict_to_workspace=True)
         workspace = access.project_path or self.workspace
         try:
             resolved = resolve_allowed_path(
-                raw,
+                project_rooted_path(raw, workspace, [access.allowed_root]),
                 workspace=workspace,
                 allowed_root=access.allowed_root,
                 strict=True,
             )
         except WorkspaceBoundaryError as exc:
-            raise DatabaseToolError("sqlite_path must stay inside the workspace") from exc
+            raise DatabaseToolError(
+                f"{param} must stay inside the project ({access.allowed_root}). "
+                "To reach a database elsewhere, declare it as a named connection "
+                "under tools.database.connections."
+            ) from exc
         except OSError as exc:
             raise DatabaseToolError(f"sqlite database not found: {raw}") from exc
         if not resolved.is_file():
             raise DatabaseToolError(f"sqlite database not found: {raw}")
+        return str(resolved)
+
+    def _resolve_configured_sqlite_path(self, raw: str, connection: str) -> str:
+        """Resolve a sqlite path declared in the config, which may sit outside.
+
+        A named connection is written by the operator, not chosen by the model, so
+        the workspace boundary does not apply: refusing it would make a legitimate
+        `~/data/app.db` unusable. The path is still anchored to the project when it
+        is relative, so existing in-project connections keep working.
+        """
+        access = current_tool_workspace(self.workspace, restrict_to_workspace=False)
+        workspace = access.project_path or self.workspace
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(workspace).expanduser() / candidate
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError as exc:
+            raise DatabaseToolError(
+                f"sqlite database not found for connection '{connection}': {raw}"
+            ) from exc
+        if not resolved.is_file():
+            raise DatabaseToolError(
+                f"sqlite database not found for connection '{connection}': {resolved}"
+            )
         return str(resolved)
 
     async def execute(
@@ -300,7 +340,10 @@ class DatabaseTool(Tool):
                     )
                 engine = conn_cfg.engine.strip().lower()
                 if engine not in _SUPPORTED_ENGINES:
-                    return ToolResult.error(f"Error: unsupported engine '{conn_cfg.engine}'")
+                    return ToolResult.error(
+                        f"Error: unsupported engine '{conn_cfg.engine}'. "
+                        f"Supported: {', '.join(_SUPPORTED_ENGINES)}."
+                    )
                 allow_writes = conn_cfg.allow_writes
                 if not allow_writes and not _is_read_only_sql(query):
                     return ToolResult.error(
@@ -311,7 +354,7 @@ class DatabaseTool(Tool):
                     target = conn_cfg.path or conn_cfg.url
                     if not target:
                         return ToolResult.error("Error: sqlite connection needs a path")
-                    resolved = self._resolve_sqlite_path(target)
+                    resolved = self._resolve_configured_sqlite_path(target, connection)
                     runner = lambda: _run_sqlite(  # noqa: E731
                         resolved, query, bound_params,
                         max_rows=limit, allow_writes=allow_writes, timeout=timeout,

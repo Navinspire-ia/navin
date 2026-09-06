@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +10,7 @@ from navin.process_runtime import (
     ManagedProcessRuntime,
     ProcessRuntimePaths,
     ProcessStartOptions,
+    child_command_prefix,
 )
 
 
@@ -42,9 +42,7 @@ class ApiRuntime(ManagedProcessRuntime):
 
     def _build_child_command(self, options: ApiStartOptions) -> list[str]:
         command = [
-            self.python_executable or sys.executable,
-            "-m",
-            "navin",
+            *child_command_prefix(self.python_executable),
             "serve",
             "--host",
             options.host,

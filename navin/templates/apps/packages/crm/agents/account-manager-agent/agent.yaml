@@ -1,0 +1,12 @@
+id: account-manager-agent
+name: Account Manager Agent
+enabled: true
+permissions:
+  - companies.read
+  - contacts.read
+  - notes.read
+  - notes.write
+tools:
+  - get_schema
+  - query
+  - mutate

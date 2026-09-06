@@ -1,6 +1,6 @@
 ---
 name: go-to-market-planner
-description: Plan a product or feature launch — segments, messaging, assets, channels, and launch calendar. Use before releasing anything new to the market.
+description: Plan a product or feature launch - segments, messaging, assets, channels, and launch calendar. Use before releasing anything new to the market.
 metadata: {"navin":{"emoji":"🚀","category":"marketing"}}
 ---
 
@@ -25,7 +25,7 @@ A launch is a coordinated moment, not a blog post. Plan segments, messages, asse
 ## Workflow
 
 1. Define the launch tier: major (full plan), minor (announcement + email), silent (changelog).
-2. Write the messaging doc first — everything derives from it.
+2. Write the messaging doc first - everything derives from it.
 3. Asset production list with owners/dates; write drafts via `copywriting-agent`, `email-writer`, `pptx-generator`.
 4. Build the day-by-day calendar (`campaign-manager` executes it).
 5. Post-launch: T+7 and T+30 metric reviews, iterate messaging on real objections.
@@ -34,4 +34,4 @@ A launch is a coordinated moment, not a blog post. Plan segments, messages, asse
 
 - Beachhead first: better to win one segment than whisper to five.
 - Launch date is frozen only when all Tier-1 assets are done.
-- Keep an internal FAQ — sales hears the hard questions first.
+- Keep an internal FAQ - sales hears the hard questions first.

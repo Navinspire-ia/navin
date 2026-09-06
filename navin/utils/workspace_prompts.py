@@ -11,8 +11,20 @@ WORKSPACE_PROMPT_MAX_CHARS = 32_000
 
 
 def workspace_prompt_file(workspace: Path, name: str) -> Path:
-    """Return the conventional path for a named workspace prompt override."""
-    return workspace / "prompts" / f"{name}.md"
+    """Return the conventional path for a named workspace prompt override.
+
+    Overrides live in ``.navin/prompts/``; a legacy root-level ``prompts/``
+    copy is still honored when the new location has no file. The root
+    ``prompts/`` folder is never migrated automatically because projects
+    commonly own an unrelated ``prompts/`` directory.
+    """
+    new = workspace / ".navin" / "prompts" / f"{name}.md"
+    if new.exists():
+        return new
+    legacy = workspace / "prompts" / f"{name}.md"
+    if legacy.exists():
+        return legacy
+    return new
 
 
 def load_workspace_prompt_override(

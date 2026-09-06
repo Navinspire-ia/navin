@@ -1,602 +1,149 @@
 # Provider Cookbook
 
-This page is for cases where you already know what you want to connect and need a pasteable setup. Each recipe shows what to set, what to run, and what a failure usually means.
+Short Settings recipes for connecting common providers in the Navin desktop app. Each recipe lists what to enter in **Settings → Providers** and **Settings → Models**, and what a failure usually means.
 
-If this is your first install and terminal commands are new to you, start with [`start-without-technical-background.md`](./start-without-technical-background.md). If you want the field-by-field explanation, read [`providers.md`](./providers.md) and then [`configuration.md#providers`](./configuration.md#providers).
-
-Most examples below are snippets to merge into `~/.navin/config.json`. Keep any existing sections you still need, and replace placeholder keys such as `${OPENROUTER_API_KEY}` with environment-variable references or real values only on your own machine.
+If this is your first install, start with [`start-without-technical-background.md`](./start-without-technical-background.md). For field meanings, read [`providers.md`](./providers.md) and [`configuration.md`](./configuration.md).
 
 Recipes are examples, not rankings. Pick the recipe that matches the credential, endpoint, and model ID you already intend to use.
 
-## Choose a Recipe
-
-Match the recipe to the credential or endpoint you already have:
+## Choose a recipe
 
 | What you have | Recipe | Must match |
 |---|---|---|
-| A gateway key and model IDs that include a model family path, such as `provider/model-name` | [OpenRouter Gateway](#recipe-openrouter-gateway) | API key, provider config key, preset provider, and gateway model ID |
-| An OpenCode Zen or Go key | [OpenCode Zen or Go](#recipe-opencode-zen-or-go) | `OPENCODE_API_KEY`, the Zen/Go provider key, and a model ID from the matching OpenCode endpoint |
-| An OpenAI platform API key and OpenAI model ID | [OpenAI Direct](#recipe-openai-direct) | `OPENAI_API_KEY`, `provider: "openai"`, and an OpenAI model available to that account |
-| An Anthropic API key and Anthropic model ID | [Anthropic Direct](#recipe-anthropic-direct) | `ANTHROPIC_API_KEY`, `provider: "anthropic"`, and a non-gateway model ID |
-| A Kimi Coding Plan key | [Kimi Coding Plan](#recipe-kimi-coding-plan) | `KIMI_CODING_API_KEY`, `provider: "kimi_coding"`, and `model: "kimi-for-coding"` |
-| An OpenAI-compatible `/v1` endpoint that is not a named navin provider | [Custom OpenAI-Compatible Provider](#recipe-custom-openai-compatible-provider) | `apiBase`, optional API key, and the model ID served by that endpoint |
-| Ollama already running locally | [Ollama Local Model](#recipe-ollama-local-model) | Ollama `apiBase`, pulled model name, and local server availability |
-| vLLM, LM Studio, or another local OpenAI-compatible server | [vLLM or LM Studio](#recipe-vllm-or-lm-studio) | Local `/v1` base URL, any required key, and served model name |
-| A primary model plus one or more backups | [Fallback Presets](#recipe-fallback-presets) | Named presets in `modelPresets`, referenced from `agents.defaults.fallbackModels` |
-| A working agent and a Langfuse project | [Langfuse Tracing](#recipe-langfuse-tracing) | Langfuse env vars in the same process environment that starts navin |
+| A gateway key and model IDs like `provider/model-name` | [OpenRouter Gateway](#recipe-openrouter-gateway) | API key, OpenRouter provider, gateway model ID |
+| An OpenCode Zen or Go key | [OpenCode Zen or Go](#recipe-opencode-zen-or-go) | `OPENCODE_API_KEY` (or paste in Settings), Zen/Go provider, matching model ID |
+| An OpenAI platform API key | [OpenAI Direct](#recipe-openai-direct) | OpenAI key, OpenAI provider, OpenAI model ID |
+| An Anthropic API key | [Anthropic Direct](#recipe-anthropic-direct) | Anthropic key, Anthropic provider, non-gateway model ID |
+| A Kimi Coding Plan key | [Kimi Coding Plan](#recipe-kimi-coding-plan) | Kimi Coding key, `kimi_coding` provider, `kimi-for-coding` |
+| An OpenAI-compatible `/v1` endpoint | [Custom OpenAI-Compatible Provider](#recipe-custom-openai-compatible-provider) | Base URL, optional key, model ID from that endpoint |
+| Ollama already running locally | [Ollama Local Model](#recipe-ollama-local-model) | Ollama base URL, pulled model, local server up |
+| Ollama not installed yet | [Configure Ollama locally](./guides/configure-ollama-local.md) | Settings → Providers → Ollama panel |
+| vLLM, LM Studio, or similar | [vLLM or LM Studio](#recipe-vllm-or-lm-studio) | Local `/v1` base URL, any required key, served model name |
+| No key at all, want free models now | [OmniRoute Free Gateway](#recipe-omniroute-free-gateway) | OmniRoute running on `localhost:20128`, model `auto` |
+| A primary model plus backups | [Fallback Presets](#recipe-fallback-presets) | Named configurations + fallback list in Settings → Models |
 
-## How to Use a Recipe
+## How to use a recipe
 
-1. Install navin and run `navin webui` once so `~/.navin/config.json` exists — providers can also be configured directly in the platform (Settings → Providers) instead of hand-editing JSON.
-2. Put secrets in environment variables when possible.
-3. Merge the recipe snippet into `~/.navin/config.json`.
-4. Run `navin status`.
-5. Run `navin agent -m "Hello!"`.
-6. If the CLI works, then connect WebUI, gateway, or chat apps.
+1. Open Navin.
+2. Open **Settings → Providers** and enter the key or base URL from the recipe.
+3. Open **Settings → Models**, add a configuration with that provider and model ID, then set it **Active**.
+4. Send a short chat message to verify.
+5. Optionally connect channels under **Settings → Channels**.
 
-The active model should normally come from `agents.defaults.modelPreset`, and that name should point to an entry in `modelPresets`. Direct `agents.defaults.provider` and `agents.defaults.model` still work for older configs, but presets are easier to switch and easier to reuse as fallbacks.
-
-## Secret Setup
-
-Environment variables keep API keys out of the config file.
-
-Use the variable name shown by the recipe you picked. The commands below use `OPENROUTER_API_KEY` only as an example; an OpenAI direct recipe uses `OPENAI_API_KEY`, an Anthropic direct recipe uses `ANTHROPIC_API_KEY`, and a custom endpoint can use any variable name you reference in `config.json`.
-
-**macOS / Linux**
-
-```bash
-export OPENROUTER_API_KEY="sk-or-v1-..."
-navin agent -m "Hello!"
-```
-
-**Windows PowerShell**
-
-```powershell
-$env:OPENROUTER_API_KEY = "sk-or-v1-..."
-navin agent -m "Hello!"
-```
-
-Environment variables set this way apply only to the current terminal. For long-running services such as systemd, Docker, LaunchAgent, or a remote shell, set the variables in that service environment before starting navin.
+Prefer pasting keys into Settings. If you use OS environment variables, set them before launching Navin so the app can resolve `${VAR}` references in advanced config.
 
 ## Recipe: OpenRouter Gateway
 
-This recipe applies when one API key routes many hosted model families.
+1. **Settings → Providers → OpenRouter** - paste your OpenRouter API key.
+2. **Settings → Models** - add a configuration:
+   - Provider: `openrouter`
+   - Model: for example `anthropic/claude-sonnet-4.5`
+   - Label: `Primary` (or any clear name)
+3. Set it **Active** and chat.
 
-```json
-{
-  "providers": {
-    "openrouter": {
-      "apiKey": "${OPENROUTER_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "Primary",
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Verify:
-
-```bash
-navin status
-navin agent -m "Hello!"
-```
-
-If this fails with `401` or `unauthorized`, check that `OPENROUTER_API_KEY` is visible in the same terminal or service that starts navin. If it fails with `model not found`, choose a model ID that OpenRouter lists for your account.
+If chat fails with unauthorized, re-paste the key. If the model is not found, pick an ID OpenRouter lists for your account.
 
 ## Recipe: OpenCode Zen or Go
 
-This recipe applies when your credential comes from OpenCode Zen or OpenCode Go.
-Both providers use `OPENCODE_API_KEY`; pick the provider block that matches the
-subscription or balance you want to use.
+Both use an OpenCode API key; pick the provider that matches your subscription.
 
-OpenCode Zen:
+**Zen**
 
-```json
-{
-  "providers": {
-    "opencodeZen": {
-      "apiKey": "${OPENCODE_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "OpenCode Zen",
-      "provider": "opencode_zen",
-      "model": "opencode/deepseek-v4-pro",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
+1. **Settings → Providers → OpenCode Zen** - paste the key.
+2. **Settings → Models** - provider `opencode_zen`, model such as `opencode/deepseek-v4-pro`.
 
-OpenCode Go:
+**Go**
 
-```json
-{
-  "providers": {
-    "opencodeGo": {
-      "apiKey": "${OPENCODE_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "OpenCode Go",
-      "provider": "opencode_go",
-      "model": "opencode-go/deepseek-v4-flash",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
+1. **Settings → Providers → OpenCode Go** - paste the key.
+2. **Settings → Models** - provider `opencode_go`, model such as `opencode-go/deepseek-v4-flash`.
 
-Verify:
-
-```bash
-navin status
-navin agent -m "Hello!"
-```
-
-OpenCode's docs list models across multiple endpoint types. The `opencode_zen`
-and `opencode_go` providers in navin use the OpenAI-compatible
-`chat/completions` path. If a model fails with `model not found` or an endpoint
-shape error, choose a model that OpenCode lists under `chat/completions` for the
-matching Zen or Go endpoint.
+Use model IDs that OpenCode lists for the chat/completions-compatible path. Set the configuration Active and test in chat.
 
 ## Recipe: OpenAI Direct
 
-This recipe applies when you have an OpenAI API key and want to call OpenAI directly instead of through a gateway.
+1. **Settings → Providers → OpenAI** - paste `OPENAI_API_KEY`.
+2. **Settings → Models** - provider `openai`, model such as `gpt-5` (use an ID available to your account).
+3. Set Active and chat.
 
-```json
-{
-  "providers": {
-    "openai": {
-      "apiKey": "${OPENAI_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "OpenAI",
-      "provider": "openai",
-      "model": "gpt-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 128000,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Verify:
-
-```bash
-OPENAI_API_KEY="sk-..." navin agent -m "Hello!"
-```
-
-If your shell cannot use inline environment variables, set `OPENAI_API_KEY` first and then run `navin agent -m "Hello!"`. If the provider rejects `apiType`, remove `apiType` unless you are using a documented OpenAI-specific mode.
+Leave OpenAI `apiType` alone unless Settings document a specific mode you need.
 
 ## Recipe: Anthropic Direct
 
-This recipe applies when your key comes from Anthropic and your model name is an Anthropic model ID, not an OpenRouter model path.
+1. **Settings → Providers → Anthropic** - paste `ANTHROPIC_API_KEY`.
+2. **Settings → Models** - provider `anthropic`, model such as `claude-sonnet-4-5` (Anthropic ID, not `anthropic/claude-…`).
+3. Set Active and chat.
 
-```json
-{
-  "providers": {
-    "anthropic": {
-      "apiKey": "${ANTHROPIC_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "Anthropic",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
+If you copied `anthropic/claude-sonnet-4.5`, that gateway-style path belongs under OpenRouter, not Anthropic direct.
 
-Verify:
-
-```bash
-ANTHROPIC_API_KEY="sk-ant-..." navin agent -m "Hello!"
-```
-
-If you copied a model name such as `anthropic/claude-sonnet-4.5`, that is a gateway-style model path and belongs under `provider: "openrouter"`, not `provider: "anthropic"`.
-
-If you use an Anthropic-compatible proxy, keep the preset provider as `anthropic` and set `providers.anthropic.apiBase`:
-
-```json
-{
-  "providers": {
-    "anthropic": {
-      "apiKey": "${ANTHROPIC_API_KEY}",
-      "apiBase": "https://anthropic-proxy.example.com"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "Anthropic proxy",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Do not configure Anthropic-compatible endpoints as arbitrary custom provider names; named custom providers use the OpenAI-compatible request format.
+For an Anthropic-compatible proxy, keep provider Anthropic and set the custom base URL in the Anthropic provider panel.
 
 ## Recipe: Kimi Coding Plan
 
-This recipe applies when your key comes from Kimi's Coding Plan endpoint. Navin uses a dedicated `kimi_coding` provider for this Anthropic Messages API endpoint; do not configure it as a generic `custom` provider.
+1. **Settings → Providers → Kimi Coding** - paste the Coding Plan key.
+2. **Settings → Models** - provider `kimi_coding`, model `kimi-for-coding`.
+3. Set Active and chat.
 
-```json
-{
-  "providers": {
-    "kimiCoding": {
-      "apiKey": "${KIMI_CODING_API_KEY}"
-    }
-  },
-  "modelPresets": {
-    "kimiCoding": {
-      "label": "Kimi Coding",
-      "provider": "kimi_coding",
-      "model": "kimi-for-coding",
-      "maxTokens": 4096,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "kimiCoding"
-    }
-  }
-}
-```
-
-Verify:
-
-```bash
-navin status
-navin agent -m "Hello!"
-```
-
-The default base URL is `https://api.kimi.com/coding/v1`. This endpoint requires a Claude-compatible `User-Agent`; navin sends `claude-code/0.1.0` by default. If your account requires a different value, override it with `providers.kimiCoding.extraHeaders.User-Agent`.
+Do not configure Kimi Coding as a generic custom OpenAI provider; Navin uses a dedicated path for this plan.
 
 ## Recipe: Custom OpenAI-Compatible Provider
 
-This recipe applies to an OpenAI-compatible service that is not a named navin provider.
+1. **Settings → Providers** - add **Custom** (or a named custom entry).
+2. Set base URL (include `/v1` when required) and API key if needed.
+3. **Settings → Models** - point a configuration at that provider name and the model ID the endpoint serves.
+4. Set Active and chat.
 
-```json
-{
-  "providers": {
-    "custom": {
-      "apiKey": "${CUSTOM_API_KEY}",
-      "apiBase": "https://api.example.com/v1"
-    }
-  },
-  "modelPresets": {
-    "primary": {
-      "label": "Custom",
-      "provider": "custom",
-      "model": "provider-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "primary"
-    }
-  }
-}
-```
-
-Verify the endpoint before blaming navin:
-
-```bash
-curl -sS https://api.example.com/v1/models
-navin agent -m "Hello!"
-```
-
-`apiBase` is the HTTP base URL, not the model name. Include the version path when the service expects it, such as `/v1`. If the service requires a non-empty key but does not validate it, use a placeholder such as `"apiKey": "EMPTY"`.
-
-For multiple custom endpoints, do not overload the single `custom` block. Name each endpoint under `providers` and reference that same name from the preset:
-
-```json
-{
-  "providers": {
-    "workProxy": {
-      "apiKey": "${WORK_PROXY_API_KEY}",
-      "apiBase": "https://proxy.example.com/v1"
-    },
-    "lab-local": {
-      "apiBase": "http://127.0.0.1:8000/v1"
-    }
-  },
-  "modelPresets": {
-    "work": {
-      "label": "Work proxy",
-      "provider": "workProxy",
-      "model": "gpt-4o-mini",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    },
-    "lab": {
-      "label": "Lab local",
-      "provider": "lab-local",
-      "model": "served-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "work"
-    }
-  }
-}
-```
-
-These custom names behave like direct OpenAI-compatible providers: `apiBase` is required, `apiKey` is optional when the endpoint allows anonymous or placeholder credentials, and `apiType` should be left unset. They do not support Anthropic-compatible endpoints; use the `anthropic` provider with `apiBase` for that case.
+For multiple custom endpoints, create separate provider entries (for example Work proxy and Lab local) instead of overloading one Custom block. Anthropic-compatible proxies should use the Anthropic provider with a custom base URL, not a generic custom OpenAI entry.
 
 ## Recipe: Ollama Local Model
 
-This recipe applies when Ollama is already installed and the model has been pulled locally.
+Prefer **Settings → Providers → Ollama** (Detect → Install → Pull → Configure). Details: [Configure Ollama locally](./guides/configure-ollama-local.md).
 
-```bash
-ollama serve
-ollama pull llama3.2
-```
+When Ollama is already running with a pulled model:
 
-```json
-{
-  "providers": {
-    "ollama": {
-      "apiBase": "http://localhost:11434/v1"
-    }
-  },
-  "modelPresets": {
-    "local": {
-      "label": "Local",
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768,
-      "temperature": 0.2
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "local"
-    }
-  }
-}
-```
+1. Confirm the Ollama panel shows a healthy server.
+2. Pull or select `llama3.2` (or another local tag).
+3. Use **Configure / Use** so Navin creates an Active local configuration.
+4. Chat in the desktop app.
 
-Verify:
-
-```bash
-curl -sS http://localhost:11434/v1/models
-navin agent -m "Hello!"
-```
-
-If you see `connection refused`, Ollama is not running or `apiBase` points to the wrong port. If the response is very slow, try a smaller local model or lower `contextWindowTokens`.
+If replies fail with connection refused, start Ollama from its app or the Settings panel, then retry.
 
 ## Recipe: vLLM or LM Studio
 
-This recipe applies when a local server exposes an OpenAI-compatible `/v1` API.
+**vLLM (example)**
 
-```json
-{
-  "providers": {
-    "vllm": {
-      "apiBase": "http://127.0.0.1:8000/v1",
-      "apiKey": "EMPTY"
-    }
-  },
-  "modelPresets": {
-    "local": {
-      "label": "Local",
-      "provider": "vllm",
-      "model": "served-model-name",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.2
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "local"
-    }
-  }
-}
-```
+1. **Settings → Providers → vLLM** (or custom named entry) - base URL `http://127.0.0.1:8000/v1`, key `EMPTY` if required.
+2. **Settings → Models** - provider `vllm`, model = the name your server serves.
 
-For LM Studio, use its local base URL and provider name:
+**LM Studio**
 
-```json
-{
-  "providers": {
-    "lmStudio": {
-      "apiBase": "http://localhost:1234/v1"
-    }
-  },
-  "modelPresets": {
-    "local": {
-      "label": "LM Studio",
-      "provider": "lm_studio",
-      "model": "local-model",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "local"
-    }
-  }
-}
-```
+1. **Settings → Providers → LM Studio** - base URL `http://localhost:1234/v1`.
+2. **Settings → Models** - provider `lm_studio`, model = your loaded local model.
 
-The config key can be `lmStudio` or `lm_studio`, but the preset provider should use the registry name `lm_studio`.
+Set Active and chat. Ensure the local server is running before testing Navin.
+
+## Recipe: OmniRoute Free Gateway
+
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) is a local, MIT-licensed gateway to 350+ providers (150+ free tiers). It answers right after install, no signup and no key.
+
+1. Install and start it: `npm install -g omniroute` then `omniroute` (dashboard and API on `http://localhost:20128`).
+2. **Settings → Providers → OmniRoute** - keep the base URL `http://localhost:20128/v1`, Auth **None**, then **Test connection**. It should list the `auto` combos plus every model OmniRoute exposes.
+3. **Settings → Models** - provider `omniroute`, model `auto` (or `auto/coding`, `auto/fast`, or a specific id such as `oc/kimi-k2.5`).
+4. Set Active and chat. Connect more upstream providers from the OmniRoute dashboard to widen the `auto` pool.
+
+If OmniRoute runs with `REQUIRE_API_KEY=true`, switch Auth to **Bearer** and paste a key from its dashboard (Endpoints).
 
 ## Recipe: Fallback Presets
 
-This recipe applies when one provider sometimes rate-limits, one model is expensive, or you want a local backup.
+1. Create two or more configurations under **Settings → Models** (for example Fast on OpenRouter, Deep on Anthropic, Local on Ollama).
+2. Set Fast as **Active**.
+3. Add Deep and Local (in order) to the fallback list under Models / agent defaults.
+4. Chat normally. On retryable primary failures, Navin tries the next named configuration.
 
-```json
-{
-  "modelPresets": {
-    "fast": {
-      "label": "Fast",
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536,
-      "temperature": 0.1
-    },
-    "deep": {
-      "label": "Deep",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 200000,
-      "temperature": 0.1
-    },
-    "local": {
-      "label": "Local",
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768,
-      "temperature": 0.2
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast",
-      "fallbackModels": ["deep", "local"]
-    }
-  }
-}
-```
+Fallback entries are configuration names, not raw model IDs. Keep context windows realistic across the chain. See [Configure model fallback](./guides/configure-model-fallback.md).
 
-`fallbackModels` belongs under `agents.defaults`. String entries are preset names, not raw model names. navin tries the active preset first, then the fallback presets in order.
+## Recipe: Switch models at runtime
 
-Keep fallback candidates realistic. If the local fallback has a smaller context window, navin must build context that fits the smallest window in the active chain.
-
-## Recipe: Langfuse Tracing
-
-This recipe applies after the agent works and you want observability for OpenAI-compatible provider calls.
-
-Install the optional package in the same Python environment that runs navin:
-
-```bash
-python -m pip install langfuse
-```
-
-Set the environment variables before starting navin:
-
-```bash
-export LANGFUSE_SECRET_KEY="sk-lf-..."
-export LANGFUSE_PUBLIC_KEY="pk-lf-..."
-export LANGFUSE_BASE_URL="https://cloud.langfuse.com"
-navin agent -m "Hello!"
-```
-
-PowerShell:
-
-```powershell
-$env:LANGFUSE_SECRET_KEY = "sk-lf-..."
-$env:LANGFUSE_PUBLIC_KEY = "pk-lf-..."
-$env:LANGFUSE_BASE_URL = "https://cloud.langfuse.com"
-navin agent -m "Hello!"
-```
-
-Langfuse is not a model provider in `config.json`. It is configured through environment variables and traces supported OpenAI-compatible provider calls. Native providers that do not use that client path may not produce Langfuse OpenAI-wrapper traces.
-
-## Recipe: Switch Models at Runtime
-
-Use this after you have more than one preset and are chatting through a supported channel.
-
-```json
-{
-  "modelPresets": {
-    "fast": {
-      "label": "Fast",
-      "provider": "openrouter",
-      "model": "anthropic/claude-sonnet-4.5",
-      "maxTokens": 4096,
-      "contextWindowTokens": 65536
-    },
-    "local": {
-      "label": "Local",
-      "provider": "ollama",
-      "model": "llama3.2",
-      "maxTokens": 2048,
-      "contextWindowTokens": 32768
-    }
-  },
-  "agents": {
-    "defaults": {
-      "modelPreset": "fast"
-    }
-  }
-}
-```
-
-In chat:
+After you have more than one configuration, use the chat model selector or composer actions:
 
 ```text
 /model
@@ -604,23 +151,21 @@ In chat:
 /model fast
 ```
 
-`/model` switching is runtime-only. It does not rewrite `config.json`, and an in-progress turn keeps using the model it started with.
+Runtime switches do not permanently rewrite Settings until you change the Active configuration. An in-progress turn keeps using the model it started with.
 
-## Quick Failure Map
+## Quick failure map
 
 | Symptom | Usually means | First check |
 |---|---|---|
-| `401`, `unauthorized`, or `invalid API key` | The key is missing, wrong, expired, or under the wrong provider | Print or re-set the environment variable in the same terminal or service |
-| `model not found` | The model ID does not belong to the selected provider or gateway | Compare `modelPresets.<name>.provider` and `modelPresets.<name>.model` |
-| `connection refused` | Local server is not running or `apiBase` has the wrong port/path | Run `curl <apiBase>/models` |
-| `provider not found` | Provider name is misspelled or uses the config key instead of registry name | Use names such as `openrouter`, `openai`, `anthropic`, `ollama`, `vllm`, `lm_studio` |
-| Langfuse shows no traces | Env vars are missing, `langfuse` is not installed in the active Python environment, or the provider path is native | Run `python -m pip show langfuse` and restart navin from the same environment |
+| Unauthorized / invalid API key | Key missing, wrong, or under the wrong provider | Re-paste under **Settings → Providers** |
+| Model not found | Model ID does not belong to the selected provider | Compare provider + model in **Settings → Models** |
+| Connection refused | Local server down or wrong base URL | Start Ollama / LM Studio / vLLM / OmniRoute; fix base URL |
+| Provider not found | Misspelled provider registry name | Use names such as `openrouter`, `openai`, `anthropic`, `ollama`, `vllm`, `lm_studio`, `omniroute` |
 
-## Next References
+## Next references
 
 | Need | Read |
 |---|---|
 | Field meanings and provider resolution | [`providers.md`](./providers.md) |
-| Full schema and provider table | [`configuration.md#providers`](./configuration.md#providers) |
-| Langfuse details | [`configuration.md#langfuse-observability`](./configuration.md#langfuse-observability) |
-| First-run diagnosis | [`troubleshooting.md`](./troubleshooting.md) |
+| Settings-first configuration | [`configuration.md`](./configuration.md) |
+| First launch without a technical background | [`start-without-technical-background.md`](./start-without-technical-background.md) |

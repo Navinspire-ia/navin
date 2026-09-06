@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
 import base64
 import binascii
 import json
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -32,6 +34,13 @@ _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
+# Streaming appends one record per token. Writing each one straight through cost
+# thousands of fsync barriers per turn on the loop that also serves the UI.
+# Deltas are buffered; every other event, and every read, drains the buffer
+# first, so a reader never sees less than what was appended.
+_APPEND_BUFFER_MAX_BYTES = 64 * 1024
+_APPEND_BUFFER_MAX_AGE_S = 0.25
+_BUFFERED_APPEND_EVENTS: frozenset[str] = frozenset({"delta", "reasoning_delta"})
 _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
     r"!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+(?:\"[^\"]*\"|'[^']*'))?\)"
@@ -155,7 +164,66 @@ def _record_json_line(record: dict[str, Any]) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
 
+class _PendingAppends(NamedTuple):
+    lines: list[str]
+    nbytes: int
+    since: float
+
+
+# session_key -> buffered lines not yet handed to the OS.
+_append_buffers: dict[str, _PendingAppends] = {}
+_append_lock = threading.Lock()
+
+
+def _buffer_append(session_key: str, line: str) -> None:
+    """Queue ``line``, writing the whole batch once it is big or old enough."""
+    now = time.monotonic()
+    with _append_lock:
+        pending = _append_buffers.get(session_key) or _PendingAppends([], 0, now)
+        lines = [*pending.lines, line]
+        nbytes = pending.nbytes + len(line.encode("utf-8"))
+        if nbytes < _APPEND_BUFFER_MAX_BYTES and now - pending.since < _APPEND_BUFFER_MAX_AGE_S:
+            _append_buffers[session_key] = _PendingAppends(lines, nbytes, pending.since)
+            return
+        _append_buffers.pop(session_key, None)
+    _write_append_batch(session_key, lines)
+
+
+def _flush_append_buffer(session_key: str) -> None:
+    with _append_lock:
+        pending = _append_buffers.pop(session_key, None)
+    if pending is not None and pending.lines:
+        _write_append_batch(session_key, pending.lines)
+
+
+def _discard_append_buffer(session_key: str) -> None:
+    """Drop queued lines: the file they targeted is being deleted or rewritten."""
+    with _append_lock:
+        _append_buffers.pop(session_key, None)
+
+
+def _flush_all_append_buffers() -> None:
+    with _append_lock:
+        pending_by_key = dict(_append_buffers)
+        _append_buffers.clear()
+    for session_key, pending in pending_by_key.items():
+        if pending.lines:
+            _write_append_batch(session_key, pending.lines)
+
+
+atexit.register(_flush_all_append_buffers)
+
+
+def _write_append_batch(session_key: str, lines: list[str]) -> None:
+    path = webui_transcript_path(session_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("".join(lines))
+
+
 def _read_transcript_file(path: Path) -> list[dict[str, Any]]:
+    # Any read is a durability point: a buffered tail must not read as missing.
+    _flush_all_append_buffers()
     lines_out: list[dict[str, Any]] = []
     try:
         with open(path, encoding="utf-8") as f:
@@ -345,6 +413,9 @@ def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -
 
 
 def _rotate_active_transcript_if_needed(session_key: str) -> None:
+    # Chunk layout is read from the files, so pending appends must land first:
+    # this is the choke point every session-scoped read goes through.
+    _flush_append_buffer(session_key)
     path = webui_transcript_path(session_key)
     if not path.is_file():
         return
@@ -575,13 +646,13 @@ def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
     if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
         msg = "webui transcript line too large"
         raise ValueError(msg)
-    path = webui_transcript_path(session_key)
-    path.parent.mkdir(parents=True, exist_ok=True)
     line = raw + "\n"
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(line)
-        f.flush()
-        os.fsync(f.fileno())
+    if obj.get("event") in _BUFFERED_APPEND_EVENTS:
+        _buffer_append(session_key, line)
+        return
+    # Anything that is not a stream delta is rare, and ordering must hold.
+    _flush_append_buffer(session_key)
+    _write_append_batch(session_key, [line])
 
 
 def _now_ms() -> int:
@@ -687,6 +758,9 @@ class WebUITranscriptRecorder:
         media_paths: list[str] | None = None,
         cli_apps: list[dict[str, Any]] | None = None,
         mcp_presets: list[dict[str, Any]] | None = None,
+        document_template: dict[str, Any] | None = None,
+        media_template: dict[str, Any] | None = None,
+        media_templates: list[dict[str, Any]] | None = None,
     ) -> None:
         if text.strip() == "/stop" and not media_paths:
             return
@@ -696,6 +770,9 @@ class WebUITranscriptRecorder:
             media_paths=media_paths,
             cli_apps=cli_apps,
             mcp_presets=mcp_presets,
+            document_template=document_template,
+            media_template=media_template,
+            media_templates=media_templates,
         )
         if payload is None:
             return
@@ -703,8 +780,9 @@ class WebUITranscriptRecorder:
 
     def append(self, chat_id: str, event: dict[str, Any]) -> None:
         try:
-            dup = json.loads(json.dumps(event, ensure_ascii=False))
-            append_transcript_object(f"websocket:{chat_id}", dup)
+            # The record is serialised synchronously below, so the caller cannot
+            # observe it again: no defensive deep copy needed on the token path.
+            append_transcript_object(f"websocket:{chat_id}", event)
         except (OSError, ValueError, TypeError) as e:
             self._log.warning("webui transcript append failed: {}", e)
 
@@ -776,7 +854,7 @@ def fork_transcript_before_user_index(
         if target_chat_id is not None:
             dup["chat_id"] = target_chat_id
         copied.append(dup)
-    if user_index == before_user_index:
+    if user_index <= before_user_index:
         found_target = True
 
     if not found_target:
@@ -832,6 +910,7 @@ def write_session_messages_as_transcript(
 
 
 def delete_webui_transcript(session_key: str) -> bool:
+    _discard_append_buffer(session_key)
     removed = False
     for path in (webui_transcript_path(session_key), _legacy_webui_thread_path(session_key)):
         if not path.is_file():
@@ -858,6 +937,9 @@ def build_user_transcript_event(
     media_paths: list[Any] | None = None,
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
+    document_template: Mapping[str, Any] | None = None,
+    media_template: Mapping[str, Any] | None = None,
+    media_templates: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
     if not text and not paths:
@@ -875,6 +957,18 @@ def build_user_transcript_event(
     presets = [dict(preset) for preset in (mcp_presets or []) if isinstance(preset, Mapping)]
     if presets:
         event["mcp_presets"] = presets
+    if isinstance(document_template, Mapping) and document_template.get("name"):
+        event["document_template"] = dict(document_template)
+    if isinstance(media_template, Mapping) and media_template.get("id"):
+        event["media_template"] = dict(media_template)
+    templates = [
+        dict(item)
+        for item in (media_templates or [])
+        if isinstance(item, Mapping) and item.get("id")
+    ]
+    if templates:
+        event["media_templates"] = templates
+        event.setdefault("media_template", dict(templates[0]))
     return event
 
 
@@ -1492,14 +1586,30 @@ def replay_transcript_to_ui_messages(
             kept.append(m)
         messages = kept
 
-    def stamp_latency(latency_ms: int) -> None:
+    def stamp_latency(
+        latency_ms: int,
+        phase_timings_ms: dict[str, int] | None = None,
+        *,
+        model_name: str | None = None,
+        model_label: str | None = None,
+        task_role: str | None = None,
+    ) -> None:
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "assistant" and messages[i].get("kind") != "trace":
-                messages[i] = {
+                updated = {
                     **messages[i],
                     "latencyMs": latency_ms,
                     "isStreaming": False,
                 }
+                if phase_timings_ms:
+                    updated["phaseTimingsMs"] = phase_timings_ms
+                if model_name:
+                    updated["modelName"] = model_name
+                if model_label:
+                    updated["modelLabel"] = model_label
+                if task_role:
+                    updated["taskRole"] = task_role
+                messages[i] = updated
                 return
 
     def absorb_complete(extra: dict[str, Any], idx: int, created_at_ms: int) -> None:
@@ -1714,6 +1824,21 @@ def replay_transcript_to_ui_messages(
                 row["mcpPresets"] = [
                     dict(preset) for preset in mcp_presets if isinstance(preset, dict)
                 ]
+            document_template = rec.get("document_template")
+            if isinstance(document_template, dict) and document_template.get("name"):
+                row["documentTemplate"] = dict(document_template)
+            media_template = rec.get("media_template")
+            if isinstance(media_template, dict) and media_template.get("id"):
+                row["mediaTemplate"] = dict(media_template)
+            media_templates_rec = rec.get("media_templates")
+            if isinstance(media_templates_rec, list):
+                normalized_templates = [
+                    dict(item)
+                    for item in media_templates_rec
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                if normalized_templates:
+                    row["mediaTemplates"] = normalized_templates
             messages.append(row)
             continue
 
@@ -1918,6 +2043,15 @@ def replay_transcript_to_ui_messages(
             lat = rec.get("latency_ms")
             if isinstance(lat, (int, float)) and lat >= 0:
                 extra["latencyMs"] = int(lat)
+            model_name = rec.get("model_name") or rec.get("model")
+            if isinstance(model_name, str) and model_name.strip():
+                extra["modelName"] = model_name.strip()
+            model_label = rec.get("model_label")
+            if isinstance(model_label, str) and model_label.strip():
+                extra["modelLabel"] = model_label.strip()
+            task_role = rec.get("task_role") or rec.get("model_route_role")
+            if isinstance(task_role, str) and task_role.strip():
+                extra["taskRole"] = task_role.strip()
             extra.update(_turn_fields(rec, "answer"))
             extra.update(_source_fields(rec))
             absorb_complete(extra, idx, _created_at_ms(rec, idx))
@@ -1939,9 +2073,56 @@ def replay_transcript_to_ui_messages(
                 if m.get("isStreaming"):
                     messages[i] = {**m, "isStreaming": False}
             prune_reasoning_only()
+            model_name = rec.get("model_name") or rec.get("model")
+            model_name_s = (
+                model_name.strip()
+                if isinstance(model_name, str) and model_name.strip()
+                else None
+            )
+            model_label = rec.get("model_label")
+            model_label_s = (
+                model_label.strip()
+                if isinstance(model_label, str) and model_label.strip()
+                else None
+            )
+            task_role = rec.get("task_role") or rec.get("model_route_role")
+            task_role_s = (
+                task_role.strip()
+                if isinstance(task_role, str) and task_role.strip()
+                else None
+            )
             lat = rec.get("latency_ms")
             if isinstance(lat, (int, float)) and lat >= 0:
-                stamp_latency(int(lat))
+                raw_phases = rec.get("phase_timings_ms")
+                phases: dict[str, int] | None = None
+                if isinstance(raw_phases, dict):
+                    phases = {
+                        str(k): int(v)
+                        for k, v in raw_phases.items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool)
+                    } or None
+                stamp_latency(
+                    int(lat),
+                    phases,
+                    model_name=model_name_s,
+                    model_label=model_label_s,
+                    task_role=task_role_s,
+                )
+            elif model_name_s or model_label_s or task_role_s:
+                for i in range(len(messages) - 1, -1, -1):
+                    if (
+                        messages[i].get("role") == "assistant"
+                        and messages[i].get("kind") != "trace"
+                    ):
+                        updated = {**messages[i]}
+                        if model_name_s:
+                            updated["modelName"] = model_name_s
+                        if model_label_s:
+                            updated["modelLabel"] = model_label_s
+                        if task_role_s:
+                            updated["taskRole"] = task_role_s
+                        messages[i] = updated
+                        break
             buffer_message_id = None
             buffer_parts = []
             continue

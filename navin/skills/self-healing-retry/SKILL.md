@@ -8,7 +8,7 @@ metadata: {"navin":{"emoji":"🩹","category":"intelligence"}}
 
 ## Overview
 
-Treat failures as information. Retry smartly, switch approach, or escalate — never loop blindly.
+Treat failures as information. Retry smartly, switch approach, or escalate - never loop blindly.
 
 ## Classification
 

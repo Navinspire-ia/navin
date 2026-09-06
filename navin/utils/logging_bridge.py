@@ -36,7 +36,7 @@ def redirect_lib_logging(name: str, level: str | None = None) -> None:
 
     Adds a bridge handler if one is not already present and disables
     propagation so messages are not duplicated.  When *level* is None the
-    handler does not filter — loguru's own level controls visibility.
+    handler does not filter - loguru's own level controls visibility.
     """
     lib_logger = logging.getLogger(name)
     if not any(isinstance(h, _LoguruBridge) for h in lib_logger.handlers):

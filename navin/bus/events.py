@@ -18,6 +18,30 @@ INBOUND_META_RUNTIME_CONTROL = "_runtime_control"
 RUNTIME_CONTROL_ACK = "_ack"
 RUNTIME_CONTROL_MCP_RELOAD = "mcp_reload"
 RUNTIME_CONTROL_EXEC_POLICY_RELOAD = "exec_policy_reload"
+# An answer to a pending approval. It rides the runtime-control route because
+# that is the only inbound path handled while a tool call is still running: a
+# normal message would be parked for mid-turn injection and never reach the
+# suspended tool.
+RUNTIME_CONTROL_APPROVAL_DECISION = "approval_decision"
+# A reconnecting client asking what is still waiting on it. Without this, a
+# browser refresh loses the card while the tool stays suspended.
+RUNTIME_CONTROL_APPROVALS_QUERY = "approvals_query"
+# Same round trip for a product choice: the agent stopped because it does not
+# know which path to take, and a normal user message would never reach the
+# suspended tool.
+RUNTIME_CONTROL_CHOICE_ANSWER = "choice_answer"
+RUNTIME_CONTROL_CHOICES_QUERY = "choices_query"
+# Same idea for background subagents: their cards live in browser memory only,
+# so without a replay a refresh hides work that is still running.
+RUNTIME_CONTROL_SUBAGENTS_QUERY = "subagents_query"
+# Multitask: dispatch a queued composer prompt to a parallel subagent instead
+# of waiting for the current turn to finish.
+RUNTIME_CONTROL_MULTITASK_SPAWN = "multitask_spawn"
+
+# Optional ``InboundMessage.metadata`` key naming the model preset to use for
+# this turn only (Cursor-style per-conversation model choice). The global
+# default preset is left untouched; unknown names fall back to the default.
+INBOUND_META_MODEL_PRESET = "model_preset"
 
 
 @dataclass

@@ -1,0 +1,351 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "inventory",
+  "name": "Inventory / Warehouse",
+  "kind": "business",
+  "category": "operations",
+  "source_github": "https://github.com/arnobt78/Warehouse-Stock-Inventory-Management-System--NextJS-FullStack",
+  "source_name": "Stock Inventory Management",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React",
+    "Prisma"
+  ],
+  "studied_from": "templates_apps/inventory",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 10,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "Stock & Warehouse Inventory Management System \u2014 Next.js, TypeScript, Prisma, MongoDB Full-Stack (including AI Business Insights + Admin Panel + Client & Supplier Role-Based Dashboards & more) An open-source, role-based warehouse and stock inventory platform. Store owners (admin), suppliers, and clients manage products, multi-warehouse stock, orders, invoices, shipping, payments, support tickets, and analytics \u2014 with SSR-first Next.js pages, TanStack Query for instant UI updates after CRUD, and optional Stripe / Shippo / Brevo / Redis / Sentry / AI integr"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "stock-inventory",
+        "scripts": {
+          "dev": "next dev --turbo",
+          "build": "npx prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint .",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:invalidate": "vitest run lib/react-query/invalidate-coverage.test.ts",
+          "prisma:migrate": "prisma migrate dev",
+          "script:reset-demo-db": "tsx scripts/reset-demo-db.ts",
+          "script:seed-demo-catalog": "tsx scripts/seed-demo-catalog.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "mongodb",
+          "next",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "stock-inventory",
+        "scripts": {
+          "dev": "next dev --turbo",
+          "build": "npx prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint .",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:invalidate": "vitest run lib/react-query/invalidate-coverage.test.ts",
+          "prisma:migrate": "prisma migrate dev",
+          "script:reset-demo-db": "tsx scripts/reset-demo-db.ts",
+          "script:seed-demo-catalog": "tsx scripts/seed-demo-catalog.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "mongodb",
+          "next",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "stock-inventory",
+        "scripts": {
+          "dev": "next dev --turbo",
+          "build": "npx prisma generate && next build",
+          "start": "next start",
+          "lint": "eslint .",
+          "test": "vitest run",
+          "test:watch": "vitest",
+          "test:invalidate": "vitest run lib/react-query/invalidate-coverage.test.ts",
+          "prisma:migrate": "prisma migrate dev",
+          "script:reset-demo-db": "tsx scripts/reset-demo-db.ts",
+          "script:seed-demo-catalog": "tsx scripts/seed-demo-catalog.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "axios",
+          "mongodb",
+          "next",
+          "prisma",
+          "react",
+          "stripe"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379,
+    27017
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "mongodb://localhost:27017/stockly",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "your_super_secret_jwt_key_here_change_this_in_production",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_API_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_RUNTIME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:instrumentation.ts"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "SENTRY_ORG",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "SENTRY_PROJECT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.ts"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "mongodb://127.0.0.1:27017/app",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run prisma:migrate",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/inventory/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run prisma:migrate"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/inventory/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/inventory/overlay.json",
+    "agents": ".navin/apps/inventory/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "inventory-agent",
+      "procurement-agent",
+      "demand-forecast-agent",
+      "warehouse-agent",
+      "logistics-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

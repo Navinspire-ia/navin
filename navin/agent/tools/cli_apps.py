@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -147,7 +148,11 @@ class CliAppsTool(Tool):
         workspace = access.project_path or self.workspace
         manager = CliAppManager(workspace=workspace, runtime=self.runtime)
         try:
-            return manager.run(
+            # The app runs as a synchronous subprocess and may legitimately use
+            # its whole timeout (up to 600 s); on the event loop that would
+            # freeze the gateway and every other session for the duration.
+            return await asyncio.to_thread(
+                manager.run,
                 name,
                 args=args or [],
                 json_output=bool(json),

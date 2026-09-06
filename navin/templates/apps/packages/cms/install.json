@@ -1,0 +1,1779 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "cms",
+  "name": "CMS",
+  "kind": "business",
+  "category": "content",
+  "source_github": "https://github.com/payloadcms/payload",
+  "source_name": "Payload CMS",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/cms",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 34,
+    "package_count": 34
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; > [!IMPORTANT] > Star this repo or keep an eye on it to follow along. Payload is the first-ever Next.js native CMS that can install directly in your existing `/app` folder. It's the start of a new era for headless CMS. Quickstart Before beginning to work with Payload, make sure you have all of the [required software](https://payloadcms.com/docs/getting-started/installation). pnpx create-payload-app@latest **If you're new to Payload, you should start with the website template** (`pnpx create-payload-app@latest -t website"
+  },
+  "system": {
+    "node": true,
+    "node_engine": "^18.20.2 || >=20.9.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "payload-monorepo",
+        "scripts": {
+          "build": "pnpm run build:core",
+          "build:admin-bar": "turbo build --filter \"@payloadcms/admin-bar\"",
+          "build:all": "turbo build --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:all:force": "pnpm clean && pnpm build:all",
+          "build:app": "next build",
+          "build:app:analyze": "cross-env ANALYZE=true next build",
+          "build:bundle-for-analysis": "turbo run build:bundle-for-analysis",
+          "build:clean": "pnpm clean:build",
+          "build:codemod": "turbo build --filter \"@payloadcms/codemod\"",
+          "build:core": "turbo build --filter \"!@payloadcms/plugin-*\" --filter \"!@payloadcms/storage-*\" --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:core:force": "pnpm clean:build && pnpm build:core --no-cache --force",
+          "build:create-payload-app": "turbo build --filter create-payload-app",
+          "build:db-d1-sqlite": "turbo build --filter \"@payloadcms/db-d1-sqlite\"",
+          "build:db-mongodb": "turbo build --filter \"@payloadcms/db-mongodb\"",
+          "build:db-postgres": "turbo build --filter \"@payloadcms/db-postgres\"",
+          "build:db-sqlite": "turbo build --filter \"@payloadcms/db-sqlite\"",
+          "build:db-vercel-postgres": "turbo build --filter \"@payloadcms/db-vercel-postgres\"",
+          "build:debug": "turbo build:debug --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:drizzle": "turbo build --filter \"@payloadcms/drizzle\"",
+          "build:email-nodemailer": "turbo build --filter \"@payloadcms/email-nodemailer\"",
+          "build:email-resend": "turbo build --filter \"@payloadcms/email-resend\"",
+          "build:eslint-config": "turbo build --filter \"@payloadcms/eslint-config\"",
+          "build:essentials:force": "pnpm clean:build && turbo build --filter=\"payload...\" --filter=\"@payloadcms/ui\" --filter=\"@payloadcms/next\" --filter=\"@payloadcms/db-mongodb\" --filter=\"@payloadcms/db-postgres\" --filter=\"@payloadcms/richtext-lexical\" --filter=\"@payloadcms/translations\" --filter=\"@payloadcms/plugin-cloud\" --filter=\"@payloadcms/graphql\" --no-cache --force",
+          "build:force": "pnpm run build:core:force",
+          "build:graphql": "turbo build --filter \"@payloadcms/graphql\"",
+          "build:kv-redis": "turbo build --filter \"@payloadcms/kv-redis\"",
+          "build:live-preview": "turbo build --filter \"@payloadcms/live-preview\"",
+          "build:live-preview-react": "turbo build --filter \"@payloadcms/live-preview-react\"",
+          "build:live-preview-vue": "turbo build --filter \"@payloadcms/live-preview-vue\"",
+          "build:next": "turbo build --filter \"@payloadcms/next\"",
+          "build:packages": "turbo build --filter=./packages/*",
+          "build:payload": "turbo build --filter payload",
+          "build:payload-cloud": "turbo build --filter \"@payloadcms/payload-cloud\"",
+          "build:plugin-cloud-storage": "turbo build --filter \"@payloadcms/plugin-cloud-storage\"",
+          "build:plugin-ecommerce": "turbo build --filter \"@payloadcms/plugin-ecommerce\"",
+          "build:plugin-form-builder": "turbo build --filter \"@payloadcms/plugin-form-builder\"",
+          "build:plugin-import-export": "turbo build --filter \"@payloadcms/plugin-import-export\"",
+          "build:plugin-mcp": "turbo build --filter \"@payloadcms/plugin-mcp\"",
+          "build:plugin-multi-tenant": "turbo build --filter \"@payloadcms/plugin-multi-tenant\"",
+          "build:plugin-nested-docs": "turbo build --filter \"@payloadcms/plugin-nested-docs\"",
+          "build:plugin-redirects": "turbo build --filter \"@payloadcms/plugin-redirects\"",
+          "build:plugin-search": "turbo build --filter \"@payloadcms/plugin-search\"",
+          "build:plugin-sentry": "turbo build --filter \"@payloadcms/plugin-sentry\"",
+          "build:plugin-seo": "turbo build --filter \"@payloadcms/plugin-seo\"",
+          "build:plugin-stripe": "turbo build --filter \"@payloadcms/plugin-stripe\"",
+          "build:plugins": "turbo build --filter \"@payloadcms/plugin-*\"",
+          "build:releaser": "turbo build --filter \"@tools/releaser\"",
+          "build:richtext-lexical": "turbo build --filter \"@payloadcms/richtext-lexical\"",
+          "build:sdk": "turbo build --filter \"@payloadcms/sdk\"",
+          "build:storage-azure": "turbo build --filter \"@payloadcms/storage-azure\"",
+          "build:storage-gcs": "turbo build --filter \"@payloadcms/storage-gcs\"",
+          "build:storage-r2": "turbo build --filter \"@payloadcms/storage-r2\"",
+          "build:storage-s3": "turbo build --filter \"@payloadcms/storage-s3\"",
+          "build:storage-vercel-blob": "turbo build --filter \"@payloadcms/storage-vercel-blob\"",
+          "build:tests": "pnpm --filter payload-test-suite run typecheck",
+          "build:tools": "turbo build --filter=./tools/*",
+          "build:translations": "turbo build --filter \"@payloadcms/translations\"",
+          "build:ui": "turbo build --filter \"@payloadcms/ui\"",
+          "clean:build": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/payload*.tgz' '**/meta_*.json'",
+          "clean:build:allowtgz": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/meta_*.json'",
+          "dev": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=16384\" tsx ./test/dev.ts",
+          "dev:generate-db-schema": "pnpm runts ./test/generateDatabaseSchema.ts",
+          "dev:generate-graphql-schema": "pnpm runts ./test/generateGraphQLSchema.ts",
+          "dev:generate-importmap": "pnpm runts ./test/generateImportMap.ts",
+          "dev:generate-types": "pnpm runts ./test/generateTypes.ts",
+          "dev:postgres": "cross-env PAYLOAD_DATABASE=postgres pnpm runts ./test/dev.ts",
+          "dev:prod": "pnpm dev --prod-server",
+          "dev:prod:tanstack": "pnpm dev --framework-tanstack-start --prod-server",
+          "dev:tanstack": "pnpm dev --framework-tanstack-start",
+          "dev:vercel-postgres": "cross-env PAYLOAD_DATABASE=vercel-postgres pnpm runts ./test/dev.ts",
+          "devsafe": "node ./scripts/delete-recursively.js '**/.next' && pnpm dev",
+          "docker:clean": "node ./scripts/docker-clean.ts",
+          "docker:start": "node ./scripts/docker-start.ts",
+          "docker:test": "pnpm runts test/__helpers/shared/db/mongodb/run-test-connection.ts && pnpm runts test/__helpers/shared/db/mongodb-atlas/run-test-connection.ts",
+          "force:build": "pnpm run build:core:force",
+          "lint": "turbo run lint --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "lint-staged": "lint-staged",
+          "lint:css": "stylelint \"packages/ui/src/**/*.css\" \"templates/**/*.css\"",
+          "lint:fix": "turbo run lint:fix --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "prepare-run-test-against-prod": "pnpm build:all && rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci:frozen": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i --frozen-lockfile && cd ..",
+          "script:build-template-with-local-pkgs": "pnpm --filter scripts build-template-with-local-pkgs",
+          "script:gen-templates:build": "pnpm --filter scripts gen-templates --build",
+          "pretest": "pnpm build",
+          "test": "pnpm test:int && pnpm test:components && pnpm test:e2e",
+          "test:e2e": "pnpm runts ./test/runE2E.ts",
+          "test:e2e:debug": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PWDEBUG=1 DISABLE_LOGGING=true playwright test",
+          "test:e2e:headed": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:e2e:noturbo": "pnpm runts ./test/runE2E.ts --no-turbo",
+          "test:e2e:prod": "pnpm prepare-run-test-against-prod && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci:noturbo": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run:noturbo",
+          "test:e2e:prod:server:run": "pnpm runts ./test/runE2E.ts --prod-server",
+          "test:e2e:prod:server:run:noturbo": "pnpm runts ./test/runE2E.ts --prod-server --no-turbo",
+          "test:e2e:tanstack": "cross-env PAYLOAD_FRAMEWORK=tanstack-start pnpm runts ./test/runE2E.ts",
+          "test:e2e:tanstack:headed": "cross-env PAYLOAD_FRAMEWORK=tanstack-start NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:eval": "tsx ./test/evals/cli.ts",
+          "test:eval:report": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 vitest --run --project eval --reporter=default --reporter=html --outputFile.html=test/evals/eval-results/report.html",
+          "test:int": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true vitest --project int --no-cache",
+          "test:int:firestore": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=firestore DISABLE_LOGGING=true vitest --project int",
+          "test:int:postgres": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=postgres DISABLE_LOGGING=true vitest --project int",
+          "test:int:sqlite": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=sqlite DISABLE_LOGGING=true vitest --project int",
+          "test:int:summary": "pnpm runts ./test/runTestsWithSummary.ts",
+          "test:types": "tstyche",
+          "test:unit": "vitest run --project unit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongoose",
+          "next",
+          "pg",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/auth/package.json",
+        "name": "payload-example-auth",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/custom-components/package.json",
+        "name": "payload-example-custom-fields",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/draft-preview/package.json",
+        "name": "payload-example-preview",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/email/package.json",
+        "name": "payload-example-email",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env PAYLOAD_SEED=true PAYLOAD_DROP_DATABASE=true NODE_OPTIONS=--no-deprecation next dev",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/form-builder/package.json",
+        "name": "payload-form-builder-example",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/live-preview/package.json",
+        "name": "payload-example-live-preview",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "lint:fix": "eslint --fix --ext .ts,.tsx src",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/localization/package.json",
+        "name": "payload-localization-example",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "dev:prod": "cross-env NODE_OPTIONS=--no-deprecation rm -rf .next && pnpm build && pnpm start",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "lint:fix": "cross-env NODE_OPTIONS=--no-deprecation next lint --fix",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/multi-tenant/package.json",
+        "name": "multi-tenant",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/tailwind-shadcn-ui/package.json",
+        "name": "tailwind-shadcn",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "devsafe": "rm -rf .next && cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": ">=18.19.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/whitelabel/package.json",
+        "name": "payload-example-whitelabel",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "devsafe": "rm -rf .next && cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "payload-monorepo",
+        "scripts": {
+          "build": "pnpm run build:core",
+          "build:admin-bar": "turbo build --filter \"@payloadcms/admin-bar\"",
+          "build:all": "turbo build --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:all:force": "pnpm clean && pnpm build:all",
+          "build:app": "next build",
+          "build:app:analyze": "cross-env ANALYZE=true next build",
+          "build:bundle-for-analysis": "turbo run build:bundle-for-analysis",
+          "build:clean": "pnpm clean:build",
+          "build:codemod": "turbo build --filter \"@payloadcms/codemod\"",
+          "build:core": "turbo build --filter \"!@payloadcms/plugin-*\" --filter \"!@payloadcms/storage-*\" --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:core:force": "pnpm clean:build && pnpm build:core --no-cache --force",
+          "build:create-payload-app": "turbo build --filter create-payload-app",
+          "build:db-d1-sqlite": "turbo build --filter \"@payloadcms/db-d1-sqlite\"",
+          "build:db-mongodb": "turbo build --filter \"@payloadcms/db-mongodb\"",
+          "build:db-postgres": "turbo build --filter \"@payloadcms/db-postgres\"",
+          "build:db-sqlite": "turbo build --filter \"@payloadcms/db-sqlite\"",
+          "build:db-vercel-postgres": "turbo build --filter \"@payloadcms/db-vercel-postgres\"",
+          "build:debug": "turbo build:debug --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:drizzle": "turbo build --filter \"@payloadcms/drizzle\"",
+          "build:email-nodemailer": "turbo build --filter \"@payloadcms/email-nodemailer\"",
+          "build:email-resend": "turbo build --filter \"@payloadcms/email-resend\"",
+          "build:eslint-config": "turbo build --filter \"@payloadcms/eslint-config\"",
+          "build:essentials:force": "pnpm clean:build && turbo build --filter=\"payload...\" --filter=\"@payloadcms/ui\" --filter=\"@payloadcms/next\" --filter=\"@payloadcms/db-mongodb\" --filter=\"@payloadcms/db-postgres\" --filter=\"@payloadcms/richtext-lexical\" --filter=\"@payloadcms/translations\" --filter=\"@payloadcms/plugin-cloud\" --filter=\"@payloadcms/graphql\" --no-cache --force",
+          "build:force": "pnpm run build:core:force",
+          "build:graphql": "turbo build --filter \"@payloadcms/graphql\"",
+          "build:kv-redis": "turbo build --filter \"@payloadcms/kv-redis\"",
+          "build:live-preview": "turbo build --filter \"@payloadcms/live-preview\"",
+          "build:live-preview-react": "turbo build --filter \"@payloadcms/live-preview-react\"",
+          "build:live-preview-vue": "turbo build --filter \"@payloadcms/live-preview-vue\"",
+          "build:next": "turbo build --filter \"@payloadcms/next\"",
+          "build:packages": "turbo build --filter=./packages/*",
+          "build:payload": "turbo build --filter payload",
+          "build:payload-cloud": "turbo build --filter \"@payloadcms/payload-cloud\"",
+          "build:plugin-cloud-storage": "turbo build --filter \"@payloadcms/plugin-cloud-storage\"",
+          "build:plugin-ecommerce": "turbo build --filter \"@payloadcms/plugin-ecommerce\"",
+          "build:plugin-form-builder": "turbo build --filter \"@payloadcms/plugin-form-builder\"",
+          "build:plugin-import-export": "turbo build --filter \"@payloadcms/plugin-import-export\"",
+          "build:plugin-mcp": "turbo build --filter \"@payloadcms/plugin-mcp\"",
+          "build:plugin-multi-tenant": "turbo build --filter \"@payloadcms/plugin-multi-tenant\"",
+          "build:plugin-nested-docs": "turbo build --filter \"@payloadcms/plugin-nested-docs\"",
+          "build:plugin-redirects": "turbo build --filter \"@payloadcms/plugin-redirects\"",
+          "build:plugin-search": "turbo build --filter \"@payloadcms/plugin-search\"",
+          "build:plugin-sentry": "turbo build --filter \"@payloadcms/plugin-sentry\"",
+          "build:plugin-seo": "turbo build --filter \"@payloadcms/plugin-seo\"",
+          "build:plugin-stripe": "turbo build --filter \"@payloadcms/plugin-stripe\"",
+          "build:plugins": "turbo build --filter \"@payloadcms/plugin-*\"",
+          "build:releaser": "turbo build --filter \"@tools/releaser\"",
+          "build:richtext-lexical": "turbo build --filter \"@payloadcms/richtext-lexical\"",
+          "build:sdk": "turbo build --filter \"@payloadcms/sdk\"",
+          "build:storage-azure": "turbo build --filter \"@payloadcms/storage-azure\"",
+          "build:storage-gcs": "turbo build --filter \"@payloadcms/storage-gcs\"",
+          "build:storage-r2": "turbo build --filter \"@payloadcms/storage-r2\"",
+          "build:storage-s3": "turbo build --filter \"@payloadcms/storage-s3\"",
+          "build:storage-vercel-blob": "turbo build --filter \"@payloadcms/storage-vercel-blob\"",
+          "build:tests": "pnpm --filter payload-test-suite run typecheck",
+          "build:tools": "turbo build --filter=./tools/*",
+          "build:translations": "turbo build --filter \"@payloadcms/translations\"",
+          "build:ui": "turbo build --filter \"@payloadcms/ui\"",
+          "clean:build": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/payload*.tgz' '**/meta_*.json'",
+          "clean:build:allowtgz": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/meta_*.json'",
+          "dev": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=16384\" tsx ./test/dev.ts",
+          "dev:generate-db-schema": "pnpm runts ./test/generateDatabaseSchema.ts",
+          "dev:generate-graphql-schema": "pnpm runts ./test/generateGraphQLSchema.ts",
+          "dev:generate-importmap": "pnpm runts ./test/generateImportMap.ts",
+          "dev:generate-types": "pnpm runts ./test/generateTypes.ts",
+          "dev:postgres": "cross-env PAYLOAD_DATABASE=postgres pnpm runts ./test/dev.ts",
+          "dev:prod": "pnpm dev --prod-server",
+          "dev:prod:tanstack": "pnpm dev --framework-tanstack-start --prod-server",
+          "dev:tanstack": "pnpm dev --framework-tanstack-start",
+          "dev:vercel-postgres": "cross-env PAYLOAD_DATABASE=vercel-postgres pnpm runts ./test/dev.ts",
+          "devsafe": "node ./scripts/delete-recursively.js '**/.next' && pnpm dev",
+          "docker:clean": "node ./scripts/docker-clean.ts",
+          "docker:start": "node ./scripts/docker-start.ts",
+          "docker:test": "pnpm runts test/__helpers/shared/db/mongodb/run-test-connection.ts && pnpm runts test/__helpers/shared/db/mongodb-atlas/run-test-connection.ts",
+          "force:build": "pnpm run build:core:force",
+          "lint": "turbo run lint --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "lint-staged": "lint-staged",
+          "lint:css": "stylelint \"packages/ui/src/**/*.css\" \"templates/**/*.css\"",
+          "lint:fix": "turbo run lint:fix --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "prepare-run-test-against-prod": "pnpm build:all && rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci:frozen": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i --frozen-lockfile && cd ..",
+          "script:build-template-with-local-pkgs": "pnpm --filter scripts build-template-with-local-pkgs",
+          "script:gen-templates:build": "pnpm --filter scripts gen-templates --build",
+          "pretest": "pnpm build",
+          "test": "pnpm test:int && pnpm test:components && pnpm test:e2e",
+          "test:e2e": "pnpm runts ./test/runE2E.ts",
+          "test:e2e:debug": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PWDEBUG=1 DISABLE_LOGGING=true playwright test",
+          "test:e2e:headed": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:e2e:noturbo": "pnpm runts ./test/runE2E.ts --no-turbo",
+          "test:e2e:prod": "pnpm prepare-run-test-against-prod && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci:noturbo": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run:noturbo",
+          "test:e2e:prod:server:run": "pnpm runts ./test/runE2E.ts --prod-server",
+          "test:e2e:prod:server:run:noturbo": "pnpm runts ./test/runE2E.ts --prod-server --no-turbo",
+          "test:e2e:tanstack": "cross-env PAYLOAD_FRAMEWORK=tanstack-start pnpm runts ./test/runE2E.ts",
+          "test:e2e:tanstack:headed": "cross-env PAYLOAD_FRAMEWORK=tanstack-start NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:eval": "tsx ./test/evals/cli.ts",
+          "test:eval:report": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 vitest --run --project eval --reporter=default --reporter=html --outputFile.html=test/evals/eval-results/report.html",
+          "test:int": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true vitest --project int --no-cache",
+          "test:int:firestore": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=firestore DISABLE_LOGGING=true vitest --project int",
+          "test:int:postgres": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=postgres DISABLE_LOGGING=true vitest --project int",
+          "test:int:sqlite": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=sqlite DISABLE_LOGGING=true vitest --project int",
+          "test:int:summary": "pnpm runts ./test/runTestsWithSummary.ts",
+          "test:types": "tstyche",
+          "test:unit": "vitest run --project unit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongoose",
+          "next",
+          "pg",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-mongodb/package.json",
+        "name": "@payloadcms/db-mongodb",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc-build --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-postgres/package.json",
+        "name": "@payloadcms/db-postgres",
+        "scripts": {
+          "build": "rimraf .dist && rimraf tsconfig.tsbuildinfo  && pnpm build:types && pnpm build:swc && pnpm build:esbuild && pnpm renamePredefinedMigrations",
+          "build:debug": "pnpm build",
+          "build:esbuild": "echo skipping esbuild",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-vercel-postgres/package.json",
+        "name": "@payloadcms/db-vercel-postgres",
+        "scripts": {
+          "build": "rimraf .dist && rimraf tsconfig.tsbuildinfo  && pnpm build:types && pnpm build:swc && pnpm build:esbuild && pnpm renamePredefinedMigrations",
+          "build:debug": "pnpm build",
+          "build:esbuild": "echo skipping esbuild",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "payload-monorepo",
+        "scripts": {
+          "build": "pnpm run build:core",
+          "build:admin-bar": "turbo build --filter \"@payloadcms/admin-bar\"",
+          "build:all": "turbo build --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:all:force": "pnpm clean && pnpm build:all",
+          "build:app": "next build",
+          "build:app:analyze": "cross-env ANALYZE=true next build",
+          "build:bundle-for-analysis": "turbo run build:bundle-for-analysis",
+          "build:clean": "pnpm clean:build",
+          "build:codemod": "turbo build --filter \"@payloadcms/codemod\"",
+          "build:core": "turbo build --filter \"!@payloadcms/plugin-*\" --filter \"!@payloadcms/storage-*\" --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:core:force": "pnpm clean:build && pnpm build:core --no-cache --force",
+          "build:create-payload-app": "turbo build --filter create-payload-app",
+          "build:db-d1-sqlite": "turbo build --filter \"@payloadcms/db-d1-sqlite\"",
+          "build:db-mongodb": "turbo build --filter \"@payloadcms/db-mongodb\"",
+          "build:db-postgres": "turbo build --filter \"@payloadcms/db-postgres\"",
+          "build:db-sqlite": "turbo build --filter \"@payloadcms/db-sqlite\"",
+          "build:db-vercel-postgres": "turbo build --filter \"@payloadcms/db-vercel-postgres\"",
+          "build:debug": "turbo build:debug --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "build:drizzle": "turbo build --filter \"@payloadcms/drizzle\"",
+          "build:email-nodemailer": "turbo build --filter \"@payloadcms/email-nodemailer\"",
+          "build:email-resend": "turbo build --filter \"@payloadcms/email-resend\"",
+          "build:eslint-config": "turbo build --filter \"@payloadcms/eslint-config\"",
+          "build:essentials:force": "pnpm clean:build && turbo build --filter=\"payload...\" --filter=\"@payloadcms/ui\" --filter=\"@payloadcms/next\" --filter=\"@payloadcms/db-mongodb\" --filter=\"@payloadcms/db-postgres\" --filter=\"@payloadcms/richtext-lexical\" --filter=\"@payloadcms/translations\" --filter=\"@payloadcms/plugin-cloud\" --filter=\"@payloadcms/graphql\" --no-cache --force",
+          "build:force": "pnpm run build:core:force",
+          "build:graphql": "turbo build --filter \"@payloadcms/graphql\"",
+          "build:kv-redis": "turbo build --filter \"@payloadcms/kv-redis\"",
+          "build:live-preview": "turbo build --filter \"@payloadcms/live-preview\"",
+          "build:live-preview-react": "turbo build --filter \"@payloadcms/live-preview-react\"",
+          "build:live-preview-vue": "turbo build --filter \"@payloadcms/live-preview-vue\"",
+          "build:next": "turbo build --filter \"@payloadcms/next\"",
+          "build:packages": "turbo build --filter=./packages/*",
+          "build:payload": "turbo build --filter payload",
+          "build:payload-cloud": "turbo build --filter \"@payloadcms/payload-cloud\"",
+          "build:plugin-cloud-storage": "turbo build --filter \"@payloadcms/plugin-cloud-storage\"",
+          "build:plugin-ecommerce": "turbo build --filter \"@payloadcms/plugin-ecommerce\"",
+          "build:plugin-form-builder": "turbo build --filter \"@payloadcms/plugin-form-builder\"",
+          "build:plugin-import-export": "turbo build --filter \"@payloadcms/plugin-import-export\"",
+          "build:plugin-mcp": "turbo build --filter \"@payloadcms/plugin-mcp\"",
+          "build:plugin-multi-tenant": "turbo build --filter \"@payloadcms/plugin-multi-tenant\"",
+          "build:plugin-nested-docs": "turbo build --filter \"@payloadcms/plugin-nested-docs\"",
+          "build:plugin-redirects": "turbo build --filter \"@payloadcms/plugin-redirects\"",
+          "build:plugin-search": "turbo build --filter \"@payloadcms/plugin-search\"",
+          "build:plugin-sentry": "turbo build --filter \"@payloadcms/plugin-sentry\"",
+          "build:plugin-seo": "turbo build --filter \"@payloadcms/plugin-seo\"",
+          "build:plugin-stripe": "turbo build --filter \"@payloadcms/plugin-stripe\"",
+          "build:plugins": "turbo build --filter \"@payloadcms/plugin-*\"",
+          "build:releaser": "turbo build --filter \"@tools/releaser\"",
+          "build:richtext-lexical": "turbo build --filter \"@payloadcms/richtext-lexical\"",
+          "build:sdk": "turbo build --filter \"@payloadcms/sdk\"",
+          "build:storage-azure": "turbo build --filter \"@payloadcms/storage-azure\"",
+          "build:storage-gcs": "turbo build --filter \"@payloadcms/storage-gcs\"",
+          "build:storage-r2": "turbo build --filter \"@payloadcms/storage-r2\"",
+          "build:storage-s3": "turbo build --filter \"@payloadcms/storage-s3\"",
+          "build:storage-vercel-blob": "turbo build --filter \"@payloadcms/storage-vercel-blob\"",
+          "build:tests": "pnpm --filter payload-test-suite run typecheck",
+          "build:tools": "turbo build --filter=./tools/*",
+          "build:translations": "turbo build --filter \"@payloadcms/translations\"",
+          "build:ui": "turbo build --filter \"@payloadcms/ui\"",
+          "clean:build": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/payload*.tgz' '**/meta_*.json'",
+          "clean:build:allowtgz": "node ./scripts/delete-recursively.js 'media/' '**/dist/' '**/.cache/' '**/.next/' '**/.turbo/' '**/tsconfig.tsbuildinfo' '**/meta_*.json'",
+          "dev": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=16384\" tsx ./test/dev.ts",
+          "dev:generate-db-schema": "pnpm runts ./test/generateDatabaseSchema.ts",
+          "dev:generate-graphql-schema": "pnpm runts ./test/generateGraphQLSchema.ts",
+          "dev:generate-importmap": "pnpm runts ./test/generateImportMap.ts",
+          "dev:generate-types": "pnpm runts ./test/generateTypes.ts",
+          "dev:postgres": "cross-env PAYLOAD_DATABASE=postgres pnpm runts ./test/dev.ts",
+          "dev:prod": "pnpm dev --prod-server",
+          "dev:prod:tanstack": "pnpm dev --framework-tanstack-start --prod-server",
+          "dev:tanstack": "pnpm dev --framework-tanstack-start",
+          "dev:vercel-postgres": "cross-env PAYLOAD_DATABASE=vercel-postgres pnpm runts ./test/dev.ts",
+          "devsafe": "node ./scripts/delete-recursively.js '**/.next' && pnpm dev",
+          "docker:clean": "node ./scripts/docker-clean.ts",
+          "docker:start": "node ./scripts/docker-start.ts",
+          "docker:test": "pnpm runts test/__helpers/shared/db/mongodb/run-test-connection.ts && pnpm runts test/__helpers/shared/db/mongodb-atlas/run-test-connection.ts",
+          "force:build": "pnpm run build:core:force",
+          "lint": "turbo run lint --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "lint-staged": "lint-staged",
+          "lint:css": "stylelint \"packages/ui/src/**/*.css\" \"templates/**/*.css\"",
+          "lint:fix": "turbo run lint:fix --log-order=grouped --continue --filter \"!blank\" --filter \"!blank-tanstack\" --filter \"!website\" --filter \"!ecommerce\"",
+          "prepare-run-test-against-prod": "pnpm build:all && rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && rm -f test/pnpm-lock.yaml && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i && cd ..",
+          "prepare-run-test-against-prod:ci:frozen": "rm -rf test/packed && rm -rf test/node_modules && rm -rf app && pnpm run script:pack --all --no-build --dest test/packed && pnpm runts test/setupProd.ts && cd test && pnpm i --frozen-lockfile && cd ..",
+          "script:build-template-with-local-pkgs": "pnpm --filter scripts build-template-with-local-pkgs",
+          "script:gen-templates:build": "pnpm --filter scripts gen-templates --build",
+          "pretest": "pnpm build",
+          "test": "pnpm test:int && pnpm test:components && pnpm test:e2e",
+          "test:e2e": "pnpm runts ./test/runE2E.ts",
+          "test:e2e:debug": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PWDEBUG=1 DISABLE_LOGGING=true playwright test",
+          "test:e2e:headed": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:e2e:noturbo": "pnpm runts ./test/runE2E.ts --no-turbo",
+          "test:e2e:prod": "pnpm prepare-run-test-against-prod && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run",
+          "test:e2e:prod:ci:noturbo": "pnpm prepare-run-test-against-prod:ci && pnpm test:e2e:prod:server:run:noturbo",
+          "test:e2e:prod:server:run": "pnpm runts ./test/runE2E.ts --prod-server",
+          "test:e2e:prod:server:run:noturbo": "pnpm runts ./test/runE2E.ts --prod-server --no-turbo",
+          "test:e2e:tanstack": "cross-env PAYLOAD_FRAMEWORK=tanstack-start pnpm runts ./test/runE2E.ts",
+          "test:e2e:tanstack:headed": "cross-env PAYLOAD_FRAMEWORK=tanstack-start NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true playwright test --headed",
+          "test:eval": "tsx ./test/evals/cli.ts",
+          "test:eval:report": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 vitest --run --project eval --reporter=default --reporter=html --outputFile.html=test/evals/eval-results/report.html",
+          "test:int": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 DISABLE_LOGGING=true vitest --project int --no-cache",
+          "test:int:firestore": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=firestore DISABLE_LOGGING=true vitest --project int",
+          "test:int:postgres": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=postgres DISABLE_LOGGING=true vitest --project int",
+          "test:int:sqlite": "cross-env NODE_OPTIONS=\"--no-deprecation --no-experimental-strip-types\" NODE_NO_WARNINGS=1 PAYLOAD_DATABASE=sqlite DISABLE_LOGGING=true vitest --project int",
+          "test:int:summary": "pnpm runts ./test/runTestsWithSummary.ts",
+          "test:types": "tstyche",
+          "test:unit": "vitest run --project unit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongoose",
+          "next",
+          "pg",
+          "react",
+          "vite",
+          "wrangler"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "test/package.json",
+        "name": "payload-test-suite",
+        "scripts": {
+          "build:app-tanstack": "vite build --config vite.tanstack.config.ts --configLoader runner",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation node ./dev.js",
+          "test": "pnpm -C \"../\" run test",
+          "test:e2e": "pnpm -C \"../\" run test:e2e",
+          "test:int": "pnpm -C \"../\" run test:int"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "better-sqlite3",
+          "mongoose",
+          "next"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "examples/astro/package.json",
+        "name": "astro-payload-monorepo",
+        "scripts": {
+          "dev:payload": "cd payload && pnpm dev",
+          "dev:website": "cd website && pnpm dev",
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "examples/auth/package.json",
+        "name": "payload-example-auth",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/custom-components/package.json",
+        "name": "payload-example-custom-fields",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "examples/custom-server/package.json",
+        "name": "payload-3-custom-server",
+        "scripts": {
+          "build": "payload build && tsc --project tsconfig.server.json",
+          "dev": "nodemon",
+          "start": "cross-env NODE_ENV=production node dist/server.js"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/draft-preview/package.json",
+        "name": "payload-example-preview",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/email/package.json",
+        "name": "payload-example-email",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env PAYLOAD_SEED=true PAYLOAD_DROP_DATABASE=true NODE_OPTIONS=--no-deprecation next dev",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/form-builder/package.json",
+        "name": "payload-form-builder-example",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/live-preview/package.json",
+        "name": "payload-example-live-preview",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "lint:fix": "eslint --fix --ext .ts,.tsx src",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/localization/package.json",
+        "name": "payload-localization-example",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "dev:prod": "cross-env NODE_OPTIONS=--no-deprecation rm -rf .next && pnpm build && pnpm start",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "lint:fix": "cross-env NODE_OPTIONS=--no-deprecation next lint --fix",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/multi-tenant/package.json",
+        "name": "multi-tenant",
+        "scripts": {
+          "_dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation && pnpm seed && next dev",
+          "seed": "npm run payload migrate:fresh",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "examples/remix/package.json",
+        "name": "remix-payload-monorepo",
+        "scripts": {
+          "dev:payload": "cd payload && pnpm dev",
+          "dev:website": "cd website && pnpm dev",
+          "test": "echo \"Error: no test specified\" && exit 1"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "examples/tailwind-shadcn-ui/package.json",
+        "name": "tailwind-shadcn",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "devsafe": "rm -rf .next && cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": ">=18.19.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "examples/whitelabel/package.json",
+        "name": "payload-example-whitelabel",
+        "scripts": {
+          "build": "cross-env NODE_OPTIONS=--no-deprecation payload build",
+          "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "devsafe": "rm -rf .next && cross-env NODE_OPTIONS=--no-deprecation next dev",
+          "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+          "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+        },
+        "node_engine": "^18.20.2 || >=20.9.0",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/admin-bar/package.json",
+        "name": "@payloadcms/admin-bar",
+        "scripts": {
+          "build": "pnpm copyfiles && pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/codemod/package.json",
+        "name": "@payloadcms/codemod",
+        "scripts": {
+          "build": "pnpm typecheck && pnpm build:swc",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix",
+          "test": "vitest --run"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/create-payload-app/package.json",
+        "name": "create-payload-app",
+        "scripts": {
+          "build": "pnpm pack-template-files && pnpm typecheck && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix",
+          "test": "vitest --run"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/db-d1-sqlite/package.json",
+        "name": "@payloadcms/db-d1-sqlite",
+        "scripts": {
+          "build": "pnpm build:swc && pnpm build:types",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-mongodb/package.json",
+        "name": "@payloadcms/db-mongodb",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc-build --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-postgres/package.json",
+        "name": "@payloadcms/db-postgres",
+        "scripts": {
+          "build": "rimraf .dist && rimraf tsconfig.tsbuildinfo  && pnpm build:types && pnpm build:swc && pnpm build:esbuild && pnpm renamePredefinedMigrations",
+          "build:debug": "pnpm build",
+          "build:esbuild": "echo skipping esbuild",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/db-sqlite/package.json",
+        "name": "@payloadcms/db-sqlite",
+        "scripts": {
+          "build": "pnpm build:swc && pnpm build:types",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "packages/db-vercel-postgres/package.json",
+        "name": "@payloadcms/db-vercel-postgres",
+        "scripts": {
+          "build": "rimraf .dist && rimraf tsconfig.tsbuildinfo  && pnpm build:types && pnpm build:swc && pnpm build:esbuild && pnpm renamePredefinedMigrations",
+          "build:debug": "pnpm build",
+          "build:esbuild": "echo skipping esbuild",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/drizzle/package.json",
+        "name": "@payloadcms/drizzle",
+        "scripts": {
+          "build": "pnpm build:swc && pnpm build:types",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/email-nodemailer/package.json",
+        "name": "@payloadcms/email-nodemailer",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:clean": "find . \\( -type d \\( -name build -o -name dist -o -name .cache \\) -o -type f -name tsconfig.tsbuildinfo \\) -exec rm -rf {} + && pnpm build",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/email-resend/package.json",
+        "name": "@payloadcms/email-resend",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc-build --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/graphql/package.json",
+        "name": "@payloadcms/graphql",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/kv-redis/package.json",
+        "name": "@payloadcms/kv-redis",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:clean": "find . \\( -type d \\( -name build -o -name dist -o -name .cache \\) -o -type f -name tsconfig.tsbuildinfo \\) -exec rm -rf {} + && pnpm build",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": [
+          "ioredis"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/live-preview-react/package.json",
+        "name": "@payloadcms/live-preview-react",
+        "scripts": {
+          "build": "pnpm copyfiles && pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/live-preview-vue/package.json",
+        "name": "@payloadcms/live-preview-vue",
+        "scripts": {
+          "build": "pnpm copyfiles && pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/live-preview/package.json",
+        "name": "@payloadcms/live-preview",
+        "scripts": {
+          "build": "pnpm copyfiles && pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/next/package.json",
+        "name": "@payloadcms/next",
+        "scripts": {
+          "build": "pnpm build:reactcompiler",
+          "build:babel": "rm -rf dist_optimized && babel dist --out-dir dist_optimized --source-maps --extensions .ts,.js,.tsx,.jsx,.cjs,.mjs && rm -rf dist && mv dist_optimized dist",
+          "build:bundle-for-analysis": "rm -rf dist && rm -rf tsconfig.tsbuildinfo && pnpm build:swc && pnpm build:babel && pnpm copyfiles && node ./bundle.js esbuild",
+          "build:cjs": "node ./bundleWithPayload.js",
+          "build:debug": "rm -rf dist && rm -rf tsconfig.tsbuildinfo && pnpm build:swc:debug && pnpm copyfiles:debug && pnpm build:types && pnpm build:cjs && node createStubScss.js",
+          "build:esbuild": "node bundleScss.js",
+          "build:reactcompiler": "rm -rf dist && rm -rf tsconfig.tsbuildinfo && pnpm build:swc && pnpm build:babel && pnpm copyfiles && pnpm build:types && pnpm build:esbuild  && pnpm build:cjs",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:swc:debug": "swc ./src -d ./dist --config-file .swcrc-debug --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "build:without_reactcompiler": "rm -rf dist && rm -rf tsconfig.tsbuildinfo && pnpm copyfiles && pnpm build:types && pnpm build:swc && pnpm build:cjs && pnpm build:esbuild",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/payload-cloud/package.json",
+        "name": "@payloadcms/payload-cloud",
+        "scripts": {
+          "build": "pnpm build:types && pnpm build:swc",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc-build --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix",
+          "test": "jest"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/payload/package.json",
+        "name": "payload",
+        "scripts": {
+          "build": "rimraf .dist && rimraf tsconfig.tsbuildinfo && pnpm copyfiles && pnpm build:types && pnpm build:swc && pnpm bundle:types && echo skipping esbuild",
+          "build:bundle-for-analysis": "node ./bundle.js esbuild",
+          "build:debug": "pnpm build",
+          "build:swc": "swc ./src -d ./dist --config-file .swcrc --strip-leading-paths",
+          "build:types": "tsc --emitDeclarationOnly --outDir dist",
+          "lint": "eslint .",
+          "lint:fix": "eslint . --fix",
+          "pretest": "pnpm build"
+        },
+        "node_engine": ">=24.15.0",
+        "deps_hint": []
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "examples/remix/payload/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [
+        "examples/remix/payload/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "examples/remix/payload/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432,
+    6379,
+    27017
+  ],
+  "env_files": [
+    ".env.example",
+    ".devcontainer/.env.example",
+    "examples/live-preview/.env.example",
+    "examples/remix/website/.env.example",
+    "examples/remix/payload/.env.example",
+    "examples/localization/.env.example",
+    "examples/auth/.env.example",
+    "examples/multi-tenant/.env.example",
+    "examples/astro/website/.env.example",
+    "examples/astro/payload/.env.example",
+    "examples/draft-preview/.env.example",
+    "examples/whitelabel/.env.example"
+  ],
+  "env": [
+    {
+      "key": "PAYLOAD_DATABASE",
+      "default": "mongodb",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "mongodb://127.0.0.1/payload-example-live-preview",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "examples/live-preview/.env.example"
+    },
+    {
+      "key": "PAYLOAD_SECRET",
+      "default": "ENTER-STRING-HERE",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "examples/live-preview/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_SERVER_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "examples/live-preview/.env.example"
+    },
+    {
+      "key": "PAYLOAD_PUBLIC_SERVER_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_IS_LIVE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "PAYLOAD_PUBLIC_DRAFT_SECRET",
+      "default": "demo-draft-secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "NEXT_PRIVATE_DRAFT_SECRET",
+      "default": "demo-draft-secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "REVALIDATION_KEY",
+      "default": "demo-revalation-key",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "NEXT_PRIVATE_REVALIDATION_KEY",
+      "default": "demo-revalation-key",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "examples/localization/.env.example"
+    },
+    {
+      "key": "COOKIE_DOMAIN",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "examples/auth/.env.example"
+    },
+    {
+      "key": "POSTGRES_URL",
+      "default": "postgres://127.0.0.1:5432/payload-example-multi-tenant",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "examples/multi-tenant/.env.example"
+    },
+    {
+      "key": "SEED_DB",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "examples/multi-tenant/.env.example"
+    },
+    {
+      "key": "PREVIEW_SECRET",
+      "default": "YOUR_SECRET_HERE",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "examples/draft-preview/.env.example"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "examples/email/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_PAYLOAD_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "examples/form-builder/.env.example"
+    },
+    {
+      "key": "CRON_SECRET",
+      "default": "YOUR_CRON_SECRET_HERE",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "templates/website/.env.example"
+    },
+    {
+      "key": "MONGODB_URL",
+      "default": "mongodb://127.0.0.1/your-database-name",
+      "required": false,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": "templates/with-vercel-mongodb/.env.example"
+    },
+    {
+      "key": "COMPANY_NAME",
+      "default": "Payload Inc.",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "TWITTER_CREATOR",
+      "default": "@payloadcms",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "TWITTER_SITE",
+      "default": "https://nextjs.org/commerce",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "SITE_NAME",
+      "default": "Payload Commerce",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "sk_test_",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "default": "pk_test_",
+      "required": false,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOKS_SIGNING_SECRET",
+      "default": "whsec_",
+      "required": true,
+      "secret": true,
+      "purpose": "Payments (Stripe)",
+      "from": "templates/ecommerce/.env.example"
+    },
+    {
+      "key": "ANALYZE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.mjs"
+    },
+    {
+      "key": "NEXT_PUBLIC_SENTRY_DSN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:sentry.server.config.ts"
+    },
+    {
+      "key": "NEXT_RUNTIME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:instrumentation.ts"
+    },
+    {
+      "key": "PAYLOAD_CACHE_COMPONENTS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.mjs"
+    },
+    {
+      "key": "PAYLOAD_FIGMA_PLUGIN_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:vitest.config.ts"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "mongodb://127.0.0.1:27017/app",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "examples/remix/payload/docker-compose.yml",
+      "examples/localization/docker-compose.yml",
+      "examples/astro/payload/docker-compose.yml",
+      "templates/with-postgres/docker-compose.yml",
+      "templates/website/docker-compose.yml",
+      "templates/with-vercel-mongodb/docker-compose.yml",
+      "templates/blank/docker-compose.yml",
+      "templates/with-vercel-postgres/docker-compose.yml",
+      "templates/blank-tanstack/docker-compose.yml",
+      "templates/_template/docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "mongo:latest",
+        "ports": [
+          "27017:27017"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:20-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "postgres",
+        "image": "mongo:latest",
+        "ports": [
+          "5432:5432",
+          "27017:27017"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "mongo:latest",
+        "ports": [
+          "27017:27017"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:20-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:20-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "postgres",
+        "image": "mongo:latest",
+        "ports": [
+          "5432:5432",
+          "27017:27017"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:24.15.0-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "payload",
+        "image": "node:18-alpine",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongo",
+        "image": "postgres:latest",
+        "ports": [
+          "27017:27017",
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "postgres",
+        "image": "postgres",
+        "ports": [
+          "54320:5432"
+        ]
+      },
+      {
+        "name": "postgres",
+        "image": "ghcr.io/payloadcms/postgis-vector:latest",
+        "ports": [
+          "5433:5432"
+        ]
+      },
+      {
+        "name": "postgres-replica",
+        "image": "ghcr.io/payloadcms/postgis-vector:latest",
+        "ports": [
+          "5434:5432"
+        ]
+      },
+      {
+        "name": "mongodb",
+        "image": "ghcr.io/payloadcms/mongodb-community-server:8.2.9-ubi9",
+        "ports": [
+          "27018:27017"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/cms/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/cms/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/cms/overlay.json",
+    "agents": ".navin/apps/cms/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "content-agent",
+      "seo-agent",
+      "media-agent",
+      "publisher-agent",
+      "localization-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

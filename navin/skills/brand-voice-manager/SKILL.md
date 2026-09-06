@@ -1,45 +1,60 @@
 ---
 name: brand-voice-manager
-description: Define, store, and enforce brand voice across all content — vocabulary, tone, do/don't lists per brand (Navinspire, Guidia, Lynara, etc.). Use to keep multi-brand output consistent.
+description: Define, store, and enforce brand voice across all content - vocabulary, tone, do/don't lists per brand. Use to keep multi-brand output consistent.
 metadata: {"navin":{"emoji":"🎨","category":"writing"}}
 ---
 
 # Brand Voice Manager
 
-## Overview
+Keep every piece recognizably on-brand. Voice lives in versioned style cards that other skills consult before writing.
 
-Keep every piece of content recognizably on-brand, per brand. The voice lives in versioned style cards that other skills consult.
+## When to use
 
-## Style card format (one per brand)
+- Defining or updating a brand voice
+- Enforcing consistency across campaign assets
+
+## When not to use
+
+- One-off neutral docs with no brand
+- Blending multiple brands in one piece
+
+## Style card format
 
 ```markdown
-# Voice — <Brand>
-- Mission in one line: ...
-- Personality (3 adjectives): ...
+# Voice - <Brand>
+- Mission in one line
+- Personality (3 adjectives)
 - Tone by context: site / social / sales / support
-- We say / we never say: | ✅ | ❌ |
+- We say / we never say table
 - Vocabulary: product names (exact casing), key terms FR/EN/AR
-- Grammar choices: tu/vous, we/I, oxford comma, emoji policy
-- Sample paragraphs: 2–3 approved examples
+- Grammar: tu/vous, we/I, emoji policy
+- Sample paragraphs: 2-3 approved examples
+- Changelog
 ```
 
-Store cards under `brand/<brand>-voice.md` in the workspace.
+Store under `brand/<brand>-voice.md`.
 
 ## Workflow
 
-**Defining a voice**
-1. Collect samples the user considers "perfectly us" and "never us".
-2. Extract the fingerprint (see `style-editor`); draft the card; validate with the user.
+**Define**
+1. Collect "perfectly us" and "never us" samples.
+2. Draft the card; validate with the user.
 
-**Enforcing**
-1. Before writing branded content, read the relevant card with `read_file`.
-2. After drafting (any skill), check: banned words? tone match? product names cased right?
-3. On violations in existing content: list them with fixes, per the card.
+**Enforce**
+1. `read_file` the card before branded writing.
+2. After drafting: banned words? tone? casing?
+3. List violations with fixes when auditing existing content.
 
-**Evolving**
-- Update the card when the user corrects tone twice for the same reason; keep a changelog section.
+**Evolve**
+- Update when the user corrects the same tone issue twice; append changelog.
 
 ## Rules
 
-- Multi-brand discipline: never blend voices; confirm which brand before writing.
-- The card wins over the writer's instinct; disagreement goes to the user, not silent override.
+- Confirm which brand before writing.
+- The card wins over writer instinct; escalate disagreements to the user.
+- Marketing studio runs should load the card early and keep it across assets.
+
+## Anti-patterns
+
+- Silent voice drift across a campaign pack
+- Mixing two brands' vocabulary

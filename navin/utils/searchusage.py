@@ -82,7 +82,7 @@ async def fetch_search_usage(
     if p == "tavily":
         return await _fetch_tavily_usage(api_key)
     else:
-        # brave, duckduckgo, searxng, jina, unknown — no usage API
+        # brave, duckduckgo, searxng, jina, unknown - no usage API
         return SearchUsageInfo(provider=p, supported=False)
 
 

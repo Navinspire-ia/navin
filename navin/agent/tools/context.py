@@ -64,6 +64,17 @@ def current_request_session_key() -> str | None:
     return ctx.session_key if ctx else None
 
 
+def is_heartbeat_turn() -> bool:
+    """True on the protected gateway heartbeat session."""
+    ctx = current_request_context()
+    if ctx is None:
+        return False
+    if (ctx.session_key or "").strip().lower() == "heartbeat":
+        return True
+    meta = ctx.metadata if isinstance(ctx.metadata, dict) else {}
+    return bool(meta.get("heartbeat"))
+
+
 @dataclass
 class ToolContext:
     config: Any
@@ -78,3 +89,7 @@ class ToolContext:
     timezone: str = "UTC"
     workspace_sandbox: Any | None = None
     runtime_events: Any | None = None
+    # Resolves a model-preset name to an LLMRuntime (ModelRuntimeResolver
+    # .resolve_preset). Lets spawn run a subagent on a different model than
+    # its parent (architect on a deep model, implementers on a fast one).
+    resolve_model_preset: Callable[[str], Any] | None = None

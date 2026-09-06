@@ -18,6 +18,7 @@ _TOOL_FORMATS: dict[str, tuple[list[str], str, bool, bool]] = {
     "web_search": (["query"],                          'search "{}"', False, False),
     "web_fetch":  (["url"],                            "fetch {}",    True,  False),
     "list_dir":   (["path"],                           "ls {}",       True,  False),
+    "browser":    (["url", "selector", "text", "action"], "browser {}",  False, False),
 }
 
 # Matches file paths embedded in shell commands, including quoted paths with spaces.
@@ -28,7 +29,7 @@ _PATH_IN_CMD_RE = re.compile(
 )
 
 
-def format_tool_hints(tool_calls: list, max_length: int = 40) -> str:
+def format_tool_hints(tool_calls: list, max_length: int = 120) -> str:
     """Format tool calls as concise hints with smart abbreviation."""
     if not tool_calls:
         return ""

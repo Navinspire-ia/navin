@@ -1,10 +1,29 @@
-"""Path abbreviation utilities for display."""
+"""Path utilities: display abbreviation and project-relative normalization."""
 
 from __future__ import annotations
 
 import os
 import re
 from urllib.parse import urlparse
+
+
+def normalize_relative_path(path: str | None) -> str:
+    """Turn a model-supplied path into a project-relative key.
+
+    Models write the same file as ``src/app.py``, ``./src/app.py`` or
+    ``/src/app.py``, so the leading ``./`` and ``/`` are dropped. A dot that
+    belongs to the name is preserved: ``.github/ci.yml`` must stay itself rather
+    than become ``github/ci.yml``, which is what ``str.lstrip("./")`` does, since
+    it strips any run of those two characters instead of a prefix.
+    """
+    text = (path or "").strip().replace("\\", "/")
+    while True:
+        if text.startswith("./"):
+            text = text[2:]
+        elif text.startswith("/"):
+            text = text[1:]
+        else:
+            return text
 
 
 def abbreviate_path(path: str, max_len: int = 40) -> str:

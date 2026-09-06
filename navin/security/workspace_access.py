@@ -25,6 +25,13 @@ _CURRENT_WORKSPACE_SCOPE: ContextVar["WorkspaceScope | None"] = ContextVar(
     "navin_workspace_scope",
     default=None,
 )
+# Settings > Restrict to workspace. Bound for the duration of an agent turn so
+# tools do not re-read config.json on every path. False is a master unlock:
+# a chat that still says "restricted" must not keep blocking other folders.
+_LIVE_RESTRICT_TO_WORKSPACE: ContextVar[bool | None] = ContextVar(
+    "navin_live_restrict_to_workspace",
+    default=None,
+)
 
 
 class WorkspaceScopeError(ValueError):
@@ -345,8 +352,54 @@ def reset_workspace_scope(token: Token[WorkspaceScope | None]) -> None:
     _CURRENT_WORKSPACE_SCOPE.reset(token)
 
 
+def bind_live_restrict_to_workspace(value: bool) -> Token[bool | None]:
+    return _LIVE_RESTRICT_TO_WORKSPACE.set(bool(value))
+
+
+def reset_live_restrict_to_workspace(token: Token[bool | None]) -> None:
+    _LIVE_RESTRICT_TO_WORKSPACE.reset(token)
+
+
 def current_workspace_scope() -> WorkspaceScope | None:
     return _CURRENT_WORKSPACE_SCOPE.get()
+
+
+def live_restrict_to_workspace_setting(*, read_config: bool = False) -> bool | None:
+    """Saved Restrict-to-workspace toggle, or None when it cannot be resolved.
+
+    Unbound turns do not read config.json: unit tests and CLI tools must keep
+    the explicit session/tool flag. Agent turns bind the Settings value.
+    """
+
+    bound = _LIVE_RESTRICT_TO_WORKSPACE.get()
+    if bound is not None:
+        return bound
+    if not read_config:
+        return None
+    try:
+        from navin.config.loader import load_config
+
+        return bool(load_config().tools.restrict_to_workspace)
+    except Exception:
+        return None
+
+
+def effective_restrict_to_workspace(
+    session_restrict: bool,
+    *,
+    read_config: bool = False,
+) -> bool:
+    """True only when both the chat and Settings still want a lock.
+
+    Restrict Off in Settings must unlock every chat, including ones that
+    still store access_mode=restricted. Full Access on a chat still unlocks
+    when Settings stay On.
+    """
+
+    live = live_restrict_to_workspace_setting(read_config=read_config)
+    if live is False:
+        return False
+    return bool(session_restrict)
 
 
 def current_tool_workspace(
@@ -355,7 +408,14 @@ def current_tool_workspace(
     restrict_to_workspace: bool = False,
     sandbox_restricts_workspace: bool = False,
 ) -> ToolWorkspace:
-    """Return the workspace/access policy for the current tool call."""
+    """Return the workspace/access policy for the current tool call.
+
+    ``sandbox_restricts_workspace`` is accepted for call-site compatibility
+    but does not lock file tools. The OS sandbox confines exec writes; the
+    Settings restrict-to-workspace toggle is the only application lock.
+    A second silent lock made read/edit look blocked with no approval card.
+    """
+    del sandbox_restricts_workspace
 
     scope = current_workspace_scope()
     project_path = (
@@ -363,16 +423,37 @@ def current_tool_workspace(
         if scope is not None
         else Path(default_workspace).expanduser() if default_workspace is not None else None
     )
-    restrict = (
+    session_restrict = (
         scope.restrict_to_workspace
         if scope is not None
         else bool(restrict_to_workspace)
-    ) or sandbox_restricts_workspace
+    )
+    restrict = effective_restrict_to_workspace(session_restrict)
     return ToolWorkspace(
         project_path=project_path,
         restrict_to_workspace=restrict,
         scope=scope,
     )
+
+
+_APPROVED_OUTSIDE_PATHS: ContextVar[tuple[str, ...]] = ContextVar(
+    "navin_approved_outside_paths",
+    default=(),
+)
+
+
+def approved_outside_paths() -> tuple[str, ...]:
+    """Paths the user allowed this chat to reach outside the project."""
+    return _APPROVED_OUTSIDE_PATHS.get()
+
+
+def remember_approved_path(path: str | Path) -> None:
+    """Keep a user-approved outside path for the rest of this turn/session task."""
+    raw = os.path.normcase(os.path.normpath(str(Path(path).expanduser())))
+    current = _APPROVED_OUTSIDE_PATHS.get()
+    if raw in current:
+        return
+    _APPROVED_OUTSIDE_PATHS.set((*current, raw))
 
 
 def current_scope_allows_loopback(*, enabled: bool) -> bool:

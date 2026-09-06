@@ -1,79 +1,34 @@
-# Build a Mattermost AI Agent with navin
+# Build a Mattermost AI Agent with Navin
 
-This guide connects navin to Mattermost through the built-in Mattermost
-channel, using WebSocket events and the Mattermost REST API.
+This guide connects Navin to Mattermost through the built-in Mattermost channel, using the desktop app Settings panel.
 
 ## What this guide builds
 
 - a Mattermost bot account or token
-- the `mattermost` channel enabled in navin
+- the Mattermost channel enabled in Navin
 - mention-only group behavior for first deployment
 - one pairing-approved DM or mention test
 
 ## Prerequisites
 
-- A working local navin reply:
+- Navin desktop app able to reply in local chat
+- A Mattermost server URL
+- A bot token or personal access token for the bot account
 
-```bash
-navin agent -m "Hello!"
-```
+## Enable Mattermost in Settings
 
-- A Mattermost server URL.
-- A bot token or personal access token for the bot account.
-
-## Install navin
-
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-```
-
-## Enable the Mattermost channel
-
-Merge this snippet into `~/.navin/config.json`:
-
-```json
-{
-  "channels": {
-    "mattermost": {
-      "enabled": true,
-      "serverUrl": "https://mattermost.example.com",
-      "token": "YOUR_MATTERMOST_TOKEN",
-      "teamId": "YOUR_TEAM_ID",
-      "groupPolicy": "mention",
-      "replyInThread": true,
-      "dm": {
-        "policy": "allowlist"
-      }
-    }
-  }
-}
-```
-
-`teamId` scopes the channel to a Mattermost team. Keep `groupPolicy` as
-`mention` for the first test.
-
-Mattermost DMs are open by default. Setting `dm.policy` to `"allowlist"` with no
-`dm.allowFrom` entries makes new DM senders receive a pairing code. Approve the
-code before using the bot normally.
-
-## Run navin gateway
-
-```bash
-navin channels status
-navin gateway
-```
+1. Open **Settings → Channels → Mattermost**.
+2. Enter the server URL, token, and team id.
+3. Keep group policy on **mention** for the first test.
+4. Prefer allowlist / pairing for DMs so new DM senders receive a pairing code.
+5. Enable reply-in-thread if you want threaded replies.
+6. Save, restart when prompted, and keep Navin open.
 
 ## Test a message
 
-DM the bot account. It should return a pairing code. Approve it from a trusted
-local surface:
-
-```bash
-navin agent -m "/pairing approve ABCD-EFGH"
-```
-
-Then DM the bot again, or mention it in a channel where the bot has access:
+1. DM the bot account. It should return a pairing code.
+2. Approve it in Navin, or with `/pairing approve ABCD-EFGH` from a trusted chat.
+3. DM the bot again, or mention it in a channel where the bot has access:
 
 ```text
 @navin Hello from Mattermost
@@ -81,24 +36,18 @@ Then DM the bot again, or mention it in a channel where the bot has access:
 
 ## Security notes
 
-- Store the Mattermost token in an environment variable for deployed services.
-- Keep `dm.policy` as `"allowlist"` when you want pairing-based approval.
+- Keep the Mattermost token in Settings; do not paste it into shared docs.
+- Keep DM allowlist / pairing on when you want approval before access.
 - Use mention-only group behavior before opening the bot to busy channels.
 - Review file and shell tools before inviting broad channel access.
 
 ## Troubleshooting
 
-- If startup logs say `serverUrl and token must be configured`, check the
-  camelCase config keys.
-- If DMs are ignored, review the `dm` policy and pairing approval state.
-- If channel messages are ignored, confirm the bot is mentioned and belongs to
-  the team/channel.
-- If thread replies are surprising, review `replyInThread` and
-  `includeThreadContext`.
+- Settings say server URL and token are required: fill both fields (and team id) in the channel panel.
+- DMs ignored: review DM policy and pairing approval state.
+- Channel messages ignored: confirm the bot is mentioned and belongs to the team/channel.
+- Thread replies surprising: review reply-in-thread and include-thread-context options in Settings.
 
-## Next: memory, automations, MCP tools
+## Next
 
-- [Chat Apps reference](../chat-apps.md)
-- [Pairing](../configuration.md#pairing)
 - [Long-running AI Agent](./long-running-ai-agent.md)
-- [Deployment](../deployment.md)

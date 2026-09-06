@@ -2,6 +2,7 @@
 
 from navin.providers.openai_responses.converters import (
     convert_messages,
+    convert_tool_output,
     convert_tools,
     convert_user_message,
     split_tool_call_id,
@@ -18,6 +19,7 @@ from navin.providers.openai_responses.parsing import (
 
 __all__ = [
     "convert_messages",
+    "convert_tool_output",
     "convert_tools",
     "convert_user_message",
     "split_tool_call_id",

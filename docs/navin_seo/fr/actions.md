@@ -1,4 +1,4 @@
-# Actions SEO — 12 cartes
+# Actions SEO - 12 cartes
 
 Chaque carte envoie `/seo` avec une spécification précise ; votre brief y est joint.
 
@@ -6,10 +6,10 @@ Chaque carte envoie `/seo` avec une spécification précise ; votre brief y est 
 
 | Action | Livre |
 | --- | --- |
-| Audit technique | Audit complet du site : récupère les pages clés, vérifie l'indexabilité (robots, canonicals, sitemaps), la structure meta et titres, les données structurées, le maillage interne, les problèmes de performance évidents — constats classés par impact avec correctifs. |
-| Audit on-page (URL) | Audit approfondi d'une page : title/meta/structure H, ciblage de mot-clé et adéquation à l'intention, profondeur de contenu vs les meilleurs concurrents, liens internes, optimisation des médias — liste de correctifs priorisée avec éléments réécrits. |
-| Analyse concurrents | Récupère les pages clés des concurrents, compare stratégie de contenu, structure de site, mots-clés ciblés et points forts — analyse d'écarts avec opportunités concrètes. |
-| Audit de contenu | Inventorie les pages principales du site, signale le contenu maigre ou obsolète, détecte la cannibalisation de mots-clés — plan d'action conserver/rafraîchir/fusionner/supprimer. |
+| Audit technique | Crawl borné du site : relève statuts, redirections, robots, sitemaps, canonicals, hreflang, meta et titres, valide le JSON-LD, cartographie les liens internes et utilise PSI/CrUX uniquement avec des mesures API - score déterministe et constats avec preuves. |
+| Audit on-page (URL) | Audit approfondi d'une page : title/meta/structure H, ciblage de mot-clé et adéquation à l'intention, profondeur de contenu vs les meilleurs concurrents, liens internes, optimisation des médias - liste de correctifs priorisée avec éléments réécrits. |
+| Analyse concurrents | Récupère les pages clés des concurrents, compare stratégie de contenu, structure de site, mots-clés ciblés et points forts - analyse d'écarts avec opportunités concrètes. |
+| Audit de contenu | Inventorie les pages principales du site, signale le contenu maigre ou obsolète, détecte la cannibalisation de mots-clés - plan d'action conserver/rafraîchir/fusionner/supprimer. |
 
 ## Recherche
 
@@ -24,7 +24,7 @@ Chaque carte envoie `/seo` avec une spécification précise ; votre brief y est 
 
 | Action | Livre |
 | --- | --- |
-| Article SEO | Article complet optimisé : balise title et meta description, structure H1-H3 couvrant les entités du sujet, usage naturel des mots-clés, section FAQ, suggestions de liens internes, balisage schema.org FAQPage/Article — enregistré en fichier. |
-| Optimisation meta & balises | Balises title réécrites (orientées CTR, bonne longueur), meta descriptions, balises Open Graph/Twitter, hiérarchie des titres — tableaux avant/après. |
-| Balisage Schema.org | Données structurées JSON-LD adaptées au site : Organization, Product, Article, FAQ, Breadcrumb ou LocalBusiness — valides, prêtes à coller, avec instructions de placement. |
+| Article SEO | Article complet optimisé : balise title et meta description, structure H1-H3 couvrant les entités du sujet, usage naturel des mots-clés, section FAQ, suggestions de liens internes, balisage schema.org FAQPage/Article - enregistré en fichier. |
+| Optimisation meta & balises | Balises title réécrites (orientées CTR, bonne longueur), meta descriptions, balises Open Graph/Twitter, hiérarchie des titres - tableaux avant/après. |
+| Balisage Schema.org | Données structurées JSON-LD adaptées au site : Organization, Product, Article, FAQ, Breadcrumb ou LocalBusiness - valides, prêtes à coller, avec instructions de placement. |
 | Plan liens & backlinks | Plan de maillage interne (pages money, ancres, maillage entre clusters) plus un plan d'acquisition de backlinks (cibles, tactiques, modèles d'outreach), priorisés par effort/impact. |

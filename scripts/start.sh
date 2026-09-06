@@ -1,5 +1,5 @@
 #!/bin/sh
-# navin start — lance tout le projet (backend + frontend) en une commande.
+# navin start - lance tout le projet (backend + frontend) en une commande.
 #
 # Usage:
 #   sh scripts/start.sh              # backend (gateway :8765) + frontend dev (:5173), en background
@@ -70,7 +70,8 @@ case "$MODE" in
 esac
 
 printf "\n%b✓ Navin est lancé.%b\n" "$GREEN" "$NC"
-printf "  Gateway / WebUI intégrée : %bhttp://127.0.0.1:8765%b\n" "$CYAN" "$NC"
+WEBUI_URL="$(python3 -c "import json, pathlib; p=pathlib.Path.home()/'.navin'/'config.json'; print((json.load(open(p)).get('channels') or {}).get('websocket', {}).get('port', 8765) if p.is_file() else 8765)" 2>/dev/null || echo 8765)"
+printf "  Gateway / WebUI intégrée : %bhttp://127.0.0.1:%s%b\n" "$CYAN" "$WEBUI_URL" "$NC"
 if [ "$MODE" = "all" ] || [ "$MODE" = "front" ]; then
     printf "  WebUI dev (hot reload)   : %bhttp://127.0.0.1:5173%b\n" "$CYAN" "$NC"
 fi

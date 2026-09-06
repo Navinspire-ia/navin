@@ -1,0 +1,273 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "purchase-orders",
+  "name": "Stock / Purchase Orders",
+  "kind": "business",
+  "category": "operations",
+  "source_github": "https://github.com/nshakib/inventory-management-system-backend",
+  "source_name": "Inventory Management System Backend",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node.js",
+    "Express",
+    "TypeScript",
+    "MongoDB"
+  ],
+  "studied_from": "curated-github",
+  "completeness": {
+    "studied": false,
+    "missing": [],
+    "env_count": 7,
+    "package_count": 2,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "nshakib inventory API: Node + Express + Mongoose + MongoDB. Products, categories, suppliers, purchases, sales, JWT. Frontend folder optional. API :5000."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone https://github.com/nshakib/inventory-management-system-backend"
+    },
+    {
+      "id": "npm",
+      "why": "Install root (API) and frontend/ if present"
+    },
+    {
+      "id": "node",
+      "why": "Node 18+ (nodemon --env-file=.env)"
+    },
+    {
+      "id": "docker",
+      "why": "MongoDB 7 on :27017"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "dev",
+          "build": "build"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "nodemon --env-file=.env index.js",
+          "start": "node --env-file=.env index.js"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "mongoose",
+          "jsonwebtoken"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "nodemon --env-file=.env index.js",
+          "start": "node --env-file=.env index.js"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "dev"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGO_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-po-mongo -p 27017:27017 mongo:7",
+        "Set MONGO_URI=mongodb://127.0.0.1:27017/inventory_db"
+      ]
+    }
+  ],
+  "ports": [
+    5000,
+    27017
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "PORT",
+      "default": "5000",
+      "required": false,
+      "secret": false,
+      "purpose": "Express port",
+      "from": "curated"
+    },
+    {
+      "key": "MONGO_URI",
+      "default": "mongodb://127.0.0.1:27017/inventory_db",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "curated"
+    },
+    {
+      "key": "JWT_ACCESS_SECRET",
+      "default": "change-me-access",
+      "required": true,
+      "secret": true,
+      "purpose": "Access token secret",
+      "from": "curated"
+    },
+    {
+      "key": "JWT_REFRESH_SECRET",
+      "default": "change-me-refresh",
+      "required": true,
+      "secret": true,
+      "purpose": "Refresh token secret",
+      "from": "curated"
+    },
+    {
+      "key": "ACCESS_TOKEN_EXPIRES",
+      "default": "15m",
+      "required": false,
+      "secret": true,
+      "purpose": "Access token TTL",
+      "from": "curated"
+    },
+    {
+      "key": "REFRESH_TOKEN_EXPIRES",
+      "default": "7d",
+      "required": false,
+      "secret": true,
+      "purpose": "Refresh token TTL",
+      "from": "curated"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "curated"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [
+      {
+        "name": "mongo",
+        "image": "mongo:7",
+        "ports": [
+          "27017:27017"
+        ]
+      }
+    ],
+    "dockerfile": false,
+    "note": "No official compose. Start MongoDB then npm run dev at repo root."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build",
+    "start": "npm start",
+    "seed": "node seed.js"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/purchase-orders/install.json first."
+      },
+      {
+        "id": "clone",
+        "run": "git clone https://github.com/nshakib/inventory-management-system-backend.git ."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "Start MongoDB 7 on :27017."
+      },
+      {
+        "id": "env",
+        "run": "Create .env with PORT=5000 MONGO_URI=mongodb://127.0.0.1:27017/inventory_db JWT_ACCESS_SECRET JWT_REFRESH_SECRET NODE_ENV=development."
+      },
+      {
+        "id": "node-deps",
+        "run": "npm install && npm run dev"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/purchase-orders/overlay.json."
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/purchase-orders/overlay.json",
+    "agents": ".navin/apps/purchase-orders/agents/",
+    "env": ".env",
+    "frontend": "frontend/ if present",
+    "backend": "package.json (Express + Mongoose). Models in models/ or server/src/models.",
+    "theme": "API-first. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "supplier-agent",
+      "purchase-order-agent",
+      "sales-agent",
+      "stock-agent",
+      "roles-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

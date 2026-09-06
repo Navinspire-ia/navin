@@ -137,7 +137,7 @@ class MyTool(Tool):
         base = (
             "Check and set your own runtime state.\n"
             "Actions: check, set.\n"
-            "- check (no key): full config overview — start here.\n"
+            "- check (no key): full config overview - start here.\n"
             "- check (key): drill into a value. Dot-paths allowed "
             "(e.g. '_last_usage.prompt_tokens', 'web_config.enable').\n"
             "- set (key, value): change config or store notes in your scratchpad. "
@@ -186,6 +186,17 @@ class MyTool(Tool):
             "required": ["action"],
         }
 
+    def call_read_only(self, params: Any) -> bool:
+        """``check`` / ``inspect`` only read runtime state; ``set`` mutates.
+
+        Without this the whole tool counted as mutating, so an Ask turn that
+        merely checked ``request.channel`` was refused as a write.
+        """
+        action = ""
+        if isinstance(params, dict):
+            action = str(params.get("action") or "").strip().lower()
+        return action in ("check", "inspect")
+
     def _audit(self, action: str, detail: str) -> None:
         ctx = current_request_context()
         session = (
@@ -214,7 +225,13 @@ class MyTool(Tool):
                     if part in obj:
                         obj = obj[part]
                     else:
-                        return None, f"'{part}' not found in dict"
+                        available = ", ".join(
+                            sorted(str(k) for k in obj if str(k) not in self._SENSITIVE_NAMES)
+                        )
+                        return None, (
+                            f"'{part}' not found in dict"
+                            + (f"; available keys: {available}" if available else " (it is empty)")
+                        )
                 else:
                     obj = getattr(obj, part)
             except (KeyError, AttributeError) as e:
@@ -265,12 +282,12 @@ class MyTool(Tool):
                 lines.append(f"  [{tid}] '{st.label}'\n{detail}")
             return "\n".join(lines)
         if hasattr(val, "tool_names"):
-            return f"tools: {len(val.tool_names)} registered — {val.tool_names}"
-        # Scalar types — repr is fine
+            return f"tools: {len(val.tool_names)} registered - {val.tool_names}"
+        # Scalar types - repr is fine
         if isinstance(val, (str, int, float, bool, type(None))):
             r = repr(val)
             return f"{key}: {r}" if key else r
-        # Dict — small: show content; large: show keys for dot-path navigation
+        # Dict - small: show content; large: show keys for dot-path navigation
         if isinstance(val, dict):
             ks = list(val.keys())
             if not ks:
@@ -282,13 +299,13 @@ class MyTool(Tool):
             preview = ", ".join(str(k) for k in ks[:15])
             suffix = ", ..." if len(ks) > 15 else ""
             return f"{key}: {{{preview}{suffix}}}" if key else f"{{{preview}{suffix}}}"
-        # List/tuple — count for large, repr for small
+        # List/tuple - count for large, repr for small
         if isinstance(val, (list, tuple)):
             if len(val) > 20:
                 return f"{key}: [{len(val)} items]" if key else f"[{len(val)} items]"
             r = repr(val)
             return f"{key}: {r}" if key else r
-        # Complex object — small Pydantic models: show values; others: show field names for navigation
+        # Complex object - small Pydantic models: show values; others: show field names for navigation
         cls_name = type(val).__name__
         model_fields = getattr(type(val), "model_fields", None)
         if model_fields:
@@ -328,11 +345,11 @@ class MyTool(Tool):
     ) -> str:
         if action in ("inspect", "check"):
             return self._inspect(key)
+        if action not in ("modify", "set"):
+            return self.unknown_action(action)
         if not self._modify_allowed:
             return ToolResult.error("Error: set is disabled (tools.my.allow_set is false)")
-        if action in ("modify", "set"):
-            return self._modify(key, value)
-        return f"Unknown action: {action}"
+        return self._modify(key, value)
 
     # -- inspect --
 
@@ -357,7 +374,10 @@ class MyTool(Tool):
                 )
             field = key.removeprefix("request.")
             if field not in self._REQUEST_FIELDS:
-                return ToolResult.error(f"Error: '{key}' not found")
+                return ToolResult.error(
+                    f"Error: '{key}' not found. Available: "
+                    + ", ".join(f"request.{f}" for f in self._REQUEST_FIELDS)
+                )
             return self._format_value(getattr(request_ctx, field), key)
         if "." not in key:
             found, value = self._current_runtime_value(key)

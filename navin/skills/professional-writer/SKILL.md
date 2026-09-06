@@ -31,5 +31,5 @@ Produce clean professional documents with the right register, structure, and cul
 ## Rules
 
 - Executive summary written last, placed first.
-- Never bury the request — state it in the first third of the document.
+- Never bury the request - state it in the first third of the document.
 - Numbers and names triple-checked; a typo in a name ruins a formal letter.

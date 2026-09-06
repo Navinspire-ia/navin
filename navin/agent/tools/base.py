@@ -1,6 +1,8 @@
 """Base class for agent tools."""
 from __future__ import annotations
 
+import difflib
+import json
 import typing
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -174,6 +176,28 @@ class Tool(ABC):
         """JSON Schema for tool parameters."""
         ...
 
+    def unknown_action(self, action: Any, *, parameter: str = "action") -> ToolResult:
+        """Reject an unrecognized action while naming the ones that work.
+
+        The valid values are read back from this tool's own declared schema, so
+        the message cannot drift from the enum. A bare "unknown action" costs the
+        agent a turn: it has no way to tell a typo from a capability the tool
+        simply does not have.
+        """
+        allowed: list[str] = []
+        try:
+            spec = self.parameters.get("properties", {}).get(parameter, {})
+            allowed = [str(v) for v in spec.get("enum", []) if v is not None]
+        except (AttributeError, TypeError):
+            allowed = []
+        message = f"Error: unknown {parameter}: {action}."
+        if allowed:
+            close = difflib.get_close_matches(str(action), allowed, n=1, cutoff=0.6)
+            if close:
+                message += f" Did you mean {parameter}={close[0]}?"
+            message += f" Valid values: {', '.join(allowed)}."
+        return ToolResult.error(message)
+
     @property
     def read_only(self) -> bool:
         """Whether this tool is side-effect free and safe to parallelize."""
@@ -188,6 +212,24 @@ class Tool(ABC):
     def exclusive(self) -> bool:
         """Whether this tool should run alone even if concurrency is enabled."""
         return False
+
+    def call_concurrency_safe(self, arguments: Any) -> bool:
+        """Whether this particular call can run alongside others.
+
+        Defaults to the tool-wide answer. A tool whose safety depends on what it
+        was asked to do - one action queries, another writes files - overrides
+        this so its read paths still parallelize while its write paths do not.
+        """
+        return self.concurrency_safe
+
+    def call_read_only(self, arguments: Any) -> bool:
+        """Whether this particular call is side-effect free.
+
+        Defaults to the tool-wide :attr:`read_only`. Tools that multiplex read
+        and write actions behind one name (git, board) override this so Ask and
+        Plan turns keep their query actions instead of losing the whole tool.
+        """
+        return self.read_only
 
     # --- Plugin metadata ---
 
@@ -248,20 +290,33 @@ class Tool(ABC):
         if t == "boolean" and isinstance(val, bool):
             return val
         if t == "integer" and isinstance(val, int) and not isinstance(val, bool):
-            return val
-        if t in self._TYPE_MAP and t not in ("boolean", "integer", "array", "object"):
+            return self._clamp_numeric(val, schema)
+        if t == "number" and isinstance(val, (int, float)) and not isinstance(val, bool):
+            return self._clamp_numeric(val, schema)
+        if t in self._TYPE_MAP and t not in ("boolean", "integer", "number", "array", "object"):
             expected = self._TYPE_MAP[t]
             if isinstance(val, expected):
                 return val
 
         if isinstance(val, str) and t in ("integer", "number"):
             try:
-                return int(val) if t == "integer" else float(val)
+                parsed: int | float = int(val) if t == "integer" else float(val)
             except ValueError:
                 return val
+            return self._clamp_numeric(parsed, schema)
 
         if t == "string":
-            return val if val is None else str(val)
+            if val is None:
+                return val
+            # A structured value for a string param (e.g. a findings array
+            # passed natively for findings_json) must become valid JSON text,
+            # not a Python repr with single quotes.
+            if isinstance(val, (dict, list)):
+                try:
+                    return json.dumps(val, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    return str(val)
+            return str(val)
 
         if t == "boolean" and isinstance(val, str):
             low = val.lower()
@@ -278,6 +333,22 @@ class Tool(ABC):
         if t == "object" and isinstance(val, dict):
             return self._cast_object(val, schema)
 
+        return val
+
+    @staticmethod
+    def _clamp_numeric(val: int | float, schema: dict[str, Any]) -> int | float:
+        """Clamp out-of-range numbers to schema bounds instead of hard-failing.
+
+        Models often pass generous timeouts (emulator boot, long builds). Rejecting
+        the whole tool call for ``wait_timeout_ms must be <= 120000`` burns turns;
+        clamping keeps the run moving with a safe ceiling.
+        """
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and val < minimum:
+            return type(val)(minimum) if not isinstance(val, bool) else minimum
+        if isinstance(maximum, (int, float)) and val > maximum:
+            return type(val)(maximum) if not isinstance(val, bool) else maximum
         return val
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:

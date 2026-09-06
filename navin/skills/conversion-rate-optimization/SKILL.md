@@ -1,6 +1,6 @@
 ---
 name: conversion-rate-optimization
-description: Optimize landing pages, forms, CTAs, and funnels — diagnosis, hypotheses, and test plans. Use when traffic exists but conversions lag.
+description: Optimize landing pages, forms, CTAs, and funnels - diagnosis, hypotheses, and test plans. Use when traffic exists but conversions lag.
 metadata: {"navin":{"emoji":"🎚️","category":"marketing"}}
 ---
 
@@ -27,12 +27,12 @@ CRO = removing friction and adding clarity where visitors already are. Diagnose 
 1. Get data: where users drop (analytics), what they say (session notes, chat logs).
 2. Audit the page with the grid; fetch it with `web_fetch` for structure.
 3. Rank issues: high traffic × high friction first.
-4. Write hypotheses (`growth-marketing` experiment format) — copy changes usually beat design changes.
+4. Write hypotheses (`growth-marketing` experiment format) - copy changes usually beat design changes.
 5. Propose the test: A/B if traffic allows, before/after with a holdout period otherwise.
 6. Rewrite copy via `copywriting-agent`; measure and iterate.
 
 ## Rules
 
 - Clarity beats persuasion tricks; specificity beats superlatives.
-- Never test tiny changes on tiny traffic — you'll never reach significance.
+- Never test tiny changes on tiny traffic - you'll never reach significance.
 - The form asks only for what sales actually uses.

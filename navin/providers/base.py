@@ -1,6 +1,7 @@
 """Base LLM provider interface."""
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -15,9 +16,31 @@ from typing import Any
 import json_repair
 from loguru import logger
 
+from navin.providers.fallback_policy import apply_jitter
+
 STREAM_IDLE_TIMEOUT_ENV = "NAVIN_STREAM_IDLE_TIMEOUT_S"
-DEFAULT_STREAM_IDLE_TIMEOUT_S = 90.0
+# Reasoning models regularly sit silent for more than a minute before the
+# first token. 90s was read as "about a minute" and forced people to Stop
+# and switch models. Two minutes is the floor; the env still raises it.
+DEFAULT_STREAM_IDLE_TIMEOUT_S = 120.0
 MAX_STREAM_IDLE_TIMEOUT_S = 3600.0
+# Retrying exactly at the provider's Retry-After can land inside the same
+# rate-limit window; one extra second clears it.
+RETRY_AFTER_BUFFER = 1
+
+# True while _run_with_retry (the outer *_with_retry ladder) is driving the
+# request. Nested retry layers (the fallback wrapper's sticky primary retries)
+# consult it and stand down: the outer ladder already provides backoff and
+# re-runs the whole chain, so stacking a second ladder inside each attempt
+# multiplied worst-case attempts into a retry storm.
+_IN_RETRY_LADDER: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "navin_in_retry_ladder", default=False
+)
+
+
+def in_outer_retry_ladder() -> bool:
+    """Whether the current request is already inside chat_with_retry's ladder."""
+    return _IN_RETRY_LADDER.get()
 
 
 def resolve_stream_idle_timeout_s(
@@ -163,6 +186,11 @@ class LLMResponse:
     error_code: str | None = None  # Provider/code semantic, e.g. rate_limit_exceeded.
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
+    # The provider's own words, chat-safe (no URLs, no dict dump). ``content``
+    # holds the generic rewrite; this keeps what the provider actually said so
+    # a refusal on the user's own key can be shown verbatim.
+    error_detail: str | None = None
+    error_provider: str | None = None  # Display name of the provider that answered.
 
     @property
     def has_tool_calls(self) -> bool:
@@ -196,6 +224,11 @@ class LLMProvider(ABC):
     supports_progress_deltas = False
 
     _CHAT_RETRY_DELAYS = (1, 2, 4)
+    # Shared :free pools saturate routinely, so retries there stay on a shorter
+    # ladder with a hard delay cap: enough to ride out a burst, never enough to
+    # hang the UI for minutes on a saturated endpoint.
+    _FREE_CHAT_RETRY_DELAYS = (2, 5)
+    _FREE_MAX_DELAY = 15
     _PERSISTENT_MAX_DELAY = 60
     _PERSISTENT_IDENTICAL_ERROR_LIMIT = 10
     _RETRY_HEARTBEAT_CHUNK = 30
@@ -576,7 +609,7 @@ class LLMProvider(ABC):
                 for b in content:
                     if isinstance(b, dict) and b.get("type") == "image_url":
                         placeholder = (
-                            "[Image not delivered to model — "
+                            "[Image not delivered to model - "
                             "do not describe or reference it]"
                         )
                         new_content.append({"type": "text", "text": placeholder})
@@ -603,12 +636,37 @@ class LLMProvider(ABC):
                 for i, b in enumerate(content):
                     if isinstance(b, dict) and b.get("type") == "image_url":
                         placeholder = (
-                            "[Image not delivered to model — "
+                            "[Image not delivered to model - "
                             "do not describe or reference it]"
                         )
                         content[i] = {"type": "text", "text": placeholder}
                         found = True
         return found
+
+    @classmethod
+    def _unexpected_error_response(cls, exc: Exception) -> LLMResponse:
+        """Wrap an exception a provider let through into an error response.
+
+        Transport failures get the shared user-facing wording and a structured
+        ``error_kind``, so the retry policy no longer depends on the exception
+        text still containing the word "connection".
+        """
+        from navin.providers.user_facing_errors import user_facing_llm_error
+
+        raw = f"Error calling LLM: {exc}"
+        name = exc.__class__.__name__.lower()
+        kind: str | None = None
+        if "timeout" in name:
+            kind = "timeout"
+        elif "connect" in name:
+            kind = "connection"
+        if kind is None:
+            return LLMResponse(content=raw, finish_reason="error")
+        return LLMResponse(
+            content=user_facing_llm_error(raw),
+            finish_reason="error",
+            error_kind=kind,
+        )
 
     async def _safe_chat(self, **kwargs: Any) -> LLMResponse:
         """Call chat() and convert unexpected exceptions to error responses."""
@@ -617,7 +675,7 @@ class LLMProvider(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return LLMResponse(content=f"Error calling LLM: {exc}", finish_reason="error")
+            return self._unexpected_error_response(exc)
 
     async def chat_stream(
         self,
@@ -661,7 +719,7 @@ class LLMProvider(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return LLMResponse(content=f"Error calling LLM: {exc}", finish_reason="error")
+            return self._unexpected_error_response(exc)
 
     async def chat_stream_with_retry(
         self,
@@ -869,12 +927,53 @@ class LLMProvider(ABC):
         should_retry_guard: Callable[[], bool] | None = None,
         on_stream_recover: Callable[[], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        ladder_token = _IN_RETRY_LADDER.set(True)
+        try:
+            return await self._run_with_retry_inner(
+                call,
+                kw,
+                original_messages,
+                retry_mode=retry_mode,
+                on_retry_wait=on_retry_wait,
+                should_retry_guard=should_retry_guard,
+                on_stream_recover=on_stream_recover,
+            )
+        finally:
+            _IN_RETRY_LADDER.reset(ladder_token)
+
+    async def _run_with_retry_inner(
+        self,
+        call: Callable[..., Awaitable[LLMResponse]],
+        kw: dict[str, Any],
+        original_messages: list[dict[str, Any]],
+        *,
+        retry_mode: str,
+        on_retry_wait: Callable[[str], Awaitable[None]] | None,
+        should_retry_guard: Callable[[], bool] | None = None,
+        on_stream_recover: Callable[[], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
         attempt = 0
         delays = list(self._CHAT_RETRY_DELAYS)
+        # A failover chain has already retried the chosen model and tried every
+        # other model of the list by the time an error reaches the ladder. One
+        # more pass covers a moment where everything was busy at once; the full
+        # ladder on top of the chain multiplied one bad minute into many calls.
+        if getattr(self, "_has_fallbacks", False):
+            delays = delays[:1]
         persistent = retry_mode == "persistent"
         last_response: LLMResponse | None = None
         last_error_key: str | None = None
         identical_error_count = 0
+        # Shared OpenRouter :free pools saturate routinely (429 / at capacity).
+        # Never fail fast to the user: retry on the short free-tier ladder.
+        # When this provider wraps a failover chain, every attempt re-runs the
+        # whole chain (primary + other free models), so even two extra passes
+        # cover many model attempts without hanging the UI for minutes.
+        request_model = str(kw.get("model") or self.get_default_model() or "")
+        is_free_model = request_model.strip().lower().endswith(":free")
+        if is_free_model:
+            delays = list(self._FREE_CHAT_RETRY_DELAYS)
+            persistent = False
         while True:
             attempt += 1
             response = await call(**kw)
@@ -940,7 +1039,13 @@ class LLMProvider(ABC):
                     )
                 return response
 
-            if not persistent and attempt > len(delays):
+            # A timeout has already cost the full request or idle window
+            # (two minutes each). One more try covers a hiccup; a provider
+            # that stalls twice in a row is down for this step, and burning
+            # two further windows on it is the eight-minute silent step.
+            timed_out = (response.error_kind or "").lower() == "timeout"
+            retry_budget = min(len(delays), 1) if timed_out and not persistent else len(delays)
+            if not persistent and attempt > retry_budget:
                 logger.warning(
                     "LLM request failed after {} retries, giving up: {}",
                     attempt,
@@ -952,10 +1057,20 @@ class LLMProvider(ABC):
                     )
                 break
 
+            retry_after = self._extract_retry_after_from_response(response)
             base_delay = delays[min(attempt - 1, len(delays) - 1)]
-            delay = self._extract_retry_after_from_response(response) or base_delay
-            if persistent:
-                delay = min(delay, self._PERSISTENT_MAX_DELAY)
+            delay = retry_after + RETRY_AFTER_BUFFER if retry_after else base_delay
+            # Jitter before the cap, so spreading the wake-ups cannot push a
+            # persistent retry past its ceiling.
+            delay = apply_jitter(delay)
+            # Standard mode used to honour any Retry-After verbatim: a 429
+            # advertising 120 s, three times, parked one step for six minutes.
+            # The persistent ceiling is generous enough for a real cooldown.
+            delay = min(delay, self._PERSISTENT_MAX_DELAY)
+            if is_free_model:
+                # A saturated free pool may advertise a long Retry-After; waiting
+                # that long is worse than retrying the failover chain sooner.
+                delay = min(delay, self._FREE_MAX_DELAY)
 
             logger.warning(
                 "LLM transient error (attempt {}{}), retrying in {}s: {}",

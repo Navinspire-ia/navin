@@ -1,6 +1,6 @@
 ---
 name: fact-checker
-description: Verify claims, statistics, quotes, and citations before publication — with sources and confidence levels. Use before publishing anything containing factual assertions.
+description: Verify claims, statistics, quotes, and citations before publication - with sources and confidence levels. Use before publishing anything containing factual assertions.
 metadata: {"navin":{"emoji":"✅","category":"writing"}}
 ---
 
@@ -15,7 +15,7 @@ Every factual claim in a publishable text gets verified, sourced, or removed. Re
 - Numbers and statistics (and their date + scope)
 - Quotes and attributions
 - Names, titles, company facts
-- Superlatives ("first", "biggest", "only") — usually wrong
+- Superlatives ("first", "biggest", "only") - usually wrong
 - Legal/regulatory statements
 - Technical claims (versions, capabilities, benchmarks)
 
@@ -24,7 +24,7 @@ Every factual claim in a publishable text gets verified, sourced, or removed. Re
 | Confidence | Standard |
 |-----------|----------|
 | Verified | 2+ independent primary/authoritative sources agree |
-| Single-source | one credible source — label it in the text ("selon X") |
+| Single-source | one credible source - label it in the text ("selon X") |
 | Unverifiable | rewrite as opinion, or cut |
 | Contradicted | correct it; note the common misconception if useful |
 
@@ -39,5 +39,8 @@ Every factual claim in a publishable text gets verified, sourced, or removed. Re
 ## Rules
 
 - The original study beats the article about the study.
-- If two credible sources conflict, present both — don't pick silently.
+- If two credible sources conflict, present both - don't pick silently.
 - AI-generated "facts" (including your own memory) are claims to verify, not sources.
+- For code audits (Review / Security / Debug): a claim about the tree is
+  unverified until `read_file` / `grep` / runtime output in this turn backs it.
+  Absences ("does not exist", "always sequential") require a failed counter-search.

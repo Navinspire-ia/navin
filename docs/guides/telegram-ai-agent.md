@@ -1,109 +1,58 @@
-# Build a Telegram AI Agent with navin
+# Build a Telegram AI Agent with Navin
 
-This guide connects navin to Telegram so a paired Telegram user can message a
-self-hosted AI agent backed by your normal navin config, tools, memory, and
-workspace.
+This guide connects Navin to Telegram so a paired Telegram user can message a self-hosted AI agent backed by your normal Navin Settings, tools, memory, and project.
 
 ## What this guide builds
 
 - a Telegram bot created through BotFather
-- the `telegram` channel enabled in navin
-- a running navin gateway
+- the Telegram channel enabled in Navin Settings
 - one pairing-approved Telegram account
 
 ## Prerequisites
 
-- A working navin CLI reply:
+- Navin desktop app installed and able to reply in local chat
+- A Telegram account
+- A bot token from `@BotFather`
 
-```bash
-navin agent -m "Hello!"
-```
+## Enable Telegram in Settings
 
-- A Telegram account.
-- A bot token from `@BotFather`.
+1. Open Navin and confirm **Settings → Providers** / **Models** work with a short chat.
+2. Open **Settings → Channels → Telegram**.
+3. Paste the BotFather token and enable the channel.
+4. Leave allowlists empty for pairing-only mode (recommended first). The first DM from a new user gets a pairing code instead of agent access.
+5. Save and restart when Navin prompts you.
+6. Keep Navin open while you test.
 
-## Install navin
-
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-```
-
-## Enable the Telegram channel
-
-Install the optional channel dependency:
-
-```bash
-navin plugins enable telegram
-```
-
-Merge this snippet into `~/.navin/config.json`:
-
-```json
-{
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "YOUR_BOT_TOKEN"
-    }
-  }
-}
-```
-
-Omitting `allowFrom` enables pairing-only mode. The first DM from a new user
-gets a pairing code instead of agent access.
-
-Telegram uses long polling by default. Webhook mode is available for public
-HTTPS deployments; start with long polling for the first test.
-
-## Run navin gateway
-
-```bash
-navin channels status
-navin gateway
-```
-
-Leave the gateway running while you test messages.
+Telegram uses long polling by default in the desktop app. Start there for the first test.
 
 ## Test a message
 
-Open Telegram, DM the bot, and send:
+1. Open Telegram, DM the bot, and send:
 
 ```text
 Hello from Telegram
 ```
 
-The bot should reply with a pairing code. Approve it from an already trusted
-surface, such as the local CLI:
-
-```bash
-navin agent -m "/pairing approve ABCD-EFGH"
-```
-
-Send the message again after approval. The reply should use the same model and
-workspace as your local CLI check.
+2. The bot should reply with a pairing code.
+3. Approve it in Navin (Channels / pairing UI), or from an already trusted chat with `/pairing approve ABCD-EFGH`.
+4. Send the message again after approval. The reply should use the same model and project as your desktop chat.
 
 ## Security notes
 
-- Prefer pairing-only mode for first setup. Add `allowFrom` only when you want a
-  static allowlist instead of code approval.
-- Do not use `allowFrom: ["*"]` unless the bot is isolated or intentionally public.
+- Prefer pairing-only mode for first setup. Add an allowlist only when you want a static list instead of code approval.
+- Do not allow everyone unless the bot is isolated or intentionally public.
 - Rotate the BotFather token if it is pasted into logs or shared files.
 - Review tool access before adding group chats or more users.
 
 ## Troubleshooting
 
-- If the channel is not listed, run `navin plugins enable telegram` again in
-  the same Python environment.
-- If messages do not arrive, run `navin gateway --verbose` and check the bot
-  token.
-- If a first DM returns a pairing code, that is expected. Approve the code before
-  testing normal agent replies.
-- If Telegram Web shows unsupported rich messages, keep `richMessages` disabled.
+- Channel not listed: reopen **Settings → Channels**, enable Telegram again, restart if prompted.
+- Messages do not arrive: confirm the bot token and that Navin is still open.
+- First DM returns a pairing code: that is expected - approve before testing normal agent replies.
+- Telegram Web shows unsupported rich messages: keep rich messages disabled in the channel panel if available.
 
-## Next: memory, automations, MCP tools
+## Next
 
-- [Chat Apps reference](../chat-apps.md)
 - [AI Agent Memory](./ai-agent-memory.md)
 - [Long-running AI Agent](./long-running-ai-agent.md)
 - [Configure MCP tools](./configure-mcp-tools.md)

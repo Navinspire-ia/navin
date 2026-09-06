@@ -1,0 +1,1288 @@
+"""Professional bid chapters. Facts stay on file. Missing facts stay visible."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from navin.tenders.enrich import fetch_text_is_noise
+from navin.tenders.profile import stated
+
+_FR_HINT = re.compile(
+    r"\b(le|la|les|des|une|pour|avec|dans|sur|objet|avis|marche|marche|"
+    r"prestataire|cahier|fourniture|travaux|modernisation|refonte|"
+    r"plateforme|decisionnel|acheteur|depot)\b|[àâäéèêëïîôùûüç]",
+    re.I,
+)
+_EN_HINT = re.compile(
+    r"\b(the|and|for|with|this|shall|must|tender|procurement|scope|"
+    r"services|please|rebuild|platform|authority|deadline|submission)\b",
+    re.I,
+)
+_AR_HINT = re.compile(r"[\u0600-\u06FF]")
+
+SECTION_KEYS = (
+    "cover",
+    "toc",
+    "letter",
+    "executive_summary",
+    "company",
+    "need",
+    "approach",
+    "vision",
+    "functional",
+    "architecture",
+    "methodology",
+    "followup_kpi",
+    "raci_risks",
+    "governance",
+    "planning",
+    "staffing",
+    "financial_schedule",
+    "references",
+    "compliance_matrix",
+    "revision_notes",
+)
+
+SECTION_TITLES = {
+    "fr": {
+        "cover": "Page de garde",
+        "toc": "Sommaire",
+        "letter": "Lettre de candidature",
+        "executive_summary": "Resume executif",
+        "company": "Presentation de la societe",
+        "need": "Comprehension du besoin",
+        "approach": "Demarche",
+        "vision": "Vision",
+        "functional": "Reponse fonctionnelle",
+        "architecture": "Reponse technique",
+        "methodology": "Methodologie",
+        "followup_kpi": "Suivi et indicateurs",
+        "raci_risks": "RACI et risques",
+        "governance": "Gouvernance projet",
+        "planning": "Planning et jalons",
+        "staffing": "Equipe",
+        "financial_schedule": "Budget et bordereau",
+        "references": "References",
+        "compliance_matrix": "Matrice de conformite",
+        "revision_notes": "Remarques internes",
+    },
+    "en": {
+        "cover": "Cover page",
+        "toc": "Contents",
+        "letter": "Submission letter",
+        "executive_summary": "Executive summary",
+        "company": "Company presentation",
+        "need": "Understanding of the need",
+        "approach": "Approach",
+        "vision": "Vision",
+        "functional": "Functional response",
+        "architecture": "Technical response",
+        "methodology": "Methodology",
+        "followup_kpi": "Follow-up and KPIs",
+        "raci_risks": "RACI and risks",
+        "governance": "Project governance",
+        "planning": "Schedule and milestones",
+        "staffing": "Team",
+        "financial_schedule": "Budget and price schedule",
+        "references": "References",
+        "compliance_matrix": "Compliance matrix",
+        "revision_notes": "Internal remarks",
+    },
+}
+
+
+def detect_notice_language(tender: dict[str, Any] | None) -> str | None:
+    parts: list[str] = []
+    for key in ("title", "description", "eligibility", "cdc_text", "submission_method"):
+        text = str((tender or {}).get(key) or "")
+        if key in {"description", "cdc_text"} and fetch_text_is_noise(text):
+            continue
+        parts.append(text)
+    blob = " ".join(parts)
+    if len(_AR_HINT.findall(blob)) >= 10:
+        return "ar"
+    fr = len(_FR_HINT.findall(blob))
+    en = len(_EN_HINT.findall(blob))
+    if fr >= 3 and fr > en * 1.15:
+        return "fr"
+    if en >= 3 and en > fr * 1.15:
+        return "en"
+    return None
+
+
+def section_title(key: str, lang: str) -> str:
+    pack = SECTION_TITLES.get(lang) or SECTION_TITLES["en"]
+    return pack.get(key) or SECTION_TITLES["en"].get(key) or key
+
+
+def _t(lang: str, fr: str, en: str) -> str:
+    return fr if lang == "fr" else en
+
+
+def _lines(*rows: str) -> str:
+    return "\n".join(row for row in rows if row is not None and str(row).strip() != "")
+
+
+def _bullet_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items if str(item).strip())
+
+
+_STOP = frozenset(
+    {
+        "les", "des", "une", "pour", "avec", "dans", "sur", "aux", "par", "est",
+        "the", "and", "for", "with", "this", "that", "from", "are", "du", "de",
+        "la", "le", "un", "et", "au", "en", "ou", "si", "it", "to", "of", "an",
+    }
+)
+_DEADLINE_REQ = re.compile(
+    r"^(date limite|deadline)\b|\b(echeance de depot|submission deadline)\b",
+    re.I,
+)
+_DURATION_FACT = re.compile(
+    r"(?:duree|duration|charge)\s*(?:de mission)?\s*[:\-]?\s*[^\n.]{0,40}"
+    r"|\b\d+\s*(?:mois|semaines?|jours?(?:[ -]homme)?|months?|weeks?|man[ -]?days?)\b",
+    re.I,
+)
+_REPORT_FACT = re.compile(
+    r"(?:reporting|comit[eé]|cadence|frequence)[^\n.]{0,80}"
+    r"|(?:hebdomadaire|mensuel|weekly|monthly|bi[ -]?weekly)",
+    re.I,
+)
+
+
+def notice_blobs(tender: dict[str, Any]) -> list[str]:
+    rows: list[str] = []
+    for key in ("description", "cdc_text", "eligibility"):
+        text = str(tender.get(key) or "").strip()
+        if text and not fetch_text_is_noise(text):
+            rows.append(text)
+    return rows
+
+
+def pick_notice_fact(tender: dict[str, Any], pattern: re.Pattern[str]) -> str:
+    for blob in notice_blobs(tender):
+        match = pattern.search(blob)
+        if match:
+            return " ".join(match.group(0).split())[:180]
+    return ""
+
+
+def _norm(text: Any) -> str:
+    return re.sub(r"\s+", " ", str(text or "").lower()).strip(" .:;-")
+
+
+def _is_blank(value: Any, missing: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    return _norm(text) in {_norm(missing), "n/a", "not on file", "non renseigne"}
+
+
+def _is_deadline_req(text: str) -> bool:
+    return bool(_DEADLINE_REQ.search(str(text or "").strip()))
+
+
+def _requirement_kind(text: str) -> str:
+    low = str(text or "").lower()
+    if _is_deadline_req(low):
+        return "milestone"
+    if re.search(
+        r"kbis|rne|attestation|certif|iso|reference|cv |justificatif|portail|"
+        r"caution|bond|lettre de|offre financiere|financial offer|eligib",
+        low,
+    ):
+        return "admin"
+    if re.search(
+        r"architect|stack|api|cloud|securit|heberg|integr|schema|technique|infra",
+        low,
+    ):
+        return "tech"
+    return "func"
+
+
+def need_is_thin(tender: dict[str, Any], analysis: dict[str, Any], missing: str = "") -> bool:
+    need = _need_text(tender, analysis, missing)
+    title = str(tender.get("title") or "").strip()
+    if _is_blank(need, missing):
+        return True
+    if title and _norm(need) == _norm(title):
+        return True
+    desc = str(tender.get("description") or "")
+    if desc and not fetch_text_is_noise(desc) and _norm(desc) != _norm(title) and len(desc.strip()) >= 40:
+        return False
+    cdc = str(tender.get("cdc_text") or "")
+    if cdc and not fetch_text_is_noise(cdc) and len(cdc.strip()) >= 40:
+        return False
+    return True
+
+
+def crafts_cover_notice(tender: dict[str, Any], crafts: str, profile: dict[str, Any] | None = None) -> bool:
+    parts = [
+        str(tender.get(key) or "")
+        for key in ("title", "description", "cdc_text", "eligibility", "sector")
+    ]
+    if fetch_text_is_noise(str(tender.get("description") or "")):
+        parts = [str(tender.get(key) or "") for key in ("title", "eligibility", "sector")]
+    blob = " ".join(parts).lower()
+    hay = set(re.findall(r"[a-zà-ÿ]{2,}", blob))
+    tokens: list[str] = []
+    tokens.extend(part.strip() for part in re.split(r"[,;/|]", crafts or "") if part.strip())
+    if profile:
+        tokens.extend(str(item).strip() for item in (profile.get("crafts") or []) if str(item).strip())
+        tokens.extend(str(item).strip() for item in (profile.get("project_types") or []) if str(item).strip())
+        if str(profile.get("specialty") or "").strip():
+            tokens.append(str(profile.get("specialty")).strip())
+    for token in tokens:
+        low = token.lower().strip()
+        if len(low) < 2 or _is_blank(low, ""):
+            continue
+        if len(low) <= 3:
+            if re.search(rf"(?<![a-zà-ÿ]){re.escape(low)}(?![a-zà-ÿ])", blob):
+                return True
+            continue
+        if low in blob:
+            return True
+        words = [part for part in re.findall(r"[a-zà-ÿ]{3,}", low) if part not in _STOP]
+        if any(word in hay for word in words if len(word) >= 4):
+            return True
+    return False
+
+
+def _raci_marks(role: str) -> tuple[str, str, str, str]:
+    low = str(role or "").lower()
+    if re.search(r"chef|directeur|director|lead|pm|projet|project", low):
+        return ("", "X", "", "X")
+    if re.search(r"tech|architect|data|dev|ingeni", low):
+        return ("X", "", "X", "")
+    if re.search(r"qualit|qa|revue|review", low):
+        return ("", "X", "X", "")
+    if re.search(r"commerc|sales|bid|offre", low):
+        return ("", "", "X", "X")
+    return ("X", "", "", "")
+
+
+def _need_text(tender: dict[str, Any], analysis: dict[str, Any], missing: str) -> str:
+    title = str(tender.get("title") or "").strip()
+    for raw in (analysis.get("need"), tender.get("description"), title):
+        text = str(raw or "").strip()
+        if text and not fetch_text_is_noise(text):
+            return text
+    return title or missing
+
+
+def _req_texts(analysis: dict[str, Any]) -> list[str]:
+    rows: list[str] = []
+    for item in analysis.get("requirements") or []:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+        else:
+            text = str(item).strip()
+        if text:
+            rows.append(text)
+    return rows
+
+
+def _price_book_lines(profile: dict[str, Any], missing: str) -> str:
+    _ = missing
+    book = profile.get("price_book")
+    if isinstance(book, str) and book.strip():
+        return book.strip()
+    if not isinstance(book, list) or not book:
+        return ""
+    lines: list[str] = []
+    for item in book[:40]:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("name") or item.get("item") or "").strip() or "poste a completer"
+            price = str(item.get("price") or item.get("amount") or item.get("unit_price") or "").strip() or "montant a completer"
+            unit = str(item.get("unit") or item.get("uom") or "").strip()
+            lines.append(f"- {label}: {price}" + (f" / {unit}" if unit else ""))
+        elif str(item).strip():
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def draft_cover(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    company: str,
+) -> str:
+    title = stated(tender.get("title"), missing)
+    buyer = stated(tender.get("buyer"), missing)
+    deadline = stated(tender.get("deadline"), missing)
+    ref = stated(tender.get("reference") or tender.get("notice_id"), missing)
+    country = stated(tender.get("country"), missing)
+    if lang == "fr":
+        return _lines(
+            "DOSSIER DE CANDIDATURE",
+            company,
+            title,
+            "",
+            f"Acheteur : {buyer}",
+            f"Reference : {ref}",
+            f"Pays : {country}",
+            f"Date limite : {deadline}",
+            "",
+            "Memoire technique et financier - usage exclusif de la commission d'analyse.",
+            "Document confidentiel. Les elements absents du dossier societe restent marques.",
+        )
+    return _lines(
+        "SUBMISSION DOSSIER",
+        company,
+        title,
+        "",
+        f"Contracting authority: {buyer}",
+        f"Reference: {ref}",
+        f"Country: {country}",
+        f"Deadline: {deadline}",
+        "",
+        "Technical and financial memorandum - for the evaluation committee only.",
+        "Confidential. Facts absent from the company file stay marked.",
+    )
+
+
+def draft_toc(lang: str) -> str:
+    skip = {"cover", "toc", "revision_notes"}
+    rows = [
+        f"{index}. {section_title(key, lang)}"
+        for index, key in enumerate((k for k in SECTION_KEYS if k not in skip), start=1)
+    ]
+    head = "Sommaire du memoire" if lang == "fr" else "Dossier contents"
+    return _lines(head, "", *rows)
+
+
+def _partner_label(item: Any) -> str:
+    if isinstance(item, dict):
+        return " / ".join(
+            str(item.get(key) or "").strip() for key in ("name", "role", "country") if str(item.get(key) or "").strip()
+        )
+    return str(item or "").strip()
+
+
+def draft_company(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    company: str,
+    crafts: str,
+    tender_types: str,
+    project_types: str,
+    specialty: str,
+    strengths: str,
+) -> str:
+    legal = stated(profile.get("legal_name"), company)
+    certs = ", ".join(str(item) for item in (profile.get("certifications") or []) if str(item).strip()) or missing
+    countries = ", ".join(str(item) for item in (profile.get("countries") or []) if str(item).strip()) or missing
+    partners = ", ".join(
+        part
+        for part in (_partner_label(item) for item in (profile.get("partners") or []))
+        if part
+    ) or missing
+    headcount = profile.get("headcount")
+    turnover = profile.get("turnover")
+    email = stated(profile.get("email"), missing)
+    phone = stated(profile.get("phone"), missing)
+    website = stated(profile.get("website"), missing)
+    sites = []
+    for row in profile.get("sites") or []:
+        if isinstance(row, dict):
+            label = " ".join(
+                str(row.get(key) or "").strip() for key in ("kind", "city", "country", "label", "name") if row.get(key)
+            )
+            if label:
+                sites.append(label)
+        elif str(row).strip():
+            sites.append(str(row).strip())
+    notice_country = stated(tender.get("country"), missing)
+    contact_bits = [part for part in (email, phone, website) if not _is_blank(part, missing)]
+    identity = [
+        ("Enseigne" if lang == "fr" else "Trading name", company),
+        ("Raison sociale" if lang == "fr" else "Legal name", legal),
+        ("Specialite" if lang == "fr" else "Specialty", specialty),
+        ("Metiers" if lang == "fr" else "Crafts", crafts),
+        ("Types de marches" if lang == "fr" else "Tender types", tender_types),
+        ("Types de projets" if lang == "fr" else "Project types", project_types),
+        ("Certifications au dossier" if lang == "fr" else "Certifications on file", certs),
+        ("Pays d'intervention" if lang == "fr" else "Operating countries", countries),
+        ("Partenaires" if lang == "fr" else "Partners", partners),
+        ("Effectif" if lang == "fr" else "Headcount", headcount),
+        ("Chiffre d'affaires" if lang == "fr" else "Turnover", turnover),
+        ("Implantations" if lang == "fr" else "Sites", ", ".join(sites)),
+        ("Contact", " / ".join(contact_bits)),
+        ("Pays de l'avis" if lang == "fr" else "Notice country", notice_country),
+    ]
+    filled: list[str] = []
+    gaps: list[str] = []
+    for label, value in identity:
+        if _is_blank(value, missing):
+            gaps.append(label)
+        else:
+            filled.append(f"- {label} : {value}" if lang == "fr" else f"- {label}: {value}")
+    capacity: list[str] = []
+    if not _is_blank(specialty, missing):
+        capacity.append(specialty)
+    if not _is_blank(crafts, missing):
+        capacity.append(crafts)
+    if lang == "fr":
+        intro = [
+            f"{legal} presente ici sa capacite a tenir {stated(tender.get('title'), missing)}, "
+            "avec les seuls elements deja inscrits au dossier societe.",
+        ]
+        if capacity:
+            intro.append(f"{legal} intervient comme {' / '.join(capacity)}.")
+        if not _is_blank(tender_types, missing):
+            intro.append(f"Marches deja couverts au dossier : {tender_types}.")
+        if not _is_blank(project_types, missing):
+            intro.append(f"Projets deja realises : {project_types}.")
+        if not _is_blank(strengths, missing):
+            intro.append(f"Ce que le dossier met en avant, sans ajout : {strengths}.")
+        lines = [*intro, "", "Fiche d'identite", *filled]
+        if gaps:
+            lines.extend(
+                [
+                    "",
+                    "A completer au dossier societe (aucune invention)",
+                    _bullet_list(gaps),
+                ]
+            )
+        return _lines(*lines)
+    intro = [
+        f"{legal} presents its capacity to deliver {stated(tender.get('title'), missing)}, "
+        "using on-file company facts only.",
+    ]
+    if capacity:
+        intro.append(f"{legal} acts as {' / '.join(capacity)}.")
+    if not _is_blank(tender_types, missing):
+        intro.append(f"Tender types already on file: {tender_types}.")
+    if not _is_blank(project_types, missing):
+        intro.append(f"Completed project types: {project_types}.")
+    if not _is_blank(strengths, missing):
+        intro.append(f"Differentiators on file, nothing added: {strengths}.")
+    lines = [*intro, "", "Identity card", *filled]
+    if gaps:
+        lines.extend(["", "Still to complete on the company file (nothing invented)", _bullet_list(gaps)])
+    return _lines(*lines)
+
+
+def draft_need(
+    tender: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    buyer: str,
+    criteria: str,
+) -> str:
+    title = stated(tender.get("title"), missing)
+    need = _need_text(tender, analysis, missing)
+    thin = need_is_thin(tender, analysis, missing)
+    eligibility = stated(tender.get("eligibility") or analysis.get("eligibility"), "")
+    if _is_blank(eligibility, missing):
+        eligibility = "absente de l'avis" if lang == "fr" else "absent from the notice"
+    deadline = stated(tender.get("deadline") or analysis.get("deadline"), "")
+    if _is_blank(deadline, missing):
+        deadline = "absente de l'avis" if lang == "fr" else "absent from the notice"
+    budget = tender.get("budget")
+    budget_txt = str(budget) if budget not in (None, "") else (
+        "absent de l'avis" if lang == "fr" else "absent from the notice"
+    )
+    reqs = [
+        item
+        for item in _req_texts(analysis)[:12]
+        if not _is_deadline_req(item) and _norm(item) != _norm(title)
+    ]
+    gaps = [str(item) for item in (analysis.get("gaps") or analysis.get("risks") or []) if str(item).strip()]
+    reqs_header = (
+        "3. Exigences extraites (sans ajout)"
+        if reqs
+        else (
+            "3. Exigences detaillees : CDC non lu. Rien n'est invente."
+            if thin
+            else "3. Exigences detaillees : aucune ligne discrete extraite. Rien n'est invente."
+        )
+    ) if lang == "fr" else (
+        "3. Requirements extracted (nothing added)"
+        if reqs
+        else (
+            "3. Detailed requirements: specification unread. Nothing is invented."
+            if thin
+            else "3. Detailed requirements: no discrete line extracted. Nothing is invented."
+        )
+    )
+    if lang == "fr":
+        need_block = (
+            [
+                "L'avis ne livre que l'intitule. Le cahier des charges n'a pas pu etre lu "
+                "(page officielle absente ou inutilisable). Aucun perimetre n'est reconstitue.",
+                f"Intitule publie : {title}.",
+            ]
+            if thin
+            else [need]
+        )
+        cdc_open = [
+            "livrables, volumes et modalites de recette",
+            "criteres d'attribution ponderes",
+            "stack / architecture acheteur",
+            "SLA et rythme de reporting",
+            "pieces administratives exigees",
+        ]
+        return _lines(
+            f"Lecture structuree de l'avis emis par {buyer}.",
+            f"Intitule : {title}.",
+            "",
+            "1. Besoin exprime",
+            *need_block,
+            "",
+            "2. Contraintes lues dans l'avis",
+            f"- Eligibilite : {eligibility}",
+            f"- Criteres d'attribution : {criteria}",
+            f"- Budget publie : {budget_txt}",
+            f"- Echeance de depot : {deadline}",
+            "",
+            reqs_header,
+            _bullet_list(reqs),
+            "",
+            "4. Points ouverts a la revue" if (gaps or thin) else "",
+            _bullet_list(gaps + (cdc_open if thin else [])),
+        )
+    need_block = (
+        [
+            "The notice only states the title. The specification could not be read "
+            "(official page missing or unusable). No scope is reconstructed.",
+            f"Published title: {title}.",
+        ]
+        if thin
+        else [need]
+    )
+    cdc_open = [
+        "deliverables, volumes and acceptance rules",
+        "weighted award criteria",
+        "buyer stack / architecture",
+        "SLAs and reporting cadence",
+        "required administrative exhibits",
+    ]
+    return _lines(
+        f"Structured reading of the notice issued by {buyer}.",
+        f"Title: {title}.",
+        "",
+        "1. Stated need",
+        *need_block,
+        "",
+        "2. Constraints as read",
+        f"- Eligibility: {eligibility}",
+        f"- Award criteria: {criteria}",
+        f"- Published budget: {budget_txt}",
+        f"- Submission deadline: {deadline}",
+        "",
+        reqs_header,
+        _bullet_list(reqs),
+        "",
+        "4. Open points for review" if (gaps or thin) else "",
+        _bullet_list(gaps + (cdc_open if thin else [])),
+    )
+
+
+def draft_approach(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    methodology: str,
+    crafts: str,
+) -> str:
+    title = stated(tender.get("title"), missing)
+    aligned = crafts_cover_notice(tender, crafts)
+    method_filled = not _is_blank(methodology, missing)
+    if lang == "fr":
+        method_line = (
+            f"Methode au dossier : {methodology}"
+            if method_filled
+            else "Methode au dossier : a completer. Les phases ci-dessous restent le cadre, sans invention."
+        )
+        deliver = (
+            f"Executer selon les metiers au dossier ({crafts}). Aucune stack n'est ajoutee hors dossier."
+            if aligned and not _is_blank(crafts, missing)
+            else (
+                f"Les metiers au dossier ({crafts}) restent au fichier societe. "
+                "Ils ne sont pas poses comme lots de ce marche tant que le CDC ne les recouvre pas."
+                if not _is_blank(crafts, missing)
+                else "Aucun metier au dossier. La realisation reste a cadrer apres lecture du CDC."
+            )
+        )
+        return _lines(
+            f"Demarche proposee pour {title}.",
+            "Nous construisons une offre executable : perimetre fige, exigences tracees, lots tenus seulement s'ils recouvrent l'avis.",
+            "",
+            "1. Cadrage",
+            "Relire l'avis et le CDC, figer le perimetre, lister les pieces, les questions et les exclusions.",
+            "2. Conception",
+            "Ecrire la reponse fonctionnelle, la reponse technique et la matrice de conformite. Chaque exigence lue recoit une reponse.",
+            "3. Realisation",
+            deliver,
+            "4. Transfert",
+            "Recette, documentation et conduite du changement si l'avis les demande. Le rythme de reporting est pose au chapitre suivi.",
+            "",
+            method_line,
+        )
+    method_line = (
+        f"On-file method: {methodology}"
+        if method_filled
+        else "On-file method: still to complete. The phases below stay the frame, nothing invented."
+    )
+    deliver = (
+        f"Execute with on-file crafts ({crafts}). No stack is added off file."
+        if aligned and not _is_blank(crafts, missing)
+        else (
+            f"On-file crafts ({crafts}) stay on the company file. "
+            "They are not presented as lots for this notice until the specification covers them."
+            if not _is_blank(crafts, missing)
+            else "No craft on file. Delivery stays to be framed after the specification is read."
+        )
+    )
+    return _lines(
+        f"Proposed approach for {title}.",
+        "We build an executable offer: frozen scope, traced requirements, lots held only when they cover the notice.",
+        "",
+        "1. Frame",
+        "Reread the notice and specification, freeze scope, list exhibits, questions and exclusions.",
+        "2. Design",
+        "Write the functional response, the technical response and the compliance matrix. Every extracted requirement gets an answer.",
+        "3. Deliver",
+        deliver,
+        "4. Transfer",
+        "Acceptance, documentation and change support if the notice asks for them. Reporting sits in the follow-up chapter.",
+        "",
+        method_line,
+    )
+
+
+def draft_vision(
+    tender: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    company: str,
+    criteria: str,
+    strengths: str,
+) -> str:
+    title = stated(tender.get("title"), missing)
+    need = _need_text(tender, analysis, missing)
+    thin = need_is_thin(tender, analysis, missing)
+    if lang == "fr":
+        thread = (
+            f"Le CDC n'est pas lisible a ce stade. Nous ne formulons pas une vision de solution a partir du seul intitule {title}."
+            if thin
+            else f"Le fil conducteur reste le besoin publie : {need}"
+        )
+        strength_line = (
+            ""
+            if _is_blank(strengths, missing)
+            else f"Les differenciateurs que nous mettons en avant, et seulement ceux-la : {strengths}."
+        )
+        return _lines(
+            f"{company} lit {title} comme un projet a livrer, pas comme une brochure.",
+            thread,
+            "La cible de cette offre est une solution conforme, mesurable et tenable avec les moyens deja au dossier.",
+            f"Les criteres d'attribution lus orientent l'effort de redaction : {criteria}.",
+            strength_line,
+            "Aucun certificat, prix ou reference n'est ajoute pour forcer un avantage.",
+        )
+    thread = (
+        f"The specification is not readable at this stage. We do not invent a solution vision from the title {title} alone."
+        if thin
+        else f"The thread remains the published need: {need}"
+    )
+    strength_line = (
+        ""
+        if _is_blank(strengths, missing)
+        else f"Differentiators we put forward, and only those: {strengths}."
+    )
+    return _lines(
+        f"{company} reads {title} as a project to deliver, not as a brochure.",
+        thread,
+        "This offer aims at a compliant, measurable solution that the on-file means can hold.",
+        f"Award criteria as read steer the writing effort: {criteria}.",
+        strength_line,
+        "No certificate, price or reference is added to force an advantage.",
+    )
+
+
+def draft_functional(
+    tender: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    crafts: str,
+    methodology: str,
+) -> str:
+    title = str(tender.get("title") or "")
+    reqs = [
+        item
+        for item in _req_texts(analysis)
+        if not _is_deadline_req(item) and _norm(item) != _norm(title)
+    ]
+    aligned = crafts_cover_notice(tender, crafts)
+    functional = [
+        item
+        for item in reqs
+        if re.search(
+            r"fournir|livrable|service|module|fonction|besoin|shall|must|deliver|scope|requirement|"
+            r"refonte|modernisation|plateforme|decisionnel|analytics|fourniture|travaux",
+            item,
+            re.I,
+        )
+    ] or reqs[:16]
+    if len(functional) < 4 and reqs:
+        seen = {item.lower() for item in functional}
+        for item in reqs:
+            if item.lower() not in seen:
+                functional.append(item)
+            if len(functional) >= 16:
+                break
+    method = methodology[:400] if methodology != missing and not _is_blank(methodology, missing) else missing
+
+    def _cover(item: str, *, fr: bool) -> str:
+        kind = _requirement_kind(item)
+        if kind == "milestone":
+            return (
+                f"- {item} : jalon de depot, pas une piece a produire."
+                if fr
+                else f"- {item}: filing milestone, not an exhibit to produce."
+            )
+        if kind == "admin":
+            return (
+                f"- {item} : piece a produire depuis le dossier societe, sans document invente."
+                if fr
+                else f"- {item}: exhibit to produce from the company file, no invented document."
+            )
+        if kind == "tech":
+            if aligned:
+                return (
+                    f"- {item} : traite dans la reponse technique, sous les metiers {crafts}."
+                    if fr
+                    else f"- {item}: handled in the technical response, under crafts {crafts}."
+                )
+            return (
+                f"- {item} : exigence technique lue. Les metiers au dossier ({crafts}) ne recouvrent pas cet avis."
+                if fr
+                else f"- {item}: technical requirement as read. On-file crafts ({crafts}) do not cover this notice."
+            )
+        if aligned:
+            return (
+                f"- {item} : service / livrable tenu dans le perimetre {crafts}."
+                if fr
+                else f"- {item}: service / deliverable held within {crafts}."
+            )
+        return (
+            f"- {item} : exigence lue. Les metiers au dossier ({crafts}) ne recouvrent pas cet avis ; aucune couverture inventee."
+            if fr
+            else f"- {item}: requirement as read. On-file crafts ({crafts}) do not cover this notice; no coverage is invented."
+        )
+
+    craft_line = (
+        f"Couverture metier au dossier : {crafts}."
+        if aligned
+        else f"Metiers au dossier ({crafts}) : non alignes sur cet avis. Ils ne sont pas presentes comme couverture."
+        if lang == "fr"
+        else (
+            f"On-file craft coverage: {crafts}."
+            if aligned
+            else f"On-file crafts ({crafts}): not aligned on this notice. They are not presented as coverage."
+        )
+    )
+    if lang == "fr":
+        head = [
+            "Reponse fonctionnelle alignee sur l'avis. Aucun usage metier n'est invente.",
+            craft_line,
+            f"Ancrage methodologique : {method}." if not _is_blank(method, missing) else "Ancrage methodologique : a completer au dossier.",
+            "",
+            "Chaque exigence extraite recoit une lecture honnete. "
+            "Les modalites de recette et les volumes absents de l'avis restent a figer a la revue.",
+        ]
+        if functional:
+            head.append("")
+            head.append("Couverture des exigences lues")
+            head.extend(_cover(item, fr=True) for item in functional[:16])
+        else:
+            head.append("Exigences fonctionnelles detaillees : CDC non lu ou absent. Rien n'est invente.")
+        return _lines(*head)
+    craft_line = (
+        f"On-file craft coverage: {crafts}."
+        if aligned
+        else f"On-file crafts ({crafts}): not aligned on this notice. They are not presented as coverage."
+    )
+    head = [
+        "Functional response aligned on the notice. No use case is invented.",
+        craft_line,
+        f"Method anchor: {method}." if not _is_blank(method, missing) else "Method anchor: still to complete on file.",
+        "",
+        "Each extracted requirement gets an honest reading. "
+        "Acceptance rules and volumes missing from the notice stay for review.",
+    ]
+    if functional:
+        head.append("")
+        head.append("Coverage of requirements as read")
+        head.extend(_cover(item, fr=False) for item in functional[:16])
+    else:
+        head.append("Detailed functional requirements: specification unread or missing. Nothing is invented.")
+    return _lines(*head)
+
+
+def draft_followup_kpi(
+    tender: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    deadline: str,
+) -> str:
+    _ = (analysis, missing)
+    days = (tender.get("score_breakdown") or {}).get("days_left")
+    cadence = pick_notice_fact(tender, _REPORT_FACT)
+    if lang == "fr":
+        days_line = (
+            f"Jours restants lus dans l'avis : {days}."
+            if days not in (None, "")
+            else "Jours restants : non calcules (avis sans score)."
+        )
+        freq_line = (
+            f"Frequence de reporting lue dans l'avis : {cadence}."
+            if cadence
+            else (
+                "Frequence de reporting : non lue dans l'avis. "
+                "Proposition : comite hebdomadaire jusqu'au depot, puis le rythme du CDC s'il est precise."
+            )
+        )
+        return _lines(
+            "Dispositif de suivi propose a la commission. Les cibles chiffrees absentes du dossier restent ouvertes : elles ne sont pas inventees comme SLA.",
+            f"Date limite de depot : {deadline}.",
+            days_line,
+            "",
+            "Indicateurs proposes (a contractualiser)",
+            "| Indicateur | Lecture | Cible |",
+            "| --- | --- | --- |",
+            "| Avancement | % de jalons tenus vs planning valide | a figer |",
+            "| Qualite | anomalies ouvertes / fermees a chaque comite | a figer |",
+            "| Delai | ecart vs date limite et vs jalons internes | depot avant l'echeance |",
+            "| Conformite | lignes de la matrice encore ouvertes | 0 ligne ouverte au depot |",
+            "| Risques | risques ouverts, proprietaire, echeance de mitigation | revue a chaque comite |",
+            "",
+            freq_line,
+        )
+    days_line = (
+        f"Days left as read: {days}."
+        if days not in (None, "")
+        else "Days left: not computed (notice without a score)."
+    )
+    freq_line = (
+        f"Reporting cadence as read: {cadence}."
+        if cadence
+        else (
+            "Reporting cadence: not read in the notice. "
+            "Proposal: weekly until filing, then the specification rhythm if stated."
+        )
+    )
+    return _lines(
+        "Proposed steering for the committee. Numeric targets missing from the file stay open: they are not invented as SLAs.",
+        f"Submission deadline: {deadline}.",
+        days_line,
+        "",
+        "Proposed indicators (to be contracted)",
+        "| Indicator | Reading | Target |",
+        "| --- | --- | --- |",
+        "| Progress | % of milestones met vs the agreed plan | to be set |",
+        "| Quality | open / closed defects at each steering meeting | to be set |",
+        "| Time | gap vs the deadline and vs internal milestones | file before the deadline |",
+        "| Compliance | matrix rows still open | 0 open rows at filing |",
+        "| Risk | open risks, owner, mitigation date | reviewed at each meeting |",
+        "",
+        freq_line,
+    )
+
+
+def draft_raci_risks(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    staffing: str,
+) -> str:
+    _ = (staffing, missing)
+    team = [row for row in (profile.get("team") or []) if isinstance(row, dict)][:8]
+    defaults = (
+        ("Chef de projet", "Project lead"),
+        ("Referent technique", "Technical lead"),
+        ("Qualite / revue", "Quality / review"),
+        ("Commercial", "Commercial"),
+    )
+    if lang == "fr":
+        lines = [
+            "Matrice RACI proposee a partir de l'equipe au dossier. Les noms absents restent a pourvoir.",
+            "R = realise, A = approuve, C = consulte, I = informe.",
+            "",
+            "| Role | R | A | C | I | Nom |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        rows = team or [{"role": fr_role, "name": "a pourvoir"} for fr_role, _en in defaults]
+        for row in rows:
+            role = stated(row.get("role"), "role a pourvoir")
+            name = stated(row.get("name"), "a pourvoir")
+            r, a, c, i = _raci_marks(role)
+            lines.append(f"| {role} | {r} | {a} | {c} | {i} | {name} |")
+        lines.extend(["", "Risques lus (avis + dossier), sans ajout :"])
+        risks = [str(item) for item in (analysis.get("risks") or analysis.get("gaps") or []) if str(item).strip()]
+        lines.append(_bullet_list(risks) if risks else "Aucun risque explicite dans l'avis.")
+        return _lines(*lines)
+    lines = [
+        "Proposed RACI from the on-file team. Missing names stay unnamed.",
+        "R = responsible, A = accountable, C = consulted, I = informed.",
+        "",
+        "| Role | R | A | C | I | Name |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    rows = team or [{"role": en, "name": "to be staffed"} for _fr, en in defaults]
+    for row in rows:
+        role = stated(row.get("role"), "role to staff")
+        name = stated(row.get("name"), "to be staffed")
+        r, a, c, i = _raci_marks(role)
+        lines.append(f"| {role} | {r} | {a} | {c} | {i} | {name} |")
+    lines.extend(["", "Risks as read (notice + file), nothing added:"])
+    risks = [str(item) for item in (analysis.get("risks") or analysis.get("gaps") or []) if str(item).strip()]
+    lines.append(_bullet_list(risks) if risks else "No explicit risk in the notice.")
+    return _lines(*lines)
+
+
+def draft_governance(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    buyer: str,
+    staffing: str,
+) -> str:
+    clauses = stated(profile.get("legal_clauses"), "")
+    clause_line = (
+        f"Clauses legales au dossier : {clauses}."
+        if lang == "fr" and not _is_blank(clauses, missing)
+        else (
+            f"Legal clauses on file: {clauses}."
+            if lang != "fr" and not _is_blank(clauses, missing)
+            else (
+                "Clauses legales : a completer au dossier societe."
+                if lang == "fr"
+                else "Legal clauses: still to complete on the company file."
+            )
+        )
+    )
+    if lang == "fr":
+        return _lines(
+            f"Gouvernance proposee pour le marche de {buyer}.",
+            "Les instances acheteur non decrites dans l'avis seront nommees a la reunion de lancement.",
+            "",
+            "Instances",
+            "- Comite de pilotage : arbitrage de perimetre, risques majeurs, jalons. Frequence a figer avec l'acheteur.",
+            "- Comite projet : avancement, livrables, questions ouvertes. Frequence proposee : hebdomadaire jusqu'au depot, puis selon le CDC.",
+            "- Point ecrit : compte rendu court (decisions, actions, ecarts, risques).",
+            "- Escalade : chef de projet candidat vers le representant acheteur designe dans l'avis.",
+            "",
+            f"Equipe candidate :\n{staffing}",
+            clause_line,
+        )
+    return _lines(
+        f"Proposed governance for the {buyer} contract.",
+        "Buyer bodies not described in the notice will be named at the kick-off.",
+        "",
+        "Bodies",
+        "- Steering committee: scope, major risks, milestones. Cadence to be agreed with the buyer.",
+        "- Project committee: progress, deliverables, open questions. Proposed cadence: weekly until filing, then as specified.",
+        "- Written point: short minutes (decisions, actions, gaps, risks).",
+        "- Escalation: bidder project lead to the buyer representative named in the notice.",
+        "",
+        f"Bidder team:\n{staffing}",
+        clause_line,
+    )
+
+
+def draft_budget(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+) -> str:
+    published = tender.get("budget")
+    published_txt = str(published) if published not in (None, "") else (
+        "absent de l'avis" if lang == "fr" else "absent from the notice"
+    )
+    currency_raw = stated(profile.get("currency") or tender.get("currency"), "")
+    currency = currency_raw if not _is_blank(currency_raw, missing) else (
+        "a completer au dossier societe" if lang == "fr" else "still to complete on file"
+    )
+    book = _price_book_lines(profile, missing)
+    if lang == "fr":
+        lines = [
+            "Volet financier. Aucun prix n'est invente.",
+            f"Budget publie dans l'avis : {published_txt}"
+            + (f" {currency_raw}" if published not in (None, "") and currency_raw else ""),
+            f"Devise au dossier : {currency}.",
+        ]
+        if book:
+            lines.append("Bordereau au dossier :")
+            lines.append(book)
+        else:
+            lines.append("Prix unitaires : a completer au dossier societe.")
+            lines.append("Le bordereau sera complete a la revue a partir des pieces au dossier, pas par estimation libre.")
+        return _lines(*lines)
+    lines = [
+        "Financial chapter. No price is invented.",
+        f"Budget published in the notice: {published_txt}"
+        + (f" {currency_raw}" if published not in (None, "") and currency_raw else ""),
+        f"Currency on file: {currency}.",
+    ]
+    if book:
+        lines.append("On-file price book:")
+        lines.append(book)
+    else:
+        lines.append("Unit prices: still to complete on the company file.")
+        lines.append("The schedule will be completed at review from on-file exhibits, not from a free estimate.")
+    return _lines(*lines)
+
+
+def draft_letter(
+    tender: dict[str, Any],
+    profile: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    company: str,
+    specialty: str,
+    crafts: str,
+    tender_types: str,
+    project_types: str,
+    strengths: str,
+    buyer: str,
+    deadline: str,
+    portal: str,
+    title: str,
+    need: str,
+    style_docs: list[dict[str, Any]],
+    style_names: str,
+    style_quote: str,
+    excerpts: list[str],
+) -> str:
+    def _fact(label: str, value: str) -> str:
+        return f"{label} {value}" if not _is_blank(value, missing) else ""
+
+    if lang == "fr":
+        facts = " ".join(
+            part
+            for part in (
+                _fact("Specialite au dossier :", specialty),
+                _fact("Metiers mobilises :", crafts),
+                _fact("Types d'AO deja tenus :", tender_types),
+                _fact("Projets deja realises :", project_types),
+                _fact("Points forts declares :", strengths),
+            )
+            if part
+        ) or "Le dossier societe ne porte encore aucun metier, type d'AO ni point fort declare."
+        letter = (
+            f"Objet : Candidature - {title}\n\n"
+            f"Madame, Monsieur,\n\n"
+            f"{company} depose une offre pour {title}, a l'attention de {buyer}. "
+            f"Nous avons lu le besoin publie et nous y repondons avec les moyens deja au dossier.\n\n"
+            f"Lecture du besoin : {need}\n"
+            f"{facts}\n"
+            f"Les faits de ce memoire viennent du dossier societe et de l'avis. "
+            f"Les absents sont listes au registre societe. Rien n'est invente.\n\n"
+            f"Nous tenons l'echeance du {deadline} et restons disponibles pour toute precision. "
+            f"Portail de depot : {portal}.\n\n"
+            f"Veuillez agreer, Madame, Monsieur, l'expression de nos salutations distinguees.\n"
+            f"{company}\n"
+        )
+        if style_docs:
+            letter += (
+                f"\nNote interne : ce brouillon reprend les modeles au dossier ({style_names}). "
+                "Formulation amelioree, jamais inventee.\n"
+            )
+            if style_quote:
+                letter += f"Extrait conserve : {style_quote[:400]}\n"
+        elif excerpts:
+            letter += "\nNote interne : le style et les slides du dossier ont ete reutilises.\n"
+        return letter
+    facts = " ".join(
+        part
+        for part in (
+            _fact("On-file specialty:", specialty),
+            _fact("Crafts mobilised:", crafts),
+            _fact("Tender types already held:", tender_types),
+            _fact("Completed projects:", project_types),
+            _fact("Declared strengths:", strengths),
+        )
+        if part
+    ) or "The company file does not yet declare a craft, tender type or strength."
+    letter = (
+        f"Subject: Submission - {title}\n\n"
+        f"Dear {buyer},\n\n"
+        f"{company} submits an offer for {title}. "
+        f"We have read the published need and we answer it with means already on file.\n\n"
+        f"Reading of the need: {need}\n"
+        f"{facts}\n"
+        f"Facts in this memorandum come from the company file and the notice. "
+        f"Absents are listed in the company register. Nothing is invented.\n\n"
+        f"We will meet the {deadline} deadline and remain available for any clarification. "
+        f"Submission portal: {portal}.\n\n"
+        f"Yours faithfully,\n"
+        f"{company}\n"
+    )
+    if style_docs:
+        letter += (
+            f"\nInternal note: this draft reuses the on-file models ({style_names}). "
+            "Wording was improved, not invented.\n"
+        )
+        if style_quote:
+            letter += f"Kept extract: {style_quote[:400]}\n"
+    elif excerpts:
+        letter += "\nInternal note: style and slides on file were reused.\n"
+    return letter
+
+
+def draft_summary(
+    tender: dict[str, Any],
+    analysis: dict[str, Any],
+    *,
+    lang: str,
+    company: str,
+    title: str,
+    criteria: str,
+) -> str:
+    need = str(analysis.get("need") or title).rstrip(" .")
+    thin = need_is_thin(tender, analysis, "non renseigne" if lang == "fr" else "not on file")
+    score = tender.get("score") or 0
+    buyer = stated(tender.get("buyer"), "l'acheteur" if lang == "fr" else "the buyer")
+    deadline = stated(tender.get("deadline"), "voir l'avis" if lang == "fr" else "see notice")
+    if lang == "fr":
+        opening = (
+            f"{company} a lu l'avis {title}. Le CDC n'est pas lisible : le besoin n'est pas reconstitue. "
+            if thin
+            else f"{company} comprend le besoin ainsi : {need}. "
+        )
+        return _lines(
+            f"{opening}"
+            f"Score de pertinence {score}/100. "
+            f"Lecture des criteres : {criteria}.",
+            "",
+            f"Ce memoire repond a l'avis de {buyer} intitule {title}. "
+            "Il pose la comprehension du besoin, la capacite de la societe, la reponse fonctionnelle, "
+            "la reponse technique, la methode, le suivi, la gouvernance et le calendrier de depot.",
+            f"Echeance tenue : {deadline}. "
+            "Les prix, certificats et references absents du dossier restent ouverts. "
+            "Rien n'est invente pour forcer un avantage.",
+        )
+    opening = (
+        f"{company} has read the notice {title}. The specification is not readable: the need is not reconstructed. "
+        if thin
+        else f"{company} understands the need as: {need}. "
+    )
+    return _lines(
+        f"{opening}"
+        f"Fit score {score}/100. "
+        f"Award reading: {criteria}.",
+        "",
+        f"This memorandum answers the {buyer} notice titled {title}. "
+        "It sets out the need, the company capacity, the functional response, "
+        "the technical response, the method, follow-up, governance and the filing calendar.",
+        f"Deadline held: {deadline}. "
+        "Prices, certificates and references absent from the file stay open. "
+        "Nothing is invented to force an advantage.",
+    )
+
+
+def draft_methodology(
+    tender: dict[str, Any],
+    *,
+    lang: str,
+    missing: str,
+    methodology: str,
+    crafts: str,
+) -> str:
+    title = stated(tender.get("title"), missing)
+    body = methodology.rstrip(" .") if methodology and methodology != missing else ""
+    if lang == "fr":
+        return _lines(
+            f"Methodologie de conduite pour {title}.",
+            "La methode reprend le dossier societe. Elle n'invente ni stack, ni charge, ni duree.",
+            "",
+            "Principes",
+            "- Cadrer avant de concevoir.",
+            "- Tracer chaque exigence jusqu'a un livrable et une preuve.",
+            "- Rendre compte a un rythme contractuel, sans indicateur invente.",
+            "",
+            "Methode au dossier",
+            body or "Methode detaillee : a completer au dossier. Les phases ci-dessous restent le cadre de travail.",
+            "",
+            "Phases types (ordre de travail, sans dates inventees)",
+            "1. Cadrage et lecture du CDC / de l'avis",
+            "2. Conception fonctionnelle et technique",
+            "3. Realisation, integrations et tests",
+            "4. Recette, transfert, documentation",
+            f"Metiers mobilises : {crafts}.",
+        )
+    return _lines(
+        f"Delivery methodology for {title}.",
+        "The method reuses the company file. It invents no stack, load or duration.",
+        "",
+        "Principles",
+        "- Frame before design.",
+        "- Trace every requirement to a deliverable and a proof.",
+        "- Report on a contractual rhythm, with no invented indicator.",
+        "",
+        "On-file method",
+        body or "Detailed method: still to complete on file. The phases below remain the working frame.",
+        "",
+        "Typical phases (work order only, no invented dates)",
+        "1. Frame the notice / specification",
+        "2. Functional and technical design",
+        "3. Build, integrate and test",
+        "4. Acceptance, transfer, documentation",
+        f"Crafts mobilised: {crafts}.",
+    )
+
+
+def draft_references(
+    ref_lines: str,
+    *,
+    lang: str,
+    missing: str,
+    title: str,
+) -> str:
+    body = str(ref_lines or "").strip()
+    if not body:
+        body = (
+            "Aucune reference au dossier societe."
+            if lang == "fr"
+            else "No reference on the company file."
+        )
+    if lang == "fr":
+        return _lines(
+            f"References au dossier, lues au regard de {title}.",
+            "Aucune reference n'est ajoutee hors dossier. Les montants ou attestations absents restent ouverts.",
+            "",
+            body,
+        )
+    return _lines(
+        f"References on file, read against {title}.",
+        "No reference is added off file. Missing amounts or attestations stay open.",
+        "",
+        body,
+    )

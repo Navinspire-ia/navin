@@ -18,7 +18,7 @@ from navin.providers.registry import find_by_name
 from navin.utils.helpers import detect_image_mime
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
-    "HTTP-Referer": "https://github.com/EIAGEN/navin-claw",
+    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
     "X-OpenRouter-Title": "navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }
@@ -250,12 +250,42 @@ class ImageGenerationProvider(ABC):
             return await c.post(url, headers=headers, json=body)
 
 
+_OPENROUTER_PIXEL_SIZE_RE = re.compile(r"^\d+[xX]\d+$")
+
+
+def _openrouter_image_size_fields(
+    image_size: str | None,
+    *,
+    model: str | None = None,
+) -> dict[str, str]:
+    """Map Navin size hints onto the Images API ``resolution`` / ``size`` fields."""
+    value = (image_size or "").strip()
+    # Seedream 4.5+ rejects 1K (< 3_686_400 pixels). Bump to 2K.
+    model_l = (model or "").strip().lower()
+    if "seedream-4.5" in model_l or "seedream-5" in model_l:
+        if not value or value.upper() in {"1K", "512"}:
+            value = "2K"
+    if not value:
+        return {}
+    if value.upper() == "512":
+        return {"resolution": "512"}
+    tier = re.fullmatch(r"([124])[kK]", value)
+    if tier:
+        return {"resolution": f"{tier.group(1)}K"}
+    if _OPENROUTER_PIXEL_SIZE_RE.fullmatch(value):
+        w, h = re.split(r"[xX]", value, maxsplit=1)
+        return {"size": f"{w}x{h}"}
+    # Tier shorthand or provider-specific size string
+    return {"size": value}
+
+
 class OpenRouterImageGenerationClient(ImageGenerationProvider):
-    """Small async client for OpenRouter Chat Completions image generation."""
+    """Async client for the dedicated OpenRouter Images API (``POST /images``)."""
 
     provider_name = "openrouter"
     missing_key_message = (
-        "OpenRouter API key is not configured. Set providers.openrouter.apiKey."
+        "Image generation API key is not configured. "
+        "Add a key in Settings → Image, or connect a paid Navin plan."
     )
 
     def _default_base_url(self) -> str:
@@ -273,31 +303,24 @@ class OpenRouterImageGenerationClient(ImageGenerationProvider):
         if not self.api_key:
             raise ImageGenerationError(self.missing_key_message)
 
-        content: str | list[dict[str, Any]]
-        references = list(reference_images or [])
-        if references:
-            blocks: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-            blocks.extend(
-                {"type": "image_url", "image_url": {"url": image_path_to_data_url(path)}}
-                for path in references
-            )
-            content = blocks
-        else:
-            content = prompt
-
         body: dict[str, Any] = {
             "model": model,
-            "messages": [{"role": "user", "content": content}],
-            "modalities": ["image", "text"],
-            "stream": False,
+            "prompt": prompt,
+            "n": 1,
         }
-        image_config: dict[str, str] = {}
         if aspect_ratio:
-            image_config["aspect_ratio"] = aspect_ratio
-        if image_size:
-            image_config["image_size"] = image_size
-        if image_config:
-            body["image_config"] = image_config
+            body["aspect_ratio"] = aspect_ratio
+        body.update(_openrouter_image_size_fields(image_size, model=model))
+
+        references = list(reference_images or [])
+        if references:
+            body["input_references"] = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_path_to_data_url(path)},
+                }
+                for path in references
+            ]
         body.update(self.extra_body)
 
         headers = {
@@ -306,39 +329,54 @@ class OpenRouterImageGenerationClient(ImageGenerationProvider):
             **_OPENROUTER_ATTRIBUTION_HEADERS,
             **self.extra_headers,
         }
-        url = f"{self.api_base}/chat/completions"
+        url = f"{self.api_base}/images"
         response = await self._http_post(url, headers=headers, body=body)
 
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             detail = response.text[:500]
-            raise ImageGenerationError(f"OpenRouter image generation failed: {detail}") from exc
+            raise ImageGenerationError(f"Image generation failed: {detail}") from exc
 
-        data = response.json()
-        images: list[str] = []
-        text_parts: list[str] = []
-        for choice in data.get("choices") or []:
-            if not isinstance(choice, dict):
+        data = response.json() if response.content else {}
+        images = _openrouter_images_from_response(data if isinstance(data, dict) else {})
+        self._require_images(images, data if isinstance(data, dict) else {})
+
+        return GeneratedImageResponse(images=images, content="", raw=data if isinstance(data, dict) else {})
+
+
+def _openrouter_images_from_response(data: dict[str, Any]) -> list[str]:
+    """Extract data-URL images from Images API or legacy chat completions shapes."""
+    images: list[str] = []
+    for item in data.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        b64 = item.get("b64_json")
+        if isinstance(b64, str) and b64:
+            media_type = item.get("media_type")
+            if isinstance(media_type, str) and media_type.startswith("image/"):
+                encoded = "".join(b64.split())
+                images.append(f"data:{media_type};base64,{encoded}")
+            else:
+                images.append(_b64_image_data_url(b64))
+            continue
+        url_value = item.get("url")
+        if isinstance(url_value, str) and url_value.startswith("data:image/"):
+            images.append(url_value)
+
+    # Legacy chat/completions image payload (older integrations / extra_body overrides)
+    for choice in data.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message") or {}
+        for image in message.get("images") or []:
+            if not isinstance(image, dict):
                 continue
-            message = choice.get("message") or {}
-            if isinstance(message.get("content"), str):
-                text_parts.append(message["content"])
-            for image in message.get("images") or []:
-                if not isinstance(image, dict):
-                    continue
-                image_url = image.get("image_url") or image.get("imageUrl") or {}
-                url_value = image_url.get("url") if isinstance(image_url, dict) else None
-                if isinstance(url_value, str) and url_value.startswith("data:image/"):
-                    images.append(url_value)
-
-        self._require_images(images, data)
-
-        return GeneratedImageResponse(
-            images=images,
-            content="\n".join(part for part in text_parts if part).strip(),
-            raw=data,
-        )
+            image_url = image.get("image_url") or image.get("imageUrl") or {}
+            url_value = image_url.get("url") if isinstance(image_url, dict) else None
+            if isinstance(url_value, str) and url_value.startswith("data:image/"):
+                images.append(url_value)
+    return images
 
 
 class AIHubMixImageGenerationClient(ImageGenerationProvider):
@@ -1205,7 +1243,7 @@ class CodexImageGenerationClient(ImageGenerationProvider):
     """OpenAI image generation via Codex subscription OAuth.
 
     Uses the Codex Responses API with the ``image_generation`` tool
-    (the same mechanism ChatGPT uses internally).  No API key required —
+    (the same mechanism ChatGPT uses internally).  No API key required -
     the Codex OAuth token from ``oauth_cli_kit`` is used instead.
     """
 
@@ -1235,11 +1273,15 @@ class CodexImageGenerationClient(ImageGenerationProvider):
     ) -> GeneratedImageResponse:
         try:
             from oauth_cli_kit import get_token as get_codex_token
+
+            from navin.providers.openai_codex_provider import codex_token_storage
         except ImportError:
             raise ImageGenerationError(self.missing_key_message)
 
         try:
-            token_kwargs = {"proxy": self.proxy} if self.proxy else {}
+            token_kwargs: dict[str, Any] = {"storage": codex_token_storage()}
+            if self.proxy:
+                token_kwargs["proxy"] = self.proxy
             token = await asyncio.to_thread(get_codex_token, **token_kwargs)
         except Exception as exc:
             raise ImageGenerationError(self.missing_key_message) from exc
@@ -1756,11 +1798,52 @@ async def _zhipu_images_from_payload(
 # Provider registration
 # ---------------------------------------------------------------------------
 
+class VllmImageGenerationClient(CustomImageGenerationClient):
+    """OpenAI-compatible Images API against a local vLLM (or similar) server."""
+
+    provider_name = "vllm"
+    missing_base_message = (
+        "vLLM image generation API base is not configured. "
+        "Set providers.vllm.apiBase (default http://localhost:8000/v1)."
+    )
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:8000/v1"
+
+
+class LmStudioImageGenerationClient(CustomImageGenerationClient):
+    """OpenAI-compatible Images API against a local LM Studio server."""
+
+    provider_name = "lm_studio"
+    missing_base_message = (
+        "LM Studio image generation API base is not configured. "
+        "Set providers.lm_studio.apiBase (default http://localhost:1234/v1)."
+    )
+
+    def _default_base_url(self) -> str:
+        return "http://localhost:1234/v1"
+
+
 register_image_gen_provider(CodexImageGenerationClient)
 register_image_gen_provider(CustomImageGenerationClient)
 register_image_gen_provider(GeminiImageGenerationClient)
 register_image_gen_provider(OllamaImageGenerationClient)
+register_image_gen_provider(VllmImageGenerationClient)
+register_image_gen_provider(LmStudioImageGenerationClient)
 register_image_gen_provider(MiniMaxImageGenerationClient)
 register_image_gen_provider(OpenAIImageGenerationClient)
 register_image_gen_provider(OpenRouterImageGenerationClient)
 register_image_gen_provider(ZhipuImageGenerationClient)
+
+
+class NavinImageGenerationClient(OpenRouterImageGenerationClient):
+    """Image generation via the managed Navin OpenRouter key (Seedream, etc.)."""
+
+    provider_name = "navin"
+    missing_key_message = (
+        "Navin managed key is not configured. Connect a paid plan, "
+        "or switch Image settings to your own provider."
+    )
+
+
+register_image_gen_provider(NavinImageGenerationClient)

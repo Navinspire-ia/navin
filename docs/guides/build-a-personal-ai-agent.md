@@ -1,83 +1,68 @@
-# How to Build a Personal AI Agent with navin
+# How to Build a Personal AI Agent with Navin
 
-This guide builds a personal AI agent you can run locally, talk to from the
-terminal or browser, and later connect to chat apps, memory, tools, and
-automations.
+This guide builds a personal AI agent you run locally in the Navin desktop app, then optionally connect to chat apps, memory, tools, and automations.
 
 ## What you will build
 
-- a configured navin install
+- Navin installed as a desktop app
 - one working model provider
-- one local agent reply
-- a browser WebUI session for ongoing work
+- one successful chat reply
+- a project you can keep using
 
 ## When to use this
 
-Use this when you want a personal AI agent that you control rather than a hosted
-chat-only interface. navin is useful when the agent needs local workspace
-access, tool calls, session history, memory, scheduled work, or chat app
-delivery.
+Use this when you want a personal AI agent that you control rather than a hosted chat-only interface. Navin is useful when the agent needs local project access, tool calls, session history, memory, scheduled work, or chat app delivery.
 
 ## Install
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
+1. Open [navin.live/download](https://navin.live/download).
+2. Download the installer for Windows, macOS, or Linux.
+3. Install and open **Navin**.
+4. Complete the setup wizard (language, model access, first action).
+
+If terminals and config files are new to you, also read [`../start-without-technical-background.md`](../start-without-technical-background.md).
+
+## First working chat
+
+1. Open **Settings → Providers** and add an API key, or finish local Ollama setup under **Settings → Providers → Ollama**.
+2. Open **Settings → Models**, add a configuration, and set it **Active**.
+3. Open a project (demo workspace or your own folder).
+4. Send a short message in chat, for example:
+
+```text
+Hello! Summarize what you can help me with in this project.
 ```
 
-The wizard creates `~/.navin/config.json` and helps you choose a provider and
-model. If terminals and config files are new to you, use
-[Start Without Technical Background](../start-without-technical-background.md)
-instead.
+## Next steps in the app
 
-## Minimal working example
-
-First prove the runtime can answer:
-
-```bash
-navin agent -m "Hello!"
-```
-
-Then open the browser workbench:
-
-```bash
-navin webui
-```
-
-The WebUI starts the local gateway, opens a browser, and keeps persistent chat
-sessions for longer work.
+- **Memory** - keep durable facts with Dream (`/dream` in chat). See [`ai-agent-memory.md`](./ai-agent-memory.md).
+- **Channels** - Telegram, Discord, Slack, and more under **Settings → Channels**. See [`chat-app-ai-agent.md`](./chat-app-ai-agent.md).
+- **Automations** - ask for schedules in chat; leave Navin open. See [`../automations.md`](../automations.md).
+- **MCP / Apps** - external tools. See [`configure-mcp-tools.md`](./configure-mcp-tools.md).
+- **Models** - named presets, task routing, fallbacks under **Settings → Models**. See [`../configuration.md`](../configuration.md).
 
 ## Production notes
 
-- Keep one workspace per project or personal context.
-- Use `modelPresets` when you want stable names for fast, deep, local, or
-  fallback models.
-- Keep `navin gateway` running for WebUI, chat apps, automations, and the
-  WebSocket channel.
-- Use the Python SDK or OpenAI-compatible API when another program should call
-  the agent.
+- Keep one project per personal or client context.
+- Use model configurations when you want stable names for fast, deep, local, or fallback models.
+- Leave Navin running for chat apps and scheduled automations.
+- Prefer Settings over hand-editing files for everyday changes.
 
 ## Security notes
 
-- Do not store API keys directly in shared files; use environment variables.
-- Prefer chat app pairing for first setup. Use `allowFrom` only for static
-  allowlists, and keep those lists narrow.
-- Enable workspace restriction before exposing file or shell tools to other
-  users.
-- Use a separate workspace for experiments that can modify files.
+- Do not paste API keys into shared chats or public docs; use Settings fields.
+- Prefer chat app pairing for first setup. Keep allowlists narrow.
+- Enable workspace restriction before exposing file or shell tools to other users.
+- Use a separate project for experiments that can modify files.
 
 ## Troubleshooting
 
-- `navin status` shows the config path, workspace path, and active model.
-- If `navin agent -m "Hello!"` fails, fix provider setup before opening the
-  WebUI or chat apps.
-- If the WebUI opens but does not answer, check gateway logs and provider
-  credentials.
+- No reply: open **Settings → Providers** and **Settings → Models**, confirm a configuration is Active, then retry chat.
+- Wrong files: check the project picker in the workbench.
+- Channel silent: keep Navin open and review **Settings → Channels**.
 
-## Related navin docs
+## Related docs
 
-- [Quick Start](../quick-start.md)
-- [Concepts](../concepts.md)
-- [WebUI](../webui.md)
-- [Configuration](../configuration.md)
-- [Troubleshooting](../troubleshooting.md)
+- [`../start-without-technical-background.md`](../start-without-technical-background.md)
+- [`ai-agent-webui.md`](./ai-agent-webui.md)
+- [`self-hosted-ai-agent.md`](./self-hosted-ai-agent.md)

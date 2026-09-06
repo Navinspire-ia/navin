@@ -1,50 +1,84 @@
-# Marketing module — Overview
+# Marketing Agent OS - Overview
 
-The **Marketing** module (sidebar → **Marketing**, route `#/marketing`) is a full-stack marketing studio. From a single brief, the agent produces real deliverables end to end: ad copy, platform-native social posts, product visuals, advertising videos with scripts, email sequences, landing page copy — every asset saved as a file in your workspace.
+The **Marketing** module (sidebar → **Marketing**, route `#/marketing`) is a **local marketing desk**: harvest a live product site (or scan the bound project), lock Brand Memory, plan a campaign, write channel variants, produce brand and post images (video/audio when a provider is set), run visual QA, ingest metrics and measured SEO rankings, then let a wall-clock loop measure and improve winners.
+
+The live book is Studio `#/marketing` and the `marketing` tool (same store as Tauri on Linux / Windows / macOS, `navin marketing`, and `python -m navin.marketing.desk_cli`). Do not invent traffic, CTR, spend, or a published post that is not in that store.
+
+For **live paid-media accounts** (Google / Meta / TikTok / Reddit Ads MCP), use the dedicated **Ads** studio (`#/ads`). For live product demos and social video exports, use **Montage** (`#/montage`).
 
 ## How it works
 
-1. Open **Marketing** in the sidebar.
-2. (Optional) Type a **brief** at the top: product, audience, goal, tone. It is attached to every action.
-3. Pick an action card in one of the three groups — **Creative**, **Content**, **Strategy** (see [Actions](./actions.md)).
-4. The chat opens and `/campaign` is sent automatically with the action's specification and your brief.
-5. The agent defines the persona and key message, produces the deliverables, saves the assets, and ends with a summary table of files and paths.
-
-Direct usage in any chat:
+1. Open **Marketing** in the sidebar (`#/marketing`).
+2. If the product already has a URL, **Harvest the live site**. The desk pulls title, one-liner, headings, CTAs, colors, fonts, logo, OG image and social links, then fills brand, SEO, content and ads. Otherwise **Use current project** (workspace scan + Brand Memory).
+3. **Approve** the campaign you want to run.
+4. In Studio, **Generate brand kit** / **Generate post images** (`produce` with `pack=brand` or `pack=posts`). Generate one card with `creative_id`. Video and speech stay skipped until a provider is configured.
+5. **Start loop** (daily / weekdays / weekend / week / month + hour) or **Launch product** (Markdown files under `launch/`). Pause or change the hours anytime. The gateway measures then improves on that calendar while Navin is up.
+6. Heartbeat only reports winners (and competitor changes). It never publishes, never spends, never starts the loop.
 
 ```
-/campaign launch campaign for our new eco water bottle, target young urban athletes
+/marketing
+/marketing action=status
+/campaign persist this launch on the marketing desk then brief LinkedIn + X
 ```
 
-## The `/campaign` command
+Do not create a chat cron that ticks or reviews KPIs. The desk loop is the autonomous cycle.
+
+## Happy path
+
+| Step | UI | Store action |
+| --- | --- | --- |
+| Harvest | Harvest the live site | `harvest` then `fill_from_site` (SEO, content, social, ads) |
+| Understand | Use current project | `pipeline` (understand → position → research → plan → content → creative → launch kit) |
+| Approve | Approve on Campaigns | `approve` |
+| Produce | Generate brand kit / post images | `produce` (`pack` or `creative_id`) |
+| Recurring | Start loop | `start` + saved schedule |
+| One cycle | Run cycle | `tick` with `force=true` |
+| Ship kit | Launch product | `launch` (Markdown files on disk) |
+
+Armed means a product name or a brand company/product is set. Start loop stays disabled until the desk is armed.
+
+## The `/marketing` command
 
 | | |
 | --- | --- |
-| Command | `/campaign [brief]` |
-| Lifecycle | Agent workflow (runs a full agent turn) |
-| Skills preloaded | `campaign-manager`, `ad-creative-generator`, `social-media-manager`, `copywriting-agent`, `image-generation`, `video-generation`, `brand-voice-manager`, `customer-persona-builder` |
-| Output | Copy, images, videos, plans — saved to the workspace with a deliverables summary |
+| Command | `/marketing [launch\|pipeline\|loop]` |
+| Lifecycle | Agent workflow (docs model route) |
+| Skills preloaded | `marketing-strategist`, `growth-marketing`, `digital-marketing`, `email-marketing`, `marketing-analytics` (+ campaign / montage skills when `/campaign` or `/montage` is used) |
+| Tool | `marketing` (same book as the Studio desk) |
+| Output | `~/.navin/marketing/` JSON book + optional Track A `marketing-report-*` UI |
 
-## Media generation providers
+`/campaign` still produces chat deliverables (copy, visuals, reports). Persist brand, campaign, content and creatives with `marketing action=plan` / `content` / `creative` so the loop can measure them.
 
-Image and video generation use the providers configured in **Settings**:
+## Same book, four doors
 
-- **Images** — the configured image-generation provider/model produces product packshots, lifestyle scenes, social visuals, and brand assets. Aspect-ratio variants (square, story, landscape) are generated per platform.
-- **Videos** — when a video-generation provider is configured, the agent writes the script and storyboard, then generates the actual video. Without one, it still delivers the full script, scene breakdown, on-screen text, and voiceover lines ready for production.
-
-The agent always keeps a consistent brand voice across assets (`brand-voice-manager`), and can research the market and competitors with web tools before creating.
-
-## What you can produce
-
-| Category | Deliverables |
+| Door | How |
 | --- | --- |
-| Creative | Product images, ad videos, social visuals per format, brand kits (logo directions, palette, typography, voice) |
-| Content | Social posts per platform with hooks and hashtags, blog articles, 5-email sequences, landing page copy |
-| Strategy | 360° campaigns, customer personas, 30-day content plans, competitor analyses |
+| Studio | `#/marketing` → HTTP `/api/marketing?action=` |
+| Agent | `marketing` tool |
+| CLI | `navin marketing` or `python -m navin.marketing.desk_cli` |
+| Gateway | Supervisor `navin-marketing-loop` + heartbeat `watch` |
 
-## Tips
+## What the machine does (and does not)
 
-- Give the brief once at the top; every card reuses it.
-- Chain actions in the same chat: persona first, then the 360° campaign inherits it.
-- Ask for platform variants: "adapt the video script for TikTok (15s) and YouTube (30s)".
-- Everything is a file: images, videos, calendars, and copies land in the workspace, ready to publish.
+| Does | Does not |
+| --- | --- |
+| Harvest a live URL or understand the bound project | Invent live traffic, rankings or published posts |
+| Write positioning, research, campaigns, channel copy | Auto-publish to LinkedIn, X, Meta, or email |
+| Produce brand / post images (video/audio when a provider is set) | Spend ad budget |
+| Score winners from ingested metrics (`by_content`) and clone variants | Invent SEO positions (only `ingest_ranking`) |
+| Alert (WebUI + optional Telegram / email / WhatsApp) once per winner | Hunt the public web on every heartbeat |
+| Recover a stuck cycle, skip overlap, retry with backoff | Block the gateway if a cycle hangs |
+
+Harvested images and produced assets live under `~/.navin/marketing/assets/` and are served by `/api/marketing/file`. Visual QA lists **desk creatives** plus workspace shots. Montage still owns live demo exports (`#/montage`).
+
+## Related
+
+- [Desk UI](./desk.md)
+- [Growth loop](./loop.md)
+- [Heartbeat](./heartbeat.md)
+- [Desktop (Tauri)](./desktop.md)
+- [Actions](./actions.md)
+- [AI layer](./ai.md)
+- Desk loop contract: [desk-loop](../../studio/desk-loop.md)
+- Ads: [navin_ads](../../navin_ads/en/README.md)
+- Montage: [navin_montage](../../navin_montage/en/README.md)

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from navin.bus.events import InboundMessage
+from navin.bus.events import OUTBOUND_META_AGENT_UI, InboundMessage
 from navin.bus.outbound_events import ProgressEvent, outbound_message_for_event
 from navin.bus.queue import MessageBus
 
@@ -29,7 +29,11 @@ def build_bus_progress_callback(
         file_edit_events: list[dict[str, Any]] | None = None,
         reasoning: bool = False,
         reasoning_end: bool = False,
+        agent_ui: dict[str, Any] | None = None,
     ) -> None:
+        metadata = dict(msg.metadata or {})
+        if agent_ui is not None:
+            metadata[OUTBOUND_META_AGENT_UI] = agent_ui
         await bus.publish_outbound(
             outbound_message_for_event(
                 channel=msg.channel,
@@ -42,7 +46,7 @@ def build_bus_progress_callback(
                     tool_events=tool_events,
                     file_edit_events=file_edit_events,
                 ),
-                metadata=msg.metadata,
+                metadata=metadata,
             )
         )
 
@@ -54,6 +58,7 @@ def build_bus_progress_callback(
         file_edit_events: list[dict[str, Any]] | None = None,
         reasoning: bool = False,
         reasoning_end: bool = False,
+        agent_ui: dict[str, Any] | None = None,
     ) -> None:
         await _publish_progress(
             content,
@@ -62,6 +67,7 @@ def build_bus_progress_callback(
             file_edit_events=file_edit_events,
             reasoning=reasoning,
             reasoning_end=reasoning_end,
+            agent_ui=agent_ui,
         )
 
     return _bus_progress

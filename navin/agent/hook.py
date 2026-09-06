@@ -29,6 +29,10 @@ class AgentHookContext:
     stop_reason: str | None = None
     error: str | None = None
     session_key: str | None = None
+    model: str | None = None
+    # What the loop asked the model to spend on reasoning for this step, so
+    # the usage it reports can be checked against the request.
+    requested_reasoning_effort: str | None = None
 
 
 @dataclass(slots=True)
@@ -62,6 +66,14 @@ class AgentTurnHookContext:
 
 class AgentHook:
     """Minimal lifecycle surface for shared runner customization."""
+
+    #: Whether this hook exists to account for tokens that were actually spent.
+    #: Such a hook runs on every path that reaches the provider, including the
+    #: two that skip the ordinary chain: ephemeral turns (titles, summaries,
+    #: compaction) and subagents, which run their own runner. Those calls are
+    #: billed like any other, so leaving them out makes the usage figures lie.
+    #: Hooks that debit a budget deliberately do not set this.
+    accounts_for_usage: bool = False
 
     def __init__(self, reraise: bool = False) -> None:
         self._reraise = reraise
@@ -148,7 +160,7 @@ class CompositeHook(AgentHook):
 
     Error isolation: async methods catch and log per-hook exceptions
     so a faulty custom hook cannot crash the agent loop.
-    ``finalize_content`` is a pipeline (no isolation — bugs should surface).
+    ``finalize_content`` is a pipeline (no isolation - bugs should surface).
     """
 
     __slots__ = ("_hooks",)

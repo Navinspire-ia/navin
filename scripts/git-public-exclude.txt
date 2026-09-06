@@ -1,0 +1,46 @@
+# Chemins jamais poussés vers GitHub (https://github.com/navinspire-ai/navin-agi).
+# Une ligne = préfixe. `site/` exclut tout le dossier. Commentaires : # ...
+#
+# Arbre public = CLI + récupération publique des templates.
+# Hors arbre : site, desktop (Tauri / Electron), os/, AWS publish,
+# navin.live / provider Navin.
+
+# Site vitrine + API licence / Stripe / admin / Supabase
+site/
+src/
+
+# Desktop (Tauri, Electron) et binaires packagés
+desktop/
+desktop-electron/
+os/
+webui/
+
+# Images Docker du site (front :3100, back :3101)
+deploy/docker/site/
+deploy/docker/site-front/
+deploy/docker/site-back/
+
+# Publication S3 / politique du bucket (binaires). La lecture publique
+# des templates reste dans navin/templates/apps/s3pack.py.
+packaging/aws/
+packaging/linux/
+packaging/macos/
+packaging/windows/
+scripts/publish-os-to-s3.sh
+scripts/publish-templates-to-s3.sh
+scripts/publish-media-templates-to-s3.sh
+scripts/s3-bucket-policy.json
+
+# Masters locaux : le CLI les télécharge depuis l'URL publique
+templates/
+
+# Connexions navin.live + provider managé
+navin/license_client.py
+navin/license_sync.py
+navin/webui/account_api.py
+
+# Interne, logs, exports locaux
+.navin/
+marketing/
+artifacts/
+notarization-log.json

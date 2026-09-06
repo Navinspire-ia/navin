@@ -1,7 +1,7 @@
 ---
 name: interview-coach
-description: Prepare candidates for interviews — likely questions, STAR answers, mock sessions, and salary negotiation. Use before any interview round.
-metadata: {"navin":{"emoji":"🎤","category":"careers"}}
+description: Prepare candidates for interviews - likely questions, STAR answers, mock sessions, and salary negotiation. Use before any interview round.
+metadata: {"navin":{"emoji":"🎤","category":"careers","default_for":"career"}}
 ---
 
 # Interview Coach
@@ -13,7 +13,7 @@ Interviews are won in preparation: predictable questions, structured answers, an
 ## Preparation blocks
 
 ### 1. Company research (30 min)
-`web_fetch` their site, recent news, the interviewer's LinkedIn. Output: 5 facts to weave in + 3 smart questions to ask.
+`web_search` / `web_fetch` the company site and recent news. Interviewer LinkedIn stays a user-opened tab (no scrape). Output: 5 facts + 3 smart questions.
 
 ### 2. Question bank per round
 | Round | Prepare |
@@ -42,4 +42,4 @@ Run a simulation in chat: ask questions one at a time, wait for answers, then gi
 ## Rules
 
 - Honest weaknesses prepared ("vraie faiblesse + ce que j'en fais"), no "je suis perfectionniste".
-- Debrief after each real interview: log questions asked into `application-tracker` notes.
+- Debrief after each real interview: log questions in `application-tracker` and keep stage=interview on the Career desk.

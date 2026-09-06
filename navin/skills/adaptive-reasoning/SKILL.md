@@ -1,6 +1,6 @@
 ---
 name: adaptive-reasoning
-description: Choose the right depth of reasoning for the task — shallow for routine edits, deep for architecture, security, or ambiguous bugs. Use when work quality depends on thinking harder (or intentionally less).
+description: Choose the right depth of reasoning for the task - shallow for routine edits, deep for architecture, security, or ambiguous bugs. Use when work quality depends on thinking harder (or intentionally less).
 metadata: {"navin":{"emoji":"🧠","category":"intelligence"}}
 ---
 
@@ -14,10 +14,12 @@ Match cognitive effort to problem difficulty. Overthinking wastes tokens; undert
 
 | Signal | Mode |
 |--------|------|
-| Typo, rename, single-file edit, clear instruction | **Shallow** — act immediately |
-| Multi-file change, unclear bug, API design | **Standard** — inspect, plan briefly, act |
-| Security, data loss, architecture, prod incident | **Deep** — explore alternatives, verify, then act |
-| Conflicting requirements or missing facts | **Clarify** — ask 1–3 precise questions first |
+| Typo, rename, single-file edit, clear instruction | **Shallow** - act immediately |
+| Multi-file change, unclear bug, API design | **Standard** - inspect, plan briefly, act |
+| Security, data loss, architecture, prod incident | **Deep** - explore alternatives, verify, then act |
+| Conflicting requirements or missing facts | **Clarify** - ask 1-3 precise questions first |
+| Chat / Ask mode with vague goal (even if a project folder is linked) | **Clarify** - questions first; no broad board/tree tour |
+| Chat / Ask with no linked project | **Clarify** - never call tools until the target is concrete |
 
 ## Workflow
 
@@ -25,14 +27,14 @@ Match cognitive effort to problem difficulty. Overthinking wastes tokens; undert
 2. **Shallow**: apply the change; skip long preambles.
 3. **Standard**:
    - gather minimal context (`read_file` / `grep`)
-   - state a 2–4 line approach
+   - state a 2-4 line approach
    - execute and verify
 4. **Deep**:
    - map constraints and failure modes
    - compare 2 options when stakes are high
    - verify with tests, dry-runs, or `exec` checks
    - document the chosen trade-off in the final answer
-5. **Clarify**: ask only blockers; propose a default if the user is silent.
+5. **Clarify**: call `ask_user` with 2-4 options and one recommended path. Do not ask an open question when a fork exists. If they skip, take the recommended option and say so.
 
 ## Escalation
 

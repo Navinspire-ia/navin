@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import threading
 from importlib.metadata import entry_points
 from typing import Any
 
@@ -16,6 +17,21 @@ _SKIP_MODULES = frozenset({
     "file_state", "sandbox", "mcp", "__init__", "runtime_state",
 })
 
+# One scan of navin.agent.tools + entry_points per process. A fresh
+# ToolLoader() per subagent used to redo both on the event loop, and a
+# wave of 50 never reached runner.run.
+_BUILTIN_CLASSES: list[type[Tool]] | None = None
+_PLUGIN_CLASSES: dict[str, type[Tool]] | None = None
+_DISCOVER_LOCK = threading.Lock()
+
+
+def clear_tool_discovery_cache() -> None:
+    """Drop the process-wide tool class lists (tests that reload modules)."""
+    global _BUILTIN_CLASSES, _PLUGIN_CLASSES
+    with _DISCOVER_LOCK:
+        _BUILTIN_CLASSES = None
+        _PLUGIN_CLASSES = None
+
 
 class ToolLoader:
     def __init__(self, package: Any = None, *, test_classes: list[type[Tool]] | None = None):
@@ -27,11 +43,7 @@ class ToolLoader:
         self._discovered: list[type[Tool]] | None = None
         self._plugins: dict[str, type[Tool]] | None = None
 
-    def discover(self) -> list[type[Tool]]:
-        if self._test_classes is not None:
-            return list(self._test_classes)
-        if self._discovered is not None:
-            return self._discovered
+    def _scan_package(self) -> list[type[Tool]]:
         seen: set[int] = set()
         results: list[type[Tool]] = []
         for _importer, module_name, _ispkg in pkgutil.iter_modules(self._package.__path__):
@@ -56,6 +68,28 @@ class ToolLoader:
                     seen.add(id(attr))
                     results.append(attr)
         results.sort(key=lambda cls: cls.__name__)
+        return results
+
+    def discover(self) -> list[type[Tool]]:
+        if self._test_classes is not None:
+            return list(self._test_classes)
+        if self._discovered is not None:
+            return self._discovered
+        use_global = getattr(self._package, "__name__", "") == "navin.agent.tools"
+        if use_global:
+            global _BUILTIN_CLASSES
+            if _BUILTIN_CLASSES is not None:
+                self._discovered = _BUILTIN_CLASSES
+                return _BUILTIN_CLASSES
+            with _DISCOVER_LOCK:
+                if _BUILTIN_CLASSES is not None:
+                    self._discovered = _BUILTIN_CLASSES
+                    return _BUILTIN_CLASSES
+                results = self._scan_package()
+                _BUILTIN_CLASSES = results
+                self._discovered = results
+                return results
+        results = self._scan_package()
         self._discovered = results
         return results
 
@@ -63,25 +97,36 @@ class ToolLoader:
         """Discover external tool plugins registered via entry_points."""
         if self._plugins is not None:
             return self._plugins
-        plugins: dict[str, type[Tool]] = {}
-        try:
-            eps = entry_points(group="navin.tools")
-        except Exception:
-            return plugins
-        for ep in eps:
+        global _PLUGIN_CLASSES
+        if _PLUGIN_CLASSES is not None:
+            self._plugins = _PLUGIN_CLASSES
+            return _PLUGIN_CLASSES
+        with _DISCOVER_LOCK:
+            if _PLUGIN_CLASSES is not None:
+                self._plugins = _PLUGIN_CLASSES
+                return _PLUGIN_CLASSES
+            plugins: dict[str, type[Tool]] = {}
             try:
-                cls = ep.load()
-                if (
-                    isinstance(cls, type)
-                    and issubclass(cls, Tool)
-                    and not getattr(cls, "__abstractmethods__", None)
-                    and getattr(cls, "_plugin_discoverable", True)
-                ):
-                    plugins[ep.name] = cls
+                eps = entry_points(group="navin.tools")
             except Exception:
-                logger.exception("Failed to load tool plugin: %s", ep.name)
-        self._plugins = plugins
-        return plugins
+                _PLUGIN_CLASSES = plugins
+                self._plugins = plugins
+                return plugins
+            for ep in eps:
+                try:
+                    cls = ep.load()
+                    if (
+                        isinstance(cls, type)
+                        and issubclass(cls, Tool)
+                        and not getattr(cls, "__abstractmethods__", None)
+                        and getattr(cls, "_plugin_discoverable", True)
+                    ):
+                        plugins[ep.name] = cls
+                except Exception:
+                    logger.exception("Failed to load tool plugin: %s", ep.name)
+            _PLUGIN_CLASSES = plugins
+            self._plugins = plugins
+            return plugins
 
     def load(self, ctx: Any, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         registered: list[str] = []
@@ -152,6 +197,9 @@ class _LegacyErrorPrefixTool(Tool):
     @property
     def concurrency_safe(self) -> bool:
         return self._wrapped.concurrency_safe
+
+    def call_concurrency_safe(self, arguments: Any) -> bool:
+        return self._wrapped.call_concurrency_safe(arguments)
 
     @property
     def config_key(self) -> str:

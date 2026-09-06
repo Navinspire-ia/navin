@@ -7,7 +7,7 @@ A user-scheduled reminder should usually notify even when the response is brief 
 
 Suppress when the response is a routine status check with nothing new, a confirmation that everything is normal, or essentially empty.
 
-Also suppress when the response contains meta-reasoning about the task itself — descriptions of internal instructions, references to configuration files (e.g. HEARTBEAT.md, AWARENESS.md), or decision logic about whether to notify the user. The user should never see the agent reasoning about whether to speak.
+Also suppress when the response contains meta-reasoning about the task itself - descriptions of internal instructions, references to configuration files (e.g. HEARTBEAT.md, AWARENESS.md), or decision logic about whether to notify the user. The user should never see the agent reasoning about whether to speak.
 {% elif part == 'user' %}
 ## Original task
 {{ task_context }}

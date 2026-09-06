@@ -1,13 +1,13 @@
 [project]
 name = "navin-ai"
-version = "0.2.2"
+version = "2.0.1"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Xubin Ren"},
-    {name = "the navin contributors"}
+    {name = "Navinspire IA"},
+    {name = "the Navin contributors"},
 ]
 keywords = ["ai", "agent", "chatbot"]
 classifiers = [
@@ -27,7 +27,9 @@ dependencies = [
     "anthropic>=0.45.0,<1.0.0",
     "pydantic>=2.12.0,<3.0.0",
     "pydantic-settings>=2.12.0,<3.0.0",
-    "websockets>=16.0,<17.0",
+    # 15.0.1 is required by browser-harness (browser-use extra): websockets 16.x
+    # breaks the Chrome 147+ CDP handshake (Sec-WebSocket-Extensions).
+    "websockets>=15.0.1,<17.0",
     "websocket-client>=1.9.0,<2.0.0",
     "httpx>=0.28.0,<1.0.0",
     "ddgs>=9.5.5,<10.0.0",
@@ -38,6 +40,7 @@ dependencies = [
     "rich>=14.0.0,<15.0.0",
     "croniter>=6.0.0,<7.0.0",
     "prompt-toolkit>=3.0.50,<4.0.0",
+    "textual>=6.0.0,<7.0.0",
     "mcp>=1.26.0,<2.0.0",
     "json-repair>=0.57.0,<1.0.0",
     "chardet>=3.0.2,<6.0.0",
@@ -48,9 +51,14 @@ dependencies = [
     "pyyaml>=6.0,<7.0.0",
     "filelock>=3.25.2",
     "packaging>=24.0",
+    # The vendoring scripts verify downloads against this bundle: build hosts
+    # without a usable system trust store would otherwise fail on TLS.
+    "certifi>=2024.2.2",
     "tzdata>=2025.2; sys_platform == 'win32'",
+    # ConPTY backend for the WebUI interactive terminals on Windows hosts.
+    "pywinpty>=2.0.12; sys_platform == 'win32'",
     "defusedxml>=0.7.1,<1.0.0",
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.0.0,<7.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
@@ -69,16 +77,34 @@ bedrock = [
 documents = [
     # Compatibility extra: document readers are bundled since v0.2.3.
     "defusedxml>=0.7.1,<1.0.0",
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.0.0,<7.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
+]
+dev-tools = [
+    # Python quality tooling for the `lint`, `test_run` and `verify` tools, plus
+    # a language server for `lsp`. All are optional: navin detects what is
+    # installed and reports what is missing rather than failing. Servers for
+    # other languages install through their own ecosystems (npm for
+    # typescript-language-server, go install for gopls, rustup for
+    # rust-analyzer).
+    "ruff>=0.9.0",
+    "pytest>=8.0.0",
+    "python-lsp-server>=1.12.0",
+    "pyflakes>=3.2.0",
+    "yamllint>=1.35.0",
+]
+scraping = [
+    # Scraping module default framework when the agent writes scrapers.
+    # Verified latest on PyPI: 0.4.14. Extra [fetchers] is required for
+    # scrapling.fetchers / scrapling.spiders; then run `scrapling install`.
+    "scrapling[fetchers]==0.4.14",
 ]
 studio = [
     # Studio modules (Documents, Marketing, SEO, Leads, Team): generation
     # and analysis packages the document/marketing skills rely on.
     "reportlab>=4.0.0,<5.0.0",
-    "weasyprint>=62.0",
     "pandas>=2.0.0,<3.0.0",
     "matplotlib>=3.8.0,<4.0.0",
     "pillow>=10.0.0",
@@ -86,6 +112,9 @@ studio = [
     "pdfplumber>=0.11.0,<1.0.0",
     "markdown>=3.5,<4.0",
     "yt-dlp>=2024.10.0",
+    # Preferred by yt-dlp's PyInstaller hook (Cryptodome). Without it the build
+    # falls back to pycryptodome (Crypto) with a noisy warning and weaker parity.
+    "pycryptodomex>=3.20.0",
 ]
 slack = [
     "aiohttp>=3.9.0,<4.0.0",
@@ -113,7 +142,11 @@ discord = [
     "discord.py>=2.5.2,<3.0.0",
 ]
 whatsapp = [
-    "neonize>=0.3.18.post0,<0.4.0",
+    # 0.3.18+ (and current 0.4.x) ship .pb2 stubs generated with protoc 32.1
+    # (gencode 7.34.1). The protobuf 6.x runtime used here cannot load them,
+    # and protobuf 7.x conflicts with browser-use -> google-api-core 2.29
+    # (protobuf<7). 0.3.17.post0 is the last wheel regenerated for protobuf 6.
+    "neonize>=0.3.17.post0,<0.3.18",
     "segno>=1.6.1,<2.0.0",
 ]
 langfuse = [
@@ -121,22 +154,28 @@ langfuse = [
 ]
 pdf = [
     # Compatibility extra: PDF reading is bundled since v0.2.3.
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.0.0,<7.0.0",
 ]
 olostep = [
     "olostep>=0.1.0",
+]
+browser = [
+    # Browser automation for the `browser` tool. After installing the package,
+    # run `playwright install chromium` (add --with-deps on Linux) to fetch the browser.
+    "playwright>=1.49.0",
+    # MIT browser agent library (tabs, DOM index, extract, upload, …). See THIRD_PARTY_NOTICES.md.
+    "browser-use>=0.13.7,<0.14.0",
 ]
 dev = [
     "aiohttp>=3.9.0,<4.0.0",
     "ruff>=0.1.0",
     "pymupdf>=1.25.0",
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.0.0,<7.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
     # Studio module packages so `make install` covers every module.
     "reportlab>=4.0.0,<5.0.0",
-    "weasyprint>=62.0",
     "pandas>=2.0.0,<3.0.0",
     "matplotlib>=3.8.0,<4.0.0",
     "pillow>=10.0.0",
@@ -144,15 +183,17 @@ dev = [
     "pdfplumber>=0.11.0,<1.0.0",
     "markdown>=3.5,<4.0",
     "yt-dlp>=2024.10.0",
+    "pycryptodomex>=3.20.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/EIAGEN/navin-claw"
-Repository = "https://github.com/EIAGEN/navin-claw"
-Issues = "https://github.com/EIAGEN/navin-claw/issues"
+Homepage = "https://navin.live"
+Repository = "https://github.com/navinspire-ai/navin-agi"
+Issues = "https://github.com/navinspire-ai/navin-agi/issues"
 
 [project.scripts]
-navin = "navin.cli.commands:app"
+navin = "navin.cli.commands:run"
+navin-cli = "navin.cli.commands:run_cli"
 
 # Third-party tool plugins register here.  Built-in tools are discovered
 # automatically via pkgutil scanning in ToolLoader.discover().
@@ -172,9 +213,15 @@ allow-direct-references = true
 [tool.hatch.build]
 include = [
     "navin/**/*.py",
+    # Data tables shipped alongside the code: the code-index language table and
+    # the reasoning-effort catalog. Without these the package imports but
+    # degrades to defaults at runtime.
+    "navin/**/*.json",
     "navin/templates/**/*.md",
     "navin/skills/**/*.md",
     "navin/skills/**/*.sh",
+    "navin/skills/**/*.py",
+    "navin/skills/**/*.csv",
     "navin/web/dist/**/*",
 ]
 # navin/web/dist/ is produced by `cd webui && bun run build` and is
@@ -187,6 +234,12 @@ artifacts = [
 [tool.hatch.build.targets.wheel]
 packages = ["navin"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"templates/ppt" = "navin/resources/templates/ppt"
+"templates/word" = "navin/resources/templates/word"
+"templates/pdf" = "navin/resources/templates/pdf"
+"templates/excel" = "navin/resources/templates/excel"
+
 [tool.hatch.build.targets.wheel.sources]
 "navin" = "navin"
 
@@ -194,6 +247,10 @@ packages = ["navin"]
 include = [
     "navin/",
     "navin/web/dist/",
+    "templates/ppt/",
+    "templates/word/",
+    "templates/pdf/",
+    "templates/excel/",
     "hatch_build.py",
     "README.md",
     "LICENSE",

@@ -1,42 +1,56 @@
 ---
 name: customer-persona-builder
-description: Build ICP and buyer personas — pains, goals, objections, triggers, and watering holes — from real evidence. Use before messaging, targeting, or content planning.
+description: Build ICP and buyer personas - pains, goals, objections, triggers, and watering holes - from real evidence. Use before messaging, targeting, or content planning.
 metadata: {"navin":{"emoji":"👤","category":"marketing"}}
 ---
 
 # Customer Persona Builder
 
-## Overview
+A persona is only useful if built from evidence (calls, reviews, won/lost deals) - not pure imagination. Flag assumptions explicitly.
 
-A persona is only useful if built from evidence (calls, reviews, won/lost deals) — not imagination.
+## When to use
+
+- Before campaigns, messaging, or lead ICP definition
+- Refreshing personas after new sales learning
+
+## When not to use
+
+- Inventing demographics with no research when user has customer data available (ask for it first)
 
 ## ICP vs persona
 
-- **ICP** (company level): industry, size, geography, tech stack, trigger events, disqualifiers
-- **Persona** (person level): role, goals, pains, objections, decision power, information sources
+- **ICP** (company): industry, size, geography, tech, triggers, disqualifiers
+- **Persona** (person): role, goals, pains, objections, power, direct sources
 
 ## Persona template
 
 ```markdown
-## Persona: <name> — <role>
-- Context: company type, team, KPIs they carry
-- Trigger: what makes them look for a solution NOW
-- Pains (ranked): 1... 2... 3...
+## Persona: <name> - <role>
+- Context: company type, team, KPIs
+- Trigger: why they look NOW
+- Pains (ranked)
 - Objections: price / risk / integration / status quo
 - Decision role: champion / economic buyer / blocker
-- Watering holes: where they read, ask, and trust
-- Words they use: verbatim quotes
+- Watering holes: where they read/ask/trust
+- Words they use: verbatim quotes (sourced)
+- Messaging map: pain → message → proof
 ```
 
 ## Workflow
 
-1. Gather evidence: best 5 customers (why they bought), lost deals (why not), reviews of competitors, LinkedIn profiles of real buyers.
-2. Research with `web_search` / `entity-research`: role descriptions, communities, industry pains.
-3. Draft 2–3 personas max (primary, secondary, blocker) — more means none.
-4. Extract the messaging map: pain → message → proof, per persona.
-5. Store in `marketing/personas.md`; feed `marketing-strategist`, `copywriting-agent`, `lead-qualification`.
+1. Gather evidence: best customers, lost deals, competitor reviews, real buyer profiles.
+2. Research with `web_search` / `entity-research` for role pains and communities.
+3. Draft 2-3 personas max (primary, secondary, blocker).
+4. Extract messaging map per persona for `copywriting-agent` / `campaign-manager`.
+5. Store `marketing/personas.md` (and feed Leads ICP when relevant).
 
 ## Rules
 
-- Every pain needs a source (quote, review, call note) — flag assumptions as assumptions.
-- Refresh personas after every 10 sales conversations or quarterly.
+- Every pain needs a source or is marked assumption.
+- Refresh after ~10 sales conversations or quarterly.
+- Do not invent quotes.
+
+## Anti-patterns
+
+- 8 fluffy personas nobody uses
+- Demographics without jobs-to-be-done

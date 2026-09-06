@@ -1,0 +1,328 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "event-management",
+  "name": "Event Management",
+  "kind": "business",
+  "category": "events",
+  "source_github": "https://github.com/sanidhyy/evently",
+  "source_name": "Evently",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "MongoDB",
+    "Clerk",
+    "Stripe"
+  ],
+  "studied_from": "templates_apps/event-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 15,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Evently - Event Management Platform using Next.js 14 :notebook_with_decorative_cover: Table of Contents :bangbang: Folder Structure Here is the folder structure of this app. evently/ :toolbox: Getting Started 1. Make sure **Git** and **NodeJS** is installed. 2. Clone this repository to your local computer. 3. Create `.env.local` file in root directory. 4. Contents of `.env.local`: .env.local clerk auth keys NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_XXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "bun",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "bun",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "evently",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb",
+          "mongoose",
+          "next",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "evently",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb",
+          "mongoose",
+          "next",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "evently",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb",
+          "mongoose",
+          "next",
+          "react",
+          "stripe"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    27017
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+      "default": "pk_test_XXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLERK_SECRET_KEY",
+      "default": "sk_test_XXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_SIGN_IN_URL",
+      "default": "/sign-in",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_SIGN_UP_URL",
+      "default": "/sign-up",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL",
+      "default": "/",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL",
+      "default": "/",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_BASE_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "mongodb+srv://<your-db-username>:<your-db-password>@<your-cluster-url>/<your-db-name>",
+      "required": false,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "CLERK_WEBHOOK_SECRET",
+      "default": "whsec_XXXXXXXXXXXXXXXXXXXX",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "UPLOADTHING_SECRET",
+      "default": "sk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "UPLOADTHING_APP_ID",
+      "default": "xxxxxxxx",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "default": "pk_test_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "required": false,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "sk_test_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "whsec_xxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/event-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: bun install."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/event-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/event-management/overlay.json",
+    "agents": ".navin/apps/event-management/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "event-agent",
+      "ticketing-agent",
+      "promotion-agent",
+      "attendee-agent",
+      "report-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

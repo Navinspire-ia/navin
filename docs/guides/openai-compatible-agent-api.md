@@ -68,7 +68,3 @@ curl http://127.0.0.1:8900/v1/chat/completions \
 
 ## Related navin docs
 
-- [Navin OpenAI-Compatible API](../openai-api.md)
-- [Python SDK](../python-sdk.md)
-- [Configuration](../configuration.md)
-- [Deployment](../deployment.md)

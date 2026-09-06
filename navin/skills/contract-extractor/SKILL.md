@@ -1,6 +1,6 @@
 ---
 name: contract-extractor
-description: Extract structured data from contracts — parties, dates, amounts, obligations, deadlines, and renewal terms — into usable tables. Use to digest contract stacks.
+description: Extract structured data from contracts - parties, dates, amounts, obligations, deadlines, and renewal terms - into usable tables. Use to digest contract stacks.
 metadata: {"navin":{"emoji":"🗄️","category":"documents"}}
 ---
 
@@ -32,9 +32,9 @@ Turn contract PDFs into a structured register: who, what, how much, until when, 
 
 1. Ingest: text-layer PDFs via `pdf-ocr-extractor` pipeline (pdfplumber; OCR fallback for scans).
 2. Extract per the schema; quote the source text + page for every extracted value (auditability).
-3. Uncertain reads (bad scan, ambiguous clause) → mark `⚠ à vérifier` — never guess an amount or date.
+3. Uncertain reads (bad scan, ambiguous clause) → mark `⚠ à vérifier` - never guess an amount or date.
 4. Batch mode: one row per contract into a register (`spreadsheet-analyst` for the xlsx).
-5. High-value output: the **deadline calendar** — renewals, préavis, expiries → `cron` reminders at J-90/J-30.
+5. High-value output: the **deadline calendar** - renewals, préavis, expiries → `cron` reminders at J-90/J-30.
 
 ## Register format
 

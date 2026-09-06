@@ -1,0 +1,251 @@
+name: OS release artifacts
+
+# Distribution 100 % Tauri : chaque plateforme produit UNIQUEMENT l'app
+# desktop native (Rust) avec le moteur embarqué en sidecar :
+#   - Windows : Navin-Desktop-<v>-windows-x64-setup.exe (NSIS) + .msi (WiX)
+#   - macOS   : Navin-Desktop-<v>-macos-<arch>.dmg
+#   - Linux   : AppImage + .deb + .rpm + .pkg.tar.zst (pacman from the .deb)
+#
+# PyInstaller does not cross-compile, so every target builds on its own
+# runner. Artifacts are uploaded to the run, not committed: they are hundreds
+# of megabytes each. Download them from the run summary and place them under
+# os/, then publish with scripts/publish-os-to-s3.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Which platforms to build
+        type: choice
+        default: all
+        options: [all, linux, macos, windows]
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: os-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  NAVIN_SKIP_WEB_BUILD: "1"
+
+jobs:
+  # No artifact ships without the full bar on every OS we publish for:
+  # unit tests, the keyword eval corpus and the live agent-loop eval
+  # (real AgentRunner + real tools). A Windows or macOS failure must not
+  # hide the others: fail-fast is off on purpose.
+  gates:
+    name: release gates (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev-tools,documents]"
+      - run: python -m pytest tests/ -q
+      - name: Eval gates (keyword + live agent loop)
+        run: |
+          python -m navin.evals.runner navin/evals/datasets/code_agent_v1.jsonl --scoreboard --gate
+          python -m navin.evals.agent_loop --scoreboard --gate
+
+  # Built once and shared: the WebUI is identical on every platform, and each
+  # per-OS script skips its own web build when NAVIN_SKIP_WEB_BUILD is set.
+  webui:
+    name: webui bundle
+    runs-on: ubuntu-latest
+    outputs:
+      # sha256 over every file of the bundle, written by npm run build. Every
+      # target below must ship exactly this digest, which is what makes
+      # "the desktop apps run the interface we tested" a checked fact.
+      bundle: ${{ steps.stamp.outputs.bundle }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci
+        working-directory: webui
+      - run: npm run lint
+        working-directory: webui
+      - run: npm test
+        working-directory: webui
+      - run: npm run build
+        working-directory: webui
+      - name: Publish the bundle digest
+        id: stamp
+        run: |
+          python packaging/verify_bundle_stamp.py navin/web/dist
+          echo "bundle=$(python -c "import json;print(json.load(open('navin/web/dist/build-info.json'))['bundle'])")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: navin/web/dist
+          retention-days: 1
+
+  linux:
+    name: linux ${{ matrix.arch }} (Tauri AppImage + deb + rpm + pacman)
+    needs: [webui, gates]
+    if: ${{ github.event_name == 'push' || contains(fromJSON('["all","linux"]'), inputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04: the Tauri bundles inherit its glibc (2.35), so they
+          # run on every distribution at least that recent.
+          - arch: x64
+            runner: ubuntu-22.04
+          # build-appimage.sh already resolves aarch64 (deb arm64, rpm aarch64,
+          # pacman aarch64); only the runner was missing, so ARM laptops and
+          # servers had no build at all.
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      # Tauri v2 Linux build dependencies (webkitgtk for the native window).
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev patchelf libssl-dev file zstd
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: navin/web/dist
+      # 1. Sidecar (self-contained engine), 2. smoke test, 3. Tauri bundles.
+      - run: sh packaging/linux/build-offline.sh
+      - run: sh packaging/smoke-test.sh os/linux/bin/${{ matrix.arch }}/navin-dist/navin
+      # The interface this target will serve is the one the webui job built,
+      # linted and tested: not a rebuild, not a leftover tree.
+      - name: Verify the shipped WebUI bundle
+        run: |
+          python packaging/verify_bundle_stamp.py \
+            os/linux/bin/${{ matrix.arch }}/navin-dist \
+            --expect "${{ needs.webui.outputs.bundle }}"
+      - run: sh packaging/linux/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            os/linux/appimage/${{ matrix.arch }}/
+            os/linux/deb/${{ matrix.arch }}/
+            os/linux/rpm/${{ matrix.arch }}/
+            os/linux/pacman/${{ matrix.arch }}/
+          retention-days: 14
+
+  macos:
+    name: macos ${{ matrix.arch }} (Tauri DMG)
+    needs: [webui, gates]
+    if: ${{ github.event_name == 'push' || contains(fromJSON('["all","macos"]'), inputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          # macos-13 was retired in December 2025; jobs asking for it queue
+          # forever. This is GitHub's last Intel image, until August 2027.
+          - arch: x64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: navin/web/dist
+      # 1. Sidecar, 2. smoke test, 3. Tauri desktop DMG.
+      # Each matrix runner builds its own architecture; the Rosetta second
+      # pass is for local Macs (see build-offline.sh), not for CI.
+      - run: sh packaging/macos/build-offline.sh
+        env:
+          NAVIN_MACOS_SINGLE_ARCH: "1"
+      - name: Smoke test the sidecar
+        run: sh packaging/smoke-test.sh ./os/macos/${{ matrix.arch }}/navin-dist/navin
+      # The interface this target will serve is the one the webui job built,
+      # linted and tested: not a rebuild, not a leftover tree.
+      - name: Verify the shipped WebUI bundle
+        run: |
+          python packaging/verify_bundle_stamp.py \
+            os/macos/${{ matrix.arch }}/navin-dist \
+            --expect "${{ needs.webui.outputs.bundle }}"
+      # Ad-hoc signed: a Developer ID identity has to be imported into the
+      # runner keychain first, so signed and notarised images are built on a Mac
+      # that holds the certificate (see packaging/README.md).
+      - name: Build the Tauri desktop app (.dmg)
+        run: sh packaging/macos/build-desktop.sh
+      # Only the DMG and its checksums: the navin-dist sidecar tree next to
+      # them weighs ~1 GB and is already inside the DMG.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            os/macos/${{ matrix.arch }}/*.dmg
+            os/macos/${{ matrix.arch }}/SHA256SUMS*
+          retention-days: 14
+
+  windows:
+    name: windows x64 (Tauri MSI + NSIS setup)
+    needs: [webui, gates]
+    if: ${{ github.event_name == 'push' || contains(fromJSON('["all","windows"]'), inputs.targets) }}
+    runs-on: windows-latest
+    env:
+      # The runner image prepares its own toolchain; winget is unavailable.
+      NAVIN_SKIP_PREREQS: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: navin/web/dist
+      # build-desktop.ps1 builds the sidecar first (build-offline.ps1), then
+      # wraps it in the Tauri desktop app: MSI (WiX) + NSIS setup.
+      - name: Build the Tauri desktop app (MSI + NSIS)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-desktop.ps1
+      - name: Smoke test the Windows sidecar
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\smoke-test.ps1 -Executable "$env:LOCALAPPDATA\NavinBuild\windows\navin-dist\navin.exe"
+      # The interface this target will serve is the one the webui job built,
+      # linted and tested: not a rebuild, not a leftover tree.
+      - name: Verify the shipped WebUI bundle
+        run: >
+          python packaging/verify_bundle_stamp.py
+          "$env:LOCALAPPDATA\NavinBuild\windows\navin-dist"
+          --expect "${{ needs.webui.outputs.bundle }}"
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: os/windows/x64/
+          retention-days: 14

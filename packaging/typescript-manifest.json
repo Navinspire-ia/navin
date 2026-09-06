@@ -1,0 +1,19 @@
+{
+  "docs": [
+    "The npm typescript package staged into packaged builds.",
+    "",
+    "Pinned by checksum: npm tarballs are immutable per version, so a mismatch",
+    "means the registry served something else and the build must stop rather",
+    "than ship it. Re-pin deliberately with --update-manifest after reviewing",
+    "the new release.",
+    "",
+    "5.x on purpose. TypeScript 7 is the native Go port, which splits into one",
+    "prebuilt binary package per platform and would turn this into a per-target",
+    "staging problem; 5.x is pure JavaScript, so one artifact serves every OS.",
+    "This is also the line webui/package.json builds against, so the bundled",
+    "fallback reports the same diagnostics as a local install."
+  ],
+  "version": "5.9.3",
+  "url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+  "sha256": "10e108c9cf7d5f2879053dff18515fb405abf2ccef63eaaf017d9c571687a1d3"
+}

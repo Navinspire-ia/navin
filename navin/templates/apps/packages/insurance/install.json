@@ -1,0 +1,258 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "insurance",
+  "name": "Insurance",
+  "kind": "business",
+  "category": "finance",
+  "source_github": "https://github.com/aaln/open-coverage",
+  "source_name": "Open Coverage",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/insurance",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 10,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Open Coverage \ud83c\udfe5 > **Democratizing health insurance decision-making through open-source tools** \ud83c\udf1f Why Open Coverage Exists Health insurance is one of the most important financial decisions families make, yet the tools to analyze and compare policies are either: - **Locked behind commercial paywalls** \ud83d\udd12 - **Built for brokers, not consumers** \ud83d\udcbc - **Overly simplified and unhelpful** \ud83d\udcca - **Biased toward specific insurers** \ud83c\udfaf **Open Coverage changes this.** We're building the first truly open-source ecosystem of health insurance tools that put consumers first."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "bun",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "bun",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "my-v0-project",
+        "scripts": {
+          "build": "next build",
+          "dev": "next dev",
+          "lint": "next lint",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "my-v0-project",
+        "scripts": {
+          "build": "next build",
+          "dev": "next dev",
+          "lint": "next lint",
+          "start": "next start"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "GROQ_API_KEY",
+      "default": "# For Groq AI models",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "default": "# For Claude models",
+      "required": false,
+      "secret": false,
+      "purpose": "Anthropic API key",
+      "from": "README.md"
+    },
+    {
+      "key": "UNSTRUCTURED_API_KEY",
+      "default": "# For PDF parsing",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "BLOB_READ_WRITE_TOKEN",
+      "default": "# For file storage",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "README.md"
+    },
+    {
+      "key": "TRIGGER_SECRET_KEY",
+      "default": "# For background jobs",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "README.md"
+    },
+    {
+      "key": "GOV_MARKETPLACE_API_KEY",
+      "default": "# For Marketplace API",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "GOV_FINDER_API_KEY",
+      "default": "# For Finder API",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "source:components/error-boundaries/general-error-boundary.tsx"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/insurance/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: bun install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/insurance/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/insurance/overlay.json",
+    "agents": ".navin/apps/insurance/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "policy-agent",
+      "claims-assistant",
+      "renewal-agent",
+      "risk-agent",
+      "client-advisor"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

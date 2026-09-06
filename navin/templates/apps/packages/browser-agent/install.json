@@ -1,0 +1,522 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "browser-agent",
+  "name": "Browser Agent",
+  "kind": "ai-product",
+  "category": "agents",
+  "source_github": "https://github.com/browser-use/web-ui",
+  "source_name": "Browser Use WebUI",
+  "license": "MIT",
+  "stack": [
+    "Python",
+    "Gradio"
+  ],
+  "studied_from": "templates_apps/browser-agent",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 44,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "This project builds upon the foundation of the [browser-use](https://github.com/browser-use/browser-use), which is designed to make websites accessible for AI agents. We would like to officially thank [WarmShao](https://github.com/warmshao) for his contribution to this project. **WebUI:** is built on Gradio and supports most of `browser-use` functionalities. This UI is designed to be user-friendly and enables easy interaction with the browser agent. **Expanded LLM Support:** We've integrated support for various Large Language Models (LLMs), including: Go"
+  },
+  "system": {
+    "node": false,
+    "node_engine": "",
+    "python": true,
+    "docker": true,
+    "package_manager": "pip",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "python3",
+      "why": "Python backend / RAG / agents"
+    },
+    {
+      "id": "pip",
+      "why": "Install Python deps"
+    }
+  ],
+  "packages": {
+    "frontend": [],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "requirements.txt",
+        "name": "python",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "requirements.txt"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "none",
+      "required": false,
+      "docker_image": "",
+      "port": 0,
+      "env_url": "",
+      "compose": [],
+      "bootstrap": [
+        "No server database detected. Uses local files or browser storage. Confirm in README before adding Docker."
+      ]
+    }
+  ],
+  "ports": [
+    9222
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "OPENAI_ENDPOINT",
+      "default": "https://api.openai.com/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "OpenAI API key",
+      "from": ".env.example"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Anthropic API key",
+      "from": ".env.example"
+    },
+    {
+      "key": "ANTHROPIC_ENDPOINT",
+      "default": "https://api.anthropic.com",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_OPENAI_API_VERSION",
+      "default": "2025-01-01-preview",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEEPSEEK_ENDPOINT",
+      "default": "https://api.deepseek.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEEPSEEK_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MISTRAL_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MISTRAL_ENDPOINT",
+      "default": "https://api.mistral.ai/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OLLAMA_ENDPOINT",
+      "default": "http://localhost:11434",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALIBABA_ENDPOINT",
+      "default": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALIBABA_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MODELSCOPE_ENDPOINT",
+      "default": "https://api-inference.modelscope.cn/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MODELSCOPE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MOONSHOT_ENDPOINT",
+      "default": "https://api.moonshot.cn/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MOONSHOT_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "UNBOUND_ENDPOINT",
+      "default": "https://api.getunbound.ai",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "UNBOUND_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SiliconFLOW_ENDPOINT",
+      "default": "https://api.siliconflow.cn/v1/",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SiliconFLOW_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "IBM_ENDPOINT",
+      "default": "https://us-south.ml.cloud.ibm.com",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "IBM_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "IBM_PROJECT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GROK_ENDPOINT",
+      "default": "https://api.x.ai/v1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GROK_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEFAULT_LLM",
+      "default": "openai",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "ANONYMIZED_TELEMETRY",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_USE_LOGGING_LEVEL",
+      "default": "info",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_USER_DATA",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_DEBUGGING_PORT",
+      "default": "9222",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_DEBUGGING_HOST",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "KEEP_BROWSER_OPEN",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "USE_OWN_BROWSER",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BROWSER_CDP",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESOLUTION",
+      "default": "1920x1080x24",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESOLUTION_WIDTH",
+      "default": "1920",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESOLUTION_HEIGHT",
+      "default": "1080",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "VNC_PASSWORD",
+      "default": "youvncpassword",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TARGETPLATFORM",
+      "default": "linux/arm64 docker compose up --build",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "SKIP_LLM_API_KEY_VERIFICATION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": "source:src/agent/browser_use/browser_use_agent.py"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "browser-use-webui",
+        "image": "ghcr.io/browser-use/web-ui",
+        "ports": [
+          "7788:7788",
+          "6080:6080",
+          "5901:5901",
+          "9222:9222"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "python -m uvicorn app:app --reload || python manage.py runserver"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/browser-agent/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "py-deps",
+        "run": "python -m venv .venv && .venv/bin/pip install -r requirements.txt (or poetry / uv)."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/browser-agent/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "python -m uvicorn app:app --reload || python manage.py runserver"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/browser-agent/overlay.json",
+    "agents": ".navin/apps/browser-agent/agents/",
+    "env": ".env",
+    "frontend": "package.json of role=frontend or root",
+    "backend": "requirements.txt",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "browser-agent",
+      "form-agent",
+      "extract-agent",
+      "watch-agent",
+      "report-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

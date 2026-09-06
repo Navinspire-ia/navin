@@ -1,4 +1,4 @@
-[Goal Runtime Guidance — host instructions]
+[Goal Runtime Guidance - host instructions]
 
 {% if goal_start_requested %}
 ## Record the sustained goal promptly
@@ -9,14 +9,14 @@ When the requested outcome is clear, call `create_goal` before extended planning
 
 The objective may be replayed after compaction, retries, or resumption. Write one clear outcome that remains correct when re-read mid-work:
 
-1. **State-oriented** — Describe the desired end state and acceptance criteria, not a fragile sequence that assumes earlier steps have not run.
-2. **Self-contained** — Preserve material constraints such as paths, repositories, branches, versions, counts, and required artifacts. Do not rely on "as discussed above" for load-bearing requirements.
-3. **Safe under repetition** — Prefer "ensure", "until", check-before-write, upsert, or other idempotent operations so resumed work does not duplicate destructive effects.
-4. **Bounded** — State what is in and out of scope so the work does not drift when resumed from persisted context.
-5. **Explicit about done-ness** — Name the evidence that proves completion: tests pass, an artifact exists, a checklist is satisfied, or another concrete condition holds.
-6. **Independent of `ui_summary`** — Keep `ui_summary` short and non-load-bearing; every requirement needed after compaction belongs in the objective.
+1. **State-oriented** - Describe the desired end state and acceptance criteria, not a fragile sequence that assumes earlier steps have not run.
+2. **Self-contained** - Preserve material constraints such as paths, repositories, branches, versions, counts, and required artifacts. Do not rely on "as discussed above" for load-bearing requirements.
+3. **Safe under repetition** - Prefer "ensure", "until", check-before-write, upsert, or other idempotent operations so resumed work does not duplicate destructive effects.
+4. **Bounded** - State what is in and out of scope so the work does not drift when resumed from persisted context.
+5. **Explicit about done-ness** - Name the evidence that proves completion: tests pass, an artifact exists, a checklist is satisfied, or another concrete condition holds.
+6. **Independent of `ui_summary`** - Keep `ui_summary` short and non-load-bearing; every requirement needed after compaction belongs in the objective.
 
-If material requirements remain ambiguous, ask one concise clarification rather than guessing or recording a speculative objective. Ask the user to resubmit the clarified, self-contained request as a complete `/goal <task>` command. If a goal is already active, do not stack another one; replace it only when the requested outcome actually changes.
+Record the objective from what the request already says, resolving the gaps with the most reasonable reading and naming the assumptions you made in `ui_summary`. Ask only when a missing requirement would send the work in a materially different direction, and ask it as one concise question. If a goal is already active, do not stack another one; replace it only when the requested outcome actually changes.
 {% endif %}
 
 {% if goal_active or goal_start_requested %}

@@ -1,0 +1,269 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "accounting",
+  "name": "Accounting / Invoicing",
+  "kind": "business",
+  "category": "finance",
+  "source_github": "https://github.com/muhammad-fiaz/OpenBook",
+  "source_name": "OpenBook",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "TypeScript"
+  ],
+  "studied_from": "templates_apps/accounting",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 7,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Open Book [Report Bug](https://github.com/muhammad-fiaz/OpenBook/issues) \u00b7 [Request Feature](https://github.com/muhammad-fiaz/OpenBook/issues) Open Book is a self-hosted, personal accounting and finance application designed for individuals and small businesses. It provides invoicing, expenses, reporting, products, clients, and basic bookkeeping features with a privacy-first approach. Table of Contents Features Open Book offers a comprehensive suite of tools for managing your finances:"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "bun",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "bun",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "openbook",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "biome check"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "openbook",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "biome check"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "openbook",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "biome check"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "framer-motion",
+          "next",
+          "pg",
+          "prisma",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [
+    ".env-example"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://<user>:<password>@<host>:<port>/<dbname>",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env-example"
+    },
+    {
+      "key": "BETTER_AUTH_SECRET",
+      "default": "<REDACTED>",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env-example"
+    },
+    {
+      "key": "BETTER_AUTH_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env-example"
+    },
+    {
+      "key": "NEXT_PUBLIC_BETTER_AUTH_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env-example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env-example"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": ".env-example"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/accounting/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env-example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: bun install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/accounting/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/accounting/overlay.json",
+    "agents": ".navin/apps/accounting/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "accounting-agent",
+      "invoice-agent",
+      "expense-agent",
+      "reconciliation-agent",
+      "tax-reporting-assistant"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -1,43 +1,59 @@
 ---
 name: outreach-sequencer
-description: Design multi-touch outreach sequences — email, LinkedIn, phone — with timing, angles, and stop conditions. Use to systematize prospect follow-up.
+description: Design multi-touch outreach sequences - email, LinkedIn, phone - with timing, angles, and stop conditions. Use to systematize prospect follow-up.
 metadata: {"navin":{"emoji":"⏱️","category":"sales"}}
 ---
 
 # Outreach Sequencer
 
-## Overview
+Most replies come from touches 2-5. Sequence them with a NEW angle each time - a follow-up that adds nothing teaches the prospect to ignore you. This skill designs cadences; it does not auto-send.
 
-Most replies come from touches 2–5. Sequence them with a NEW angle each time — a follow-up that adds nothing teaches the prospect to ignore you.
+On the Leads desk, `leads action=sequence` starts j0/j3/j7. Heartbeat `watch` alerts when a step is due and never sends. The desk loop never sends. Human or `leads action=outreach` sends.
+
+## When to use
+
+- Multi-touch email / social / phone plans
+- Segment-specific cadences after qualification
+
+## When not to use
+
+- Single one-off email (use `cold-email-writer`)
+- Guaranteed send automation (out of scope; prepare + human send)
 
 ## Reference sequence (B2B)
 
 | Touch | Day | Channel | Angle |
 |-------|-----|---------|-------|
-| 1 | 0 | Email | researched hook (`cold-email-writer`) |
-| 2 | 3 | LinkedIn | connection request, short note |
-| 3 | 6 | Email | new value: relevant case study or insight |
-| 4 | 10 | LinkedIn/phone | comment on their content / direct call |
+| 1 | 0 | Email | researched hook |
+| 2 | 3 | LinkedIn | short connection note |
+| 3 | 6 | Email | new value (case / insight) |
+| 4 | 10 | LinkedIn/phone | comment or call |
 | 5 | 15 | Email | different pain angle |
-| 6 | 22 | Email | polite breakup ("je clos de mon côté — si le sujet revient…") |
+| 6 | 22 | Email | polite breakup |
 
-Adapt density to deal size: enterprise = slower + more research; SMB = tighter.
+Adapt: enterprise = slower + more research; SMB = tighter.
 
-## Stop conditions (immediate)
+## Stop conditions
 
-- Any reply (positive or negative) → sequence stops, human takes over
-- Opt-out / "not interested" → stop + log, no breakup email
-- Trigger event changes context → re-personalize, don't continue blindly
+- Any reply → human takes over
+- Opt-out / not interested → stop + log
+- Trigger event changes context → re-personalize
 
 ## Workflow
 
-1. Segment the list (from `lead-qualification`): sequence per segment, not per universe.
-2. Write all touches upfront; each must stand alone AND escalate value.
-3. Execution: schedule reminders with `cron`; log every touch + outcome in `sales/outreach-log.md` (or CRM via `crm-update-agent`).
-4. Weekly stats: reply rate per touch and per angle → rewrite the weakest touch.
+1. Segment from `lead-qualification` tiers - sequence per segment.
+2. Write all touches upfront with `cold-email-writer` quality bar.
+3. Schedule reminders via `cron` if useful; log touches in `sales/outreach-log.md` or CRM (`crm-update-agent` / HubSpot MCP).
+4. Weekly: reply rate per touch/angle → rewrite the weakest.
 
 ## Rules
 
-- Sends require human validation (`human-approval`) — the agent prepares and reminds.
-- Max 1 sequence per prospect at a time; 90-day cooldown after a completed sequence.
-- Breakup emails are polite and final — no guilt-tripping.
+- Sends require human validation (`human-approval`) - agent prepares and reminds.
+- Max 1 active sequence per prospect; 90-day cooldown after completion.
+- Breakup emails are polite and final - no guilt-tripping.
+- Compliance: honest identity, honor opt-out instantly.
+
+## Anti-patterns
+
+- "Just bumping this" with no new value
+- Parallel sequences to the same person

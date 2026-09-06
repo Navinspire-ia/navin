@@ -8,18 +8,20 @@ Mirrors editor-grade checkpointing:
 - ``/checkpoint restore <name> [all|chat|code]`` rewinds conversation, code,
   or both, back to the selected point.
 
-Checkpoints are plain JSON files stored in ``<workspace>/.checkpoints/`` and
+Checkpoints are plain JSON files stored in ``<workspace>/.navin/checkpoints/`` and
 are safe to inspect or delete by hand. They complement, not replace, git: the
 folder ships its own ``.gitignore`` so it is never committed.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
 import re
 import tempfile
+from collections.abc import Callable
 from contextvars import ContextVar, Token
 from datetime import datetime
 from pathlib import Path
@@ -62,36 +64,52 @@ class TurnRecorder:
         self.files: dict[str, bytes | None] = {}
         self.skipped: list[str] = []
 
-    def record(self, path: str | Path) -> None:
+    def record(self, path: str | Path) -> str | None:
+        """Snapshot a path; returns the resolved path on first record, else None."""
         try:
             p = str(Path(path).expanduser().resolve(strict=False))
         except (OSError, RuntimeError, ValueError):
-            return
+            return None
         if p in self.files or p in self.skipped:
-            return
+            return None
         if len(self.files) >= _MAX_SNAPSHOT_FILES:
             self.skipped.append(p)
-            return
+            return None
         target = Path(p)
         if not target.exists():
             self.files[p] = None
-            return
+            return p
         if not target.is_file():
             self.skipped.append(p)
-            return
+            return None
         try:
             if target.stat().st_size > _MAX_SNAPSHOT_FILE_BYTES:
                 self.skipped.append(p)
-                return
+                return None
             self.files[p] = target.read_bytes()
+            return p
         except OSError:
             self.skipped.append(p)
+            return None
 
 
 _current_recorder: ContextVar[TurnRecorder | None] = ContextVar(
     "navin_checkpoint_recorder",
     default=None,
 )
+
+# Called with (path, before_bytes_or_None) shortly after a file is first
+# recorded in a turn, so the WebUI review list streams in live instead of
+# waiting for the end of the turn.
+LiveEditHook = Callable[[str, "bytes | None"], None]
+_live_edit_hook: ContextVar[LiveEditHook | None] = ContextVar(
+    "navin_live_edit_hook",
+    default=None,
+)
+# The record happens *before* the tool writes; the flush must run after, or
+# current == baseline and the store drops the entry. One second comfortably
+# covers the write that immediately follows.
+_LIVE_FLUSH_DELAY_S = 1.0
 
 
 def bind_checkpoint_recorder(recorder: TurnRecorder) -> Token[TurnRecorder | None]:
@@ -103,14 +121,55 @@ def reset_checkpoint_recorder(token: Token[TurnRecorder | None]) -> None:
     _current_recorder.reset(token)
 
 
+def bind_live_edit_hook(hook: LiveEditHook) -> Token[LiveEditHook | None]:
+    """Bind a per-turn hook that streams first-touch edits to observers."""
+    return _live_edit_hook.set(hook)
+
+
+def reset_live_edit_hook(token: Token[LiveEditHook | None]) -> None:
+    _live_edit_hook.reset(token)
+
+
+def _schedule_live_flush(hook: LiveEditHook, path: str, before: bytes | None) -> None:
+    """Run the hook off the event loop, after the pending write lands."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.call_later(
+        _LIVE_FLUSH_DELAY_S,
+        lambda: loop.run_in_executor(None, _safe_hook, hook, path, before),
+    )
+
+
+def _safe_hook(hook: LiveEditHook, path: str, before: bytes | None) -> None:
+    try:
+        hook(path, before)
+    except Exception:  # noqa: BLE001 - observers must never break a turn
+        pass
+
+
 def record_file_before(path: str | Path) -> None:
     """Snapshot a file's current content before an agent tool modifies it.
 
     No-op when no recorder is bound (e.g. WebUI file-save, tests).
+
+    Every agent write path funnels through here, so it doubles as the
+    freshness signal for the code index: the write about to happen makes the
+    throttled revalidation snapshot stale.
     """
     recorder = _current_recorder.get()
     if recorder is not None:
-        recorder.record(path)
+        first_recorded = recorder.record(path)
+        if first_recorded is not None:
+            hook = _live_edit_hook.get()
+            if hook is not None:
+                _schedule_live_flush(
+                    hook, first_recorded, recorder.files.get(first_recorded)
+                )
+    from navin.index.warmer import note_file_written
+
+    note_file_written(path)
 
 
 def _encode_files(files: dict[str, bytes | None]) -> dict[str, Any]:
@@ -128,14 +187,16 @@ class CheckpointStore:
 
     def __init__(self, workspace: str | Path) -> None:
         root = Path(workspace)
-        self.dir = root / ".checkpoints"
-        # One-time migration: rename the legacy visible folder in place.
-        legacy = root / "checkpoints"
-        if legacy.is_dir() and not self.dir.exists():
-            try:
-                legacy.rename(self.dir)
-            except OSError:
-                pass
+        self.dir = root / ".navin" / "checkpoints"
+        # One-time migrations: relocate the legacy folders in place
+        # (oldest layout first: checkpoints/ -> .checkpoints/ -> .navin/checkpoints/).
+        for legacy in (root / ".checkpoints", root / "checkpoints"):
+            if legacy.is_dir() and not self.dir.exists():
+                try:
+                    self.dir.parent.mkdir(parents=True, exist_ok=True)
+                    legacy.rename(self.dir)
+                except OSError:
+                    pass
 
     def _ensure_ignored(self) -> None:
         """Make git ignore the whole folder, wherever the workspace lives."""
@@ -144,7 +205,7 @@ class CheckpointStore:
             return
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
-            marker.write_text("# Navin checkpoints — never commit.\n*\n", encoding="utf-8")
+            marker.write_text("# Navin checkpoints - never commit.\n*\n", encoding="utf-8")
         except OSError:
             pass
 
@@ -162,6 +223,7 @@ class CheckpointStore:
         auto: bool = False,
         prompt: str = "",
         files: dict[str, bytes | None] | None = None,
+        skipped: list[str] | None = None,
     ) -> dict[str, Any]:
         """Snapshot the session (and optionally file states). Returns metadata."""
         now = datetime.now()
@@ -183,6 +245,11 @@ class CheckpointStore:
             "last_consolidated": session.last_consolidated,
             "messages": session.messages,
             "files": _encode_files(files or {}),
+            # Explicit exclusion manifest: paths the recorder could not
+            # snapshot (size cap, file-count cap, unreadable). A restore
+            # cannot rewind these, and pretending otherwise is worse than
+            # saying so.
+            "skipped_files": sorted(set(skipped or [])),
         }
         self._ensure_ignored()
         self._write(self._path(session.key, name), payload)
@@ -197,9 +264,11 @@ class CheckpointStore:
         session_key: str,
         name: str,
         files: dict[str, bytes | None],
+        *,
+        skipped: list[str] | None = None,
     ) -> None:
         """Merge before-snapshots into an existing checkpoint (end of turn)."""
-        if not files:
+        if not files and not skipped:
             return
         try:
             data = self.load(session_key, name)
@@ -208,6 +277,9 @@ class CheckpointStore:
         existing = data.get("files") or {}
         merged = {**_encode_files(files), **existing}
         data["files"] = merged
+        if skipped:
+            previous = data.get("skipped_files") or []
+            data["skipped_files"] = sorted(set(previous) | set(skipped))
         self._write(self._path(session_key, _slug(name)), data)
 
     @staticmethod
@@ -242,6 +314,7 @@ class CheckpointStore:
                     "prompt": data.get("prompt", ""),
                     "message_count": int(data.get("message_count") or 0),
                     "file_count": len(data.get("files") or {}),
+                    "skipped_count": len(data.get("skipped_files") or []),
                 })
             except (OSError, ValueError):
                 continue
@@ -275,12 +348,14 @@ class CheckpointStore:
         session.updated_at = datetime.now()
         return len(messages)
 
-    def restore_files(self, session_key: str, name: str) -> tuple[int, int]:
+    def restore_files(self, session_key: str, name: str) -> tuple[int, int, list[str]]:
         """Rewind files to their state at the checkpoint.
 
         Collects, for every file touched at or after the target checkpoint,
         the earliest before-snapshot, then writes those states back. Returns
-        ``(restored, deleted)`` counts.
+        ``(restored, deleted, unrestorable)`` where *unrestorable* lists the
+        paths whose pre-state was never captured (snapshot caps) - the
+        restore is partial for those and the caller must say so.
         """
         target = _slug(name)
         if not target:
@@ -292,6 +367,7 @@ class CheckpointStore:
         # Ascending order: target first, then everything after it. The first
         # snapshot seen per path is the state at the target checkpoint.
         earliest: dict[str, dict[str, Any]] = {}
+        unrestorable: set[str] = set()
         for path in sorted(folder.glob("*.json")):
             if path.stem < target:
                 continue
@@ -303,6 +379,9 @@ class CheckpointStore:
             for file_path, snap in (data.get("files") or {}).items():
                 if file_path not in earliest and isinstance(snap, dict):
                     earliest[file_path] = snap
+            for skipped_path in data.get("skipped_files") or []:
+                if isinstance(skipped_path, str):
+                    unrestorable.add(skipped_path)
 
         restored = 0
         deleted = 0
@@ -323,7 +402,9 @@ class CheckpointStore:
                 restored += 1
             except (OSError, ValueError):
                 continue
-        return restored, deleted
+        # A path that also has a snapshot was captured by a later turn and
+        # did rewind; only report what truly could not be restored.
+        return restored, deleted, sorted(unrestorable - set(earliest))
 
     def delete(self, session_key: str, name: str) -> None:
         safe = _slug(name)

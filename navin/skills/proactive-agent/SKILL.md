@@ -1,6 +1,6 @@
 ---
 name: proactive-agent
-description: Run periodic checks, anticipate follow-ups, resume after interruptions, and keep quiet when nothing changed. Use with cron, HEARTBEAT.md, and sustained goals (/goal) for autonomous monitoring.
+description: Run periodic checks, anticipate follow-ups, resume after interruptions, and keep quiet when nothing changed. Use with cron, .navin/HEARTBEAT.md, and sustained goals (/goal) for autonomous monitoring.
 metadata: {"navin":{"emoji":"🛰️","category":"intelligence"}}
 ---
 
@@ -12,31 +12,31 @@ Operate as a reliable background partner: schedule work, recover from interrupti
 
 ## Tools
 
-- `cron` — reminders and recurring agent tasks that report back to the chat
-- `HEARTBEAT.md` — quiet periodic checks (update the file; the heartbeat job runs it)
-- `/goal` / goal tools — sustained objectives across turns
-- `spawn` — long independent tracks
+- `cron` - reminders and recurring agent tasks that report back to the chat
+- `.navin/HEARTBEAT.md` - quiet periodic checks (update the file; the heartbeat job runs it)
+- `/goal` / goal tools - sustained objectives across turns
+- `spawn` - long independent tracks
 
 ## When to use cron vs HEARTBEAT
 
 | Need | Mechanism |
 |------|-----------|
 | User-facing reminder / report | `cron` |
-| Quiet “check and only speak if useful” | `HEARTBEAT.md` |
+| Quiet “check and only speak if useful” | `.navin/HEARTBEAT.md` |
 | Multi-turn project with state | `/goal` |
 
-## Workflow — schedule
+## Workflow - schedule
 
 1. Confirm cadence and timezone.
 2. Write a **self-contained** task message (the future turn has limited chat context).
 3. Prefer `cron_expr` + `tz` for calendar schedules; `every_seconds` for short loops.
 4. List jobs with `cron(action="list")` before adding duplicates.
 
-## Workflow — resume after interruption
+## Workflow - resume after interruption
 
 1. Re-read the last plan / goal state / relevant files.
 2. Restate “where we left off” in one sentence.
-3. Continue from the next incomplete step — do not restart completed work.
+3. Continue from the next incomplete step - do not restart completed work.
 4. If blocked, say what is blocked and the cheapest unblock.
 
 ## Notification discipline

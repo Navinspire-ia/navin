@@ -1,0 +1,278 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "sales-inventory",
+  "name": "Sales / Purchase Inventory",
+  "kind": "business",
+  "category": "operations",
+  "source_github": "https://github.com/mhShohan/inventory-management-system",
+  "source_name": "Inventory Management System",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "TypeScript",
+    "Node.js",
+    "Express",
+    "MongoDB"
+  ],
+  "studied_from": "curated-github",
+  "completeness": {
+    "studied": false,
+    "missing": [],
+    "env_count": 5,
+    "package_count": 3,
+    "curated": true
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "mhShohan inventory: React+Vite client, Express+TypeScript+MongoDB server, optional next-client. Products, sellers, purchases, sales history."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone https://github.com/mhShohan/inventory-management-system"
+    },
+    {
+      "id": "npm",
+      "why": "Install client/ and server/ separately"
+    },
+    {
+      "id": "node",
+      "why": "Node 18+"
+    },
+    {
+      "id": "docker",
+      "why": "MongoDB 7 on :27017"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "client",
+        "scripts": {
+          "dev": "vite",
+          "build": "vite build"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "dev",
+          "start": "start"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "client",
+        "scripts": {
+          "dev": "vite"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "dev"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "next-client/package.json",
+        "name": "next-client",
+        "scripts": {
+          "dev": "next dev"
+        },
+        "node_engine": ">=18",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker run -d --name navin-sales-mongo -p 27017:27017 mongo:7",
+        "Set server DATABASE_URL to mongodb://127.0.0.1:27017/inventory"
+      ]
+    }
+  ],
+  "ports": [
+    8000,
+    5173,
+    27017
+  ],
+  "env_files": [
+    "client/.env",
+    "server/.env"
+  ],
+  "env": [
+    {
+      "key": "VITE_BASE_URL",
+      "default": "http://localhost:8000/api/v1",
+      "required": true,
+      "secret": false,
+      "purpose": "API base for Vite client",
+      "from": "client/.env"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "dev",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "server/.env"
+    },
+    {
+      "key": "PORT",
+      "default": "8000",
+      "required": false,
+      "secret": false,
+      "purpose": "Express port",
+      "from": "server/.env"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "mongodb://127.0.0.1:27017/inventory",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB URI",
+      "from": "server/.env"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "change-me-jwt",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "server/.env"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [
+      {
+        "name": "mongo",
+        "image": "mongo:7",
+        "ports": [
+          "27017:27017"
+        ]
+      }
+    ],
+    "dockerfile": false,
+    "note": "No official compose. Start MongoDB then npm run dev in server/ and client/."
+  },
+  "launch": {
+    "dev": "cd server && npm run dev  (and  cd client && npm run dev)",
+    "build": "cd client && npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/sales-inventory/install.json first."
+      },
+      {
+        "id": "clone",
+        "run": "git clone https://github.com/mhShohan/inventory-management-system.git ."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "Start MongoDB 7 on :27017."
+      },
+      {
+        "id": "env-server",
+        "run": "Create server/.env with NODE_ENV=dev PORT=8000 DATABASE_URL=mongodb://127.0.0.1:27017/inventory JWT_SECRET=..."
+      },
+      {
+        "id": "env-client",
+        "run": "Create client/.env with VITE_BASE_URL=http://localhost:8000/api/v1"
+      },
+      {
+        "id": "node-server",
+        "run": "cd server && npm install && npm run dev"
+      },
+      {
+        "id": "node-client",
+        "run": "cd client && npm install && npm run dev"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/sales-inventory/overlay.json."
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/sales-inventory/overlay.json",
+    "agents": ".navin/apps/sales-inventory/agents/",
+    "env": "server/.env and client/.env",
+    "frontend": "client/package.json (Vite + React). Optional next-client/.",
+    "backend": "server/package.json (Express + Mongoose)",
+    "theme": "Ant Design on the client. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "product-agent",
+      "vendor-agent",
+      "purchase-agent",
+      "sales-agent",
+      "stock-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

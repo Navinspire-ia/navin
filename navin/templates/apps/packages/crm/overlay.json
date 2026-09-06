@@ -1,0 +1,9 @@
+{
+  "schema": "navin-app-overlay.v1",
+  "slug": "crm",
+  "disabled_agents": [],
+  "extra_agents": [],
+  "agent_overrides": {},
+  "env": {},
+  "notes": "Audit in_review. Personnaliser ici sans forker Atomic CRM."
+}

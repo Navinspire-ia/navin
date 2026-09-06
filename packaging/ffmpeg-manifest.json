@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "Static ffmpeg + ffprobe builds staged into packaged Navin by",
+    "packaging/ffmpeg_vendor.py. These are GPL builds; see THIRD_PARTY_NOTICES.md",
+    "for attribution and the written offer for corresponding source.",
+    "The Linux and Windows archives contain both programs; macOS providers ship",
+    "ffprobe as a separate archive, declared as an 'ffprobe' sub-entry.",
+    "Upstream serves rolling 'release' URLs, so sha256 is a lockfile: a mismatch",
+    "means the remote moved. Review the new build, then re-pin deliberately with",
+    "  python packaging/ffmpeg_vendor.py --all --force --update-manifest"
+  ],
+  "license": "GPL-3.0-or-later",
+  "targets": {
+    "linux-arm64": {
+      "archive": "tar.xz",
+      "sha256": "f4149bb2b0784e30e99bdda85471c9b5930d3402014e934a5098b41d0f7201b1",
+      "source": "johnvansickle.com static builds",
+      "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz"
+    },
+    "linux-x64": {
+      "archive": "tar.xz",
+      "sha256": "abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67",
+      "source": "johnvansickle.com static builds",
+      "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    },
+    "macos-arm64": {
+      "archive": "zip",
+      "ffprobe": {
+        "archive": "zip",
+        "sha256": "156a2c4da546e7d86877dd204df026eeda79aee8a80af8f04cd00f9b02687aa0",
+        "source": "osxexperts.net",
+        "url": "https://www.osxexperts.net/ffprobe71arm.zip"
+      },
+      "sha256": "0878f3313311c2c1b2c818e7c955c0bd828c97b357fa86211b42a5c36d01e36f",
+      "source": "osxexperts.net (evermeet.cx ships x86_64 only)",
+      "url": "https://www.osxexperts.net/ffmpeg71arm.zip"
+    },
+    "macos-x64": {
+      "archive": "zip",
+      "ffprobe": {
+        "archive": "zip",
+        "sha256": "d13f35db03456b7f65b7edb6437c86e23810fbfe91795e571f5b77211343b4f1",
+        "source": "evermeet.cx",
+        "url": "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
+      },
+      "sha256": "8a8c9e549983409fe6604b9aa665648b7a5def9407fe814c39c8b2ea7f64a48f",
+      "source": "evermeet.cx",
+      "url": "https://evermeet.cx/ffmpeg/getrelease/zip"
+    },
+    "windows-arm64": {
+      "archive": "zip",
+      "sha256": "ad00ee05f30a3522757e9d05b4f40e7ae714f9c8bcbb818ba1c5983a4ca8066a",
+      "source": "github.com BtbN/FFmpeg-Builds (gyan.dev publishes x86-64 only)",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-winarm64-gpl-8.1.zip"
+    },
+    "windows-x64": {
+      "archive": "zip",
+      "sha256": "fec81ae03971d9dd4be3ebe02e263bd2ec1d789483f931bdba5f5715e65da2e9",
+      "source": "gyan.dev release-essentials",
+      "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    }
+  }
+}

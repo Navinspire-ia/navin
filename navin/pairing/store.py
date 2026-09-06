@@ -270,7 +270,7 @@ def handle_pairing_command(channel: str, subcommand_text: str) -> str:
         if result is None:
             return f"Invalid or expired pairing code: `{arg}`"
         ch, sid = result
-        return f"Approved pairing code `{arg}` — {sid} can now access {ch}"
+        return f"Approved pairing code `{arg}` - {sid} can now access {ch}"
 
     elif sub == "deny":
         if arg is None:

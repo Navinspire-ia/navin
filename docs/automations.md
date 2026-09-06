@@ -1,46 +1,34 @@
 # Automations
 
-<!-- Meta description: Create, run, and manage navin scheduled automations, local triggers, and heartbeat-backed background checks. -->
+<!-- Meta description: Create, run, and manage Navin scheduled automations and heartbeat-backed background checks from the desktop app. -->
 
-Automations are agent turns that run later in a linked chat/session. Use them
-when navin should do work without someone actively typing: reminders,
-recurring checks, nightly summaries, CI follow-ups, local script reports, or
-webhook-driven events.
+Automations are agent turns that run later in a linked chat. Use them when Navin should do work without you actively typing: reminders, recurring checks, nightly summaries, or quiet workspace watch loops.
 
-Create automations from the chat, channel, or WebUI session where the result
-should appear. That lets navin keep the right session history, workspace, and
-reply target.
+Create automations from the chat session where the result should appear. That keeps the right history, project, and reply target.
 
-## Choose an Automation Type
+Everything below happens inside the **Navin desktop app** (Windows `.exe`, macOS `.dmg`, or Linux AppImage/deb/rpm/pacman). Keep Navin open for scheduled work to run.
 
-| Type | Starts from | Best for | Created with |
+## Choose an automation type
+
+| Type | Starts from | Best for | How to create |
 |---|---|---|---|
-| Scheduled automation | Time, interval, or cron expression | Recurring reminders, scheduled summaries, one-time future tasks | Ask navin in the target session to schedule it with the `cron` tool |
-| Local trigger | A local `navin trigger ...` command | CI jobs, webhooks, shell scripts, generated reports | `/trigger <name>` in the target session |
-| Heartbeat | Protected system schedule | Quiet recurring checks that should only report useful results | Edit `<workspace>/HEARTBEAT.md` |
+| Scheduled automation | Time, interval, or cron-style schedule | Recurring reminders, scheduled summaries, one-time future tasks | Ask Navin in the target chat to schedule it |
+| Heartbeat | Protected system schedule | Quiet recurring checks that should only report useful results | Edit `HEARTBEAT.md` in the project |
+| Advanced wake-up (optional) | Something outside Navin | Rare integrations that need to wake a specific chat later | Ask in chat with `/trigger`, or contact support for advanced integrations |
 
-The two user-created automation types are scheduled automations and local
-triggers. Heartbeat uses the same background service but is system-managed and
-protected from normal automation edits.
+Scheduled automations and heartbeat cover most personal and project use. Heartbeat is system-managed and protected from normal automation edits.
 
-## Before You Create One
+## Before you create one
 
-Keep `navin gateway` running. The gateway owns background delivery for chat
-apps, WebUI sessions, scheduled automations, local triggers, heartbeat, and
-Dream jobs.
+1. Open Navin and leave it running while you need background delivery.
+2. Open the chat (or channel thread) where results should appear.
+3. Confirm a provider and model under **Settings → Providers** and **Settings → Models**.
 
-Use the same workspace and config for the gateway and any process that sends
-local trigger messages. If you run multiple navin instances, pass the matching
-`--config` or `--workspace` option to `navin trigger`.
+An automation without a linked chat cannot be enabled or run from the Automations view, because Navin would not know where to deliver the turn.
 
-Create each automation from the target session. An automation without a linked
-chat/session cannot be enabled or run from the WebUI because navin would not
-know where to deliver the turn.
+## Scheduled automations
 
-## Scheduled Automations
-
-Scheduled automations are created by the agent's `cron` tool. In practice, ask
-navin from the target chat or WebUI session:
+Ask Navin from the target chat:
 
 ```text
 Every weekday at 9am, check open pull requests and summarize blockers here.
@@ -52,150 +40,75 @@ or:
 Tomorrow at 4pm, remind me to send the release notes.
 ```
 
-The cron tool supports interval schedules, cron expressions, and one-time
-scheduled tasks. Cron expressions can include an IANA timezone such as
-`America/Vancouver`; otherwise navin uses the runtime default timezone.
+Schedules can be intervals, calendar-style expressions, or one-time future times. You can include a timezone such as `America/Vancouver`; otherwise Navin uses the runtime default.
 
-Scheduled automations normally deliver the result back to the session where they
-were created. Use them for work that should run on a predictable schedule and
-report each run.
+Scheduled automations normally deliver the result back to the session where they were created. Use them when every run should produce a visible reminder or report.
 
-For background checks that should stay quiet unless there is something useful to
-report, use heartbeat instead of a user-created scheduled automation.
+For background checks that should stay quiet unless something useful appears, use heartbeat instead.
 
-## Local Triggers
+## Heartbeat
 
-Local triggers let a local script or external service send a message into a
-specific navin session later.
+Heartbeat is for recurring project checks that should usually stay quiet. It reads `HEARTBEAT.md` in the active project, runs the listed tasks, and sends only useful or actionable results to the most recently active chat target.
 
-Create the trigger from the chat or WebUI session where future messages should
-arrive:
+Use heartbeat for checks such as "watch this project for important failures" or "periodically inspect this workspace and only tell me when action is needed."
+
+Heartbeat is enabled by default while Navin is running. Timing options live under agent / gateway heartbeat settings in **Settings** (see also the advanced notes in [`configuration.md`](./configuration.md)).
+
+Career and Trading desks have their own loop (calendar hunt/cycle) plus a silent heartbeat `watch`. That is not a chat cron. Contract: [desk loop](./studio/desk-loop.md).
+
+## Advanced wake-up (`/trigger`)
+
+Some workflows need an outside event to wake a specific chat later. In the target chat, you can create a named wake-up with the composer action:
 
 ```text
 /trigger PR review
 ```
 
-navin replies with a trigger ID and a command shaped like:
+Navin links that name to the current session. Advanced integrations outside the app can wake that session later. Everyday users can skip this path. If you need a custom integration, ask support or check later advanced docs - this page does not require terminal recipes.
 
-```bash
-navin trigger trg_8K4P2Q9X "Review PR #4502"
-```
+## Manage automations
 
-Replace the quoted text with the message navin should receive. For generated
-or longer content, pipe stdin:
-
-```bash
-generate-report | navin trigger trg_8K4P2Q9X
-```
-
-For multiple instances, use the same config or workspace selector as the
-gateway:
-
-```bash
-navin trigger --config ./bot-a/config.json trg_8K4P2Q9X "Nightly report"
-navin trigger --workspace ./bot-a/workspace trg_8K4P2Q9X "Nightly report"
-```
-
-navin does not provide a built-in public webhook receiver for local triggers.
-If GitHub, CI, or another external system should wake navin, run your own
-small webhook service and have it call `navin trigger` after it builds the
-final message.
-
-## Heartbeat
-
-Heartbeat is for recurring workspace checks that should usually stay quiet. It
-reads `<workspace>/HEARTBEAT.md`, executes active tasks, and sends only useful or
-actionable results to the most recently active chat target.
-
-Use heartbeat for checks such as "watch this repo for important failures" or
-"periodically inspect this workspace and only tell me when action is needed." Use
-a scheduled automation instead when every run should produce a visible reminder
-or report.
-
-Heartbeat is enabled by default when `navin gateway` starts. Configure it in
-[`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat).
-
-## Manage Automations
-
-Use the WebUI Automations view to:
+Open the **Automations** view in the app to:
 
 - filter by all, active, paused, needs-attention, or system jobs;
-- search by task name, message, trigger command, linked chat, schedule, or
-  status;
+- search by task name, message, linked chat, schedule, or status;
 - sort by next run, last run, updated time, or name;
 - run scheduled automations now;
 - pause or resume, rename, or delete user-created automations;
-- copy the CLI command for local triggers;
 - inspect protected system automations without changing them.
 
-Local triggers do not have a WebUI "Run now" action because each run needs a
-message. Copy the `navin trigger ...` command from the WebUI and replace
-`"message"` with the content that should be delivered.
+## Delivery and reliability
 
-## Delivery and Reliability
+Automation delivery is local to your machine and project. Scheduled jobs use the same project as the chat where they were created.
 
-Automation delivery is workspace-local. Scheduled jobs and local trigger
-deliveries use the same workspace as the gateway.
+Keep Navin open (or restarted) for due work to fire. If a linked session is already mid-turn, a wake-up waits until the session is idle instead of interrupting the active turn.
 
-Local trigger messages are written to a durable queue. If the gateway is not
-running yet, the message waits in that workspace. If the linked session is
-already running a turn, the trigger waits until the session becomes idle instead
-of being injected into the active turn.
+## Common patterns
 
-The local trigger queue is at-least-once, not exactly-once. If the gateway exits
-after claiming a delivery but before the linked turn completes, the next gateway
-start requeues that delivery. External scripts should make repeated trigger
-messages safe. If the delivery reaches the agent and the turn fails, the
-delivery is marked failed instead of retrying forever.
-
-Each local trigger delivery writes an audit record under
-`<workspace>/triggers/runs`. Run one gateway consumer per workspace; the local
-queue is not a distributed multi-consumer queue.
-
-## Common Patterns
-
-For a nightly report, ask from the target session:
+Nightly report - ask from the target chat:
 
 ```text
-Every night at 9pm, review today's workspace changes and summarize anything I should handle tomorrow.
+Every night at 9pm, review today's project changes and summarize anything I should handle tomorrow.
 ```
 
-For a CI follow-up, create a trigger once:
+Quiet watch - add a short task list to `HEARTBEAT.md` in the project, then leave Navin running.
+
+One-time reminder:
 
 ```text
-/trigger CI follow-up
-```
-
-Then have your CI or webhook adapter call:
-
-```bash
-navin trigger <trigger-id> "Build failed on main. Inspect the logs and suggest the next fix."
-```
-
-For a local report script:
-
-```bash
-generate-report | navin trigger <trigger-id>
+Tomorrow at 4pm, remind me to send the release notes.
 ```
 
 ## Troubleshooting
 
-If an automation does not run, check that `navin gateway` is running, the
-automation is enabled, and it was created from a linked chat/session.
+- Automation does not run: confirm Navin is open, the automation is enabled, and it was created from a linked chat.
+- No delivery target: recreate the automation from the chat where you want replies.
+- Heartbeat too noisy or too quiet: edit `HEARTBEAT.md` and adjust heartbeat interval in Settings.
+- To edit, pause, resume, rename, delete, or inspect automations, use the Automations view.
 
-If a local trigger waits forever, confirm the command uses the same workspace or
-config as the gateway.
+## Related docs
 
-If a trigger message appears twice after a restart, treat it as expected
-at-least-once delivery and make the external message idempotent.
-
-If you need to edit, pause, resume, rename, delete, or inspect automations, use
-the WebUI Automations view.
-
-## Related Docs
-
-- [`webui.md#automations`](./webui.md#automations) for the browser management view
-- [`chat-commands.md#local-triggers`](./chat-commands.md#local-triggers) for `/trigger`
-- [`cli-reference.md#local-triggers`](./cli-reference.md#local-triggers) for `navin trigger`
-- [`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat) for heartbeat settings
-- [`guides/long-running-ai-agent.md`](./guides/long-running-ai-agent.md) for long-running agent work
+- [`guides/long-running-ai-agent.md`](./guides/long-running-ai-agent.md) - leave Navin running for sustained work
+- [`configuration.md`](./configuration.md) - Settings for providers, models, and heartbeat
+- [`memory.md`](./memory.md) - Dream and durable project memory
+- [`studio/desk-loop.md`](./studio/desk-loop.md) - Career and Trading: two clocks, never a chat cron

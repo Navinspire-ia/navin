@@ -32,10 +32,10 @@ Growth = disciplined experimentation. Hypothesis → smallest test → measure �
 ## Workflow
 
 1. Map the funnel with real numbers; find the constraint.
-2. Backlog 5–10 experiments; score ICE (Impact, Confidence, Ease).
-3. Run 1–2 at a time; log each in `growth/experiments.md` in the workspace.
-4. Weekly review: results, learnings, next tests (schedule with `cron`).
-5. Scale winners into always-on programs (`campaign-manager`).
+2. Backlog 5-10 experiments; score ICE (Impact, Confidence, Ease).
+3. Persist experiments on the Marketing desk (`marketing action=improve` / metrics).
+4. Weekly review: start the desk loop (`marketing action=start`) on a saved schedule. Never create a chat cron that ticks KPIs.
+5. Scale winners into always-on programs via `marketing action=content` and `campaign-manager`.
 
 ## Rules
 

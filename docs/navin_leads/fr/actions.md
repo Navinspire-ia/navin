@@ -1,4 +1,4 @@
-# Actions leads & ventes — 16 cartes
+# Actions leads & ventes - 17 cartes
 
 Chaque carte envoie `/leads` avec une spécification précise ; votre brief y est joint.
 
@@ -6,10 +6,11 @@ Chaque carte envoie `/leads` avec une spécification précise ; votre brief y es
 
 | Action | Livre |
 | --- | --- |
-| Recherche d'entreprises | Liste d'entreprises dédupliquée et sourcée correspondant au profil cible : annuaires, registres, palmarès, écosystèmes concurrents, listes d'événements. CSV avec entreprise, site, taille, secteur, pays, signal, source, confiance — plus les 5 meilleurs fits expliqués. |
-| Recherche de personnes | Décideurs des entreprises cibles : profils publics, pages équipe, citations presse, bios de conférences, signatures. Tableau avec personne, rôle, entreprise, URL de profil, source, confiance — sources publiques uniquement. |
-| Recherche d'offres d'emploi | Annonces correspondant au rôle/secteur/zone cible, avec entreprise, poste, stack mentionnée, douleurs citées mot pour mot et date — entreprises classées par intensité de recrutement. |
-| Trouver les contacts | Patterns d'emails déduits de sources publiques avec niveau de confiance, téléphones officiels, profils sociaux. Tout ce qui n'est pas vérifié est marqué comme tel. |
+| Recherche d'entreprises | Liste d'entreprises dédupliquée et sourcée (search + scrape + MCP Exa/Firecrawl si dispo) : annuaires, registres, palmarès, écosystèmes. CSV + top 5 fits. |
+| Recherche de personnes | Décideurs publics : pages équipe, presse, bios - personne, rôle, entreprise, URL, source, confiance. |
+| Recherche d'offres d'emploi | Annonces carrières/boards avec stack, douleurs verbatim, intensité de recrutement. |
+| Chasse web profonde | Corpus public (scrape + search + MCP) → CSV leads dédupliqué, validé `score_leads.py`, rapport HTML. |
+| Trouver les contacts | `enrich_leads.py` si Hunter/Apollo ; sinon patterns `unverified`. Jamais de faux verified. |
 
 ## Qualifier
 
@@ -17,15 +18,15 @@ Chaque carte envoie `/leads` avec une spécification précise ; votre brief y es
 | --- | --- |
 | Définir l'ICP | Profil client idéal : firmographie, comité d'achat, douleurs et déclencheurs, critères d'exclusion, et 10 entreprises exemples qui correspondent. |
 | Scorer & enrichir | Chaque lead scoré (fit ICP 0-100 + force de signal) avec grille explicite, champs manquants enrichis, tableau classé avec action recommandée par palier. |
-| Fiche compte complète | Fiche complète : business model, taille/finances, organisation et personnes clés, actualités, indices techniques, douleurs, concurrents utilisés, et 3 angles d'approche — chaque source citée. |
-| Scan signaux d'achat | Signaux levées, recrutement, direction, expansion, tech et réglementation, scorés force × fraîcheur, avec URL de preuve et angle suggéré — top 5 des comptes à contacter cette semaine. |
+| Fiche compte complète | Fiche complète : business model, taille/finances, organisation et personnes clés, actualités, indices techniques, douleurs, concurrents utilisés, et 3 angles d'approche - chaque source citée. |
+| Scan signaux d'achat | Signaux levées, recrutement, direction, expansion, tech et réglementation, scorés force × fraîcheur, avec URL de preuve et angle suggéré - top 5 des comptes à contacter cette semaine. |
 
 ## Contacter
 
 | Action | Livre |
 | --- | --- |
 | Séquence cold email | Séquence de 4-5 touches : accroches personnalisées par segment, corps orienté valeur, un CTA chacun, objets en A/B, timing. |
-| Scripts réseaux pros | Variantes de notes de connexion (<300 caractères), séquence de 3 DM, tactique de warm-up par commentaires — personnalisés avec les signaux collectés. |
+| Scripts réseaux pros | Variantes de notes de connexion (<300 caractères), séquence de 3 DM, tactique de warm-up par commentaires - personnalisés avec les signaux collectés. |
 | Script d'appel & objections | Ouverture de 30 secondes, questions de découverte liées aux douleurs, narratif de valeur, tableau d'objections (reconnaître → explorer → répondre) pour les 8 objections les plus probables, script de messagerie vocale. |
 | Cadence de relance | Cadence multicanale sur 3 semaines : plan jour par jour, canal et objectif par touche, critères de sortie, règles de personnalisation. |
 

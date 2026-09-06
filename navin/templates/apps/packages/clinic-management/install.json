@@ -1,0 +1,281 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "clinic-management",
+  "name": "Clinic / Medical Practice",
+  "kind": "business",
+  "category": "healthcare",
+  "source_github": "https://github.com/SoulHiro/doutor-agenda",
+  "source_name": "Doutor Agenda",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/clinic-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 10,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "\ud83c\udfe5 DoutorAgenda Sistema completo de gerenciamento de cl\u00ednicas m\u00e9dicas desenvolvido com Next.js, oferecendo uma solu\u00e7\u00e3o moderna e eficiente para o agendamento de consultas e administra\u00e7\u00e3o de estabelecimentos de sa\u00fade. \ud83d\udccb Sobre o Projeto O **DoutorAgenda** \u00e9 uma plataforma web robusta projetada para simplificar a gest\u00e3o de cl\u00ednicas m\u00e9dicas. O sistema permite que administradores de cl\u00ednicas gerenciem m\u00e9dicos, pacientes e agendamentos de forma intuitiva e eficiente, proporcionando uma experi\u00eancia completa de administra\u00e7\u00e3o hospitalar."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "doutor-agenda",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "pg",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "doutor-agenda",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "pg",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "fullstack",
+        "path": "package.json",
+        "name": "doutor-agenda",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "pg",
+          "react",
+          "stripe"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://...",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "README.md"
+    },
+    {
+      "key": "BETTER_AUTH_SECRET",
+      "default": "your-secret-key",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "README.md"
+    },
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "default": "your-google-client-id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "README.md"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "default": "your-google-client-secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "README.md"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "sk_test_...",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "default": "pk_test_...",
+      "required": false,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "README.md"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "whsec_...",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "README.md"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "source:src/app/(protected)/subscription/_components/subscription-plan.tsx"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/clinic-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Create .env from install.json env[] keys."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/clinic-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/clinic-management/overlay.json",
+    "agents": ".navin/apps/clinic-management/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "medical-admin-agent",
+      "appointment-agent",
+      "patient-documentation-agent",
+      "billing-agent",
+      "practice-analytics-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

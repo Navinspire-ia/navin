@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext, suppress
@@ -47,6 +48,14 @@ def _set_navin_logs(enabled: bool) -> None:
         logger.disable("navin")
 
 
+def _optional_managed_usage_hooks(config: Any) -> list[Any]:
+    try:
+        from navin.license_client import ManagedUsageHook
+    except ImportError:
+        return []
+    return [ManagedUsageHook(config)]
+
+
 from prompt_toolkit import PromptSession, print_formatted_text  # noqa: E402
 from prompt_toolkit.application import run_in_terminal  # noqa: E402
 from prompt_toolkit.formatted_text import ANSI, HTML  # noqa: E402
@@ -62,8 +71,9 @@ from rich.text import Text  # noqa: E402
 
 from navin import __logo__, __version__  # noqa: E402
 from navin import optional_features as feature_support  # noqa: E402
-from navin.agent.hooks import create_file_edit_activity_hook  # noqa: E402
+from navin.agent.hooks import DEFAULT_HOOK_FACTORIES  # noqa: E402
 from navin.agent.loop import AgentLoop  # noqa: E402
+from navin.bus.notify import set_notification_bus  # noqa: E402
 from navin.bus.outbound_events import (  # noqa: E402
     ProgressEvent,
     RetryWaitEvent,
@@ -72,7 +82,10 @@ from navin.bus.outbound_events import (  # noqa: E402
     StreamEndEvent,
     outbound_event_from_message,
 )
+from navin.cli.agi import create_agi_app  # noqa: E402
+from navin.cli.app_templates import create_app_templates_app  # noqa: E402
 from navin.cli.gateway import create_gateway_app  # noqa: E402
+from navin.cli.lsp import create_lsp_app  # noqa: E402
 from navin.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
 from navin.config.paths import get_workspace_path, is_default_workspace  # noqa: E402
 from navin.config.schema import Config  # noqa: E402
@@ -193,6 +206,37 @@ def _advance_dream_cursor_if_behind(memory: Any) -> None:
         memory.set_last_dream_cursor(latest)
 
 
+def _dream_runtime_override(agent: Any, config: Any) -> Any | None:
+    """Resolve the Dream consolidation model, when one is configured.
+
+    ``agents.defaults.dream.model_override`` names either a model preset (the
+    dedicated nightly-consolidation preset) or a raw model slug. Unresolvable
+    values fall back to the session default instead of skipping the run: a
+    consolidation on the wrong model beats no consolidation at all.
+    """
+    try:
+        override = (config.agents.defaults.dream.model_override or "").strip()
+    except Exception:
+        return None
+    if not override:
+        return None
+    resolver = getattr(agent, "runtime_resolver", None)
+    if resolver is None:
+        return None
+    try:
+        return resolver.resolve_preset(override)
+    except Exception:
+        pass
+    try:
+        return resolver.resolve_override(model=override, model_preset=None)
+    except Exception:
+        logger.warning(
+            "Dream model override {!r} could not be resolved; using the default model",
+            override,
+        )
+        return None
+
+
 def _commit_dream_changes(memory: Any) -> str | None:
     """Commit durable Dream edits, without entering the commit path for a no-op run."""
     if not memory.git.is_initialized():
@@ -236,7 +280,7 @@ _HEARTBEAT_PREAMBLE = (
     "Output ONLY the final user-facing message. Never reference internal "
     "files (HEARTBEAT.md, AWARENESS.md, etc.), your instructions, or your "
     "decision process. If nothing needs reporting, respond with just "
-    "'All clear.' and nothing else.]\n\n"
+    "HEARTBEAT_OK and nothing else.]\n\n"
 )
 
 
@@ -758,7 +802,7 @@ def _model_display(config: Config) -> tuple[str, str]:
     resolved = config.resolve_preset()
     name = config.agents.defaults.model_preset
     tag = f" (preset: {name})" if name else ""
-    return resolved.model, tag
+    return resolved.model or "not configured", tag
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -1010,6 +1054,18 @@ def _webui_browser_url(config: Config) -> str:
     return f"{base_url}/#/?bootstrapSecret={quote(secret, safe='')}"
 
 
+def _append_webui_hash_param(url: str, key: str, value: str) -> str:
+    """Append a ``key=value`` pair to the WebUI URL hash query (``#/?...``)."""
+    from urllib.parse import quote
+
+    param = f"{key}={quote(value, safe='')}"
+    if "#" in url:
+        base, hash_part = url.split("#", 1)
+        separator = "&" if "?" in hash_part else "?"
+        return f"{base}#{hash_part}{separator}{param}"
+    return f"{url}/#/?{param}"
+
+
 def _webui_display_url(url: str) -> str:
     marker = "bootstrapSecret="
     if marker not in url:
@@ -1144,7 +1200,10 @@ def _print_foreground_port_conflict(
     webui_url: str,
     gateway_host: str,
     gateway_port: int,
+    config: Config | None = None,
 ) -> None:
+    from navin.ports import check_ports, format_port_table
+
     console.print(
         "[red]Error: navin cannot start because one of its local ports is already in use.[/red]"
     )
@@ -1152,11 +1211,47 @@ def _print_foreground_port_conflict(
     console.print(
         f"  Gateway health: [cyan]http://{_host_for_local_browser(gateway_host)}:{gateway_port}/health[/cyan]"
     )
+    try:
+        results = check_ports(config, include_external=True)
+        console.print()
+        console.print(format_port_table(results))
+        conflicts = [row for row in results if row.is_conflict]
+        for row in conflicts:
+            endpoint = f"{row.role.host}:{row.role.port}"
+            pid = row.listener.pid if row.listener else None
+            cmd = (row.listener.cmdline if row.listener else None) or row.detail
+            console.print(
+                f"  [red]Conflict[/red] {row.role.spec.name} {endpoint}"
+                + (f" pid={pid}" if pid else "")
+                + (f" ({cmd})" if cmd else "")
+            )
+    except Exception:
+        pass
     console.print()
     console.print("If this is an existing navin instance, use it or stop it first:")
     console.print("  [cyan]navin gateway status[/cyan]")
     console.print("  [cyan]navin gateway stop[/cyan]")
+    console.print("  [cyan]navin ports[/cyan]")
     console.print("Or choose different ports with [cyan]--port[/cyan] and [cyan]--gateway-port[/cyan].")
+
+
+def _log_external_port_status(config: Config) -> None:
+    """Best-effort info log for external MCP ports (never blocks startup)."""
+    try:
+        from navin.ports import check_ports
+
+        for row in check_ports(config, include_external=True):
+            if row.role.spec.owner != "external":
+                continue
+            logger.info(
+                "Port {}: {}:{} status={}",
+                row.role.spec.name,
+                row.role.host,
+                row.role.port,
+                row.status,
+            )
+    except Exception:
+        pass
 
 
 def _find_chromium_browser() -> list[str] | None:
@@ -1201,6 +1296,142 @@ def _find_chromium_browser() -> list[str] | None:
     return None
 
 
+def _app_window_profile() -> Path:
+    """Private Chromium profile reserved for Navin's app window."""
+    from navin.config.paths import get_webui_dir
+
+    return get_webui_dir() / "browser-profile"
+
+
+def _app_window_chrome_args() -> list[str]:
+    """Flags that make the app window's own frame match the app inside it.
+
+    A Chromium app window paints its title bar from the *browser* theme and
+    ignores the page's ``theme-color``, so a dark Navin sat under a light frame.
+    ``--force-dark-mode`` fixes the frame without touching page rendering, which
+    is a separate feature flag.
+
+    It only has any effect on a fresh browser process, though: joining a Chrome
+    that is already running silently drops every flag. Hence the private profile
+    directory, which also keeps Navin's window out of the user's session rather
+    than borrowing its cookies and extensions.
+    """
+    from navin.webui.sidebar_state import webui_theme
+
+    args = [
+        f"--user-data-dir={_app_window_profile()}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if webui_theme() == "dark":
+        args.append("--force-dark-mode")
+    return args
+
+
+def _close_stale_macos_app_browser() -> None:
+    """Terminate a window-less Chrome left behind by a closed app window.
+
+    macOS keeps an application alive after its last window closes, and its
+    Chromium process singleton does not relay command lines to the running
+    instance (Linux and Windows do). Relaunching Navin.app then degrades into
+    a bare "reopen" event on that lingering instance: the ``--app=<url>``
+    argument is dropped and the user gets an empty new-tab window instead of
+    Navin. The lingering instance serves nothing without its window, so it is
+    terminated before the fresh launch. Only processes using Navin's private
+    profile directory are touched - never the user's own browser.
+    """
+    import platform
+    import subprocess
+    import time
+
+    from navin.utils.proc import no_window_kwargs
+
+    if platform.system() != "Darwin":
+        return
+    pattern = f"--user-data-dir={_app_window_profile()}"
+    try:
+        alive = (
+            subprocess.run(  # noqa: S603
+                ["pgrep", "-f", pattern],
+                capture_output=True,
+                check=False,
+                **no_window_kwargs(),
+            ).returncode
+            == 0
+        )
+        if not alive:
+            return
+        subprocess.run(  # noqa: S603
+            ["pkill", "-TERM", "-f", pattern], check=False, **no_window_kwargs()
+        )
+        # The singleton lock must be released before the new launch, or it
+        # would still hand itself over to the dying process.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            gone = (
+                subprocess.run(  # noqa: S603
+                    ["pgrep", "-f", pattern],
+                    capture_output=True,
+                    check=False,
+                    **no_window_kwargs(),
+                ).returncode
+                != 0
+            )
+            if gone:
+                return
+            time.sleep(0.1)
+    except OSError:
+        return
+
+
+def _open_webui_on_windows_host(url: str) -> bool:
+    """From inside WSL, open the WebUI on the Windows side of the boundary.
+
+    The Linux opening machinery is a dead end here: a stock WSL has no browser
+    and no portal, so ``webbrowser`` ends in ``gio: Operation not supported``
+    while the user sits in front of a Windows screen. The window that can show
+    the page is a Windows one, ideally the same standalone app window the
+    Windows desktop build opens, pointed at *this* gateway, so the WSL project
+    opens in it rather than in a second Windows-side instance.
+    """
+    import subprocess
+
+    from navin.utils import wsl
+    from navin.utils.proc import detached_no_window_kwargs
+    from navin.webui.sidebar_state import webui_theme
+
+    want_app_window = os.environ.get("NAVIN_WEBUI_TAB", "").strip() not in {"1", "true", "yes"}
+    local_app_data = wsl.windows_env("LOCALAPPDATA")
+    browser = wsl.find_host_browser(local_app_data) if want_app_window else None
+    if browser:
+        args = [
+            browser,
+            f"--app={url}",
+            "--window-size=1440,900",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if local_app_data:
+            # The profile has to live on the Windows side: Chrome cannot write
+            # its lock files through the WSL redirector. A private profile also
+            # keeps the flags effective when the user's own Chrome is running.
+            args.append(f"--user-data-dir={local_app_data}\\Navin\\browser-profile")
+        if webui_theme() == "dark":
+            args.append("--force-dark-mode")
+        try:
+            subprocess.Popen(  # noqa: S603
+                args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **detached_no_window_kwargs(),
+            )
+            return True
+        except OSError:
+            pass  # Interop disabled or the exe vanished; try the default browser.
+
+    return wsl.open_url_on_host(url)
+
+
 def _open_webui_browser(url: str, *, wait: bool = True) -> None:
     """Open the WebUI as a dedicated app window (Cursor-style), or a tab as fallback.
 
@@ -1210,16 +1441,33 @@ def _open_webui_browser(url: str, *, wait: bool = True) -> None:
     import subprocess
     import webbrowser
 
+    from navin.utils import wsl
+
     if wait:
         _wait_for_webui(url)
     display_url = _webui_display_url(url)
 
+    if wsl.is_wsl_guest():
+        if _open_webui_on_windows_host(url):
+            console.print(
+                f"[green]✓[/green] Opened Navin on Windows: [cyan]{display_url}[/cyan]"
+            )
+            return
+        # No interop and no Windows browser reachable: fall through to the
+        # Linux paths for the rare WSL that runs its own browser under WSLg.
+
     if os.environ.get("NAVIN_WEBUI_TAB", "").strip() not in {"1", "true", "yes"}:
         browser = _find_chromium_browser()
         if browser:
+            _close_stale_macos_app_browser()
             try:
                 subprocess.Popen(  # noqa: S603
-                    [*browser, f"--app={url}", "--window-size=1440,900"],
+                    [
+                        *browser,
+                        f"--app={url}",
+                        "--window-size=1440,900",
+                        *_app_window_chrome_args(),
+                    ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
@@ -1232,8 +1480,13 @@ def _open_webui_browser(url: str, *, wait: bool = True) -> None:
                 pass  # Fall back to a normal browser tab below.
 
     try:
-        webbrowser.open(url)
-        console.print(f"[green]✓[/green] Opened WebUI: [cyan]{display_url}[/cyan]")
+        # webbrowser reports False for "no way to open anything"; a claimed
+        # success can still fail later inside gio, but at least the honest
+        # failures stop printing a green check mark over a dead end.
+        if webbrowser.open(url):
+            console.print(f"[green]✓[/green] Opened WebUI: [cyan]{display_url}[/cyan]")
+        else:
+            console.print(f"[yellow]No browser found; open {display_url} yourself.[/yellow]")
     except Exception as exc:
         console.print(f"[yellow]Could not open browser ({exc}); visit {display_url}[/yellow]")
 
@@ -1365,15 +1618,34 @@ def serve(
             "Set api.api_key in config to prevent unauthenticated access.[/red]"
         )
         raise typer.Exit(1)
+    if _tcp_endpoint_reachable(_host_for_local_browser(host), port):
+        from navin.ports import who_listens
+
+        listener = who_listens(port)
+        detail = ""
+        if listener and listener.pid:
+            detail = f" (pid={listener.pid}"
+            if listener.cmdline:
+                detail += f" {listener.cmdline[:80]}"
+            detail += ")"
+        console.print(
+            f"[red]Error: API port {host}:{port} is already in use{detail}.[/red]"
+        )
+        console.print("Check with [cyan]navin ports[/cyan] or choose another --port.")
+        raise typer.Exit(1)
     sync_workspace_templates(runtime_config.workspace_path)
+    from navin.index.warmer import schedule_warm
+
+    schedule_warm(runtime_config.workspace_path)
     bus = MessageBus()
+    set_notification_bus(bus)
     session_manager = SessionManager(runtime_config.workspace_path)
     try:
         agent_loop = AgentLoop.from_config(
             runtime_config, bus,
             session_manager=session_manager,
             image_generation_provider_configs=image_gen_provider_configs(runtime_config),
-            hook_factories=[create_file_edit_activity_hook],
+            hook_factories=list(DEFAULT_HOOK_FACTORIES),
         )
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
@@ -1430,6 +1702,11 @@ def webui(
         help="Keep the gateway running after this command exits",
     ),
     no_open: bool = typer.Option(False, "--no-open", help="Do not open a browser"),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help="Open the WebUI with this project directory preselected (like `navin .`)",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -1442,6 +1719,19 @@ def webui(
     from navin.gateway import GatewayRuntime, GatewayRuntimePaths, GatewayStartOptions
 
     _ensure_interactive_tty_mode()
+
+    # Self-heal the `navin` command: the desktop installers (Tauri MSI/NSIS,
+    # DMG, AppImage) ship a full CLI but never touch the PATH. First launch
+    # creates the shims (Windows/WSL) or the symlink (macOS/Linux).
+    try:
+        from navin.cli_link import ensure_cli_on_path
+
+        healed = ensure_cli_on_path()
+        if healed is not None and healed.created:
+            console.print(f"[dim]{healed.message}[/dim]")
+    except Exception:
+        pass
+
     config_path = _resolve_webui_config_path(config)
     created_config = not config_path.exists()
     if created_config:
@@ -1451,6 +1741,10 @@ def webui(
     setup_config = _load_webui_setup_config(config_path)
     if workspace:
         setup_config.agents.defaults.workspace = workspace
+    if gateway_port is not None:
+        # Persist explicit desktop/standalone ports so a second launch can
+        # attach to the same instance instead of starting a duplicate.
+        setup_config.gateway.port = gateway_port
 
     provider_error = _provider_setup_error(setup_config)
     if provider_error:
@@ -1472,7 +1766,42 @@ def webui(
         console.print(f"[red]Error: invalid WebUI channel config: {exc}[/red]")
         raise typer.Exit(1) from exc
 
-    if created_config or changed_webui or workspace:
+    from navin.config.security_profile import ensure_webui_assisted_profile
+
+    changed_security_profile = ensure_webui_assisted_profile(setup_config)
+    if changed_security_profile:
+        console.print(
+            "[dim]Security profile: assisted "
+            "(ask before destructive shell/file ops; allow-for-session).[/dim]"
+        )
+
+    from navin.webui.mcp_presets_api import ensure_auto_enabled_mcp_presets
+
+    added_mcp_presets = ensure_auto_enabled_mcp_presets(setup_config)
+    if added_mcp_presets:
+        console.print(
+            "[dim]MCP presets auto-enabled: "
+            + ", ".join(added_mcp_presets)
+            + ".[/dim]"
+        )
+
+    if project:
+        project_dir = Path(project).expanduser()
+        if not project_dir.is_dir():
+            console.print(f"[red]Error: project directory not found: {project}[/red]")
+            raise typer.Exit(1)
+        project_dir = project_dir.resolve()
+        console.print(f"Project: [cyan]{project_dir}[/cyan]")
+        webui_url = _append_webui_hash_param(webui_url, "project", str(project_dir))
+
+    if (
+        created_config
+        or changed_webui
+        or changed_security_profile
+        or added_mcp_presets
+        or workspace
+        or gateway_port is not None
+    ):
         save_config(setup_config, config_path)
         console.print(f"[green]✓[/green] Saved config: {config_path}")
 
@@ -1588,6 +1917,7 @@ def webui(
             webui_url=webui_url,
             gateway_host=runtime_config.gateway.host,
             gateway_port=effective_gateway_port,
+            config=runtime_config,
         )
         raise typer.Exit(1)
 
@@ -1617,6 +1947,14 @@ def _run_gateway(
     health_server_enabled: bool = True,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
+    # Lancée depuis le Finder/Explorer, l'app hérite d'un PATH minimal qui ne
+    # voit ni npx ni uvx : compléter AVANT de démarrer quoi que ce soit, pour
+    # que les serveurs MCP stdio, les presets et les prérequis de skills
+    # trouvent les outils installés en user.
+    from navin.utils.path_env import augment_path_for_user_tools
+
+    augment_path_for_user_tools()
+
     from navin.agent.tools.message import MessageTool
     from navin.bus.queue import MessageBus
     from navin.bus.runtime_events import RuntimeEventBus
@@ -1624,7 +1962,8 @@ def _run_gateway(
     from navin.cron.bound_runner import run_bound_cron_job
     from navin.cron.service import CronJobSkippedError, CronService
     from navin.cron.session_turns import is_bound_cron_job
-    from navin.cron.types import CronJob
+    from navin.cron.spend import CronSpendHook
+    from navin.cron.types import CronJob, CronLimits
     from navin.providers.factory import (
         build_provider_snapshot_allowing_unconfigured,
         load_provider_snapshot_allowing_unconfigured,
@@ -1645,6 +1984,7 @@ def _run_gateway(
             webui_url=webui_url,
             gateway_host=config.gateway.host,
             gateway_port=port,
+            config=config,
         )
         raise typer.Exit(1)
     if _webui_channel_enabled(config) and _webui_endpoint_reachable(webui_url):
@@ -1652,23 +1992,73 @@ def _run_gateway(
             webui_url=webui_url,
             gateway_host=config.gateway.host,
             gateway_port=port,
+            config=config,
         )
         raise typer.Exit(1)
 
+    _log_external_port_status(config)
+
     console.print(f"{__logo__} Starting navin gateway version {__version__} on port {port}...")
+    if webui_runtime_surface == "browser":
+        # A CLI install has no toast: one line here, from the daily cache, is
+        # how its user learns a newer navin exists. The desktop shell runs the
+        # gateway with its own surface and shows the update in its window.
+        from navin.update.notice import notice_in_background
+
+        notice_in_background(lambda text: console.print(f"[yellow]{escape(text)}[/yellow]"))
+    if sys.platform != "win32":
+        from navin.agent.tools.sandbox import ensure_native_sandbox
+
+        sandbox_bin = ensure_native_sandbox()
+        if sandbox_bin:
+            console.print(f"OS sandbox: {sandbox_bin}")
+        else:
+            console.print(
+                "[red]OS sandbox missing: navin-sandbox was not built. "
+                "Agent commands run unconfined. Install rustup "
+                "(https://rustup.rs) then `make native`, or ship a "
+                "packaged build that includes the helper.[/red]"
+            )
     _prepare_webui_bundle_for_gateway(
         config,
         mode=webui_bundle_mode,
         webui_static_dist=webui_static_dist,
     )
     sync_workspace_templates(config.workspace_path)
+
+    # Managed model catalog (opt-in). Never block boot on the network (up to
+    # 5 s): refresh in background unless no model is chosen yet. Later updates
+    # come from Settings / chat picker (forced), or activate / plan change.
+    from navin.providers.managed_catalog import sync_managed_catalog
+
+    if config.model_catalog.enabled:
+        if not config.agents.defaults.model:
+            sync_managed_catalog(config, force=True, min_interval_s=0)
+        else:
+            def _sync_catalog_offline_copy() -> None:
+                try:
+                    from navin.config.loader import load_config as _load
+
+                    sync_managed_catalog(_load(), force=True, min_interval_s=0)
+                except Exception as exc:  # best-effort by design
+                    logger.debug("Background catalog sync failed: {}", exc)
+
+            threading.Thread(
+                target=_sync_catalog_offline_copy,
+                name="navin-catalog-sync",
+                daemon=True,
+            ).start()
+
     bus = MessageBus()
+    # Lets subsystems with no bus of their own - the scheduler, the indexer,
+    # the language servers - reach the WebUI notification centre.
+    set_notification_bus(bus)
     runtime_events = RuntimeEventBus()
     provider_snapshot = build_provider_snapshot_allowing_unconfigured(config)
     if isinstance(provider_snapshot.provider, UnconfiguredProvider):
         console.print(
             "[yellow]No model provider configured yet. "
-            "Gateway will start — finish setup in WebUI Settings → Providers after connecting.[/yellow]"
+            "Gateway will start - finish setup in WebUI Settings → Providers after connecting.[/yellow]"
         )
         if provider_snapshot.provider.reason:
             console.print(f"[dim]{provider_snapshot.provider.reason}[/dim]")
@@ -1694,7 +2084,13 @@ def _run_gateway(
 
     # Create cron service with workspace-scoped store
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
-    cron = CronService(cron_store_path)
+    cron = CronService(
+        cron_store_path,
+        max_consecutive_failures=config.loops.max_consecutive_failures,
+        backoff_base_ms=config.loops.backoff_base_ms,
+        backoff_cap_ms=config.loops.backoff_cap_ms,
+        timezone_name=config.agents.defaults.timezone,
+    )
     trigger_store = LocalTriggerStore(config.workspace_path)
 
     # Create agent with cron service
@@ -1709,10 +2105,23 @@ def _run_gateway(
         provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
         runtime_events=runtime_events,
         provider_signature=provider_snapshot.signature,
-        hooks=[TokenUsageHook(timezone_name=config.agents.defaults.timezone)],
+        hooks=[
+            TokenUsageHook(timezone_name=config.agents.defaults.timezone),
+            CronSpendHook(cron),
+            *_optional_managed_usage_hooks(config),
+        ],
         local_trigger_store=trigger_store,
-        hook_factories=[create_file_edit_activity_hook],
+        hook_factories=list(DEFAULT_HOOK_FACTORIES),
     )
+    # Pull plan limits from navin.live on a timer so Stripe renewals / upgrades
+    # re-clamp the live AgentLoop without a manual Refresh or restart.
+    try:
+        from navin.license_sync import start_license_sync, stop_license_sync
+
+        license_sync = start_license_sync(lambda: agent)
+    except ImportError:
+        stop_license_sync = None  # type: ignore[assignment]
+        license_sync = None
     WebuiTurnCoordinator(
         bus=bus,
         sessions=session_manager,
@@ -1770,7 +2179,7 @@ def _run_gateway(
         async def _silent(*_args, **_kwargs):
             pass
 
-        # Dream is an internal job — run directly, not through the agent loop.
+        # Dream is an internal job - run directly, not through the agent loop.
         if job.name == "dream":
             from navin.agent.memory import MemoryStore
 
@@ -1793,6 +2202,7 @@ def _run_gateway(
                     ephemeral=True,
                     tools=store.build_dream_tools(),
                     on_progress=_silent,
+                    runtime=_dream_runtime_override(agent, config),
                 )
                 # Ground truth: the real file delta, not the LLM's self-report.
                 diff_body = store.dream_content_diff()
@@ -1831,8 +2241,41 @@ def _run_gateway(
             return None
 
         # Heartbeat is a system job that checks HEARTBEAT.md for active tasks.
+        if job.name == "trading-loop":
+            try:
+                from navin.trading.loop import maybe_tick
+
+                await asyncio.to_thread(maybe_tick)
+            except Exception:
+                logger.exception("Cron trading-loop tick failed")
+            return None
+
+        if job.name == "marketing-loop":
+            try:
+                from navin.marketing.loop import maybe_tick as marketing_maybe_tick
+
+                await asyncio.to_thread(marketing_maybe_tick)
+            except Exception:
+                logger.exception("Cron marketing-loop tick failed")
+            return None
+
         if job.name == "heartbeat":
-            heartbeat_file = config.workspace_path / "HEARTBEAT.md"
+            from navin import workspace_layout
+
+            # Desk ticks run even when the LLM turn is skipped (no chat target,
+            # empty HEARTBEAT.md). Tenders follow, Career watch, Leads watch,
+            # Marketing watch and Trading watch are not agent decisions.
+            career_note = ""
+            try:
+                from navin.gateway.heartbeat_desks import tick_heartbeat_desks
+
+                career_note = await asyncio.to_thread(tick_heartbeat_desks)
+            except Exception:
+                logger.exception("Heartbeat: desk ticks failed")
+
+            heartbeat_file = workspace_layout.read_with_root_fallback(
+                config.workspace_path, "HEARTBEAT.md"
+            )
             try:
                 content = heartbeat_file.read_text(encoding="utf-8")
             except OSError:
@@ -1848,7 +2291,10 @@ def _run_gateway(
 
             prompt = (
                 _HEARTBEAT_PREAMBLE
-                + f"You are executing periodic heartbeat tasks. Read the active tasks below, perform each one, and report what you did:\n\n{content}"
+                + "You are executing periodic heartbeat tasks. Read the active tasks below, "
+                "perform each one, and report what you did:\n\n"
+                + content
+                + career_note
             )
 
             # Internal check: funnel all output through the post-run gate so the
@@ -1915,7 +2361,14 @@ def _run_gateway(
     cron.on_job = on_cron_job
 
     def _webui_runtime_model_name() -> str | None:
-        model = getattr(agent, "model", None)
+        # Refresh from the saved config first: between a settings save and the
+        # next turn the in-memory runtime lags behind, and the bootstrap would
+        # otherwise report a stale model name. llm_runtime() also broadcasts
+        # runtime_model_updated to connected clients when the model changed.
+        try:
+            model = agent.llm_runtime().model
+        except Exception:
+            model = getattr(agent, "model", None)
         if isinstance(model, str):
             stripped = model.strip()
             return stripped or None
@@ -1923,6 +2376,12 @@ def _run_gateway(
 
     # Create channel manager (forwards SessionManager so the WebSocket channel
     # can serve the embedded webui's REST surface).
+    from navin.webui.runtime_surface import desktop_sidecar_surface
+
+    if webui_runtime_surface in {"native", "desktop"}:
+        webui_runtime_surface = "native"
+    else:
+        webui_runtime_surface = desktop_sidecar_surface()
     channels = ChannelManager(
         config,
         bus,
@@ -1930,6 +2389,9 @@ def _run_gateway(
         cron_service=cron,
         local_trigger_store=trigger_store,
         webui_runtime_model_name=_webui_runtime_model_name,
+        # Guardrails > Memory adds or drops the recall tool at runtime through
+        # the registry's public register/unregister; the loop is not involved.
+        webui_tool_registry=lambda: agent.tools,
         webui_cron_pending_job_ids=getattr(agent, "pending_cron_job_ids_for_session", None),
         webui_local_trigger_pending_ids=getattr(
             agent,
@@ -2018,7 +2480,7 @@ def _run_gateway(
         async with server:
             await server.serve_forever()
     # Register Dream system job (idempotent on restart)
-    from navin.cron.types import CronJob, CronPayload, CronSchedule
+    from navin.cron.types import CronJob, CronPayload
     dream_cfg = config.agents.defaults.dream
     if dream_cfg.enabled:
         cron.register_system_job(CronJob(
@@ -2026,6 +2488,10 @@ def _run_gateway(
             name="dream",
             schedule=dream_cfg.build_schedule(config.agents.defaults.timezone),
             payload=CronPayload(kind="system_event"),
+            limits=CronLimits(
+                daily_token_budget=dream_cfg.daily_token_budget,
+                max_consecutive_failures=dream_cfg.max_consecutive_failures,
+            ),
         ))
         console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
     else:
@@ -2037,38 +2503,43 @@ def _run_gateway(
         cron.register_system_job(CronJob(
             id="heartbeat",
             name="heartbeat",
-            schedule=CronSchedule(
-                kind="every",
-                every_ms=hb_cfg.interval_s * 1000,
-                tz=config.agents.defaults.timezone,
-            ),
+            schedule=hb_cfg.build_schedule(config.agents.defaults.timezone),
             payload=CronPayload(kind="system_event"),
+            limits=CronLimits(
+                daily_token_budget=hb_cfg.daily_token_budget,
+                max_consecutive_failures=hb_cfg.max_consecutive_failures,
+            ),
         ))
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
         if not open_browser_url:
             return
-        from urllib.parse import urlparse
+        try:
+            from urllib.parse import urlparse
 
-        parsed = urlparse(open_browser_url)
-        target_host = parsed.hostname or config.gateway.host or "127.0.0.1"
-        target_port = parsed.port or port
-        # Channels start asynchronously; a short poll lets us avoid racing the bind.
-        for _ in range(40):  # ~4s max
-            try:
-                reader, writer = await asyncio.open_connection(
-                    target_host,
-                    target_port,
-                )
-                writer.close()
-                with suppress(Exception):
-                    await writer.wait_closed()
-                break
-            except OSError:
-                await asyncio.sleep(0.1)
-        # App-window (Cursor-style) with tab fallback; already past the bind poll.
-        await asyncio.to_thread(_open_webui_browser, open_browser_url, wait=False)
+            parsed = urlparse(open_browser_url)
+            target_host = parsed.hostname or config.gateway.host or "127.0.0.1"
+            target_port = parsed.port or port
+            # Channels start asynchronously; a short poll lets us avoid racing the bind.
+            for _ in range(40):  # ~4s max
+                try:
+                    reader, writer = await asyncio.open_connection(
+                        target_host,
+                        target_port,
+                    )
+                    writer.close()
+                    with suppress(Exception):
+                        await writer.wait_closed()
+                    break
+                except OSError:
+                    await asyncio.sleep(0.1)
+            # App-window (Cursor-style) with tab fallback; already past the bind poll.
+            await asyncio.to_thread(_open_webui_browser, open_browser_url, wait=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Could not open the webui browser")
 
     async def run():
         tasks: list[asyncio.Task] = []
@@ -2084,7 +2555,190 @@ def _run_gateway(
             console.print,
         )
         try:
+            # Pre-import the provider SDKs off the event loop: they are loaded
+            # lazily so startup never pays for them, but the first user turn
+            # should not pay the ~1 s import either. Failures are irrelevant
+            # here - the real import at call time will report them properly.
+            def _prewarm_provider_sdks() -> None:
+                for module in ("anthropic", "openai"):
+                    try:
+                        __import__(module)
+                    except Exception:
+                        pass
+
+            threading.Thread(
+                target=_prewarm_provider_sdks,
+                name="navin-sdk-prewarm",
+                daemon=True,
+            ).start()
+
             await cron.start()
+            trading_tick_inflight = False
+
+            async def _trading_loop_supervisor() -> None:
+                nonlocal trading_tick_inflight
+                while True:
+                    try:
+                        from navin.trading.loop import guard_tick, maybe_tick
+
+                        while True:
+                            if trading_tick_inflight:
+                                await asyncio.sleep(20)
+                                continue
+                            trading_tick_inflight = True
+                            try:
+                                await asyncio.to_thread(maybe_tick)
+                                # Intraday guard: stops, venue fills and threshold
+                                # alerts between research cycles (own interval).
+                                await asyncio.to_thread(guard_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Trading loop supervisor tick failed")
+                            finally:
+                                trading_tick_inflight = False
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Trading loop supervisor crashed - restarting in 5s")
+                        trading_tick_inflight = False
+                        await asyncio.sleep(5)
+
+            career_tick_inflight = False
+
+            async def _career_loop_supervisor() -> None:
+                nonlocal career_tick_inflight
+                while True:
+                    try:
+                        from navin.career.loop import maybe_tick as career_maybe_tick
+
+                        while True:
+                            if career_tick_inflight:
+                                await asyncio.sleep(20)
+                                continue
+                            career_tick_inflight = True
+                            try:
+                                await asyncio.to_thread(career_maybe_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Career loop supervisor tick failed")
+                            finally:
+                                career_tick_inflight = False
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Career loop supervisor crashed - restarting in 5s")
+                        career_tick_inflight = False
+                        await asyncio.sleep(5)
+
+            marketing_tick_inflight = False
+
+            async def _marketing_loop_supervisor() -> None:
+                nonlocal marketing_tick_inflight
+                while True:
+                    try:
+                        from navin.marketing.loop import maybe_tick as marketing_maybe_tick
+
+                        while True:
+                            if marketing_tick_inflight:
+                                await asyncio.sleep(20)
+                                continue
+                            marketing_tick_inflight = True
+                            try:
+                                await asyncio.to_thread(marketing_maybe_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Marketing loop supervisor tick failed")
+                            finally:
+                                marketing_tick_inflight = False
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Marketing loop supervisor crashed - restarting in 5s")
+                        marketing_tick_inflight = False
+                        await asyncio.sleep(5)
+
+            tenders_tick_inflight = False
+
+            async def _tenders_loop_supervisor() -> None:
+                nonlocal tenders_tick_inflight
+                while True:
+                    try:
+                        from navin.tenders.loop import maybe_tick as tenders_maybe_tick
+
+                        while True:
+                            if tenders_tick_inflight:
+                                await asyncio.sleep(20)
+                                continue
+                            tenders_tick_inflight = True
+                            try:
+                                await asyncio.to_thread(tenders_maybe_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Tenders loop supervisor tick failed")
+                            finally:
+                                tenders_tick_inflight = False
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Tenders loop supervisor crashed - restarting in 5s")
+                        tenders_tick_inflight = False
+                        await asyncio.sleep(5)
+
+            leads_tick_inflight = False
+
+            async def _leads_loop_supervisor() -> None:
+                nonlocal leads_tick_inflight
+                while True:
+                    try:
+                        from navin.leads.loop import maybe_tick as leads_maybe_tick
+
+                        while True:
+                            if leads_tick_inflight:
+                                await asyncio.sleep(20)
+                                continue
+                            leads_tick_inflight = True
+                            try:
+                                await asyncio.to_thread(leads_maybe_tick)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                logger.exception("Leads loop supervisor tick failed")
+                            finally:
+                                leads_tick_inflight = False
+                            await asyncio.sleep(20)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Leads loop supervisor crashed - restarting in 5s")
+                        leads_tick_inflight = False
+                        await asyncio.sleep(5)
+
+            async def _run_isolated_desk_loops() -> None:
+                """Career / Leads / Marketing / Tenders / Trading must not cancel the WebUI."""
+                desk_loop_tasks = [
+                    asyncio.create_task(_trading_loop_supervisor(), name="navin-trading-loop"),
+                    asyncio.create_task(_career_loop_supervisor(), name="navin-career-loop"),
+                    asyncio.create_task(_marketing_loop_supervisor(), name="navin-marketing-loop"),
+                    asyncio.create_task(_tenders_loop_supervisor(), name="navin-tenders-loop"),
+                    asyncio.create_task(_leads_loop_supervisor(), name="navin-leads-loop"),
+                ]
+                try:
+                    await asyncio.gather(*desk_loop_tasks, return_exceptions=True)
+                except asyncio.CancelledError:
+                    for item in desk_loop_tasks:
+                        if not item.done():
+                            item.cancel()
+                    await asyncio.gather(*desk_loop_tasks, return_exceptions=True)
+                    raise
+
             tasks = [
                 asyncio.create_task(agent.run(), name="navin-agent-loop"),
                 asyncio.create_task(channels.start_all(), name="navin-channels"),
@@ -2095,6 +2749,7 @@ def _run_gateway(
                     ),
                     name="navin-local-triggers",
                 ),
+                asyncio.create_task(_run_isolated_desk_loops(), name="navin-desk-loops"),
             ]
             # When the WebSocket/WebUI channel is enabled it already binds the
             # gateway port and serves GET /health. A second listener on the same
@@ -2140,6 +2795,8 @@ def _run_gateway(
             console.print(traceback.format_exc())
         finally:
             try:
+                if license_sync is not None and stop_license_sync is not None:
+                    stop_license_sync(license_sync)
                 if shutdown_task and not shutdown_task.done():
                     shutdown_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -2157,6 +2814,10 @@ def _run_gateway(
                 if runtime_tasks is not None and not runtime_tasks_drained:
                     with suppress(asyncio.CancelledError, Exception):
                         await runtime_tasks
+                # A stopped gateway must not leave exec sessions or browser
+                # engines running: a dev server started through a session
+                # would keep its port with nothing left to stop it.
+                await _close_agent_subprocesses()
                 # Flush all cached sessions to durable storage before exit.
                 # This prevents data loss on filesystems with write-back
                 # caching (rclone VFS, NFS, FUSE mounts, etc.).
@@ -2184,9 +2845,100 @@ app.add_typer(
 )
 
 
+ports_app = typer.Typer(help="List and check Navin service ports")
+
+
+@ports_app.callback(invoke_without_command=True)
+def ports_root(
+    ctx: typer.Context,
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace path"),
+) -> None:
+    """Show the port registry status (default) or run a subcommand."""
+    if ctx.invoked_subcommand is not None:
+        return
+    runtime = _load_runtime_config(config, workspace)
+    from navin.ports import check_ports, format_port_table
+
+    results = check_ports(runtime, include_external=True)
+    console.print(format_port_table(results))
+    conflicts = [row for row in results if row.is_conflict]
+    if conflicts:
+        console.print()
+        console.print(
+            f"[yellow]{len(conflicts)} Navin-owned port(s) held by another process.[/yellow]"
+        )
+
+
+@ports_app.command("check")
+def ports_check(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace path"),
+) -> None:
+    """Exit non-zero when a Navin-owned port is busy with a non-Navin process."""
+    runtime = _load_runtime_config(config, workspace)
+    from navin.ports import check_navin_ports, check_ports, format_port_table
+
+    results = check_ports(runtime, include_external=True)
+    console.print(format_port_table(results))
+    conflicts = check_navin_ports(runtime)
+    if not conflicts:
+        console.print("[green]OK[/green] - no Navin port conflicts")
+        raise typer.Exit(0)
+    console.print()
+    console.print(
+        f"[red]FAIL[/red] - {len(conflicts)} Navin-owned port(s) conflict with other services"
+    )
+    for row in conflicts:
+        endpoint = f"{row.role.host}:{row.role.port}"
+        console.print(f"  - {row.role.spec.name} {endpoint}: {row.detail}")
+    raise typer.Exit(1)
+
+
+app.add_typer(ports_app, name="ports")
+
+
 # ============================================================================
 # Agent Commands
 # ============================================================================
+
+
+def _warn_about_orphaned_subagents(agent_loop: Any) -> None:
+    """Say so when a one-shot run ends with subagents still working.
+
+    ``spawn`` reports back through the bus, but a ``--message`` run exits as soon
+    as the turn is done, so that report has nowhere to land. The agent will have
+    promised to follow up; without this notice the work vanishes silently.
+    """
+    try:
+        running = agent_loop.subagents.get_running_count()
+    except Exception:  # noqa: BLE001 - a missing manager must not break shutdown
+        return
+    if running < 1:
+        return
+    console.print(
+        f"\n[yellow]{running} subagent(s) were still running and did not report back.[/yellow]\n"
+        "[dim]A --message run exits after one turn. Use the interactive session "
+        "to receive subagent results.[/dim]"
+    )
+
+
+async def _close_agent_subprocesses() -> None:
+    """Stop the long-lived child processes tools may leave behind.
+
+    Anything still attached to the loop when it closes is torn down by the
+    garbage collector afterwards, which prints an "Event loop is closed"
+    traceback under the agent's last message. A new tool that owns a subprocess
+    belongs here.
+    """
+    from navin.agent.tools.browser import shutdown_browser_sessions
+    from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
+
+    for closer in (DEFAULT_EXEC_SESSION_MANAGER.shutdown, shutdown_browser_sessions):
+        try:
+            await closer()
+        except Exception as exc:  # noqa: BLE001 - shutdown must not mask the turn's result
+            logger.debug("Shutdown cleanup failed: {}", exc)
 
 
 @app.command()
@@ -2206,6 +2958,12 @@ def agent(
     config = _load_runtime_config(config, workspace)
     sync_workspace_templates(config.workspace_path)
 
+    # Start the code index off the first-tool path so a cold repo is warm
+    # before the interactive prompt or -m turn asks for a symbol.
+    from navin.index.warmer import schedule_warm
+
+    schedule_warm(config.workspace_path)
+
     bus = MessageBus()
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
@@ -2223,7 +2981,7 @@ def agent(
             config, bus,
             cron_service=cron,
             image_generation_provider_configs=image_gen_provider_configs(config),
-            hook_factories=[create_file_edit_activity_hook],
+            hook_factories=list(DEFAULT_HOOK_FACTORIES),
         )
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
@@ -2267,7 +3025,7 @@ def agent(
         return _cli_progress
 
     if message:
-        # Single message mode — direct call, no bus needed
+        # Single message mode - direct call, no bus needed
         async def run_once():
             renderer = StreamRenderer(
                 render_markdown=markdown,
@@ -2291,16 +3049,18 @@ def agent(
                     metadata=response.metadata if response else None,
                     **print_kwargs,
                 )
+            _warn_about_orphaned_subagents(agent_loop)
             await agent_loop.close_mcp()
+            await _close_agent_subprocesses()
 
         asyncio.run(run_once())
     else:
-        # Interactive mode — route through bus like other channels
+        # Interactive mode - route through bus like other channels
         from navin.bus.events import InboundMessage
         _init_prompt_session()
         _model, _preset_tag = _model_display(config)
         _icon = config.agents.defaults.bot_icon or __logo__
-        console.print(f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} — type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n")
+        console.print(f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} - type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n")
 
         if ":" in session_id:
             cli_channel, cli_chat_id = session_id.split(":", 1)
@@ -2456,8 +3216,66 @@ def agent(
                 outbound_task.cancel()
                 await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
                 await agent_loop.close_mcp()
+                await _close_agent_subprocesses()
 
         asyncio.run(run_interactive())
+
+
+@app.command(hidden=True)
+def tui(
+    path: str | None = typer.Argument(None, help="Project folder to work in (default: the current directory)", show_default=False),
+    session_id: str | None = typer.Option(None, "--session", "-s", help="Session ID (default: last navin-cli session, else cli:direct)"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory (default: the project folder)"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    logs: bool = typer.Option(False, "--logs/--no-logs", help="Write navin runtime logs to the log file while navin-cli runs"),
+):
+    """Hidden alias of `navin-cli`. Prefer the `navin-cli` command.
+
+    Like `navin-cli .` or `navin-cli ~/projects/app`, it works in the folder
+    you launch it from.
+    """
+    # Must run before Textual is imported: it reads TEXTUAL_COLOR_SYSTEM once.
+    from navin.tui.terminal import prepare_terminal_env
+
+    prepare_terminal_env()
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        console.print(
+            "[red]The terminal UI needs the 'textual' package.[/red]\n"
+            "Install it with: [bold]uv pip install 'textual>=6,<7'[/bold] (or pip install textual)"
+        )
+        raise typer.Exit(1)
+
+    project = Path(path or ".").expanduser()
+    if not project.is_dir():
+        console.print(f"[red]Not a folder: {project}[/red]")
+        raise typer.Exit(1)
+    project = project.resolve()
+    # navin-cli is a project tool: the agent, Graph and Evolve all work in the
+    # folder it was started from (or the one given), like `navin-cli .`.
+    os.chdir(project)
+    # Packaged builds: make sure `navin-cli` exists next to `navin` (no-op from source).
+    with suppress(Exception):
+        from navin.cli_link import ensure_cli_on_path
+
+        ensure_cli_on_path()
+
+    config_path = Path(config).expanduser().resolve() if config else None
+    loaded = _load_runtime_config(config, workspace or str(project))
+    # navin-cli owns the screen: runtime logs would corrupt it, so they go to the
+    # file sink only (same switch as `navin agent --logs`).
+    _set_navin_logs(logs)
+
+    from navin.tui import run_tui
+
+    run_tui(config=loaded, session_id=session_id, config_path=config_path, project_root=project)
+
+
+def run_cli() -> None:
+    """Entry point of the `navin-cli` command: the terminal UI, in this folder."""
+    sys.argv = [sys.argv[0], "tui", *sys.argv[1:]]
+    run()
 
 
 # ============================================================================
@@ -2526,6 +3344,21 @@ def channels_login(
 
     if not success:
         raise typer.Exit(1)
+
+
+# ============================================================================
+# Language Server Commands
+# ============================================================================
+
+app.add_typer(create_lsp_app(console=console), name="lsp")
+app.add_typer(create_app_templates_app(console=console), name="app")
+
+
+# ============================================================================
+# AGI: skills evolution + memory switches (same as the AGI panel)
+# ============================================================================
+
+app.add_typer(create_agi_app(console=console), name="agi")
 
 
 # ============================================================================
@@ -2609,6 +3442,479 @@ def plugins_disable(
 
 
 # ============================================================================
+# Career desk (same store as Studio #/career, Tauri, and the career tool)
+# ============================================================================
+
+
+@app.command(
+    name="tenders",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def tenders_desk(ctx: typer.Context) -> None:
+    """Start, stop, schedule, tick or watch the Tenders loop.
+
+    Same store as Studio ``#/tenders``, Tauri, HTTP ``/api/tenders``, and
+    ``python -m navin.tenders.desk_cli``. Heartbeat is follow/watch only.
+    Never send a buyer mail from the loop or from heartbeat.
+    """
+    from navin.tenders.desk_cli import main as tenders_main
+
+    raise typer.Exit(tenders_main(list(ctx.args)))
+
+
+@app.command(
+    name="career",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def career_desk(ctx: typer.Context) -> None:
+    """Start, stop, schedule, tick or watch the Career loop.
+
+    Same store as Studio ``#/career``, Tauri, HTTP ``/api/career``, and
+    ``python -m navin.career.desk_cli``. Heartbeat is watch only.
+    """
+    from navin.career.desk_cli import main as career_main
+
+    raise typer.Exit(career_main(list(ctx.args)))
+
+
+@app.command(
+    name="trading",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def trading_desk(ctx: typer.Context) -> None:
+    """Start, stop, schedule, tick or watch the Trading loop.
+
+    Same store as Studio ``#/trading``, Tauri, HTTP ``/api/trading``, and
+    ``python -m navin.trading.desk_cli``. Heartbeat is watch only.
+    """
+    from navin.trading.desk_cli import main as trading_main
+
+    raise typer.Exit(trading_main(list(ctx.args)))
+
+
+@app.command(
+    name="marketing",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def marketing_desk(ctx: typer.Context) -> None:
+    """Start, stop, schedule, tick or watch the Marketing loop.
+
+    Same store as Studio ``#/marketing``, Tauri, HTTP ``/api/marketing``, and
+    ``python -m navin.marketing.desk_cli``. Heartbeat is watch only.
+    """
+    from navin.marketing.desk_cli import main as marketing_main
+
+    raise typer.Exit(marketing_main(list(ctx.args)))
+
+
+@app.command(
+    name="leads",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    add_help_option=False,
+)
+def leads_desk(ctx: typer.Context) -> None:
+    """Start, stop, schedule, tick or watch the Leads loop.
+
+    Same store as Studio ``#/leads``, Tauri, HTTP ``/api/leads``, and
+    ``python -m navin.leads.desk_cli``. Heartbeat is watch only.
+    Never scrape LinkedIn. Never send a sequence from the loop or heartbeat.
+    """
+    from navin.leads.desk_cli import main as leads_main
+
+    raise typer.Exit(leads_main(list(ctx.args)))
+
+
+# ============================================================================
+# Diagnostics
+# ============================================================================
+
+
+@app.command()
+def doctor(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+):
+    """Report what this installation can do and what is missing.
+
+    Works the same from source and from a packaged build, on Linux, macOS and
+    Windows: nothing here needs a shell script or a source checkout.
+    """
+    from navin.diagnostics import doctor_report, missing_required, workspace_note
+
+    _config_path, loaded = _load_inspection_config(config=config, workspace=workspace)
+    sections = doctor_report(loaded, workspace=loaded.workspace_path)
+    sections[0].checks.append(workspace_note(loaded.workspace_path))
+
+    console.print(f"{__logo__} navin doctor\n")
+    for section in sections:
+        # A section can come back empty when it reports on history this
+        # installation has not accumulated yet.
+        if not section.checks:
+            continue
+        console.print(f"[bold]{section.title}[/bold]")
+        for check in section.checks:
+            mark = "[green]OK[/green]  " if check.ok else "[yellow]MISS[/yellow]"
+            line = f"  {mark} {check.name:<22} {escape(check.detail)}"
+            if not check.ok and check.hint:
+                line += f" [dim]- {escape(check.hint)}[/dim]"
+            console.print(line)
+        console.print("")
+
+    blocking = missing_required(sections)
+    if blocking:
+        names = ", ".join(check.name for check in blocking)
+        console.print(f"[red]Missing and needed: {names}[/red]")
+        raise typer.Exit(1)
+    console.print("[dim]Missing optional tools only remove the capabilities they serve.[/dim]")
+
+
+def _download_with_progress(service: Any) -> dict[str, Any]:
+    """Run the signed download on a thread and draw its progress in the terminal."""
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        TextColumn,
+        TimeRemainingColumn,
+        TransferSpeedColumn,
+    )
+
+    outcome: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            outcome["result"] = service.download_update()
+        except Exception as exc:  # noqa: BLE001 - reported on the main thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, name="navin-update-download", daemon=True)
+    worker.start()
+    with Progress(
+        TextColumn("[bold]Downloading[/bold]"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("download", total=None)
+        while worker.is_alive():
+            status = service.update_status()
+            total = int(status.get("totalBytes") or 0)
+            done = int(status.get("downloadedBytes") or 0)
+            if total:
+                progress.update(task, total=total, completed=done)
+            worker.join(0.2)
+        status = service.update_status()
+        if status.get("totalBytes"):
+            progress.update(task, total=status["totalBytes"], completed=status["totalBytes"])
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["result"]
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(False, "--check", help="Only report whether a newer version exists"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Install without asking"),
+):
+    """Update navin to the latest signed release.
+
+    Checks the signed release manifest, downloads the archive for this OS,
+    verifies its checksum, proves the new version starts, then swaps the
+    installation in place. Works for the packaged CLI installed with
+    `curl https://navin.live/install`; the desktop app updates itself from
+    its own window.
+    """
+    from navin.update import service
+
+    kind = service._install_kind()
+    if kind == "source":
+        console.print(
+            f"{__logo__} navin v{__version__} runs from a source checkout. "
+            "Update it with git pull (or pip / uv), not with this command."
+        )
+        return
+    if not service.updates_configured():
+        console.print(
+            "[yellow]This build has no update server configured.[/yellow] "
+            "Download the latest release from https://navin.live/download"
+        )
+        raise typer.Exit(1)
+
+    try:
+        info = service.check_for_update(force=True)
+    except service.UpdateError as exc:
+        console.print(f"[red]Could not check for updates: {escape(str(exc))}[/red]")
+        raise typer.Exit(1) from exc
+
+    if not info.get("available"):
+        console.print(f"{__logo__} navin v{__version__} is up to date.")
+        return
+
+    latest = str(info.get("latestVersion") or "")
+    console.print(f"{__logo__} navin [bold]{latest}[/bold] is available (you have {__version__}).")
+    notes = str(info.get("notes") or "").strip()
+    if notes:
+        console.print(f"[dim]{escape(notes)}[/dim]")
+    if not info.get("supported"):
+        reason = str(info.get("reason") or "This installation cannot be updated automatically.")
+        console.print(f"[yellow]{escape(reason)}[/yellow]")
+        raise typer.Exit(1)
+    if kind != "cli":
+        console.print(
+            "[yellow]This is a desktop installation: open Navin and use Settings > Updates, "
+            "or download the new installer from https://navin.live/download[/yellow]"
+        )
+        raise typer.Exit(1)
+    if check:
+        console.print("Run [bold]navin update[/bold] to install it.")
+        return
+    if not yes:
+        if not sys.stdin.isatty():
+            console.print("Not a terminal: pass --yes to install without a prompt.")
+            raise typer.Exit(1)
+        if not typer.confirm(f"Install navin {latest} now?", default=True):
+            console.print("Update skipped.")
+            return
+
+    try:
+        _download_with_progress(service)
+        result = service.apply_cli_update()
+    except service.UpdateError as exc:
+        console.print(f"[red]Update failed: {escape(str(exc))}[/red]")
+        console.print("[dim]Nothing was changed; the current version keeps working.[/dim]")
+        raise typer.Exit(1) from exc
+
+    # The daily "a newer navin exists" hint is stale now; the next start
+    # re-reads the manifest instead of announcing the version just installed.
+    with suppress(Exception):
+        from navin.update.notice import _cache_path
+
+        _cache_path().unlink(missing_ok=True)
+
+    if result.get("deferred"):
+        console.print(
+            f"[green]navin {latest} is ready.[/green] It is put in place the moment this "
+            "command exits; give it a few seconds, then run [bold]navin --version[/bold]."
+        )
+        return
+    console.print(f"[green]Updated to navin {latest}.[/green] New terminals and sessions use it right away.")
+
+
+@app.command(name="install-cli")
+def install_cli(
+    force: bool = typer.Option(False, "--force", help="Replace an existing navin command"),
+):
+    """Make the `navin` command available in your terminal.
+
+    Needed after installing the macOS disk image or a bare Linux binary: both put
+    the executable somewhere no shell looks. The Linux packages and the Windows
+    installer already do this for you.
+    """
+    from navin.cli_link import install_cli_link
+
+    result = install_cli_link(force=force)
+    colour = "green" if result.created else "yellow"
+    console.print(f"[{colour}]{escape(result.message)}[/{colour}]")
+    if not result.created and result.path is None and sys.platform != "win32":
+        raise typer.Exit(1)
+
+
+# ============================================================================
+# Cache maintenance
+# ============================================================================
+
+
+def _cache_categories() -> list[tuple[str, str, Path, bool]]:
+    """(id, description, path, cleared_by_default) for every cache Navin keeps.
+
+    Only regenerable data qualifies. Config, chat threads, sessions, history,
+    snapshots and workspaces are user data and never listed here.
+    """
+    from navin.config.paths import get_data_dir, get_webui_dir
+
+    data = get_data_dir()
+    categories = [
+        ("index", "Code index (rebuilt on demand per project)", data / "index", True),
+        ("logs", "Log files", data / "logs", True),
+        ("updates", "Downloaded update artifacts", data / "updates", True),
+        ("media", "Chat attachments cache (old chats lose their previews)", data / "media", False),
+        (
+            "lsp-extensions",
+            "Language servers installed from VS Code extensions (reinstall with navin lsp install)",
+            data / "lsp-extensions",
+            False,
+        ),
+        ("browser", "Browser profile (logins in the agent browser are lost)", get_webui_dir() / "browser-profile", False),
+    ]
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            categories.append(
+                ("browser", "Browser profile (desktop app)", Path(local) / "Navin" / "browser-profile", False)
+            )
+    return categories
+
+
+def _dir_size_bytes(path: Path) -> int:
+    total = 0
+    if path.is_dir():
+        for entry in path.rglob("*"):
+            try:
+                if entry.is_file() and not entry.is_symlink():
+                    total += entry.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _human_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{value:.1f} GB"
+
+
+def _clear_dir_contents(path: Path) -> int:
+    """Delete everything inside *path* (kept itself); returns bytes freed."""
+    import shutil as _shutil
+
+    freed = 0
+    if not path.is_dir():
+        return 0
+    for entry in path.iterdir():
+        try:
+            if entry.is_dir() and not entry.is_symlink():
+                freed += _dir_size_bytes(entry)
+                _shutil.rmtree(entry, ignore_errors=True)
+            else:
+                freed += entry.stat().st_size if entry.is_file() else 0
+                entry.unlink(missing_ok=True)
+        except OSError:
+            # A file held open (live log on Windows) stays; everything else goes.
+            continue
+    return freed
+
+
+@app.command(name="cache")
+def cache_command(
+    clear: bool = typer.Option(False, "--clear", help="Delete the regenerable caches (code index, logs, update downloads)"),
+    media: bool = typer.Option(False, "--media", help="With --clear: also delete the chat attachments cache"),
+    browser: bool = typer.Option(False, "--browser", help="With --clear: also delete the agent browser profile (logins lost)"),
+    all_caches: bool = typer.Option(False, "--all", help="With --clear: delete every cache category"),
+):
+    """Show what Navin caches and how big it is; --clear empties it.
+
+    Only regenerable data is touched. Configuration, chats, sessions, history
+    and project workspaces are never deleted by this command.
+    """
+    categories = _cache_categories()
+    if not clear:
+        total = 0
+        for cat_id, description, path, default in categories:
+            size = _dir_size_bytes(path)
+            total += size
+            extra = "" if default else f" [dim](--{cat_id})[/dim]"
+            console.print(f"  {_human_size(size):>10}  {cat_id:<8} {escape(description)}{extra}")
+        console.print(f"\n  {_human_size(total):>10}  total")
+        console.print("\n[dim]navin cache --clear  vide les caches régénérables "
+                      "(--media / --browser / --all pour élargir)[/dim]")
+        return
+
+    selected = {"index", "logs", "updates"}
+    if media or all_caches:
+        selected.add("media")
+    if browser or all_caches:
+        selected.add("browser")
+
+    freed = 0
+    for cat_id, description, path, _default in categories:
+        if cat_id not in selected:
+            continue
+        size = _clear_dir_contents(path)
+        freed += size
+        if size:
+            console.print(f"  [green]✓[/green] {cat_id:<8} {_human_size(size)} freed")
+    console.print(f"[green]Cache cleared: {_human_size(freed)} freed.[/green]")
+
+
+# ============================================================================
+# Embedded interpreter
+# ============================================================================
+
+
+@app.command(
+    name="python",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    add_help_option=False,
+)
+def python_command(ctx: typer.Context):
+    """Run a Python script, module or snippet with navin's own libraries.
+
+    ``navin python report.py``, ``navin python -m pytest``, ``navin python -c code``.
+    A packaged build has no separate interpreter on disk, so this is how skills,
+    the document converters and the agent's own scripts reach python-docx,
+    openpyxl, pandas and everything else navin ships with. From source it is the
+    same interpreter navin itself runs on.
+    """
+    import runpy
+
+    args = list(ctx.args)
+    if not args:
+        console.print("Usage: navin python [-m module | -c code | script.py] [args...]")
+        raise typer.Exit(2)
+
+    # sys.argv has to look like a normal interpreter's to the code being run:
+    # argparse, __file__ and sys.path[0] are all read from it.
+    original_argv = sys.argv[:]
+    original_path = sys.path[:]
+    try:
+        if args[0] == "-c":
+            if len(args) < 2:
+                console.print("navin python -c needs the code to run")
+                raise typer.Exit(2)
+            sys.argv = ["-c", *args[2:]]
+            sys.path.insert(0, "")
+            exec(compile(args[1], "<command>", "exec"), {"__name__": "__main__"})  # noqa: S102
+        elif args[0] == "-m":
+            if len(args) < 2:
+                console.print("navin python -m needs the module to run")
+                raise typer.Exit(2)
+            sys.argv = [args[1], *args[2:]]
+            sys.path.insert(0, "")
+            try:
+                runpy.run_module(args[1], run_name="__main__", alter_sys=True)
+            except ImportError as exc:
+                # A packaged build carries the modules navin ships, not the whole
+                # standard library: PyInstaller collects what it sees imported.
+                # The bare traceback names runpy internals and blames navin.
+                console.print(f"[red]{escape(str(exc))}[/red]")
+                raise typer.Exit(1) from None
+        else:
+            script = Path(args[0]).expanduser()
+            if not script.is_file():
+                console.print(f"[red]No such file: {script}[/red]")
+                raise typer.Exit(2)
+            sys.argv = [str(script), *args[1:]]
+            sys.path.insert(0, str(script.parent.resolve()))
+            runpy.run_path(str(script), run_name="__main__")
+    except SystemExit as exc:
+        code = exc.code
+        raise typer.Exit(code if isinstance(code, int) else (0 if code is None else 1)) from None
+    finally:
+        sys.argv = original_argv
+        sys.path[:] = original_path
+
+
+# ============================================================================
 # Status Commands
 # ============================================================================
 
@@ -2658,6 +3964,93 @@ def status(
 # OAuth Login
 # ============================================================================
 
+license_app = typer.Typer(help="Manage the navin.live subscription of this device")
+app.add_typer(license_app, name="license")
+
+
+@license_app.command("activate")
+def license_activate(
+    key: str = typer.Argument(..., help="License key (NAVIN-XXXX-XXXX-XXXX-XXXX)"),
+    name: str | None = typer.Option(None, "--name", help="Device name shown in the dashboard"),
+):
+    """Activate this device with a navin.live license key."""
+    from navin.config.loader import load_config
+    from navin.license_client import LicenseError, activate, uses_managed_key
+
+    config = load_config()
+    try:
+        result = activate(config, key, name=name)
+    except LicenseError as e:
+        console.print(f"[red]Activation failed: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Could not reach the license server: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓ Device activated[/green]  plan: [bold]{result.get('plan', '?')}[/bold]")
+    if uses_managed_key(config):
+        console.print("[green]✓ Managed models ready[/green] [dim](provisioned OpenRouter key installed)[/dim]")
+    elif result.get("managedKey"):
+        console.print("[yellow]Managed key received but not installed (your own OpenRouter key is kept).[/yellow]")
+    else:
+        console.print("[dim]No managed models on this plan (BYOK / local models).[/dim]")
+
+
+@license_app.command("status")
+def license_status():
+    """Check the subscription attached to this device."""
+    from navin.config.loader import load_config
+    from navin.license_client import (
+        LicenseError,
+        plan_price_usd,
+        uses_managed_key,
+        validate,
+    )
+
+    config = load_config()
+    if not config.license.activated:
+        console.print("[yellow]This device is not activated.[/yellow] Run: navin license activate <KEY>")
+        raise typer.Exit(1)
+    try:
+        result = validate(config)
+    except LicenseError as e:
+        console.print(f"[red]License check failed: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Could not reach the license server: {e}[/red]")
+        raise typer.Exit(1)
+
+    # On affiche l'offre et son prix public, jamais les plafonds internes.
+    plan = str(result.get("plan", "?"))
+    price = plan_price_usd(plan)
+    price_suffix = f"  [dim]${price}/month[/dim]" if isinstance(price, int) and price > 0 else ""
+    console.print(f"[green]✓ Subscription valid[/green]  plan: [bold]{plan}[/bold]{price_suffix}")
+    if uses_managed_key(config):
+        console.print("  [dim]Model calls billed on the provisioned key.[/dim]")
+
+
+@license_app.command("deactivate")
+def license_deactivate():
+    """Forget the license on this device (removes the managed key)."""
+    from navin.config.loader import load_config, save_config
+
+    config = load_config()
+    if not config.license.activated and not config.license.managed_api_key:
+        console.print("[dim]Nothing to deactivate.[/dim]")
+        return
+    # La clé provisionnée ne part qu'avec la licence ; une clé BYOK reste.
+    if config.providers.openrouter.api_key == config.license.managed_api_key:
+        config.providers.openrouter.api_key = ""
+    config.license.license_key = ""
+    config.license.activation_token = ""
+    config.license.device = ""
+    config.license.plan = ""
+    config.license.managed_api_key = ""
+    config.license.managed_provider = ""
+    save_config(config)
+    console.print("[green]✓ License removed from this device.[/green]")
+
+
 provider_app = typer.Typer(help="Manage providers")
 app.add_typer(provider_app, name="provider")
 
@@ -2668,11 +4061,13 @@ _LOGOUT_HANDLERS: dict[str, Callable[[], None]] = {}
 _PROVIDER_DISPLAY: dict[str, str] = {
     "openai_codex": "OpenAI Codex",
     "github_copilot": "GitHub Copilot",
+    "xai_oauth": "Grok (x.ai subscription)",
 }
 
 _OAUTH_PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "openai_codex": "openai-codex/gpt-5.6-sol",
     "github_copilot": "github-copilot/gpt-5.4-mini",
+    "xai_oauth": "xai-oauth/grok-4.6",
 }
 
 
@@ -2795,6 +4190,7 @@ def _login_openai_codex() -> None:
         from oauth_cli_kit import get_token, login_oauth_interactive
 
         from navin.config.loader import load_config, resolve_config_env_vars
+        from navin.providers.openai_codex_provider import codex_token_storage
 
         proxy = None
         try:
@@ -2802,14 +4198,16 @@ def _login_openai_codex() -> None:
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1) from e
+        storage = codex_token_storage()
         token = None
         with suppress(Exception):
-            token = get_token(proxy=proxy)
+            token = get_token(storage=storage, proxy=proxy)
         if not (token and token.access):
             console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
             token = login_oauth_interactive(
                 print_fn=lambda s: console.print(s),
                 prompt_fn=lambda s: typer.prompt(s),
+                storage=storage,
                 proxy=proxy,
             )
         if not (token and token.access):
@@ -2825,14 +4223,24 @@ def _login_openai_codex() -> None:
 def _logout_openai_codex() -> None:
     """Clear local OAuth credentials for OpenAI Codex."""
     try:
-        from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
-        from oauth_cli_kit.storage import FileTokenStorage
+        from navin.providers.openai_codex_provider import codex_token_storage
     except ImportError:
         console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
         raise typer.Exit(1)
 
-    storage = FileTokenStorage(token_filename=OPENAI_CODEX_PROVIDER.token_filename)
-    _delete_oauth_files(storage.get_token_path(), _PROVIDER_DISPLAY["openai_codex"])
+    _delete_oauth_files(codex_token_storage().get_token_path(), _PROVIDER_DISPLAY["openai_codex"])
+
+
+@_register_logout("xai_oauth")
+def _logout_xai_oauth() -> None:
+    """Clear local OAuth credentials for Grok (x.ai subscription)."""
+    try:
+        from navin.providers.xai_oauth_provider import get_storage
+    except ImportError:
+        console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
+        raise typer.Exit(1)
+
+    _delete_oauth_files(get_storage().get_token_path(), _PROVIDER_DISPLAY["xai_oauth"])
 
 
 @_register_logout("github_copilot")
@@ -2874,6 +4282,23 @@ def _delete_oauth_files(token_path: Path, provider_label: str) -> None:
         console.print(f"[yellow]! Could not remove {path}: {exc}[/yellow]")
 
 
+@_register_login("xai_oauth")
+def _login_xai_oauth() -> None:
+    try:
+        from navin.providers.xai_oauth_provider import login_xai_oauth
+
+        console.print("[cyan]Starting Grok (x.ai) device flow...[/cyan]\n")
+        token = login_xai_oauth(
+            print_fn=lambda s: console.print(s),
+            prompt_fn=lambda s: typer.prompt(s),
+        )
+        account = token.account_id or "xAI"
+        console.print(f"[green]✓ Authenticated with Grok (x.ai subscription)[/green]  [dim]{account}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Authentication error: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @_register_login("github_copilot")
 def _login_github_copilot() -> None:
     try:
@@ -2891,5 +4316,93 @@ def _login_github_copilot() -> None:
         raise typer.Exit(1)
 
 
-if __name__ == "__main__":
+def _known_cli_names() -> set[str]:
+    """Names of registered commands and sub-apps (e.g. webui, gateway)."""
+    names: set[str] = set()
+    for command in app.registered_commands:
+        name = command.name or (command.callback.__name__ if command.callback else "")
+        if name:
+            names.add(name.replace("_", "-"))
+            names.add(name)
+    for group in app.registered_groups:
+        if group.name:
+            names.add(group.name)
+    return names
+
+
+def _desktop_shell_binary() -> Path | None:
+    """The Tauri desktop app bundled near this executable, if any.
+
+    In the installed apps the CLI sidecar is either next to the desktop shell
+    (``navin-desktop``, one-file layouts) or one level below it in the
+    ``navin-dist`` resource directory (one-dir layouts). Source checkouts and
+    bare-binary installs have no shell, so ``navin <dir>`` falls back to the
+    browser WebUI there.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    name = "navin-desktop.exe" if sys.platform == "win32" else "navin-desktop"
+    here = Path(sys.executable).resolve().parent
+    candidates = [here, here.parent]
+    if sys.platform == "darwin":
+        # Contents/Resources/navin-dist/navin -> Contents/MacOS/navin-desktop
+        candidates.append(here.parent.parent / "MacOS")
+    for directory in candidates:
+        shell = directory / name
+        if shell.is_file():
+            return shell
+    return None
+
+
+def _launch_desktop_shell(shell: Path, project: str) -> None:
+    """Start the desktop app on *project*, detached from this console."""
+    import subprocess
+
+    from navin.utils.proc import detached_no_window_kwargs
+
+    subprocess.Popen(
+        [str(shell), project],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **detached_no_window_kwargs(),
+    )
+
+
+def _rewrite_project_dir_argv(argv: list[str]) -> list[str]:
+    """Support ``navin .`` / ``navin <dir>``: open Navin on that project.
+
+    Mirrors ``cursor .`` / ``code .``: when the first argument is an existing
+    directory (and not a CLI command name), rewrite the invocation to
+    ``navin webui --background --yes --project <dir>``.
+    """
+    if len(argv) < 2:
+        return argv
+    candidate = argv[1]
+    if candidate.startswith("-") or candidate in _known_cli_names():
+        return argv
+    path = Path(candidate).expanduser()
+    if not path.is_dir():
+        return argv
+    resolved = str(path.resolve())
+    return [argv[0], "webui", "--background", "--yes", "--project", resolved, *argv[2:]]
+
+
+def run() -> None:
+    """Console entry point (``navin``) with `navin <dir>` support."""
+    argv = _rewrite_project_dir_argv(sys.argv)
+    if argv is not sys.argv:
+        # `navin <dir>` was recognized. When the desktop app is installed,
+        # open a window on that project (what `cursor .` does) instead of the
+        # background browser WebUI.
+        project = argv[argv.index("--project") + 1]
+        shell = _desktop_shell_binary()
+        if shell is not None:
+            _launch_desktop_shell(shell, project)
+            return
+    sys.argv[:] = argv
     app()
+
+
+if __name__ == "__main__":
+    run()

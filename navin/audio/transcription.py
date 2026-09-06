@@ -26,7 +26,7 @@ from navin.utils.media_decode import FileSizeExceeded, save_base64_data_url
 
 TranscriptionProviderName = str
 
-_DEFAULT_PROVIDER: TranscriptionProviderName = "groq"
+_DEFAULT_PROVIDER: TranscriptionProviderName = "navin"
 _MAX_AUDIO_BYTES_FALLBACK = 25 * 1024 * 1024
 _AUDIO_MIME_ALLOWED: frozenset[str] = frozenset({
     "audio/aac",
@@ -81,10 +81,26 @@ def _provider_default_api_base(provider: str) -> str | None:
     return spec.default_api_base if spec else None
 
 
-def _resolve_transcription_api_key(provider: str, provider_cfg: Any) -> str:
+def _is_local_transcription_provider(provider: str) -> bool:
+    chat_spec = find_by_name(provider)
+    return bool(chat_spec and chat_spec.is_local)
+
+
+def _resolve_transcription_api_key(
+    provider: str,
+    provider_cfg: Any,
+    config: Any = None,
+) -> str:
     api_key = getattr(provider_cfg, "api_key", None) if provider_cfg else None
     if api_key:
         return api_key
+
+    # Plan Plus+ : la clé managée vit dans license.managed_api_key même si le
+    # slot providers.navin n'a pas encore été synchronisé sur ce device.
+    if provider == "navin" and config is not None:
+        managed = getattr(getattr(config, "license", None), "managed_api_key", "") or ""
+        if managed.strip():
+            return managed.strip()
 
     spec = find_by_name(provider)
     if provider == "siliconflow":
@@ -93,7 +109,14 @@ def _resolve_transcription_api_key(provider: str, provider_cfg: Any) -> str:
             return env_key
 
     env_key = spec.env_key if spec else ""
-    return os.environ.get(env_key) if env_key else ""
+    if env_key:
+        env_value = os.environ.get(env_key)
+        if env_value:
+            return env_value
+    # Local OpenAI-compat servers (Ollama / vLLM) accept a dummy Bearer token.
+    if _is_local_transcription_provider(provider):
+        return "local"
+    return ""
 
 
 def _resolve_transcription_api_base(provider: str, provider_cfg: Any) -> str:
@@ -126,13 +149,37 @@ def resolve_transcription_config(config: Any) -> EffectiveTranscriptionConfig:
         spec = get_transcription_provider(provider)
     default_model = spec.default_model if spec else ""
     provider_cfg = _provider_config(config, provider)
+    api_key = _resolve_transcription_api_key(provider, provider_cfg, config)
+    api_base = _resolve_transcription_api_base(provider, provider_cfg)
+    model = (getattr(top, "model", None) or default_model).strip()
+    # Micro toujours branché quand une clé existe quelque part : si le provider
+    # configuré n'a pas de clé, bascule runtime vers Navin (clé managée du plan)
+    # puis vers OpenRouter BYOK (même protocole, mêmes slugs).
+    # Keep local providers on their own base URL even without a real API key.
+    if not api_key and not _is_local_transcription_provider(provider):
+        generic_models = {"whisper-large-v3", "whisper-1", "whisper", ""}
+        for fallback in ("navin", "openrouter"):
+            if provider == fallback:
+                continue
+            fb_cfg = _provider_config(config, fallback)
+            fb_key = _resolve_transcription_api_key(fallback, fb_cfg, config)
+            if not fb_key:
+                continue
+            fb_spec = get_transcription_provider(fallback)
+            provider = fallback
+            provider_cfg = fb_cfg
+            api_key = fb_key
+            api_base = _resolve_transcription_api_base(fallback, fb_cfg)
+            if model in generic_models:
+                model = (fb_spec.default_model if fb_spec else "") or model
+            break
     return EffectiveTranscriptionConfig(
         enabled=bool(getattr(top, "enabled", True)),
         provider=provider,
-        model=(getattr(top, "model", None) or default_model).strip(),
+        model=model,
         language=getattr(top, "language", None) or getattr(channels, "transcription_language", None),
-        api_key=_resolve_transcription_api_key(provider, provider_cfg),
-        api_base=_resolve_transcription_api_base(provider, provider_cfg),
+        api_key=api_key,
+        api_base=api_base,
         max_duration_sec=int(getattr(top, "max_duration_sec", 120)),
         max_upload_mb=int(getattr(top, "max_upload_mb", 25)),
     )
@@ -143,6 +190,7 @@ async def transcribe_audio_data_url(
     config: EffectiveTranscriptionConfig,
     *,
     duration_ms: Any = None,
+    partials: list[str] | None = None,
 ) -> str:
     """Validate, persist, transcribe, and remove a WebUI audio data URL."""
     if not isinstance(data_url, str) or not data_url:
@@ -178,7 +226,7 @@ async def transcribe_audio_data_url(
         raise TranscriptionIngressError("decode")
 
     try:
-        text = await transcribe_audio_file(audio_path, config)
+        text = await transcribe_audio_file(audio_path, config, partials=partials)
     finally:
         with suppress(OSError):
             Path(audio_path).unlink(missing_ok=True)
@@ -190,6 +238,8 @@ async def transcribe_audio_data_url(
 async def transcribe_audio_file(
     file_path: str | Path,
     config: EffectiveTranscriptionConfig,
+    *,
+    partials: list[str] | None = None,
 ) -> str:
     """Transcribe *file_path* using the already-resolved transcription config."""
     if not config.enabled or not config.configured:
@@ -204,4 +254,9 @@ async def transcribe_audio_file(
         language=config.language,
         model=config.model,
     )
+    stream_method = getattr(provider, "transcribe_with_partials", None)
+    if partials is not None and callable(stream_method):
+        text, provider_partials = await stream_method(file_path)
+        partials.extend(str(value) for value in provider_partials if str(value).strip())
+        return text
     return await provider.transcribe(file_path)

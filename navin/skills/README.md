@@ -14,7 +14,7 @@ When skills reference large local documentation or logs, prefer navin's built-in
 ## Custom skills
 
 Create or delete custom skills from the WebUI (`#/skills`) or by writing
-`<workspace>/skills/<name>/SKILL.md`. Workspace skills override built-ins of the
+`<workspace>/.navin/skills/<name>/SKILL.md`. Workspace skills override built-ins of the
 same name and are included in the agent skills summary automatically.
 
 ## Built-in catalog
@@ -57,12 +57,14 @@ same name and are included in the agent skills summary automatically.
 | `prompt-injection-defender` | Resist hostile content |
 | `backup-rollback` | Snapshot before risky edits |
 | `security-auditor` | Full app security audit (`/fortify`) |
+| `debug-live` | Live debug: DebugMCP, repro, isolated branch (`/debug`) |
+| `studio-html-report` | Expert HTML reports (Review / Security / Debug + studio) |
 | `vulnerability-scanner` | Flaw & CVE hunting (`/probe`) |
 
 ### Navigation & research
 | Skill | Description |
 |-------|-------------|
-| `playwright-browser` | Browser automation |
+| `playwright-browser` | Browser automation with the built-in `browser` tool |
 | `deep-web-research` | Multi-source research |
 | `web-extractor` | Site → Markdown/JSON |
 | `website-monitor` | Change detection |
@@ -72,8 +74,8 @@ same name and are included in the agent skills summary automatically.
 | Skill | Description |
 |-------|-------------|
 | `fullstack-dev` | Dev mode: plan/investigate/code/run/verify |
-| `project-metadata` | `.metadata` knowledge base + metagraph (`/atlas`) |
-| `code-reviewer` | Code/PR review |
+| `project-metadata` | `.navin/metadata` knowledge base + metagraph (`/atlas`) |
+| `code-reviewer` | Code/PR review (`/inspect`, OCR 5-gates + `pr_comments`) |
 | `test-generator` | Generate & run tests |
 | `docker-operator` | Docker / Compose |
 | `kubernetes-operator` | kubectl diagnostics |
@@ -103,7 +105,7 @@ same name and are included in the agent skills summary automatically.
 ### SEO
 | Skill | Description |
 |-------|-------------|
-| `seo-technical-auditor` | Technical SEO audits |
+| `seo-technical-auditor` | Technical SEO audits (+ audit_score.py) |
 | `keyword-research` | Keyword & intent mapping |
 | `competitor-seo-analysis` | Competitor gaps |
 | `seo-content-writer` | Optimized articles |
@@ -113,6 +115,8 @@ same name and are included in the agent skills summary automatically.
 | `geo-ai-search-optimizer` | AI answer/GEO visibility |
 | `local-seo` | GBP, local pages, citations |
 | `seo-monitoring` | Recurring rank/health watch |
+| `seo-data-provider` | DataForSEO/Semrush volumes when keys exist |
+| `studio-expert-contract` | Shared senior desk contract (Marketing/SEO/Leads) |
 
 ### Marketing
 | Skill | Description |
@@ -132,6 +136,7 @@ same name and are included in the agent skills summary automatically.
 | `conversion-rate-optimization` | Landing/funnel CRO |
 | `content-recycler` | Long-form → social assets |
 | `video-generation` | AI video via generate_video (Veo/Sora/Hailuo), scripts, ffmpeg |
+| `montage-studio` | Project marketing montage: kit, calendar, creatives, lazy HyperFrames |
 | `ad-creative-generator` | Complete ad sets: concepts, copy, AI images & videos per platform |
 | `product-visuals` | Packshots, lifestyle scenes, e-commerce sets, product videos |
 
@@ -159,13 +164,14 @@ same name and are included in the agent skills summary automatically.
 | `lead-generation` | ICP prospect lists |
 | `lead-prospector` | Expert company/people/contact hunting |
 | `buying-signals` | Funding, hiring, tech-change signal scoring |
-| `lead-qualification` | BANT-F scoring |
+| `lead-qualification` | BANT-F scoring (+ score_leads.py) |
+| `lead-enrichment` | Hunter/Apollo enrichment when keys exist |
 | `cold-email-writer` | Outbound emails |
 | `outreach-sequencer` | Multi-touch sequences |
 | `sales-proposal-writer` | Offers & quotes |
 | `discovery-call-assistant` | Call prep & summaries |
 | `objection-handler` | AER playbooks, battlecards |
-| `crm-update-agent` | HubSpot/Salesforce/files |
+| `crm-update-agent` | HubSpot/Salesforce/files (prefers HubSpot MCP) |
 | `pipeline-analyst` | Pipeline health & forecast |
 | `account-research` | Pre-meeting account sheets |
 | `tender-monitor` | Appels d'offres watch |
@@ -176,32 +182,33 @@ same name and are included in the agent skills summary automatically.
 ### Careers & HR
 | Skill | Description |
 |-------|-------------|
+| `career-agent` | Career desk operator (Freelance + Jobs) |
 | `cv-builder` | ATS-safe CVs |
 | `cv-tailoring` | CV per offer |
 | `cover-letter-writer` | Motivation letters |
-| `linkedin-optimizer` | Profile optimization |
-| `job-description-writer` | Fiches de poste |
+| `linkedin-optimizer` | Profile drafts (user pastes, no scrape) |
 | `ats-analyzer` | CV/offer match scoring |
-| `job-search-agent` | Search + watches |
+| `job-search-agent` | Search + watches on authorized sources |
 | `application-tracker` | Application pipeline |
+| `followup-writer` | J+3 / J+7 relances |
 | `interview-coach` | Prep & mock interviews |
-| `candidate-screening` | Grid-based CV scoring |
-| `recruitment-agent` | End-to-end hiring |
+| `offer-analyzer` | Written offer accept / negotiate / walk |
+| `salary-negotiator` | Salary and package talk tracks |
+| `freelance-rate-card` | TJM / daily rate card |
 | `career-advisor` | Trajectory advice |
-| `org-designer` | Org structures, roles, RACI, rituals |
-| `virtual-team-builder` | AI agent teams via subagents |
 
 ### Documents
 | Skill | Description |
 |-------|-------------|
 | `docx-generator` | Word via python-docx |
-| `pdf-generator` | PDF via WeasyPrint/ReportLab |
+| `pdf-generator` | PDF via Chromium / ReportLab |
 | `pptx-generator` | PowerPoint via python-pptx |
 | `spreadsheet-analyst` | Excel/CSV with pandas |
 | `contract-extractor` | Contract data registers |
 | `invoice-reader` | Invoice extraction + checks |
 | `report-generator` | Recurring report pipelines |
 | `presentation-designer` | Deck story & slide plans |
+| `archify` | Default architecture / sequence / workflow diagrams (HTML + SVG) |
 | `template-manager` | Branded template library |
 | `document-templates` | Built-in visual themes + template adaptation |
 

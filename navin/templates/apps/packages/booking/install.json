@@ -1,0 +1,359 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "booking",
+  "name": "Booking SaaS",
+  "kind": "business",
+  "category": "booking",
+  "source_github": "https://github.com/bhanu87777/BookIt-Appointment-Booking-System",
+  "source_name": "BookIt",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Vite",
+    "Express",
+    "PostgreSQL"
+  ],
+  "studied_from": "templates_apps/booking",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 15,
+    "package_count": 3
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "\ud83d\udcc5 BookIt Multi-Vertical Appointment Booking System *Book anything \u2014 doctors, salons & turfs \u2014 with **zero double-bookings**. A full-stack booking platform where the database itself makes overlapping appointments impossible.* --- \ud83d\udcd6 Overview **BookIt** is a full-stack, multi-vertical appointment booking platform for three kinds of business \u2014 **doctors & clinics, salons & grooming, and sports turfs & courts**. Customers browse providers, see **real-time bookable slots** computed from each provider's live schedule, and book or cancel in a few clicks. Admins"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "client",
+        "scripts": {
+          "dev": "vite",
+          "build": "tsc -b && vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "tsx watch src/index.ts",
+          "build": "tsc -p tsconfig.json",
+          "start": "node dist/index.js",
+          "db:migrate": "tsx src/db/migrate.ts",
+          "db:seed": "tsx src/db/seed.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "pg"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "appointment-booking-system",
+        "scripts": {
+          "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
+          "build": "npm run build -w server && npm run build -w client",
+          "db:migrate": "npm run db:migrate -w server",
+          "db:seed": "npm run db:seed -w server",
+          "db:setup": "npm run db:migrate -w server && npm run db:seed -w server"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "client",
+        "scripts": {
+          "dev": "vite",
+          "build": "tsc -b && vite build"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "server/package.json",
+        "name": "server",
+        "scripts": {
+          "dev": "tsx watch src/index.ts",
+          "build": "tsc -p tsconfig.json",
+          "start": "node dist/index.js",
+          "db:migrate": "tsx src/db/migrate.ts",
+          "db:seed": "tsx src/db/seed.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "pg"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    4000,
+    5432
+  ],
+  "env_files": [
+    "server/.env.example"
+  ],
+  "env": [
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://postgres:YOUR_PASSWORD@localhost:5432/appointments",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "PORT",
+      "default": "4000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "change-me-in-production",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "CLIENT_ORIGIN",
+      "default": "http://localhost:5173",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "PAYMENT_PROVIDER",
+      "default": "mock",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "PAYMENT_HOLD_MINUTES",
+      "default": "10",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "MOCK_PAY_SECRET",
+      "default": "mockpay-dev-secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "REFUND_FULL_BEFORE_HOURS",
+      "default": "24",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "REFUND_FEE_PCT",
+      "default": "25",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "REFUND_NONE_WITHIN_HOURS",
+      "default": "2",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "server/.env.example"
+    },
+    {
+      "key": "MAIL_FROM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:server/src/config.ts"
+    },
+    {
+      "key": "SMTP_HOST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:server/src/config.ts"
+    },
+    {
+      "key": "SMTP_PASS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:server/src/config.ts"
+    },
+    {
+      "key": "SMTP_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:server/src/config.ts"
+    },
+    {
+      "key": "SMTP_USER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "source:server/src/config.ts"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "seed": "npm run db:seed",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/booking/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy server/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "seed",
+        "run": "npm run db:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/booking/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/booking/overlay.json",
+    "agents": ".navin/apps/booking/agents/",
+    "env": ".env",
+    "frontend": "client/package.json",
+    "backend": "server/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "scheduling-agent",
+      "availability-agent",
+      "reminder-agent",
+      "customer-assistant",
+      "revenue-optimization-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

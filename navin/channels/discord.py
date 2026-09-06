@@ -405,7 +405,7 @@ class DiscordChannel(BaseChannel):
     async def start(self) -> None:
         """Start the Discord client."""
         if not DISCORD_AVAILABLE:
-            self.logger.error("discord.py not installed. Run: navin plugins enable discord")
+            self.logger.error("discord.py not installed. Click Install support on the Discord tool.")
             return
 
         if not self.config.token:
@@ -585,7 +585,7 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             self.logger.debug("Failed to add read receipt reaction: {}", e)
 
-        # Delayed working indicator (cosmetic — not tied to subagent lifecycle)
+        # Delayed working indicator (cosmetic - not tied to subagent lifecycle)
         async def _delayed_working_emoji() -> None:
             await asyncio.sleep(self.config.working_emoji_delay)
             with suppress(Exception):

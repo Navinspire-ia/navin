@@ -109,6 +109,7 @@ class ChannelManager:
         webui_static_dist: bool = True,
         webui_runtime_surface: str = "browser",
         webui_runtime_capabilities: dict[str, Any] | None = None,
+        webui_tool_registry: Callable[[], Any] | None = None,
     ):
         self.config = config
         self.bus = bus
@@ -116,6 +117,7 @@ class ChannelManager:
         self._cron_service = cron_service
         self._local_trigger_store = local_trigger_store
         self._webui_runtime_model_name = webui_runtime_model_name
+        self._webui_tool_registry = webui_tool_registry
         self._webui_cron_pending_job_ids = webui_cron_pending_job_ids
         self._webui_local_trigger_pending_ids = webui_local_trigger_pending_ids
         self._webui_static_dist = webui_static_dist
@@ -202,6 +204,7 @@ class ChannelManager:
                 cron_pending_job_ids=self._webui_cron_pending_job_ids,
                 local_trigger_pending_ids=self._webui_local_trigger_pending_ids,
                 channel_feature_action=self.apply_channel_feature_action,
+                tool_registry=self._webui_tool_registry,
                 logger=logger,
             )
             kwargs["gateway"] = gateway

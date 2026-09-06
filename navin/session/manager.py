@@ -101,6 +101,15 @@ def _message_preview_text(message: dict[str, Any]) -> str:
     content: Any = message.get("content")
     if message.get("injected_event") == "subagent_result" and isinstance(content, str):
         content = scrub_subagent_announce_body(content)
+    if isinstance(content, str) and content.lstrip().startswith("["):
+        # Expanded workflow briefs must not become the sidebar label.
+        from navin.session.webui_turns import title_source_from_user_text
+
+        focused = title_source_from_user_text(content)
+        if focused:
+            content = focused
+        elif "Skills for this mission" in content:
+            return ""
     return _text_preview(content)
 
 
@@ -159,11 +168,16 @@ class Session:
         max_tokens: int = 0,
         extend_to_user: bool = False,
         include_runtime_context: bool = True,
+        with_media_refs: bool = False,
     ) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input.
 
         History is sliced by message count first (``max_messages``), then by
         token budget from the tail (``max_tokens``) when provided.
+
+        ``with_media_refs`` keeps the persisted attachment paths of user turns
+        under ``_meta["media"]`` so the agent loop can show a vision model the
+        images again; providers strip ``_meta`` before the call.
         """
         unconsolidated = self.messages[self.last_consolidated:]
         max_messages = max_messages if max_messages > 0 else FILE_MAX_MESSAGES
@@ -206,7 +220,7 @@ class Session:
             # Synthesize an ``[image: path]`` breadcrumb from the persisted
             # ``media`` kwarg so LLM replay still sees *something* where the
             # image used to be. Without this, an image-only user turn
-            # replays as an empty user message — the assistant's reply then
+            # replays as an empty user message - the assistant's reply then
             # looks like it's responding to nothing.
             media = message.get("media")
             if role == "user" and isinstance(media, list) and media and isinstance(content, str):
@@ -245,6 +259,10 @@ class Session:
             for key in ("tool_calls", "tool_call_id", "name", "reasoning_content", "thinking_blocks"):
                 if key in message:
                     entry[key] = message[key]
+            if with_media_refs and role == "user" and isinstance(media, list):
+                refs = [p for p in media if isinstance(p, str) and p]
+                if refs:
+                    entry["_meta"] = {"media": refs}
             out.append(entry)
 
         if max_tokens > 0 and out:
@@ -492,6 +510,22 @@ class SessionManager:
         self._cache[key] = session
         return session
 
+    def peek(self, key: str) -> Session | None:
+        """Return an existing session, or ``None`` when it was never created.
+
+        Unlike :meth:`get_or_create` this never materialises a blank session,
+        so read-only paths (hydrate on connect, status probes) cannot turn a
+        throwaway chat id into a phantom chat in the sidebar.
+        """
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        session = self._load(key)
+        if session is None:
+            return None
+        self._cache[key] = session
+        return session
+
     def _load(self, key: str) -> Session | None:
         """Load a session from disk."""
         path = self._get_session_path(key)
@@ -639,6 +673,13 @@ class SessionManager:
         path = self._get_session_path(session.key)
         tmp_path = path.with_suffix(".jsonl.tmp")
 
+        if not session.messages and not session.metadata and not path.exists():
+            # Nothing to persist: no message, no metadata, no file yet. Writing
+            # here would create a phantom "New chat" that only exists because
+            # some read path touched the key.
+            self._cache[session.key] = session
+            return
+
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 metadata_line = {
@@ -661,7 +702,7 @@ class SessionManager:
             if fsync:
                 # fsync the directory so the rename is durable.
                 # On Windows, opening a directory with O_RDONLY raises
-                # PermissionError — skip the dir sync there (NTFS
+                # PermissionError - skip the dir sync there (NTFS
                 # journals metadata synchronously).
                 with suppress(PermissionError):
                     fd = os.open(str(path.parent), os.O_RDONLY)
@@ -727,9 +768,10 @@ class SessionManager:
 
         ``before_user_index`` is zero-based over user messages in the full session:
         ``0`` means "before the first user message", ``1`` means "before the
-        second user message", and so on. A value equal to the total user-message
-        count copies the full session prefix. WebUI assistant-reply forks pass
-        the next user index so the selected completed assistant turn is included.
+        second user message", and so on. A value equal to or greater than the
+        total user-message count copies the full session prefix. WebUI
+        assistant-reply forks pass the next user index so the selected
+        completed assistant turn is included.
         """
         if before_user_index < 0:
             return None
@@ -747,7 +789,7 @@ class SessionManager:
                     break
                 user_index += 1
             copied.append(public_history_message(message))
-        if user_index == before_user_index:
+        if user_index <= before_user_index:
             found_target = True
         if not found_target:
             return None

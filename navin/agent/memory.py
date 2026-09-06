@@ -40,17 +40,25 @@ if TYPE_CHECKING:
     from navin.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
-# MemoryStore — pure file I/O layer
+# MemoryStore - pure file I/O layer
 # ---------------------------------------------------------------------------
 
 class MemoryStore:
-    """Pure file I/O for memory files: MEMORY.md, history.jsonl, SOUL.md, USER.md."""
+    """Pure file I/O for memory files: MEMORY.md, history.jsonl, SOUL.md, USER.md.
+
+    All files live under ``.navin/`` (see :mod:`navin.workspace_layout`);
+    legacy root-level copies are migrated on first construction.
+    """
 
     _DEFAULT_MAX_HISTORY = 1000
     # Durable files whose real working-tree delta grounds Dream commit messages
     # and the cursor-advance gate. Deliberately excludes memory/.dream_cursor so
     # that advancing the cursor itself is never mistaken for a productive edit.
-    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
+    _DREAM_CONTENT_PATHS = (
+        ".navin/SOUL.md",
+        ".navin/USER.md",
+        ".navin/memory/MEMORY.md",
+    )
     # Per-file cap when embedding current contents into the Dream prompt. The
     # durable files are tiny in practice (~5 KB total), but a runaway file must
     # not unbounded the prompt.
@@ -64,15 +72,21 @@ class MemoryStore:
     )
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
+        from navin import workspace_layout
+
         self.workspace = workspace
         self.max_history_entries = max_history_entries
-        self.memory_dir = ensure_dir(workspace / "memory")
+        # Move legacy root-level brain files (SOUL.md, memory/, ...) into
+        # .navin/ so old projects keep their memory at the new location.
+        workspace_layout.migrate_layout(workspace)
+        self.memory_dir = ensure_dir(workspace_layout.memory_dir(workspace))
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "history.jsonl"
         self.legacy_history_file = self.memory_dir / "HISTORY.md"
-        self.soul_file = workspace / "SOUL.md"
-        self.user_file = workspace / "USER.md"
-        self._cursor_file = self.memory_dir / ".cursor"
+        self.soul_file = workspace_layout.soul_file(workspace)
+        self.user_file = workspace_layout.user_file(workspace)
+        self._cursor_file = self.memory_dir / ".log_navin"
+        self._legacy_cursor_file = self.memory_dir / ".cursor"
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit invalid cursor warning
         self._malformed_entry_logged = False  # rate-limit bad history shape warning
@@ -80,8 +94,18 @@ class MemoryStore:
         self._dream_prompt_oversize_logged = False
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+            ".navin/SOUL.md",
+            ".navin/USER.md",
+            ".navin/memory/MEMORY.md",
+            ".navin/memory/.dream_cursor",
         ])
+        if self._git.is_initialized() and self._git.owns_gitignore():
+            # Legacy stores ignore .navin/: without this, Dream commits would
+            # silently stop after the layout migration. Guarded so a project's
+            # own repo / .gitignore is never touched.
+            with suppress(OSError):
+                self._git.refresh_gitignore()
+        self._maybe_migrate_cursor_name()
         self._maybe_migrate_legacy_history()
 
     @property
@@ -248,7 +272,7 @@ class MemoryStore:
         long_term = self.read_memory()
         return f"## Long-term Memory\n{long_term}" if long_term else ""
 
-    # -- history.jsonl — append-only, JSONL format ---------------------------
+    # -- history.jsonl - append-only, JSONL format ---------------------------
 
     def append_history(
         self,
@@ -263,7 +287,7 @@ class MemoryStore:
         (e.g. unclosed `<think` prefixes, `<channel|>` markers) before being
         persisted. If the cleaned content is empty but the raw entry wasn't,
         the record is persisted with an empty string rather than falling back
-        to the raw leak — otherwise `strip_think`'s guarantees would be
+        to the raw leak - otherwise `strip_think`'s guarantees would be
         undone by history replay / consolidation downstream.
 
         A defensive cap (*max_chars*, default ``_HISTORY_ENTRY_HARD_CAP``) is
@@ -350,6 +374,23 @@ class MemoryStore:
         session_key = entry.get("session_key")
         return session_key is None or isinstance(session_key, str)
 
+    def _maybe_migrate_cursor_name(self) -> None:
+        """Move a pre-existing ``memory/.cursor`` to ``memory/.log_navin``.
+
+        The old name was read as Cursor IDE configuration by everyone who saw it
+        in a file tree or in ``git status``, and it showed up as a node in the
+        project graph next to real source files. It only ever held one integer:
+        how far the raw logger has written into history.jsonl.
+
+        Losing the counter is not harmful - ``_next_cursor`` recovers it from the
+        last line of history.jsonl - so a failed rename is left alone rather than
+        raised.
+        """
+        if self._cursor_file.exists() or not self._legacy_cursor_file.exists():
+            return
+        with suppress(OSError):
+            self._legacy_cursor_file.replace(self._cursor_file)
+
     def _read_cursor_counter(self) -> int | None:
         """Return the persisted cursor counter when it is usable."""
         if not self._cursor_file.exists():
@@ -372,7 +413,7 @@ class MemoryStore:
             return max(cursor_counter, max_history_cursor) + 1
 
         # Fast path: trust the tail when intact.  Otherwise scan the whole
-        # file and take ``max`` — that stays correct even if the monotonic
+        # file and take ``max`` - that stays correct even if the monotonic
         # invariant was broken by external writes.
         if last_cursor is not None:
             return last_cursor + 1
@@ -470,7 +511,7 @@ class MemoryStore:
 
             # fsync the directory so the rename is durable.
             # On Windows, opening a directory with O_RDONLY raises
-            # PermissionError — skip the dir sync there (NTFS
+            # PermissionError - skip the dir sync there (NTFS
             # journals metadata synchronously).
             with suppress(PermissionError):
                 fd = os.open(str(self.history_file.parent), os.O_RDONLY)
@@ -536,7 +577,7 @@ class MemoryStore:
 
         The current contents of the durable memory files (SOUL.md, USER.md,
         memory/MEMORY.md) are embedded so the model edits the real files rather
-        than a stale mental model — eliminating a class of failed/out-of-bounds
+        than a stale mental model - eliminating a class of failed/out-of-bounds
         edits that previously produced hallucinated audit records.
         """
         last_cursor = self.get_last_dream_cursor()
@@ -564,9 +605,9 @@ class MemoryStore:
         section is the ground truth the model must edit against.
         """
         files = [
-            ("SOUL.md", self.soul_file),
-            ("USER.md", self.user_file),
-            ("memory/MEMORY.md", self.memory_file),
+            (".navin/SOUL.md", self.soul_file),
+            (".navin/USER.md", self.user_file),
+            (".navin/memory/MEMORY.md", self.memory_file),
         ]
         blocks = []
         for label, path in files:
@@ -592,6 +633,7 @@ class MemoryStore:
 
     def build_dream_tools(self):
         """Build the restricted tool registry used by Dream runs."""
+        from navin import workspace_layout
         from navin.agent.skills import BUILTIN_SKILLS_DIR
         from navin.agent.tools.apply_patch import ApplyPatchTool
         from navin.agent.tools.file_state import FileStates
@@ -601,8 +643,7 @@ class MemoryStore:
         tools = ToolRegistry()
         file_states = FileStates()
         workspace = self.workspace
-        skills_dir = workspace / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
+        skills_dir = workspace_layout.coalesce_owned_skills(workspace)
 
         extra_read = [BUILTIN_SKILLS_DIR] if BUILTIN_SKILLS_DIR.exists() else None
         editable_files = [self.memory_file, self.soul_file, self.user_file]
@@ -727,7 +768,7 @@ class MemoryStore:
 
 
 # ---------------------------------------------------------------------------
-# Consolidator — lightweight token-budget triggered consolidation
+# Consolidator - lightweight token-budget triggered consolidation
 # ---------------------------------------------------------------------------
 
 # Individual history.jsonl writers cap their own payloads tightly; the
@@ -735,6 +776,12 @@ class MemoryStore:
 # that catches any new caller that forgot to set its own cap.
 _RAW_ARCHIVE_MAX_CHARS = 16_000       # fallback dump (LLM failed)
 _ARCHIVE_SUMMARY_MAX_CHARS = 8_000    # LLM-produced consolidation summary
+# Wall clock on one consolidation call. These calls run before a turn starts
+# (or in the background after it ends) and go straight to chat_with_retry,
+# whose ladder can otherwise sit on a hung provider for many minutes; a
+# summary that has not arrived in three minutes will not, and the raw archive
+# fallback keeps the messages.
+_CONSOLIDATION_LLM_TIMEOUT_S = 180.0
 _HISTORY_ENTRY_HARD_CAP = 64_000      # emergency cap in append_history
 
 
@@ -753,6 +800,7 @@ class Consolidator:
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         consolidation_ratio: float = 0.5,
         unified_session: bool = False,
+        on_compacted: Callable[[dict[str, Any]], None] | None = None,
     ):
         self.store = store
         self.sessions = sessions
@@ -760,9 +808,25 @@ class Consolidator:
         self.unified_session = unified_session
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
+        self._on_compacted = on_compacted
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
+        # Last full token estimate per session: (tokens, history_chars, model).
+        # Rebuilding the whole probe prompt and running tiktoken over it costs
+        # ~20ms per BUILD even when the session is nowhere near its budget;
+        # the cache lets clearly-idle turns skip that entirely (see
+        # _clearly_under_budget).
+        self._estimate_cache: dict[str, tuple[int, int, str]] = {}
+
+    def _notify_compacted(self, info: dict[str, Any]) -> None:
+        """Best-effort notification so UIs can surface compaction to the user."""
+        if self._on_compacted is None:
+            return
+        try:
+            self._on_compacted(info)
+        except Exception:
+            logger.exception("compaction notification failed for {}", info.get("session_key"))
 
     def get_lock(self, session_key: str) -> asyncio.Lock:
         """Return the shared consolidation lock for one session."""
@@ -789,6 +853,77 @@ class Consolidator:
             removed_tokens += estimate_message_tokens(message)
 
         return last_boundary
+
+    # Skip the full estimate only when the projection sits below this share
+    # of the budget; the grey zone above it always re-estimates for real.
+    _LAZY_ESTIMATE_HEADROOM = 0.45
+    # Start consolidating before hard overflow so tool-heavy audits do not
+    # replay megabytes of read_file/grep results until the window is full.
+    _PROACTIVE_CONSOLIDATION_RATIO = 0.55
+    # Chars per token used to project growth since the last real estimate.
+    # English prose runs ~4 chars/token; using 3 deliberately overestimates,
+    # so a skipped estimate can only err on the side of consolidating late
+    # by one turn, never of overflowing the window.
+    _CHARS_PER_TOKEN_CONSERVATIVE = 3
+
+    @staticmethod
+    def _unconsolidated_chars(session: Session) -> int:
+        """Rough char size of the unconsolidated tail (upper bound, no tokenizer)."""
+        total = 0
+        for message in session.messages[session.last_consolidated:]:
+            content = message.get("content")
+            if isinstance(content, str):
+                total += len(content)
+            elif content is not None:
+                total += len(str(content))
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                total += len(str(tool_calls))
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str):
+                total += len(reasoning)
+        return total
+
+    def _clearly_under_budget(
+        self,
+        session: Session,
+        *,
+        runtime: LLMRuntime,
+        budget: int,
+    ) -> bool:
+        """True when the cached estimate proves the session is far from full.
+
+        Projects the last real estimate forward by the chars added since,
+        using a conservative chars-per-token ratio. Shrinkage (archived
+        messages) is ignored on purpose: it can only make the projection an
+        overestimate, so a skip stays safe.
+        """
+        cached = self._estimate_cache.get(session.key)
+        if cached is None:
+            return False
+        cached_tokens, cached_chars, cached_model = cached
+        if cached_model != runtime.model:
+            return False
+        chars = self._unconsolidated_chars(session)
+        grown = max(0, chars - cached_chars)
+        projected = cached_tokens + grown // self._CHARS_PER_TOKEN_CONSERVATIVE
+        return projected < int(budget * self._LAZY_ESTIMATE_HEADROOM)
+
+    def _remember_estimate(
+        self,
+        session: Session,
+        *,
+        runtime: LLMRuntime,
+        estimated: int,
+    ) -> None:
+        if estimated > 0:
+            self._estimate_cache[session.key] = (
+                estimated,
+                self._unconsolidated_chars(session),
+                runtime.model,
+            )
+        else:
+            self._estimate_cache.pop(session.key, None)
 
     @staticmethod
     def _full_unconsolidated_history(
@@ -874,6 +1009,69 @@ class Consolidator:
             }
             self.sessions.save(session)
 
+    _RESUME_AUTO_START = "<!-- navin:auto-handoff:start -->"
+    _RESUME_AUTO_END = "<!-- navin:auto-handoff:end -->"
+    _RESUME_AUTO_MAX_CHARS = 4_000
+
+    def _persist_resume_brief(self, session: Session, brief: str | None) -> None:
+        """Mirror the handoff brief into the project's RESUME.md.
+
+        The metadata copy of the brief dies with ``/new`` or gets overwritten
+        by a later compaction; the continuity file survives both and is
+        injected into every turn, so resuming a project no longer depends on
+        the agent having remembered to update RESUME.md itself.
+        """
+        if not brief or brief == "(nothing)":
+            return
+        scope = session.metadata.get("workspace_scope")
+        project = scope.get("project_path") if isinstance(scope, dict) else None
+        if not project:
+            return
+        try:
+            resume_path = (
+                Path(str(project)).expanduser() / ".navin" / "continuity" / "RESUME.md"
+            )
+            if not resume_path.parent.is_dir():
+                return
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            body = truncate_text(brief.strip(), self._RESUME_AUTO_MAX_CHARS)
+            block = (
+                f"{self._RESUME_AUTO_START}\n"
+                f"## Last auto handoff ({stamp}, session {session.key})\n\n"
+                f"{body}\n"
+                f"{self._RESUME_AUTO_END}"
+            )
+            existing = (
+                resume_path.read_text(encoding="utf-8")
+                if resume_path.is_file()
+                else ""
+            )
+            start = existing.find(self._RESUME_AUTO_START)
+            end = existing.find(self._RESUME_AUTO_END)
+            if start != -1 and end != -1 and end > start:
+                updated = (
+                    existing[:start]
+                    + block
+                    + existing[end + len(self._RESUME_AUTO_END):]
+                )
+            else:
+                prefix = existing.rstrip()
+                updated = f"{prefix}\n\n{block}\n" if prefix else f"{block}\n"
+            resume_path.write_text(updated, encoding="utf-8")
+            try:
+                from navin.continuity.resume_seed import append_decisions_from_brief
+
+                append_decisions_from_brief(project, brief)
+            except Exception:
+                logger.debug(
+                    "Could not append Decisions from handoff brief for {}",
+                    session.key,
+                )
+        except Exception:
+            logger.debug(
+                "Could not mirror handoff brief to RESUME.md for {}", session.key
+            )
+
     def estimate_session_prompt_tokens(
         self,
         session: Session,
@@ -881,11 +1079,17 @@ class Consolidator:
         runtime: LLMRuntime,
     ) -> tuple[int, str]:
         """Estimate prompt size from the full unconsolidated session tail."""
+        from navin.session.context_usage_meta import (
+            last_context_usage_row,
+            last_preload_skills,
+        )
+
         history = self._full_unconsolidated_history(session)
         channel, chat_id = (session.key.split(":", 1) if ":" in session.key else (None, None))
         # Include archived summary in estimation so the budget accounts for it.
         meta = session.metadata.get("_last_summary")
         summary = meta.get("text") if isinstance(meta, dict) else (meta if isinstance(meta, str) else None)
+        skill_names = last_preload_skills(session.metadata)
         probe_messages = self._build_messages(
             history=history,
             current_message="[token-probe]",
@@ -896,13 +1100,25 @@ class Consolidator:
             session_metadata=session.metadata,
             session_key=session.key,
             unified_session=self.unified_session,
+            skill_names=skill_names,
         )
-        return estimate_prompt_tokens_chain(
+        estimated, source = estimate_prompt_tokens_chain(
             runtime.provider,
             runtime.model,
             probe_messages,
             self._get_tool_definitions(),
         )
+        # Provider-reported peak from the last turn is ground truth for fill.
+        # Prefer it when the probe under-counts (skills/tools drift).
+        last = last_context_usage_row(session.metadata)
+        if last is not None:
+            try:
+                peak = int(last.get("peak_prompt_tokens") or last.get("prompt_tokens") or 0)
+            except (TypeError, ValueError):
+                peak = 0
+            if peak > estimated:
+                return peak, f"{source}+last_peak"
+        return estimated, source
 
     def _input_token_budget(self, runtime: LLMRuntime) -> int:
         """Available input token budget for consolidation LLM."""
@@ -944,23 +1160,30 @@ class Consolidator:
         try:
             formatted = MemoryStore._format_messages(messages_to_summarize)
             formatted = self._truncate_to_token_budget(formatted, runtime=runtime)
-            response = await runtime.provider.chat_with_retry(
-                model=runtime.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": render_template(
-                            "agent/consolidator_archive.md",
-                            strip=True,
-                        ),
-                    },
-                    {"role": "user", "content": formatted},
-                ],
-                tools=None,
-                tool_choice=None,
-                temperature=runtime.generation.temperature,
-                max_tokens=runtime.generation.max_tokens,
-                reasoning_effort=runtime.generation.reasoning_effort,
+            response = await asyncio.wait_for(
+                runtime.provider.chat_with_retry(
+                    model=runtime.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": render_template(
+                                "agent/consolidator_archive.md",
+                                strip=True,
+                            ),
+                        },
+                        {"role": "user", "content": formatted},
+                    ],
+                    tools=None,
+                    tool_choice=None,
+                    temperature=runtime.generation.temperature,
+                    max_tokens=runtime.generation.max_tokens,
+                    # Never inherit the turn's effort: this call runs *before* the
+                    # visible turn, and a reasoning model told to think hard about
+                    # writing a summary is exactly the multi-minute first-token
+                    # stall users report on OpenRouter.
+                    reasoning_effort="none",
+                ),
+                timeout=_CONSOLIDATION_LLM_TIMEOUT_S,
             )
             if response.finish_reason == "error":
                 raise RuntimeError(f"LLM returned error: {response.content}")
@@ -975,6 +1198,64 @@ class Consolidator:
             logger.warning("Consolidation LLM call failed, raw-dumping to history")
             self.store.raw_archive(messages, session_key=session_key)
             return None
+
+    async def handoff_brief(
+        self,
+        messages: list[dict],
+        *,
+        runtime: LLMRuntime,
+    ) -> str | None:
+        """Summarize a chunk for continuing the work, not for remembering it.
+
+        ``archive`` extracts durable memory facts, which is right for
+        history.jsonl and wrong for the slot that is re-injected into the next
+        prompt: its instructions deliberately skip anything derivable from the
+        repository, so the plan, the files already edited and the tests already
+        run are exactly what it drops. When the window fills mid-task that is the
+        only state worth keeping, hence a second pass with its own brief.
+
+        Returns None when the model has nothing to carry over, so the caller can
+        leave the previous brief in place rather than overwrite it with noise.
+        """
+        if not messages:
+            return None
+        try:
+            formatted = MemoryStore._format_messages(public_history_messages(messages))
+            formatted = self._truncate_to_token_budget(formatted, runtime=runtime)
+            response = await asyncio.wait_for(
+                runtime.provider.chat_with_retry(
+                    model=runtime.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": render_template(
+                                "agent/consolidator_handoff.md",
+                                strip=True,
+                            ),
+                        },
+                        {"role": "user", "content": formatted},
+                    ],
+                    tools=None,
+                    tool_choice=None,
+                    temperature=runtime.generation.temperature,
+                    max_tokens=runtime.generation.max_tokens,
+                    # Same as archive(): a summary needs no chain-of-thought, and
+                    # this call blocks the turn that is about to start.
+                    reasoning_effort="none",
+                ),
+                timeout=_CONSOLIDATION_LLM_TIMEOUT_S,
+            )
+            if response.finish_reason == "error":
+                raise RuntimeError(f"LLM returned error: {response.content}")
+            brief = (response.content or "").strip()
+        except Exception:
+            # Losing the brief degrades the next turn; losing the archive would
+            # lose the messages. The archive already ran, so this is survivable.
+            logger.warning("Handoff brief failed; keeping the previous brief")
+            return None
+        if not brief or brief.lower() in {"(nothing)", "nothing"}:
+            return None
+        return brief
 
     async def maybe_consolidate_by_tokens(
         self,
@@ -1007,6 +1288,17 @@ class Consolidator:
                 replay_max_messages,
                 runtime=runtime,
             )
+            # Fast path: when the cached projection proves the session is far
+            # below budget, skip the probe-prompt rebuild and tiktoken pass
+            # that otherwise tax every BUILD of a healthy session.
+            if self._clearly_under_budget(session, runtime=runtime, budget=budget):
+                logger.debug(
+                    "Token consolidation lazy-idle {} (projected under {}%% of budget)",
+                    session.key,
+                    int(self._LAZY_ESTIMATE_HEADROOM * 100),
+                )
+                self._persist_last_summary(session, last_summary)
+                return
             try:
                 estimated, source = self.estimate_session_prompt_tokens(
                     session,
@@ -1015,22 +1307,38 @@ class Consolidator:
             except Exception:
                 logger.exception("Token estimation failed for {}", session.key)
                 estimated, source = 0, "error"
+            self._remember_estimate(session, runtime=runtime, estimated=estimated)
             if estimated <= 0:
                 self._persist_last_summary(session, last_summary)
                 return
-            if estimated < budget:
+            proactive = int(budget * self._PROACTIVE_CONSOLIDATION_RATIO)
+            tool_heavy = sum(
+                1
+                for m in session.messages[session.last_consolidated:]
+                if isinstance(m, dict) and m.get("role") == "tool"
+            ) >= 8
+            consolidate_floor = (
+                min(proactive, budget) if tool_heavy else budget
+            )
+            if estimated < consolidate_floor:
                 unconsolidated_count = len(session.messages) - session.last_consolidated
                 logger.debug(
-                    "Token consolidation idle {}: {}/{} via {}, msgs={}",
+                    "Token consolidation idle {}: {}/{} via {}, msgs={} floor={}",
                     session.key,
                     estimated,
                     runtime.context_window_tokens,
                     source,
                     unconsolidated_count,
+                    consolidate_floor,
                 )
                 self._persist_last_summary(session, last_summary)
                 return
 
+            tokens_before = estimated
+            archived_messages = 0
+            # Collected across rounds so the handoff brief is written once, over
+            # everything this call dropped, instead of once per round.
+            dropped: list[dict] = []
             for round_num in range(self._MAX_CONSOLIDATION_ROUNDS):
                 if estimated <= target:
                     break
@@ -1070,10 +1378,12 @@ class Consolidator:
                 # would just emit duplicate [RAW] entries.
                 if summary:
                     last_summary = summary
+                dropped.extend(chunk)
+                archived_messages += len(chunk)
                 session.last_consolidated = end_idx
                 self.sessions.save(session)
                 if not summary:
-                    # LLM is degraded — stop hammering it this call;
+                    # LLM is degraded - stop hammering it this call;
                     # the next invocation can retry a fresh chunk.
                     break
 
@@ -1087,11 +1397,27 @@ class Consolidator:
                     estimated, source = 0, "error"
                 if estimated <= 0:
                     break
+            self._remember_estimate(session, runtime=runtime, estimated=estimated)
 
-            # Persist the last summary to session metadata so it can be injected
-            # into the runtime context on the next prepare_session() call, aligning
-            # the summary injection strategy with AutoCompact._archive().
+            # Persist a summary to session metadata so it can be injected into
+            # the runtime context on the next prepare_session() call. What goes
+            # in is the handoff brief when the work was summarised here; the
+            # memory-fact archive is only a fallback, since it is written for
+            # long-term recall rather than for resuming the task.
+            if dropped:
+                brief = await self.handoff_brief(dropped, runtime=runtime)
+                if brief:
+                    last_summary = brief
+                    self._persist_resume_brief(session, brief)
             self._persist_last_summary(session, last_summary)
+            if archived_messages:
+                self._notify_compacted({
+                    "session_key": session.key,
+                    "kind": "consolidation",
+                    "messages_archived": archived_messages,
+                    "tokens_before": tokens_before,
+                    "tokens_after": estimated,
+                })
 
     async def compact_idle_session(
         self,
@@ -1145,11 +1471,22 @@ class Consolidator:
                     summary_messages=messages_to_summarize,
                 )
 
-            if summary and summary != "(nothing)":
+            # The re-injected text describes where the work stood, not what to
+            # remember about the user; the archive above already covers the
+            # latter. A user coming back to an idle session needs the former.
+            resume = None
+            if messages_to_remove:
+                resume = await self.handoff_brief(
+                    messages_to_summarize, runtime=runtime
+                )
+            carried = resume or summary
+            if carried and carried != "(nothing)":
                 session.metadata["_last_summary"] = {
-                    "text": summary,
+                    "text": carried,
                     "last_active": last_active.isoformat(),
                 }
+            if resume:
+                self._persist_resume_brief(session, resume)
 
             session.messages = messages_to_keep
             session.last_consolidated = 0
@@ -1163,5 +1500,10 @@ class Consolidator:
                     len(messages_to_keep),
                     bool(summary),
                 )
+                self._notify_compacted({
+                    "session_key": session_key,
+                    "kind": "idle",
+                    "messages_archived": len(messages_to_remove),
+                })
 
             return summary

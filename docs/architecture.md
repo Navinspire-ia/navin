@@ -1,8 +1,10 @@
 # Architecture
 
-This page maps navin's runtime behavior to source files. Use it when you are debugging internals, reviewing a PR, adding a provider/channel/tool, or trying to understand where a user-visible behavior comes from.
+This page maps **Navin Harness** runtime behavior to source files. The harness is the loop: AgentLoop, AgentRunner, tools, memory, permissions and channels.
 
-For the product-level mental model, read [`concepts.md`](./concepts.md) first.
+Use it when you are debugging internals, reviewing a PR, adding a provider/channel/tool, or trying to understand where a user-visible behavior comes from.
+
+For the product-level mental model, read [Navin Harness](./navin-harness.md) first.
 
 ## Core Flow
 
@@ -70,7 +72,7 @@ Provider implementations live in `navin/providers/`. Most hosted providers use t
 Useful docs:
 
 - [`providers.md`](./providers.md) for practical setup;
-- [`configuration.md#providers`](./configuration.md#providers) for exact provider reference.
+- `configuration.md#providers` for exact provider reference.
 
 ## Channels
 
@@ -104,13 +106,15 @@ The packaged WebUI is served by the WebSocket channel, not the health endpoint:
 | Health endpoint | `http://127.0.0.1:18790/health` |
 | WebUI/WebSocket | `http://127.0.0.1:8765` |
 
+Full port registry, CLI (`navin ports`), and conflict checks: [Ports](./ports.md).
+
 WebUI source lives in `webui/`. The production build is written to `navin/web/dist/` and bundled into the wheel.
 
 Useful docs:
 
-- [`webui.md`](./webui.md) for the WebUI user guide;
+- `webui.md` for the WebUI user guide;
 - [`../webui/README.md`](../webui/README.md) for frontend source development;
-- [`websocket.md`](./websocket.md) for protocol details.
+- `websocket.md` for protocol details.
 
 ## Tools
 
@@ -125,12 +129,79 @@ Important files:
 | Shell execution | `navin/agent/tools/shell.py` |
 | Filesystem tools | `navin/agent/tools/filesystem.py` |
 | Web search/fetch | `navin/agent/tools/web.py` |
+| Scrape / crawl / export | `navin/agent/tools/scrape.py`, `navin-core/src/scrape.rs` |
 | MCP tools | `navin/agent/tools/mcp.py` |
 | Cron | `navin/agent/tools/cron.py`, `navin/cron/` |
 | Image generation | `navin/agent/tools/image_generation.py` |
+| Browser automation | `navin/agent/tools/browser.py` |
+| Mobile (Expo/RN/Flutter + Android preview) | `navin/agent/tools/mobile.py`, `navin/mobile/`, `navin-core/src/mobile.rs` |
 | Runtime self-inspection | `navin/agent/tools/self.py` |
 
 Tool behavior is part of the model contract. Keep user-visible tool names, schemas, and error messages stable unless a change is intentional.
+
+## Document Generation
+
+Document templates ship as HTML masters under `templates/<category>/<name>/`
+(1920x1080 `slide_XX.html` for decks, A4 `document.html` for the rest). When a
+turn carries a template selection, `navin/utils/document_templates.py` copies
+the folder into `<workspace>/.navin/resources/document-templates/` so
+workspace-scoped tools can read it, and adds the runtime context that points
+the agent at it.
+
+Deliverables must stay editable, which rules out rasterizing a design into an
+Office file. Rebuilding a design by hand is just as unreliable, so every Office
+format goes through a converter in `navin/documents/`:
+
+| Format | Converter | Result |
+|---|---|---|
+| PPTX | `html2pptx.py` | text boxes, shapes and pictures over a decor backdrop |
+| DOCX | `html2docx.py` | headings, lists, tables, running header and footer |
+| XLSX | `html2xlsx.py` | typed cells, number formats, SUM formulas, CSV export |
+| PDF | none | rendered from the HTML (headless Chromium or WeasyPrint) |
+
+The whole folder is copied into `<workspace>/.navin/resources/tools/`, and the
+runtime context hands the agent a ready command using `sys.executable`: the
+interpreter running Navin owns python-pptx, python-docx and openpyxl, which a
+bare `python3` in the user shell usually does not. The modules import each
+other through `if __package__`, so they run both as a package and as a loose
+folder of scripts.
+
+All three share `_chromium.py` (binary discovery, headless runs, reading the
+injected JSON back out of `--dump-dom`), `_dom.py` (the measuring script: boxes,
+typography, colors, runs, grid detection) and `_fonts.py` (web fonts mapped
+onto fonts Office actually has). No Playwright dependency; Chromium is found
+through `NAVIN_CHROMIUM`, the `PATH`, or the Playwright cache.
+
+The deck converter treats a slide as a canvas: Chromium runs twice per slide,
+once to measure and neutralize, once to screenshot the leftover decor, and
+python-pptx rebuilds the slide on top. Two details keep the two layers aligned.
+`--window-size` sizes a simulated window, not the page, so `chrome_padding()`
+measures the furniture once per binary and adds it back, otherwise a 1080px
+slide is rendered and captured at its first 993px only. And the page is pinned
+to exactly 1920x1080, because a document one pixel taller makes Chromium capture
+the whole of it and squeeze the result into the requested image, shifting the
+decor under text placed from unsqueezed coordinates.
+
+A faithful conversion is not the same as a good deliverable: a poorly filled
+template converts perfectly into a poor deck. `_audit.py` therefore reports, on
+stderr where the agent reads it, the defects a reader notices first: copy
+clipped by the slide frame, text failing a 3:1 contrast ratio against what sits
+behind it, and a picture reused across slides. That background is the fill of
+the innermost native shape under the text, falling back to the captured decor,
+because a card converted into a shape leaves the page background showing in the
+capture and white copy on a dark card would otherwise read as invisible.
+`preview_pptx.py` closes the loop by rendering the saved file back into PNGs
+from its real shapes, so the agent can look at what it produced without
+PowerPoint or LibreOffice. The Word and Excel converters treat the
+page as content instead, since neither format is a canvas: the DOM is walked in
+flow order and mapped onto Word constructs (a repeated letterhead becomes the
+running header, a "Page 3 / 8" footer becomes PAGE and NUMPAGES fields) or onto
+spreadsheet cells (displayed text parsed back into numbers, percentages, money
+and dates, with total rows restored as formulas when the sum checks out).
+
+`tests/documents/check_coverage.py` converts the whole template library and
+reports any text that fails to make it into the output; it is the regression
+net for these converters.
 
 ## Config and Paths
 
@@ -195,8 +266,8 @@ Common checks:
 ```bash
 pytest tests/test_openai_api.py::test_function -v
 ruff check navin/
-cd webui && bun run test
-cd webui && bun run build
+cd webui && npm run test
+cd webui && npm run build
 ```
 
 Choose tests based on the changed surface:

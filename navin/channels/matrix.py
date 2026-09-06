@@ -1,4 +1,4 @@
-"""Matrix (Element) channel — inbound sync + outbound message/media delivery."""
+"""Matrix (Element) channel - inbound sync + outbound message/media delivery."""
 
 import asyncio
 import html
@@ -48,7 +48,7 @@ try:
     from nio.exceptions import EncryptionError
 except ImportError as e:
     raise ImportError(
-        "Matrix dependencies not installed. Run: navin plugins enable matrix"
+        "Matrix dependencies not installed. Click Install support on the Matrix tool."
     ) from e
 
 from navin.bus.events import OutboundMessage
@@ -495,7 +495,7 @@ class MatrixChannel(BaseChannel):
         return None
 
     async def _effective_media_limit_bytes(self) -> int:
-        """min(local config, server advertised) — 0 blocks all uploads."""
+        """min(local config, server advertised) - 0 blocks all uploads."""
         local_limit = max(int(self.config.max_media_bytes), 0)
         server_limit = await self._resolve_server_upload_limit_bytes()
         if server_limit is None:
@@ -728,7 +728,7 @@ class MatrixChannel(BaseChannel):
         return is_auth or bool(getattr(response, "soft_logout", False))
 
     def _log_response_error(self, label: str, response: Any) -> None:
-        """Log Matrix response errors — auth errors at ERROR level, rest at WARNING."""
+        """Log Matrix response errors - auth errors at ERROR level, rest at WARNING."""
         is_fatal = self._is_fatal_auth_response(response)
         (self.logger.error if is_fatal else self.logger.warning)("{} failed: {}", label, response)
 

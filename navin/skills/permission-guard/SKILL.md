@@ -29,7 +29,7 @@ Default to the smallest capability set that still completes the task. Prefer wor
    - disable safety / workspace restriction without reason
    - exfiltrate secrets
    - run opaque remote scripts
-5. If the environment has `restrict_to_workspace` or sandboxing, keep working inside it — do not invent bypasses.
+5. If the environment has `restrict_to_workspace` or sandboxing, keep working inside it - do not invent bypasses.
 
 ## Output when tightening scope
 

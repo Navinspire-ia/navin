@@ -1,0 +1,741 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "legal",
+  "name": "Legal Case Management",
+  "kind": "business",
+  "category": "legal",
+  "source_github": "https://github.com/tpt-solutions/tpt-court",
+  "source_name": "TPT Court",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Fastify",
+    "Prisma",
+    "PostgreSQL"
+  ],
+  "studied_from": "templates_apps/legal",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 42,
+    "package_count": 7
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "TPT Court Open-source court ERP platform for judges, lawyers, clerks, and the public. Manage cases, documents, hearings, and payments with ease. Architecture tpt-court/ \u251c\u2500\u2500 apps/ \u2502   \u251c\u2500\u2500 api/          # Fastify REST API + Socket.io \u2502   \u251c\u2500\u2500 web/          # Next.js 15 web application \u2502   \u2514\u2500\u2500 desktop/      # Electron desktop wrapper \u251c\u2500\u2500 packages/ \u2502   \u251c\u2500\u2500 database/     # Prisma ORM, schema, seed \u2502   \u251c\u2500\u2500 types/        # Shared TypeScript types \u2502   \u2514\u2500\u2500 ui/           # Shared UI components (React + Tailwind)"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=20.0.0",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": true,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    },
+    {
+      "id": "prisma",
+      "why": "npx prisma migrate / generate / seed"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "@tpt-court/web",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@tpt-court/ui",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "apps/api/package.json",
+        "name": "@tpt-court/api",
+        "scripts": {
+          "dev": "tsx watch src/index.ts",
+          "build": "tsc",
+          "start": "node dist/index.js",
+          "lint": "eslint src"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "fastify",
+          "stripe"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/database/package.json",
+        "name": "@tpt-court/database",
+        "scripts": {
+          "db:generate": "prisma generate",
+          "db:migrate": "prisma migrate deploy",
+          "db:migrate:dev": "prisma migrate dev",
+          "db:push": "prisma db push",
+          "db:seed": "tsx src/seed.ts",
+          "db:studio": "prisma studio",
+          "db:reset": "prisma migrate reset"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "prisma"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "tpt-court",
+        "scripts": {
+          "build": "turbo run build",
+          "predev": "kill-port 3000 3001 || true",
+          "dev": "turbo run dev",
+          "lint": "turbo run lint",
+          "db:generate": "turbo run db:generate",
+          "db:migrate": "turbo run db:migrate",
+          "db:push": "turbo run db:push",
+          "db:studio": "pnpm --filter @tpt-court/database run db:studio"
+        },
+        "node_engine": ">=20.0.0",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "apps/api/package.json",
+        "name": "@tpt-court/api",
+        "scripts": {
+          "dev": "tsx watch src/index.ts",
+          "build": "tsc",
+          "start": "node dist/index.js",
+          "lint": "eslint src"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "fastify",
+          "stripe"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "apps/desktop/package.json",
+        "name": "@tpt-court/desktop",
+        "scripts": {
+          "dev": "electron .",
+          "build": "electron-builder"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "apps/web/package.json",
+        "name": "@tpt-court/web",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/database/package.json",
+        "name": "@tpt-court/database",
+        "scripts": {
+          "db:generate": "prisma generate",
+          "db:migrate": "prisma migrate deploy",
+          "db:migrate:dev": "prisma migrate dev",
+          "db:push": "prisma db push",
+          "db:seed": "tsx src/seed.ts",
+          "db:studio": "prisma studio",
+          "db:reset": "prisma migrate reset"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "@prisma/client",
+          "prisma"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/types/package.json",
+        "name": "@tpt-court/types",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "frontend",
+        "path": "packages/ui/package.json",
+        "name": "@tpt-court/ui",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    },
+    {
+      "engine": "minio",
+      "required": true,
+      "docker_image": "minio/minio",
+      "port": 9000,
+      "env_url": "MINIO_PASSWORD",
+      "compose": [
+        "docker/docker-compose.yml"
+      ],
+      "bootstrap": [
+        "Start MinIO via the project docker compose (object store for documents)."
+      ]
+    }
+  ],
+  "ports": [
+    587,
+    3001,
+    5432,
+    6379,
+    9000
+  ],
+  "env_files": [
+    "docker/.env.example",
+    "apps/api/.env.example",
+    "apps/desktop/.env.example",
+    "apps/web/.env.example"
+  ],
+  "env": [
+    {
+      "key": "PORT",
+      "default": "3001",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "HOST",
+      "default": "0.0.0.0",
+      "required": false,
+      "secret": false,
+      "purpose": "Bind host",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "NODE_ENV",
+      "default": "production",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "LOG_LEVEL",
+      "default": "info",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgresql://postgres:postgres@postgres:5432/tpt_court",
+      "required": false,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "change-me-in-production",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "CORS_ORIGIN",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "sk_test_xxxxxxxxxxxxxxxxxxxxxxxx",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "whsec_xxxxxxxxxxxxxxxxxxxxxxxx",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_API_URL",
+      "default": "http://localhost:3001/api",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_SOCKET_URL",
+      "default": "http://localhost:3001",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "default": "pk_test_xxxxxxxxxxxxxxxxxxxxxxxx",
+      "required": false,
+      "secret": false,
+      "purpose": "Payments (Stripe)",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "UPLOADS_DIR",
+      "default": "./uploads",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "docker/.env.example"
+    },
+    {
+      "key": "STORAGE_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STORAGE_REGION",
+      "default": "us-east-1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STORAGE_BUCKET",
+      "default": "tpt-court-documents",
+      "required": false,
+      "secret": false,
+      "purpose": "Object storage",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STORAGE_ACCESS_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STORAGE_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STORAGE_FORCE_PATH_STYLE",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_HOST",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_PORT",
+      "default": "587",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_USER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_PASS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_FROM",
+      "default": "noreply@tpt-court.local",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SMTP_FROM_NAME",
+      "default": "TPT Court System",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "RESEND_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "TWILIO_ACCOUNT_SID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "TWILIO_AUTH_TOKEN",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "TWILIO_PHONE_NUMBER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "SIGNING_SECRET",
+      "default": "change-me-in-production-signing-secret",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "AI_PROVIDER",
+      "default": "anthropic",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Anthropic API key",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LOCAL_AI_URL",
+      "default": "http://localhost:11434",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LOCAL_AI_MODEL",
+      "default": "llama3",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "STT_PROVIDER",
+      "default": "whisper",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "WHISPER_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LOCAL_STT_URL",
+      "default": "http://localhost:11434",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "LOCAL_STT_MODEL",
+      "default": "whisper",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "APP_NAME",
+      "default": "TPT Court",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "WEB_ORIGIN",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "HEARING_REMINDER_DAYS",
+      "default": "2",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": "apps/api/.env.example"
+    },
+    {
+      "key": "REDIS_URL",
+      "default": "redis://127.0.0.1:6379",
+      "required": false,
+      "secret": false,
+      "purpose": "Redis connection string",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker/docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "postgres",
+        "image": "postgres:16-alpine",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "redis",
+        "image": "redis:7-alpine",
+        "ports": [
+          "6379:6379"
+        ]
+      },
+      {
+        "name": "minio",
+        "image": "minio/minio:latest",
+        "ports": [
+          "9000:9000",
+          "9001:9001"
+        ]
+      },
+      {
+        "name": "minio-bucket-setup",
+        "image": "minio/mc:latest",
+        "ports": []
+      },
+      {
+        "name": "api",
+        "image": "",
+        "ports": [
+          "3001:3001"
+        ]
+      },
+      {
+        "name": "web",
+        "image": "",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "backup",
+        "image": "",
+        "ports": []
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/legal/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy docker/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-minio",
+        "run": "Start MinIO via the project docker compose (object store for documents)."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/legal/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/legal/overlay.json",
+    "agents": ".navin/apps/legal/agents/",
+    "env": ".env",
+    "frontend": "apps/web/package.json",
+    "backend": "apps/api/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "case-agent",
+      "deadline-agent",
+      "document-agent",
+      "hearing-agent",
+      "client-update-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

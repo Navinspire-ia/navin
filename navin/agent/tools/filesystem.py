@@ -1,5 +1,6 @@
 """File system tools: read, write, edit, list."""
 
+import asyncio
 import difflib
 import mimetypes
 import os
@@ -7,29 +8,124 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import AliasChoices, Field
+
 from navin.agent.checkpoints import record_file_before
+from navin.agent.tools.atomic_write import encode_for
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.file_state import FileStates, _hash_file, current_file_states
-from navin.agent.tools.path_utils import resolve_workspace_path
+from navin.agent.tools.path_utils import closest_existing_match, resolve_workspace_path
 from navin.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
+from navin.config.secrets import RUNTIME_CONFIG_DENIED, is_runtime_secret_path
 from navin.config_base import Base
-from navin.security.workspace_access import current_tool_workspace
+from navin.security.workspace_access import (
+    approved_outside_paths,
+    current_tool_workspace,
+    remember_approved_path,
+)
+from navin.security.workspace_policy import WorkspaceBoundaryError
+from navin.utils import longpath, text_decode
+from navin.utils.git_state import uncommitted_note
 from navin.utils.helpers import build_image_content_blocks, detect_image_mime
+
+
+def _split_approved_paths() -> tuple[list[Path], list[Path]]:
+    """Turn chat-approved outside paths into extra roots/files for resolve."""
+    dirs: list[Path] = []
+    files: list[Path] = []
+    for raw in approved_outside_paths():
+        try:
+            item = Path(raw).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if item.is_dir():
+            dirs.append(item)
+        else:
+            files.append(item)
+            dirs.append(item.parent)
+    return dirs, files
+
+
+def _existing_layout(fp: Path) -> text_decode.DecodedText | None:
+    """How this file is currently encoded, so a rewrite does not convert it.
+
+    ``write_file`` replaces whole files, including ones it did not create. A
+    cp1252 source or a BOM-prefixed script rewritten as plain UTF-8 still reads
+    correctly here and breaks in the toolchain that owns it.
+    """
+    try:
+        if not fp.is_file():
+            return None
+        return text_decode.decode(fp.read_bytes())
+    except OSError:
+        return None
+
+
+def _match_line_endings(content: str, layout: text_decode.DecodedText | None) -> str:
+    """Keep a CRLF file on CRLF when a whole-file rewrite arrives with LF text.
+
+    Models write LF. Converting the file as a side effect of an unrelated
+    rewrite shows up in review as a change on every single line, and flips the
+    convention of a checkout that deliberately uses CRLF.
+    """
+    if layout is None or not layout.crlf or "\r\n" in content:
+        return content
+    return content.replace("\n", "\r\n")
 
 
 class FileToolsConfig(Base):
     """Filesystem tools configuration."""
 
     enable: bool = True  # built-in file tools on by default
+    # Names manage_files refuses to remove, wherever they appear in a path.
+    # Defaults to the version-control metadata whose loss no baseline can undo;
+    # an operator can widen it, or empty it to leave nothing off-limits.
+    protected_paths: list[str] = Field(
+        # ".checkpoints" = legacy root folder; current store is
+        # .navin/checkpoints (fenced via file_manage prefixes).
+        default_factory=lambda: [".git", ".hg", ".svn", ".checkpoints"],
+        validation_alias=AliasChoices("protectedPaths", "protected_paths"),
+        serialization_alias="protectedPaths",
+    )
+    # How much one manage_files call may touch while staying reviewable and
+    # undoable: both limits exist because the baseline is held in memory. 0 on
+    # either means no ceiling, and the call stops being cheap to roll back.
+    max_tracked_files: int = Field(
+        default=200,
+        ge=0,
+        validation_alias=AliasChoices("maxTrackedFiles", "max_tracked_files"),
+        serialization_alias="maxTrackedFiles",
+    )
+    max_tracked_mib: int = Field(
+        default=64,
+        ge=0,
+        validation_alias=AliasChoices("maxTrackedMib", "max_tracked_mib"),
+        serialization_alias="maxTrackedMib",
+    )
+    # Reading a character device can hang the turn or stream forever, so these
+    # are refused by default. Off for an operator who needs /dev or /proc.
+    block_device_reads: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("blockDeviceReads", "block_device_reads"),
+        serialization_alias="blockDeviceReads",
+    )
+    # Run the file-scope linters on whatever an edit touched and return their
+    # findings with the edit. Off for a project whose linters are slow enough
+    # that the wait costs more than the reminder is worth.
+    lint_after_edit: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("lintAfterEdit", "lint_after_edit"),
+        serialization_alias="lintAfterEdit",
+    )
 
 
 class _FsTool(Tool):
-    """Shared base for filesystem tools — common init and path resolution."""
+    """Shared base for filesystem tools - common init and path resolution."""
 
     config_key = "file"
 
@@ -52,7 +148,21 @@ class _FsTool(Tool):
         file_states: FileStates | None = None,
         restrict_to_workspace: bool | None = None,
         sandbox_restricts_workspace: bool = False,
+        protected_paths: list[str] | None = None,
+        max_tracked_files: int = 200,
+        max_tracked_mib: int = 64,
+        block_device_reads: bool = True,
+        lint_after_edit: bool = True,
     ):
+        self._protected_paths = frozenset(
+            protected_paths
+            if protected_paths is not None
+            else FileToolsConfig().protected_paths
+        )
+        self._max_tracked_files = max_tracked_files
+        self._max_tracked_bytes = max_tracked_mib * 1024 * 1024
+        self._block_device_reads = block_device_reads
+        self._lint_after_edit = lint_after_edit
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         # Legacy alias: extra_allowed_dirs is read-only. Write-capable tools
@@ -79,11 +189,7 @@ class _FsTool(Tool):
     def create(cls, ctx: Any) -> Tool:
         from navin.agent.skills import BUILTIN_SKILLS_DIR
 
-        restrict = (
-            ctx.config.restrict_to_workspace
-            or ctx.config.exec.sandbox
-        )
-        sandbox_restricts = bool(ctx.config.exec.sandbox)
+        restrict = bool(ctx.config.restrict_to_workspace)
         allowed_dir = Path(ctx.workspace) if restrict else None
         extra_read = [BUILTIN_SKILLS_DIR]
         return cls(
@@ -91,9 +197,30 @@ class _FsTool(Tool):
             allowed_dir=allowed_dir,
             extra_read_allowed_dirs=extra_read,
             file_states=ctx.file_state_store,
-            restrict_to_workspace=ctx.config.restrict_to_workspace,
-            sandbox_restricts_workspace=sandbox_restricts,
+            restrict_to_workspace=restrict,
+            sandbox_restricts_workspace=False,
+            protected_paths=ctx.config.file.protected_paths,
+            max_tracked_files=ctx.config.file.max_tracked_files,
+            max_tracked_mib=ctx.config.file.max_tracked_mib,
+            block_device_reads=ctx.config.file.block_device_reads,
+            lint_after_edit=ctx.config.file.lint_after_edit,
         )
+
+    async def _with_diagnostics(self, message: str, paths: list[Path]) -> str:
+        """Append what the linters say about ``paths``, when there is anything.
+
+        Off the event loop: the linters are subprocesses, and this now runs on
+        every edit rather than only when the model asks, so blocking here would
+        stall the gateway and every other session with it.
+        """
+        if not self._lint_after_edit:
+            return message
+        from navin.agent.tools.edit_feedback import diagnostics_after_write
+
+        report = await asyncio.to_thread(
+            diagnostics_after_write, paths, workspace=self._workspace
+        )
+        return f"{message}\n\n{report}" if report else message
 
     @property
     def _file_states(self) -> FileStates:
@@ -126,14 +253,23 @@ class _FsTool(Tool):
             restrict_to_workspace=self._restrict_to_workspace,
             sandbox_restricts_workspace=self._sandbox_restricts_workspace,
         )
-        return resolve_workspace_path(
+        lifted_dirs, lifted_files = _split_approved_paths()
+        extra_dirs = [*(extra_allowed_dirs or []), *lifted_dirs]
+        extra_files = [*(extra_allowed_files or []), *lifted_files]
+        resolved = resolve_workspace_path(
             path,
             access.project_path,
             self._effective_allowed_root(access.allowed_root),
-            extra_allowed_dirs,
-            extra_allowed_files,
+            extra_dirs,
+            extra_files,
             include_media_dir=include_media_dir,
         )
+        # After the boundary check, never before: the extended-length prefix
+        # would defeat the containment comparison it is applied to.
+        io_resolved = longpath.io_path(resolved)
+        if is_runtime_secret_path(io_resolved) or is_runtime_secret_path(resolved):
+            raise PermissionError(RUNTIME_CONFIG_DENIED)
+        return io_resolved
 
     def _resolve_read(self, path: str) -> Path:
         return self._resolve_with_extra(
@@ -154,8 +290,100 @@ class _FsTool(Tool):
     def _resolve(self, path: str) -> Path:
         return self._resolve_read(path)
 
+    async def _bound_path(self, path: str, *, write: bool = False) -> Path:
+        """Resolve *path*, asking in the chat when it sits outside the project.
+
+        Restrict-to-workspace stays the default. A silent error was indistinguishable
+        from a hang; a card in the thread is the only user block.
+        """
+        try:
+            return self._resolve_write(path) if write else self._resolve_read(path)
+        except WorkspaceBoundaryError as exc:
+            if not await self._ask_outside_workspace(path, write=write):
+                raise PermissionError(
+                    f"{exc}. The user refused access to this path."
+                ) from exc
+            remembered = Path(path).expanduser()
+            if not remembered.is_absolute() and self._workspace is not None:
+                remembered = Path(self._workspace) / remembered
+            try:
+                remembered = remembered.resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                pass
+            remember_approved_path(remembered)
+            return self._resolve_write(path) if write else self._resolve_read(path)
+
+    async def _ask_outside_workspace(self, path: str, *, write: bool) -> bool:
+        from navin.agent.approval import ApprovalRequest, request_approval
+
+        decision = await request_approval(ApprovalRequest(
+            tool="write_file" if write else "read_file",
+            action=(
+                "Write a file outside the current project"
+                if write
+                else "Read a file outside the current project"
+            ),
+            reason=(
+                "Restrict to workspace is on. Allow this location for the rest "
+                "of the chat?"
+            ),
+            detail=path,
+            consequence=(
+                "The agent uses your user permissions at this path. "
+                "Secrets and other projects become reachable."
+            ),
+            scope=f"workspace:{path}",
+            allow_when_unattended=False,
+        ))
+        return decision.allowed
+
     def _display_workspace(self) -> Path | None:
         return current_tool_workspace(self._workspace).project_path
+
+    def _missing_path_msg(self, kind: str, path: str, resolved: Path) -> str:
+        """Report a missing path with the nearest names that do exist.
+
+        A bare "not found" leaves the agent guessing, and guessing shows up as a
+        run of failed calls. Naming the closest entries, or the deepest part of
+        the path that does exist, gives it something to act on.
+        """
+        parts = [f"Error: {kind} not found: {path}"]
+        parent = resolved.parent
+        if parent.is_dir():
+            try:
+                names = [entry.name for entry in parent.iterdir()]
+            except OSError:
+                names = []
+            close = difflib.get_close_matches(resolved.name, names, n=3, cutoff=0.5)
+            if close:
+                parts.append(
+                    "Did you mean: " + ", ".join(self._display(parent / c) for c in close) + "?",
+                )
+        else:
+            existing = parent
+            while existing != existing.parent and not existing.is_dir():
+                existing = existing.parent
+            if existing.is_dir():
+                parts.append(
+                    f"Deepest existing directory: {self._display(existing)} "
+                    "(list it to see what is actually there).",
+                )
+        return ToolResult.error("\n".join(parts))
+
+    def _missing_project_file(self, rel: str, root: Path) -> str:
+        """Report a project-relative file that is absent, with near matches."""
+        return self._missing_path_msg("File", rel, root / rel)
+
+    def _display(self, path: Path) -> str:
+        """Show a path relative to the project when it sits inside it."""
+        workspace = self._display_workspace()
+        if workspace is not None:
+            try:
+                rel = path.relative_to(Path(workspace).expanduser().resolve(strict=False))
+            except ValueError:
+                return str(path)
+            return "the project root" if str(rel) == "." else str(rel)
+        return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +402,7 @@ _BLOCKED_DEVICE_PATHS = frozenset({
 def _is_blocked_device(path: str | Path) -> bool:
     """Check if path is a blocked device that could hang or produce infinite output."""
     import re
+    import stat
     raw = str(path)
 
     # Resolve symlinks to check the actual target
@@ -189,9 +418,20 @@ def _is_blocked_device(path: str | Path) -> bool:
     if re.match(r"/proc/\d+/fd/[012]$", resolved) or re.match(r"/proc/self/fd/[012]$", resolved):
         return True
 
-    # Check if resolved path starts with /dev/ (covers symlinks to devices)
+    # The rest of /dev is judged by what it is, not where it lives: /dev/null
+    # reads as instant EOF, /dev/shm is an ordinary tmpfs that programs use
+    # for scratch files, and neither can hang a read. What hangs is a
+    # character or block device or a FIFO, so only those are refused.
     if resolved.startswith("/dev/"):
-        return True
+        if resolved == "/dev/null" or resolved.startswith("/dev/shm/"):
+            return False
+        try:
+            mode = os.stat(resolved).st_mode
+        except OSError:
+            # Missing or unstatable: the read itself will fail with an honest
+            # error, which beats a warning about a hang that cannot happen.
+            return False
+        return not (stat.S_ISREG(mode) or stat.S_ISDIR(mode))
     return False
 
 
@@ -203,7 +443,11 @@ def _builtin_skill_read_path(path: str) -> Path | None:
     if requested.is_absolute():
         return None
     parts = requested.parts
-    if len(parts) < 2 or parts[0] != "skills":
+    # Custom skills live in .navin/skills; leftover .navin/skill is still
+    # falls back to the bundled copy.
+    if len(parts) >= 2 and parts[0] == ".navin" and parts[1] in {"skill", "skills"}:
+        parts = parts[1:]
+    if len(parts) < 2 or parts[0] not in {"skill", "skills"}:
         return None
     root = BUILTIN_SKILLS_DIR.resolve()
     candidate = (root / Path(*parts[1:])).resolve()
@@ -238,7 +482,16 @@ class ReadFileTool(_FsTool):
     _scopes = {"core", "subagent", "memory"}
 
     _MAX_CHARS = 128_000
-    _DEFAULT_LIMIT = 2000
+    # Default window for text reads. Every extra window is one more model call
+    # (~1.7 s and a full prompt re-send), so the window must cover the
+    # ordinary source file in one read; 1 000 lines does for the vast majority.
+    # Claude Code reads 2 000 lines by default. Minified bundles and data
+    # files are held in check by the per-line cap, not by a small window.
+    _DEFAULT_LIMIT = 1000
+    _LARGE_FILE_LINES = 1000
+    # A line longer than this is cut: it is a minified bundle, a data blob or
+    # a base64 payload, never something the model needs whole.
+    _MAX_LINE_CHARS = 2000
     _MAX_PDF_PAGES = 20
 
     @property
@@ -252,10 +505,12 @@ class ReadFileTool(_FsTool):
             "Text output format: LINE_NUM|CONTENT. "
             "Images return visual content for analysis. "
             "Supports PDF, DOCX, XLSX, PPTX documents. "
+            "Prefer code_index / grep with a path or glob before reading. "
             "Use find_files/list_dir first when the path is uncertain. "
             "Read the relevant range before editing so replacements or patches "
             "are based on current content. "
-            "Use offset and limit for large text files. "
+            "Default window is 1000 lines - pass offset and limit for larger files. "
+            "Lines over 2000 chars are cut. "
             "Use force=true to re-read content even if unchanged. "
             "Reads exceeding ~128K chars are truncated."
         )
@@ -263,6 +518,13 @@ class ReadFileTool(_FsTool):
     @property
     def read_only(self) -> bool:
         return True
+
+    @classmethod
+    def _clip_line(cls, line: str) -> str:
+        if len(line) <= cls._MAX_LINE_CHARS:
+            return line
+        omitted = len(line) - cls._MAX_LINE_CHARS
+        return line[: cls._MAX_LINE_CHARS] + f" (line truncated, {omitted} chars omitted)"
 
     async def execute(
         self,
@@ -277,17 +539,27 @@ class ReadFileTool(_FsTool):
             if not path:
                 return ToolResult.error("Error reading file: Unknown path")
 
-            # Device path blacklist
-            if _is_blocked_device(path):
-                return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output).")
+            if self._block_device_reads and _is_blocked_device(path):
+                return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
 
-            fp = self._resolve_read(path)
+            fp = await self._bound_path(path, write=False)
             if not fp.exists():
                 fp = _builtin_skill_read_path(path) or fp
-            if _is_blocked_device(fp):
-                return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output).")
+            if self._block_device_reads and _is_blocked_device(fp):
+                return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
             if not fp.exists():
-                return ToolResult.error(f"Error: File not found: {path}")
+                recovered = self._closest_readable_match(fp)
+                if recovered is not None:
+                    note = (
+                        f"[Note: {path} not found; reading closest match "
+                        f"{self._display(recovered)} instead.]\n"
+                    )
+                    result = await self.execute(
+                        path=str(recovered), offset=offset, limit=limit,
+                        pages=pages, force=force,
+                    )
+                    return note + result if isinstance(result, str) else result
+                return self._missing_path_msg("File", path, fp)
             if not fp.is_file():
                 return ToolResult.error(f"Error: Not a file: {path}")
 
@@ -345,20 +617,24 @@ class ReadFileTool(_FsTool):
 
             # Read the file content after dedup check
             raw = fp.read_bytes()
-            try:
-                text_content = raw.decode("utf-8")
-            except UnicodeDecodeError:
+            # Decoding also strips any BOM and normalizes CRLF -> LF before
+            # line-splitting. CRLF is primarily a Windows concern (git checkouts
+            # with autocrlf, editors saving CRLF) but is normalized on all
+            # platforms so downstream StrReplace/Grep behavior is consistent
+            # regardless of where the file was written.
+            decoded = text_decode.decode(raw)
+            if decoded is None:
                 # Binary file - return error message
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
                 if mime and mime.startswith("image/"):
                     return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
-                return ToolResult.error(f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'}). Only UTF-8 text and images are supported.")
+                return ToolResult.error(f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'}). Only text and images are supported.")
 
-            # Normalize CRLF -> LF before line-splitting. Primarily a Windows
-            # concern (git checkouts with autocrlf, editors saving CRLF) but
-            # applied on all platforms so downstream StrReplace/Grep behavior
-            # is consistent regardless of where the file was written.
-            text_content = text_content.replace("\r\n", "\n")
+            text_content = decoded.text
+            if fp.suffix.lower() == ".ipynb":
+                from navin.agent.tools.notebook import render_notebook
+
+                text_content = render_notebook(text_content) or text_content
 
             all_lines = text_content.splitlines()
             total = len(all_lines)
@@ -368,10 +644,27 @@ class ReadFileTool(_FsTool):
             if offset > total:
                 return ToolResult.error(f"Error: offset {offset} is beyond end of file ({total} lines)")
 
+            effective_limit = limit if limit is not None else self._DEFAULT_LIMIT
             start = offset - 1
-            end = min(start + (limit or self._DEFAULT_LIMIT), total)
-            numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(all_lines[start:end])]
+            end = min(start + effective_limit, total)
+            numbered = [
+                f"{start + i + 1}| {self._clip_line(line)}"
+                for i, line in enumerate(all_lines[start:end])
+            ]
             result = "\n".join(numbered)
+            large_hint = ""
+            if (
+                limit is None
+                and total > self._LARGE_FILE_LINES
+                and end < total
+            ):
+                large_hint = (
+                    f"(Large file: {total} lines. Prefer code_index or grep to "
+                    f"locate symbols, then read_file with offset/limit. "
+                    f"Default window is {self._DEFAULT_LIMIT} lines.)\n\n"
+                )
+            if large_hint:
+                result = large_hint + result
 
             if len(result) > self._MAX_CHARS:
                 trimmed, chars = [], 0
@@ -380,19 +673,41 @@ class ReadFileTool(_FsTool):
                     if chars > self._MAX_CHARS:
                         break
                     trimmed.append(line)
+                if not trimmed:
+                    # A first line wider than the whole budget would otherwise
+                    # yield an empty window whose "use offset=N to continue"
+                    # points back at itself, and the agent replays the same
+                    # call forever. Emit that line truncated instead, so the
+                    # window always advances by at least one line.
+                    first = numbered[0]
+                    omitted = len(first) - self._MAX_CHARS
+                    trimmed = [
+                        first[: self._MAX_CHARS]
+                        + f" (line truncated, {omitted} chars omitted)"
+                    ]
                 end = start + len(trimmed)
                 result = "\n".join(trimmed)
 
             if end < total:
                 result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
             else:
-                result += f"\n\n(End of file — {total} lines total)"
+                result += f"\n\n(End of file - {total} lines total)"
             self._file_states.record_read(fp, offset=offset, limit=limit)
             return result
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error reading file: {e}")
+
+    def _closest_readable_match(self, fp: Path) -> Path | None:
+        """Unambiguous stand-in for a missing read path, or None.
+
+        Reading is non-destructive, so a clearly-flagged substitution beats a
+        dead-end error. See ``closest_existing_match`` for the exact rules.
+        """
+        workspace = self._display_workspace()
+        root = Path(workspace).expanduser() if workspace is not None else None
+        return closest_existing_match(fp, root)
 
     def _read_pdf(self, fp: Path, pages: str | None) -> str:
         from navin.utils.document import PdfPageRangeError, PdfSafetyError, extract_pdf_pages
@@ -412,7 +727,7 @@ class ReadFileTool(_FsTool):
             return ToolResult.error(f"Error reading PDF: {e}")
 
         if not extraction.text:
-            return f"(PDF has no extractable text: {fp})"
+            return self._read_scanned_pdf(fp, extraction)
 
         result = extraction.text
         if extraction.end_page < extraction.total_pages - 1:
@@ -423,6 +738,46 @@ class ReadFileTool(_FsTool):
                 f"of {extraction.total_pages}. Use pages='{next_start}-{next_end}' to continue.)"
             )
         return result
+
+    def _read_scanned_pdf(self, fp: Path, extraction: Any) -> Any:
+        """Pages of a text-less PDF as images the model reads directly.
+
+        A scanned document used to come back as "no extractable text", which
+        the model relayed as if the file were empty. Rendering the requested
+        page range (six pages at a time) lets a vision model read it, and the
+        note tells it how to page further.
+        """
+        from navin.utils.pdf_pages import (
+            DEFAULT_MAX_PAGES,
+            describe_pdf_pages,
+            expand_scanned_pdf,
+        )
+
+        pages = expand_scanned_pdf(
+            fp,
+            total_pages=extraction.total_pages,
+            max_pages=DEFAULT_MAX_PAGES,
+            first_page=extraction.start_page + 1,
+        )
+        if not pages.ok:
+            return f"(PDF has no extractable text: {fp}. {pages.reason})"
+
+        blocks: list[dict[str, Any]] = []
+        for path, number in zip(pages.paths, pages.page_numbers, strict=False):
+            try:
+                raw = Path(path).read_bytes()
+            except OSError:
+                continue
+            blocks.extend(
+                build_image_content_blocks(raw, "image/png", path, f"(Page {number} of {fp.name})")
+            )
+        note = describe_pdf_pages(pages)
+        last = pages.page_numbers[-1]
+        if last < pages.total_pages:
+            next_end = min(last + DEFAULT_MAX_PAGES, pages.total_pages)
+            note += f"\nUse pages='{last + 1}-{next_end}' to continue."
+        blocks.append({"type": "text", "text": note})
+        return blocks
 
     def _read_office_doc(self, fp: Path) -> str:
         from navin.utils.document import extract_text
@@ -468,10 +823,25 @@ class WriteFileTool(_FsTool):
     def description(self) -> str:
         return (
             "Create a new file or intentionally replace an entire file with "
-            "the provided content. Overwrites existing files and creates parent "
-            "directories as needed. For code changes or partial edits, prefer "
-            "apply_patch; use edit_file only for small exact replacements."
+            "the provided content. Creates parent directories as needed. "
+            "Available in every agent mode except Ask. For small/partial code "
+            "edits prefer apply_patch; use edit_file for small exact "
+            "replacements. write_file is ideal for new docs and full rewrites."
         )
+
+    def _overwrite_warnings(self, fp: Path) -> list[str]:
+        """What the agent should know before this file stops existing as it was."""
+        if not fp.exists():
+            return []
+        warnings: list[str] = []
+        stale = self._file_states.check_read(fp)
+        if stale:
+            warnings.append(stale)
+        root = self._display_workspace()
+        note = uncommitted_note(root, fp) if root else ""
+        if note:
+            warnings.append(note)
+        return warnings
 
     async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
         try:
@@ -479,12 +849,19 @@ class WriteFileTool(_FsTool):
                 raise ValueError("Unknown path")
             if content is None:
                 raise ValueError("Unknown content")
-            fp = self._resolve_write(path)
+            fp = await self._bound_path(path, write=True)
+            # Replacing a whole file is the only edit with no anchor text to
+            # fail against, so a stale or unread target is caught here or not
+            # at all.
+            warnings = self._overwrite_warnings(fp)
             record_file_before(fp)
             fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(content, encoding="utf-8")
+            layout = _existing_layout(fp)
+            fp.write_bytes(encode_for(_match_line_endings(content, layout), layout))
             self._file_states.record_write(fp)
-            return f"Successfully wrote {len(content)} characters to {fp}"
+            written = f"Successfully wrote {len(content)} characters to {fp}"
+            summary = "\n".join([*warnings, written]) if warnings else written
+            return await self._with_diagnostics(summary, [fp])
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -810,18 +1187,25 @@ class EditFileTool(_FsTool):
         return (
             "Perform a small, exact replacement in one file by replacing "
             "old_text with new_text. Use this for narrow text substitutions "
-            "with old_text copied from read_file. For multi-file, structural, "
-            "or generated code edits, prefer apply_patch. If old_text matches "
-            "multiple times, provide more context or set occurrence, line_hint, "
-            "replace_all, and expected_replacements. When editing from numbered "
-            "read_file output, set line_hint to the exact target line. "
-            "Shows closest-match diagnostics on failure."
+            "with old_text copied from read_file. Keep old_text to the smallest "
+            "unique span (a few lines, never a whole function): with line_hint "
+            "set to the target line, one line is enough. For multi-file, "
+            "structural, or generated code edits, prefer apply_patch. If "
+            "old_text matches multiple times, set occurrence, line_hint, "
+            "replace_all, or expected_replacements rather than pasting more "
+            "context. Shows closest-match diagnostics on failure."
         )
 
     @staticmethod
     def _strip_trailing_ws(text: str) -> str:
-        """Strip trailing whitespace from each line."""
-        return "\n".join(line.rstrip() for line in text.split("\n"))
+        """Blank a line that is only indentation, and leave content lines alone.
+
+        Whitespace at the end of an otherwise empty line is always accidental
+        and every linter flags it. After a line with content it can be the point
+        of the edit - fixture data, a snapshot, a patch body - so removing it
+        would write bytes the caller did not ask for.
+        """
+        return "\n".join("" if not line.strip() else line for line in text.split("\n"))
 
     async def execute(
         self, path: str | None = None, old_text: str | None = None,
@@ -830,12 +1214,19 @@ class EditFileTool(_FsTool):
         line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
     ) -> str:
         try:
+            # Named explicitly: "Unknown old_text" reads as a rejected value
+            # rather than a missing argument, and the usual cause is a call that
+            # used another tool's parameter names.
             if not path:
-                raise ValueError("Unknown path")
+                raise ValueError("edit_file requires 'path'")
             if old_text is None:
-                raise ValueError("Unknown old_text")
+                raise ValueError(
+                    "edit_file requires 'old_text' (the exact text to replace)"
+                )
             if new_text is None:
-                raise ValueError("Unknown new_text")
+                raise ValueError(
+                    "edit_file requires 'new_text' (may be an empty string to delete)"
+                )
             if occurrence is not None and occurrence < 1:
                 return ToolResult.error("Error: occurrence must be >= 1.")
             if line_hint is not None and line_hint < 1:
@@ -843,7 +1234,13 @@ class EditFileTool(_FsTool):
             if expected_replacements is not None and expected_replacements < 1:
                 return ToolResult.error("Error: expected_replacements must be >= 1.")
 
-            fp = self._resolve_write(path)
+            fp = await self._bound_path(path, write=True)
+            if fp.suffix.lower() == ".ipynb" and fp.exists():
+                # read_file shows cells, not the JSON the anchor would have to
+                # match; the cell tool is the only edit that lines up with it.
+                return ToolResult.error(
+                    "Error: use notebook_edit for Jupyter notebooks (cells are numbered by read_file)."
+                )
             record_file_before(fp)
 
             # Create-file semantics: old_text='' + file doesn't exist → create
@@ -852,7 +1249,7 @@ class EditFileTool(_FsTool):
                     fp.parent.mkdir(parents=True, exist_ok=True)
                     fp.write_text(new_text, encoding="utf-8")
                     self._file_states.record_write(fp)
-                    return f"Successfully created {fp}"
+                    return await self._with_diagnostics(f"Successfully created {fp}", [fp])
                 return self._file_not_found_msg(path, fp)
 
             # File size protection
@@ -866,19 +1263,24 @@ class EditFileTool(_FsTool):
             # Create-file: old_text='' but file exists and not empty → reject
             if old_text == "":
                 raw = fp.read_bytes()
-                content = raw.decode("utf-8")
-                if content.strip():
-                    return ToolResult.error(f"Error: Cannot create file — {path} already exists and is not empty.")
+                probe = text_decode.decode(raw)
+                content = probe.text if probe is not None else ""
+                if content.strip() or (probe is None and raw):
+                    return ToolResult.error(f"Error: Cannot create file - {path} already exists and is not empty.")
                 fp.write_text(new_text, encoding="utf-8")
                 self._file_states.record_write(fp)
-                return f"Successfully edited {fp}"
+                return await self._with_diagnostics(f"Successfully edited {fp}", [fp])
 
             # Read-before-edit check
             warning = self._file_states.check_read(fp)
 
             raw = fp.read_bytes()
-            uses_crlf = b"\r\n" in raw
-            content = raw.decode("utf-8").replace("\r\n", "\n")
+            decoded = text_decode.decode(raw)
+            if decoded is None:
+                return ToolResult.error(
+                    f"Error: Cannot edit binary file {path}. Only text files can be edited."
+                )
+            content = decoded.text
             norm_old = old_text.replace("\r\n", "\n")
             matches = _find_matches(content, norm_old)
 
@@ -902,8 +1304,12 @@ class EditFileTool(_FsTool):
                 if len(line_numbers) > 3:
                     preview += ", ..."
                 location_hint = f" at {preview}" if preview else ""
-                return (
-                    f"Warning: old_text appears {count} times{location_hint}. "
+                # Nothing was edited, so this must read as a failure: a plain
+                # string here lets is_error consumers (fail_on_tool_error,
+                # retries, stats) believe the edit happened. apply_patch
+                # already treats the same ambiguity as an error.
+                return ToolResult.error(
+                    f"Error: old_text appears {count} times{location_hint}. "
                     "Provide more context, set occurrence to choose one match, "
                     "or set replace_all=true."
                 )
@@ -954,15 +1360,15 @@ class EditFileTool(_FsTool):
                     end += 1
 
                 new_content = new_content[: match.start] + replacement + new_content[end:]
-            if uses_crlf:
-                new_content = new_content.replace("\n", "\r\n")
 
-            fp.write_bytes(new_content.encode("utf-8"))
+            # Re-encode the way the file was stored, so editing one line of a
+            # cp1252 or BOM-prefixed file does not rewrite every other line.
+            fp.write_bytes(text_decode.encode(new_content, decoded))
             self._file_states.record_write(fp)
             msg = f"Successfully edited {fp}"
             if warning:
                 msg = f"{warning}\n{msg}"
-            return msg
+            return await self._with_diagnostics(msg, [fp])
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1031,9 +1437,11 @@ class ListDirTool(_FsTool):
 
     _DEFAULT_MAX = 200
     _IGNORE_DIRS = {
-        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
         "dist", "build", ".tox", ".mypy_cache", ".pytest_cache",
-        ".ruff_cache", ".coverage", "htmlcov",
+        ".ruff_cache", ".coverage", "htmlcov", ".next", ".nuxt", ".cache",
+        "target", "vendor", ".turbo", ".svelte-kit", ".output", ".gradle",
+        ".terraform",
     }
 
     @property
@@ -1043,9 +1451,11 @@ class ListDirTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "List the contents of a directory. "
-            "Set recursive=true to explore nested structure. "
-            "Common noise directories (.git, node_modules, __pycache__, etc.) are auto-ignored."
+            "List the contents of a directory (project tree). "
+            "Set recursive=true for a nested tree of files and folders. "
+            "Available in every agent mode/module except Ask. "
+            "Heavy trees (node_modules, .git, build, ...) are listed at the "
+            "point they appear but not walked, so the call stays fast."
         )
 
     @property
@@ -1059,39 +1469,77 @@ class ListDirTool(_FsTool):
         try:
             if path is None:
                 raise ValueError("Unknown path")
-            dp = self._resolve(path)
+            dp = await self._bound_path(path, write=False)
             if not dp.exists():
-                return ToolResult.error(f"Error: Directory not found: {path}")
+                return self._missing_path_msg("Directory", path, dp)
             if not dp.is_dir():
                 return ToolResult.error(f"Error: Not a directory: {path}")
 
             cap = max_entries or self._DEFAULT_MAX
             items: list[str] = []
-            total = 0
+            truncated = False
 
             if recursive:
-                for item in sorted(dp.rglob("*")):
-                    if any(p in self._IGNORE_DIRS for p in item.parts):
-                        continue
-                    total += 1
-                    if len(items) < cap:
-                        rel = item.relative_to(dp)
-                        items.append(f"{rel}/" if item.is_dir() else str(rel))
+                for dirpath, dirnames, filenames in os.walk(dp):
+                    current = Path(dirpath)
+                    if current != dp:
+                        rel = current.relative_to(dp).as_posix() + "/"
+                        if len(items) >= cap:
+                            truncated = True
+                            dirnames.clear()
+                            break
+                        items.append(rel)
+                    dirnames.sort()
+                    kept: list[str] = []
+                    for name in dirnames:
+                        child_rel = (
+                            name if current == dp
+                            else (current.relative_to(dp) / name).as_posix()
+                        )
+                        if name in self._IGNORE_DIRS:
+                            if len(items) >= cap:
+                                truncated = True
+                                break
+                            items.append(f"{child_rel}/")
+                        else:
+                            kept.append(name)
+                    if truncated:
+                        dirnames.clear()
+                        break
+                    dirnames[:] = kept
+                    for name in sorted(filenames):
+                        if len(items) >= cap:
+                            truncated = True
+                            dirnames.clear()
+                            break
+                        rel = (
+                            name if current == dp
+                            else (current.relative_to(dp) / name).as_posix()
+                        )
+                        items.append(rel)
+                    if truncated:
+                        break
             else:
-                for item in sorted(dp.iterdir()):
-                    if item.name in self._IGNORE_DIRS:
-                        continue
-                    total += 1
-                    if len(items) < cap:
-                        pfx = "📁 " if item.is_dir() else "📄 "
-                        items.append(f"{pfx}{item.name}")
+                try:
+                    children = sorted(
+                        dp.iterdir(),
+                        key=lambda item: (not item.is_dir(), item.name.lower()),
+                    )
+                except OSError as exc:
+                    return ToolResult.error(f"Error listing directory: {exc}")
+                for item in children:
+                    if len(items) >= cap:
+                        truncated = True
+                        break
+                    pfx = "📁 " if item.is_dir() else "📄 "
+                    items.append(f"{pfx}{item.name}")
 
-            if not items and total == 0:
+            if not items:
                 return f"Directory {path} is empty"
 
             result = "\n".join(items)
-            if total > cap:
-                result += f"\n\n(truncated, showing first {cap} of {total} entries)"
+            if truncated:
+                result += f"\n\n(truncated, showing first {cap} entries)"
             return result
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")

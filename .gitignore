@@ -1,4 +1,5 @@
 # Project-specific
+os/
 .worktrees/
 .worktree/
 .assets
@@ -11,10 +12,21 @@
 docs/superpowers/
 docs/plans/
 
+# vitest writes its cache next to the cwd it was launched from, which is the
+# repository root when the suite is run with --prefix.
+/node_modules/
+
 # webui (monorepo frontend)
 webui/node_modules/
 webui/dist/
 webui/coverage/
+# package-lock.json is the single lockfile every build resolves. A second one
+# resolved 112 of 878 packages to other versions, so the shipped WebUI
+# depended on which package manager the build machine happened to have.
+webui/bun.lock
+webui/bun.lockb
+webui/pnpm-lock.yaml
+webui/yarn.lock
 webui/.vite/
 webui/logs/
 *.tsbuildinfo
@@ -34,8 +46,16 @@ frontend.log
 __pycache__/
 *.egg-info/
 *.egg
+# Every local virtualenv, whatever its suffix (.venv, .venv-x86, .venv-arm...):
+# hundreds of MB of platform-specific binaries, rebuilt from pyproject.
+# Named explicitly too: `.venv-x86` was once committed and bloated Forgejo.
 .venv/
+.venv*/
+.venv-x86/
 venv/
+**/venv/
+**/.venv/
+**/.venv*/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -48,9 +68,55 @@ dmypy.json
 
 # Build & packaging
 dist/
+# Rust build trees of the native crates. The bare `target/` rule covers every
+# crate, present and future (navin-core, navin-sandbox, crates/navin-engine,
+# desktop/src-tauri): those trees weigh gigabytes and are rebuilt from source.
+target/
+navin-core/Cargo.lock
+navin-sandbox/Cargo.lock
+# Compiled binaries staged for packaging by `make native`
+navin/resources/bin/navin-sandbox
+navin/resources/bin/navin-engine*
+# Built OS packages (kept locally / published by CI, never committed).
+# Official staging is os/. Copies dropped at the repo root (windows/, macos/,
+# linux/) must stay out of git too. Filename rules have no version in them:
+# 1.0.0, 1.0.1 and 9.9.9 are ignored the same way.
+/windows/
+/macos/
+/linux/
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+navin-linux-*
+navin-macos-*
+SHA256SUMS*.txt
+*:Zone.Identifier
+/os/**/*.tar.gz
+/os/**/navin-standalone/
+/os/**/Navin.app/
+/packaging/windows/NavinUpdater.exe
+# Static ffmpeg staged by packaging/ffmpeg_vendor.py: 47-98 MB per target,
+# re-downloadable from the checksum-pinned manifest, never committed.
+/packaging/vendor/
+# Identifiants Azure Trusted Signing (chargés par build-desktop.ps1)
+/packaging/windows/signing.env
+# Inno Setup GUI wrappers: they hardcode one machine's staging paths.
+/packaging/windows/*.local.iss
+/navin/update/public_key.txt
+/navin/update/default_base_url.txt
+# Written by the packaging scripts: the extras compiled into that build.
+/navin/bundled_extras.txt
 build/
 *.manifest
+# The generic Python template ignores *.spec for the specs PyInstaller
+# generates. Navin's two specs are written by hand and are the build itself:
+# ignored, they exist on developer machines and nowhere else, and every CI
+# desktop build fails with "Spec file not found".
 *.spec
+!packaging/pyinstaller/*.spec
 pip-wheel-metadata/
 share/python-wheels/
 
@@ -84,6 +150,12 @@ Desktop.ini
 # Editors & IDEs (local workspace / user settings)
 .vscode/
 .cursor/
+# Extracted third-party agent packages kept locally for study (proprietary,
+# 200+ MB: never commit)
+/cursor/
+# Upstream marketplace sources cloned locally for study (~2.3 GB).
+# Never commit: MIT/Apache bases stay local until Navin-normalized.
+/templates_apps/
 .idea/
 .fleet/
 *.code-workspace
@@ -107,3 +179,14 @@ temp/
 exp/
 .playwright-mcp/
 bridge/node_modules/
+meetily/
+# Etat local de l'agent Navin (memoire/persona), jamais versionne.
+.navin/
+
+# Masters media generes localement (~350 Mo) puis publies sur S3 via
+# make aws-upload-media. Seul catalog.json reste versionne.
+templates/media/assets/
+
+# Local /install mirror (make local-releases). README stays.
+site/front/public/downloads/v*/
+site/front/public/downloads/releases.json

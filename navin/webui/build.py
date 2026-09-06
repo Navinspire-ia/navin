@@ -190,11 +190,13 @@ def build_webui_bundle(
     command_runner = runner or pick_webui_build_runner()
     if command_runner is None:
         raise WebUIBuildError(
-            "neither `bun` nor `npm` is available on PATH; install one or run "
-            "`cd webui && bun run build` manually"
+            "npm is not available on PATH; install Node.js or run "
+            "`cd webui && npm ci && npm run build` manually"
         )
+    if runner:
+        command_runner = shutil.which(runner) or runner
 
-    _emit(output, f"Building bundled WebUI with `{command_runner}`...")
+    _emit(output, f"Building bundled WebUI with `{Path(command_runner).name}`...")
     _run_frontend_command(
         [command_runner, "install"],
         cwd=resolved_source,
@@ -233,7 +235,7 @@ def ensure_webui_bundle(
     if mode == "warn":
         _emit(
             output,
-            f"Warning: {detail} Run `cd {status.source_dir} && bun run build` "
+            f"Warning: {detail} Run `cd {status.source_dir} && npm run build` "
             "to refresh it.",
         )
         return status
@@ -242,7 +244,7 @@ def ensure_webui_bundle(
         if confirm is None:
             _emit(output, f"Warning: {detail} No interactive confirmation is available.")
             return status
-        message = "Build WebUI now? This runs `cd webui && bun run build`."
+        message = "Build WebUI now? This runs `cd webui && npm run build`."
         if not confirm(message):
             _emit(output, "Continuing with the existing bundled WebUI build.")
             return status
@@ -260,10 +262,21 @@ def ensure_webui_bundle(
 
 
 def pick_webui_build_runner() -> str | None:
-    """Pick the frontend package manager used to build the WebUI."""
-    for candidate in ("bun", "npm"):
-        if shutil.which(candidate):
-            return candidate
+    """Pick the frontend package manager used to build the WebUI.
+
+    The resolved path is returned rather than the bare name: npm on Windows
+    ships as ``npm.cmd``, and ``CreateProcess`` only ever appends ``.exe``, so
+    spawning ``npm`` fails with a file-not-found that says nothing useful.
+
+    npm comes first: package-lock.json is the single lockfile every release
+    build resolves, and bun.lock used to resolve 112 of 878 packages to other
+    versions, so a checkout that auto-built with bun ran a WebUI nobody ships.
+    bun stays as a last resort for a machine without npm at all.
+    """
+    for candidate in ("npm", "bun"):
+        found = shutil.which(candidate)
+        if found:
+            return found
     return None
 
 

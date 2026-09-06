@@ -1,0 +1,335 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "school-management",
+  "name": "School Management",
+  "kind": "business",
+  "category": "education",
+  "source_github": "https://github.com/biprodas/school-erp",
+  "source_name": "School ERP",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/school-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 13,
+    "package_count": 2
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "doc/"
+    ],
+    "summary": "School ERP Monorepo for a school administration platform: admissions, academics, people (students, parents, staff), finance, campus services, communication, and reporting. The UI is a Next.js dashboard with a configurable sidebar; the API layer is NestJS. Repository layout Prerequisites - **Node.js** (LTS recommended) and **npm** Frontend cd frontend npm install npm run dev Open [http://localhost:3000](http://localhost:3000) (default Next.js port). Other scripts: `npm run build`, `npm run start`, `npm run lint`."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "backend",
+        "scripts": {
+          "build": "nest build",
+          "start": "nest start",
+          "start:dev": "nest start --watch",
+          "start:debug": "nest start --debug --watch",
+          "start:prod": "node dist/main",
+          "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+          "test": "jest",
+          "test:watch": "jest --watch",
+          "test:cov": "jest --coverage",
+          "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+          "test:e2e": "jest --config ./test/jest-e2e.json"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg",
+          "typeorm"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "backend",
+        "scripts": {
+          "build": "nest build",
+          "start": "nest start",
+          "start:dev": "nest start --watch",
+          "start:debug": "nest start --debug --watch",
+          "start:prod": "node dist/main",
+          "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+          "test": "jest",
+          "test:watch": "jest --watch",
+          "test:cov": "jest --coverage",
+          "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+          "test:e2e": "jest --config ./test/jest-e2e.json"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "pg",
+          "typeorm"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "frontend",
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start",
+          "lint": "eslint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3900,
+    5432
+  ],
+  "env_files": [
+    "backend/.env.example"
+  ],
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "HOST",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "Bind host",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "PORT",
+      "default": "3900",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "DATABASE_HOST",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "DATABASE_PORT",
+      "default": "5432",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "DATABASE_USERNAME",
+      "default": "postgres",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "DATABASE_PASSWORD",
+      "default": "postgres",
+      "required": true,
+      "secret": true,
+      "purpose": "Database setting",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "DATABASE_NAME",
+      "default": "multitenant_db",
+      "required": false,
+      "secret": false,
+      "purpose": "Database setting",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "your-super-secret-jwt-key",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_EXPIRES_IN",
+      "default": "7d",
+      "required": false,
+      "secret": false,
+      "purpose": "Auth / secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:backend/src/config/app.config.ts"
+    },
+    {
+      "key": "VERSION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:backend/src/config/app.config.ts"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run start",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/school-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy backend/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/school-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run start"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/school-management/overlay.json",
+    "agents": ".navin/apps/school-management/agents/",
+    "env": ".env",
+    "frontend": "frontend/package.json",
+    "backend": "backend/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "school-admin-agent",
+      "attendance-agent",
+      "timetable-agent",
+      "parent-assistant",
+      "academic-report-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -1,6 +1,6 @@
 ---
 name: market-research
-description: Study a market — size, trends, players, pricing, regulation, and opportunities — with sourced findings. Use before entering a market or positioning an offer.
+description: Study a market - size, trends, players, pricing, regulation, and opportunities - with sourced findings. Use before entering a market or positioning an offer.
 metadata: {"navin":{"emoji":"🌍","category":"marketing"}}
 ---
 
@@ -28,12 +28,12 @@ Answer: is this market worth entering, who wins today, and where is the opening.
 2. Multi-source research via `web_search` + `web_fetch` (see `deep-web-research` method): reports, news, competitor sites, reviews, communities.
 3. Triangulate numbers: if sizes conflict, show the range and the source of each.
 4. Map players on two axes that matter to the user (e.g. price × specialization).
-5. Conclude with 3–5 openings and the evidence behind each.
+5. Conclude with 3-5 openings and the evidence behind each.
 
 ## Report format
 
 ```markdown
-## Market research — <market, geography, date>
+## Market research - <market, geography, date>
 ### Answer in one paragraph
 ### Market size & growth [sources]
 ### Key players
@@ -44,5 +44,5 @@ Answer: is this market worth entering, who wins today, and where is the opening.
 
 ## Rules
 
-- Date every figure — markets move; 2019 data ≠ today.
+- Date every figure - markets move; 2019 data ≠ today.
 - Distinguish facts, estimates, and opinions typographically.

@@ -6,38 +6,57 @@ metadata: {"navin":{"emoji":"💥","category":"writing"}}
 
 # Copywriting Agent
 
-## Overview
-
 Copy sells one idea to one reader for one action. Specificity and proof beat adjectives.
+
+## When to use
+
+- Landing pages, ads, emails, slogans, CTAs
+- Any conversion-focused messaging
+
+## When not to use
+
+- Long SEO articles (prefer `seo-content-writer`, then tighten CTAs here)
+- Inventing testimonials or guarantees
 
 ## Frameworks
 
 | Framework | Flow | Best for |
 |-----------|------|----------|
-| PAS | Problem → Agitate → Solution | cold audiences, ads |
-| AIDA | Attention → Interest → Desire → Action | landing pages |
-| 4U headline | Useful, Urgent, Unique, Ultra-specific | titles, subjects |
-| Before/After/Bridge | current pain → desired state → your bridge | emails, intros |
+| PAS | Problem → Agitate → Solution | cold ads |
+| AIDA | Attention → Interest → Desire → Action | landings |
+| 4U | Useful, Urgent, Unique, Ultra-specific | titles |
+| Before/After/Bridge | pain → desired → bridge | emails |
 
 ## Craft rules
 
-- Benefits over features; outcomes over benefits ("get X in Y days" > "powerful tool")
-- Specific numbers > vague claims ("cut reporting from 3h to 20min")
-- Proof next to every claim (case, quote, logo, number)
-- One CTA; verb + outcome ("Get my audit", not "Submit")
+- Benefits → outcomes with numbers you can defend
+- Proof beside every claim (case, quote, logo, number) or cut the claim
+- One CTA; verb + outcome
 - Write 10 headlines, keep 1
-- Read aloud test: if it sounds like an ad, rewrite it
+- Read aloud: if it sounds like an ad, rewrite
+
+## If the deliverable is a page, not a doc
+
+Copy here. Build with the `ui-ux-pro-max` super render stack (Motion + Lenis + Embla + Lucide + Three.js / R3F / drei). Always a designed 3D layer, never wallpaper. A landing that is a PPTX export or a WebGL screenshot is the wrong file.
 
 ## Workflow
 
-1. Get raw material: persona (`customer-persona-builder`), offer, proof points, objections.
-2. Choose the framework by audience temperature.
-3. Draft headline batch → body → CTA.
-4. Cut 30%: every sentence must earn its place.
-5. Deliver 2 variants when stakes are high (A/B via `conversion-rate-optimization`).
+1. Raw material: persona, offer, proof, objections, awareness level.
+2. Choose framework by temperature (cold → PAS; warm → AIDA).
+3. Headline batch → body → CTA; produce sectioned landing copy when asked.
+4. Cut 30%.
+5. Deliver 2 variants for high-stakes A/B.
+6. Save under `marketing/copy/`.
 
 ## Rules
 
 - Never invent testimonials, numbers, or guarantees.
-- Match the awareness level: don't sell the product to someone unaware of the problem.
+- Match awareness: don't pitch product to problem-unaware readers without education.
 - Keep `brand-voice-manager` constraints.
+- Align CTA with campaign KPI (`campaign-manager`).
+
+## Anti-patterns
+
+- Feature lists with no outcome
+- Multiple competing CTAs
+- Superlatives without proof

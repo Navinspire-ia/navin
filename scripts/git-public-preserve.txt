@@ -1,0 +1,20 @@
+# Fichiers qui n'existent que sur le hub GitHub public (installers documentés,
+# captures, issue templates). Après overlay du source filtré, on les remet
+# pour ne pas écraser le hub communautaire.
+#
+# linux/ macos/ windows/ sont gitignorés dans ce dépôt (artefacts de build).
+# Sur GitHub ce sont des README d'installation, pas des binaires.
+
+linux/
+macos/
+windows/
+CONTRIBUTING.md
+SECURITY.md
+SUPPORT.md
+README.md
+docs/assets/
+docs/install/
+.github/ISSUE_TEMPLATE/
+examples/
+mcp/
+plugins/

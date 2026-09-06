@@ -1,0 +1,399 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "hotel-management",
+  "name": "Hotel Management",
+  "kind": "business",
+  "category": "hospitality",
+  "source_github": "https://github.com/SamiurRahmanMukul/Hotel-Room-Booking-System",
+  "source_name": "Hotel Room Booking System",
+  "license": "Apache-2.0",
+  "stack": [
+    "Next.js",
+    "React",
+    "Express",
+    "MongoDB"
+  ],
+  "studied_from": "templates_apps/hotel-management",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 18,
+    "package_count": 3
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "[![Facebook][facebook-shield]][facebook-url] [![Instagram][instagram-shield]][instagram-url] [![Twitter][twitter-shield]][twitter-url] [![LinkedIn][linkedin-shield]][linkedin-url] [![Github][github-shield]][github-url] \ud83c\udfd6\ufe0f Beach Resort | Hotel Room Booking System A comprehensive full-stack hotel room booking and management system built with modern web technologies. This application provides a complete solution for hotel room reservations, user management, and administrative operations."
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "npm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "npm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "admin-panel/package.json",
+        "name": "hotel-room-booking-system-admin-panel",
+        "scripts": {
+          "start": "set PORT=3033 && react-scripts start",
+          "build": "react-scripts build",
+          "lint": "eslint .",
+          "test": "react-scripts test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "react"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "hotel-room-booking-system-frontend",
+        "scripts": {
+          "dev": "next dev -p 3034",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "hotel-room-booking-system-backed",
+        "scripts": {
+          "start": "node server.js",
+          "dev": "NODE_ENV=development nodemon server.js",
+          "lint": "eslint .",
+          "test": "jest --forceExit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "admin-panel/package.json",
+        "name": "hotel-room-booking-system-admin-panel",
+        "scripts": {
+          "start": "set PORT=3033 && react-scripts start",
+          "build": "react-scripts build",
+          "lint": "eslint .",
+          "test": "react-scripts test"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "react"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "backend/package.json",
+        "name": "hotel-room-booking-system-backed",
+        "scripts": {
+          "start": "node server.js",
+          "dev": "NODE_ENV=development nodemon server.js",
+          "lint": "eslint .",
+          "test": "jest --forceExit"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "express",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "frontend/package.json",
+        "name": "hotel-room-booking-system-frontend",
+        "scripts": {
+          "dev": "next dev -p 3034",
+          "build": "next build",
+          "start": "next start",
+          "lint": "next lint"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "antd",
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    27017
+  ],
+  "env_files": [
+    "admin-panel/.env.example",
+    "backend/.env.example",
+    "frontend/.env.example"
+  ],
+  "env": [
+    {
+      "key": "REACT_APP_API_BASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "admin-panel/.env.example"
+    },
+    {
+      "key": "APP_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "APP_PORT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "APP_NODE_ENV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "APP_BASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "APP_SERVICE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "APP_LOG_LEVEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "MONGO_URI",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_ACCESS_TOKEN_EXPIRES",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_REFRESH_TOKEN_EXPIRES",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "JWT_TOKEN_COOKIE_EXPIRES",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SEND_SENDER_MAIL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "SEND_GRID_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": "backend/.env.example"
+    },
+    {
+      "key": "API_BASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "frontend/.env.example"
+    },
+    {
+      "key": "JWT_REFRESH_TOKEN_SECRET_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": "source:backend/src/middleware/app.authentication.js"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "mongodb://127.0.0.1:27017/app",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run start",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/hotel-management/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy admin-panel/.env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: npm install."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/hotel-management/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run start"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/hotel-management/overlay.json",
+    "agents": ".navin/apps/hotel-management/agents/",
+    "env": ".env",
+    "frontend": "admin-panel/package.json",
+    "backend": "backend/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "front-desk-agent",
+      "reservation-agent",
+      "housekeeping-agent",
+      "guest-assistant",
+      "revenue-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

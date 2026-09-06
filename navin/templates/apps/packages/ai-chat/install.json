@@ -1,0 +1,1874 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-chat",
+  "name": "AI Chatbot",
+  "kind": "ai-product",
+  "category": "chat",
+  "source_github": "https://github.com/danny-avila/LibreChat",
+  "source_name": "LibreChat",
+  "license": "MIT",
+  "stack": [
+    "React",
+    "Node",
+    "MongoDB",
+    "MCP"
+  ],
+  "studied_from": "templates_apps/ai-chat",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 208,
+    "package_count": 8
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "alt=\"Translation Progress\"> \ud83d\ude80 What's New in v0.8.8-rc1 - **Agent run control:** Interrupt or steer an Agent mid-run, queue follow-up messages, and reclaim, edit, or escalate pending steers. - **Human-in-the-loop Agents:** Agents stream question progress, ask up to four related questions in one form, pause for input or tool approval, and resume. - **Unified Agent Builder:** A redesigned Tools marketplace brings together Skills, MCP, Code Interpreter, orchestration, Programmatic Tool Calling, model-spec controls, and per-tool background and intent settings"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "bun",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "bun",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "@librechat/frontend",
+        "scripts": {
+          "build:file": "cross-env NODE_ENV=production vite build --debug > vite-output.log 2>&1",
+          "build": "cross-env NODE_ENV=production NODE_OPTIONS=--max-old-space-size=8192 vite build && node ./scripts/post-build.cjs",
+          "build:ci": "cross-env NODE_ENV=development vite build --mode ci",
+          "dev": "cross-env NODE_ENV=development vite",
+          "test": "cross-env NODE_ENV=development jest --watch",
+          "test:ci": "cross-env NODE_ENV=development jest --ci --logHeapUsage",
+          "b:test": "NODE_ENV=test bunx jest --watch",
+          "b:build": "NODE_ENV=production bun --bun vite build",
+          "b:dev": "NODE_ENV=development bunx vite"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/client/package.json",
+        "name": "@librechat/client",
+        "scripts": {
+          "build": "npm run clean && tsdown",
+          "build:dev": "npm run clean && NODE_ENV=development tsdown",
+          "b:build": "bun run b:clean && bun run tsdown",
+          "build:watch": "tsdown --watch",
+          "dev": "tsdown --watch",
+          "test": "jest",
+          "test:ci": "jest --ci"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      }
+    ],
+    "backend": [
+      {
+        "role": "backend",
+        "path": "api/package.json",
+        "name": "@librechat/backend",
+        "scripts": {
+          "start": "echo 'please run this from the root directory'",
+          "server-dev": "echo 'please run this from the root directory'",
+          "test": "cross-env NODE_ENV=test jest",
+          "b:test": "NODE_ENV=test bun jest",
+          "test:ci": "jest --ci --logHeapUsage"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "express",
+          "ioredis",
+          "mongodb",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/api/package.json",
+        "name": "@librechat/api",
+        "scripts": {
+          "build": "npm run clean && tsdown",
+          "build:dev": "npm run clean && tsdown",
+          "build:watch": "tsdown --watch",
+          "build:watch:prod": "tsdown --watch",
+          "test": "jest --coverage --watch --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
+          "test:ci": "jest --coverage --ci --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
+          "test:cache-integration:core": "jest --testPathPatterns=\"src/cache/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false",
+          "test:cache-integration:cluster": "jest --testPathPatterns=\"src/cluster/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false --runInBand",
+          "test:cache-integration:mcp": "jest --testPathPatterns=\"src/mcp/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false",
+          "test:cache-integration:stream": "jest --testPathPatterns=\"src/stream/.*\\.stream_integration\\.spec\\.ts$\" --coverage=false --runInBand --forceExit",
+          "test:cache-integration": "npm run test:cache-integration:core && npm run test:cache-integration:cluster && npm run test:cache-integration:mcp && npm run test:cache-integration:stream",
+          "test:s3-integration": "jest --testPathPatterns=\"src/storage/s3/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand",
+          "test:agents-integration": "jest --testPathPatterns=\"src/agents/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand --forceExit",
+          "b:build": "bun run b:clean && bun run tsdown",
+          "b:build:dev": "bun run b:clean && bun run tsdown",
+          "start:everything-sse": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/examples/everything/sse.ts",
+          "start:everything": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/everything.ts",
+          "start:filesystem": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/filesystem.ts",
+          "start:servers": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/servers.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb"
+        ]
+      }
+    ],
+    "all": [
+      {
+        "role": "root",
+        "path": "package.json",
+        "name": "LibreChat",
+        "scripts": {
+          "rebuild:package-lock": "node config/packages",
+          "reinstall:docker": "node config/update.js -d -g",
+          "update:docker": "node config/update.js -d",
+          "start:deployed": "docker compose -f ./deploy-compose.yml up -d || docker-compose -f ./deploy-compose.yml up -d",
+          "backend:dev": "cross-env NODE_ENV=development npx nodemon api/server/index.js",
+          "backend:dev:redis:single": "cross-env USE_REDIS=true USE_REDIS_CLUSTER=false REDIS_URI=redis://127.0.0.1:6379 npm run backend:dev",
+          "backend:dev:redis:cluster": "cross-env USE_REDIS=true USE_REDIS_CLUSTER=true REDIS_URI=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003 npm run backend:dev",
+          "build:data-provider": "cd packages/data-provider && npm run build",
+          "build:api": "cd packages/api && npm run build",
+          "build:data-schemas": "cd packages/data-schemas && npm run build",
+          "build:client": "cd client && npm run build",
+          "build:client-package": "cd packages/client && npm run build",
+          "build:packages": "npm run build:data-provider && npm run build:data-schemas && npm run build:api && npm run build:client-package",
+          "build": "npx turbo run build",
+          "build:safe": "npx turbo run build --no-daemon",
+          "frontend:dev": "cd client && npm run dev",
+          "test:client": "cd client && npm run test:ci",
+          "test:api": "cd api && npm run test:ci",
+          "test:packages:api": "cd packages/api && npm run test:ci",
+          "test:packages:data-provider": "cd packages/data-provider && npm run test:ci",
+          "test:packages:data-schemas": "cd packages/data-schemas && npm run test:ci",
+          "test:config": "jest --config config/jest.config.js",
+          "test:all": "npm run test:client && npm run test:api && npm run test:packages:api && npm run test:packages:data-provider && npm run test:packages:data-schemas",
+          "lint:fix": "eslint . --fix",
+          "lint": "eslint .",
+          "b:api:dev": "NODE_ENV=production bun run --watch api/server/index.js",
+          "b:build:client-package": "cd packages/client && bun run b:build",
+          "b:build:api": "cd packages/api && bun run b:build",
+          "b:build:client": "cd client && bun --bun run b:build",
+          "b:client:dev": "cd client && bun run b:dev",
+          "b:test:client": "cd client && bun run b:test",
+          "b:test:api": "cd api && bun run b:test",
+          "migrate:terms-timestamp": "node config/migrate-terms-timestamp.js",
+          "migrate:agent-permissions:dry-run": "node config/migrate-agent-permissions.js --dry-run",
+          "migrate:agent-permissions": "node config/migrate-agent-permissions.js",
+          "migrate:agent-permissions:batch": "node config/migrate-agent-permissions.js --batch-size=50",
+          "migrate:prompt-permissions:dry-run": "node config/migrate-prompt-permissions.js --dry-run",
+          "migrate:prompt-permissions": "node config/migrate-prompt-permissions.js",
+          "migrate:prompt-permissions:batch": "node config/migrate-prompt-permissions.js --batch-size=50",
+          "migrate:shared-link-permissions:dry-run": "node config/migrate-shared-link-permissions.js --dry-run",
+          "migrate:shared-link-permissions": "node config/migrate-shared-link-permissions.js",
+          "migrate:shared-link-permissions:batch": "node config/migrate-shared-link-permissions.js --batch-size=50",
+          "migrate:orphaned-agent-files:dry-run": "node config/migrate-orphaned-agent-files.js --dry-run",
+          "migrate:orphaned-agent-files": "node config/migrate-orphaned-agent-files.js",
+          "migrate:orphaned-agent-files:batch": "node config/migrate-orphaned-agent-files.js --batch-size=50",
+          "migrate:code-file-duplicates:dry-run": "node config/migrate-code-file-duplicates.js --dry-run",
+          "migrate:code-file-duplicates": "node config/migrate-code-file-duplicates.js",
+          "migrate:code-file-duplicates:batch": "node config/migrate-code-file-duplicates.js --batch-size=50"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "backend",
+        "path": "api/package.json",
+        "name": "@librechat/backend",
+        "scripts": {
+          "start": "echo 'please run this from the root directory'",
+          "server-dev": "echo 'please run this from the root directory'",
+          "test": "cross-env NODE_ENV=test jest",
+          "b:test": "NODE_ENV=test bun jest",
+          "test:ci": "jest --ci --logHeapUsage"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "express",
+          "ioredis",
+          "mongodb",
+          "mongoose"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "client/package.json",
+        "name": "@librechat/frontend",
+        "scripts": {
+          "build:file": "cross-env NODE_ENV=production vite build --debug > vite-output.log 2>&1",
+          "build": "cross-env NODE_ENV=production NODE_OPTIONS=--max-old-space-size=8192 vite build && node ./scripts/post-build.cjs",
+          "build:ci": "cross-env NODE_ENV=development vite build --mode ci",
+          "dev": "cross-env NODE_ENV=development vite",
+          "test": "cross-env NODE_ENV=development jest --watch",
+          "test:ci": "cross-env NODE_ENV=development jest --ci --logHeapUsage",
+          "b:test": "NODE_ENV=test bunx jest --watch",
+          "b:build": "NODE_ENV=production bun --bun vite build",
+          "b:dev": "NODE_ENV=development bunx vite"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "framer-motion",
+          "react",
+          "vite"
+        ]
+      },
+      {
+        "role": "backend",
+        "path": "packages/api/package.json",
+        "name": "@librechat/api",
+        "scripts": {
+          "build": "npm run clean && tsdown",
+          "build:dev": "npm run clean && tsdown",
+          "build:watch": "tsdown --watch",
+          "build:watch:prod": "tsdown --watch",
+          "test": "jest --coverage --watch --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
+          "test:ci": "jest --coverage --ci --testPathIgnorePatterns=\"\\.*integration\\.|\\.*helper\\.|__tests__/helpers/|\\.*manual\\.spec\\.\"",
+          "test:cache-integration:core": "jest --testPathPatterns=\"src/cache/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false",
+          "test:cache-integration:cluster": "jest --testPathPatterns=\"src/cluster/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false --runInBand",
+          "test:cache-integration:mcp": "jest --testPathPatterns=\"src/mcp/.*\\.cache_integration\\.spec\\.ts$\" --coverage=false",
+          "test:cache-integration:stream": "jest --testPathPatterns=\"src/stream/.*\\.stream_integration\\.spec\\.ts$\" --coverage=false --runInBand --forceExit",
+          "test:cache-integration": "npm run test:cache-integration:core && npm run test:cache-integration:cluster && npm run test:cache-integration:mcp && npm run test:cache-integration:stream",
+          "test:s3-integration": "jest --testPathPatterns=\"src/storage/s3/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand",
+          "test:agents-integration": "jest --testPathPatterns=\"src/agents/.*\\.integration\\.spec\\.ts$\" --coverage=false --runInBand --forceExit",
+          "b:build": "bun run b:clean && bun run tsdown",
+          "b:build:dev": "bun run b:clean && bun run tsdown",
+          "start:everything-sse": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/examples/everything/sse.ts",
+          "start:everything": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/everything.ts",
+          "start:filesystem": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/filesystem.ts",
+          "start:servers": "node -r dotenv/config --loader ./tsconfig-paths-bootstrap.mjs --experimental-specifier-resolution=node ./src/demo/servers.ts"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "mongodb"
+        ]
+      },
+      {
+        "role": "frontend",
+        "path": "packages/client/package.json",
+        "name": "@librechat/client",
+        "scripts": {
+          "build": "npm run clean && tsdown",
+          "build:dev": "npm run clean && NODE_ENV=development tsdown",
+          "b:build": "bun run b:clean && bun run tsdown",
+          "build:watch": "tsdown --watch",
+          "dev": "tsdown --watch",
+          "test": "jest",
+          "test:ci": "jest --ci"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "react"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/data-provider/package.json",
+        "name": "librechat-data-provider",
+        "scripts": {
+          "build": "npm run clean && tsdown && tsc -p tsconfig.build.json",
+          "build:watch": "tsdown --watch",
+          "test": "jest --coverage --watch",
+          "test:ci": "jest --coverage --ci --logHeapUsage",
+          "b:build": "bun run b:clean && bun run tsdown && bun run tsc -p tsconfig.build.json"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios"
+        ]
+      },
+      {
+        "role": "package",
+        "path": "packages/data-schemas/package.json",
+        "name": "@librechat/data-schemas",
+        "scripts": {
+          "build": "npm run clean && tsdown",
+          "build:watch": "tsdown --watch",
+          "test": "jest --coverage --watch",
+          "test:ci": "jest --coverage --ci",
+          "b:build": "bun run b:clean && bun run tsdown"
+        },
+        "node_engine": "",
+        "deps_hint": []
+      },
+      {
+        "role": "package",
+        "path": "packages/data-provider/react-query/package.json",
+        "name": "librechat-data-provider/react-query",
+        "scripts": {},
+        "node_engine": "",
+        "deps_hint": [
+          "axios"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    },
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    },
+    {
+      "engine": "redis",
+      "required": false,
+      "docker_image": "redis:7-alpine",
+      "port": 6379,
+      "env_url": "REDIS_URL",
+      "compose": [
+        "docker-compose.yml"
+      ],
+      "bootstrap": [
+        "docker compose up -d redis || docker run -d --name navin-redis -p 6379:6379 redis:7-alpine"
+      ]
+    }
+  ],
+  "ports": [
+    0,
+    25,
+    3080,
+    5432,
+    6379,
+    27017
+  ],
+  "env_files": [
+    ".env.example",
+    "search/.env.example"
+  ],
+  "env": [
+    {
+      "key": "HOST",
+      "default": "localhost",
+      "required": false,
+      "secret": false,
+      "purpose": "Bind host",
+      "from": ".env.example"
+    },
+    {
+      "key": "PORT",
+      "default": "3080",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_URI",
+      "default": "mongodb://127.0.0.1:27017/LibreChat",
+      "required": false,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_MAX_POOL_SIZE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_MIN_POOL_SIZE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_MAX_CONNECTING",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_MAX_IDLE_TIME_MS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_WAIT_QUEUE_TIMEOUT_MS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_AUTO_INDEX",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "MONGO_AUTO_CREATE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB setting",
+      "from": ".env.example"
+    },
+    {
+      "key": "DOMAIN_CLIENT",
+      "default": "http://localhost:3080",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DOMAIN_SERVER",
+      "default": "http://localhost:3080",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ADMIN_PANEL_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "ADMIN_PANEL_SESSION_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "NO_INDEX",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TRUST_PROXY",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CONSOLE_JSON",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEBUG_LOGGING",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEBUG_CONSOLE",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOG_TO_FILE",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AGENT_DEBUG_LOGGING",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NODE_MAX_OLD_SPACE_SIZE",
+      "default": "6144",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "PROXY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "default": "user_provided",
+      "required": true,
+      "secret": true,
+      "purpose": "Anthropic API key",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_KEY",
+      "default": "user_provided",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "user_provided",
+      "required": true,
+      "secret": true,
+      "purpose": "OpenAI API key",
+      "from": ".env.example"
+    },
+    {
+      "key": "DEBUG_OPENAI",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "ASSISTANTS_API_KEY",
+      "default": "user_provided",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CREDS_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CREDS_IV",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_SERVICE_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_INDEX_NAME",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_API_VERSION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_SEARCH_OPTION_QUERY_TYPE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_SEARCH_OPTION_TOP",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "AZURE_AI_SEARCH_SEARCH_OPTION_SELECT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "FLUX_API_BASE_URL",
+      "default": "https://api.us1.bfl.ai",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_SEARCH_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CSE_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SD_WEBUI_URL",
+      "default": "http://host.docker.internal:7860",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "TAVILY_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TRAVERSAAL_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "WOLFRAM_APP_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ZAPIER_NLA_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SEARCH",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MEILI_NO_ANALYTICS",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MEILI_HOST",
+      "default": "http://0.0.0.0:7700",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MEILI_MASTER_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "STT_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TTS_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_MODERATION",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENAI_MODERATION_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Model / LLM provider",
+      "from": ".env.example"
+    },
+    {
+      "key": "BAN_VIOLATIONS",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BAN_DURATION",
+      "default": "1000 * 60 * 60 * 2",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "BAN_INTERVAL",
+      "default": "20",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOGIN_VIOLATION_SCORE",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "REGISTRATION_VIOLATION_SCORE",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CONCURRENT_VIOLATION_SCORE",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MESSAGE_VIOLATION_SCORE",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "NON_BROWSER_VIOLATION_SCORE",
+      "default": "20",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "TTS_VIOLATION_SCORE",
+      "default": "0",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "STT_VIOLATION_SCORE",
+      "default": "0",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "FORK_VIOLATION_SCORE",
+      "default": "0",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "IMPORT_VIOLATION_SCORE",
+      "default": "0",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP / service port",
+      "from": ".env.example"
+    },
+    {
+      "key": "FILE_UPLOAD_VIOLATION_SCORE",
+      "default": "0",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOGIN_MAX",
+      "default": "7",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LOGIN_WINDOW",
+      "default": "5",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "REGISTER_MAX",
+      "default": "5",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "REGISTER_WINDOW",
+      "default": "60",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LIMIT_CONCURRENT_MESSAGES",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "CONCURRENT_MESSAGE_MAX",
+      "default": "2",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LIMIT_MESSAGE_IP",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MESSAGE_IP_MAX",
+      "default": "40",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MESSAGE_IP_WINDOW",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LIMIT_MESSAGE_USER",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MESSAGE_USER_MAX",
+      "default": "40",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "MESSAGE_USER_WINDOW",
+      "default": "1",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ILLEGAL_MODEL_REQ_SCORE",
+      "default": "5",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_EMAIL_LOGIN",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_REGISTRATION",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_SOCIAL_LOGIN",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_SOCIAL_REGISTRATION",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_PASSWORD_RESET",
+      "default": "false",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ALLOW_UNVERIFIED_EMAIL_LOGIN",
+      "default": "true",
+      "required": false,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "SESSION_EXPIRY",
+      "default": "1000 * 60 * 15",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "REFRESH_TOKEN_EXPIRY",
+      "default": "(1000 * 60 * 60 * 24) * 7",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "JWT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "JWT signing secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "JWT_REFRESH_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "DISCORD_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "DISCORD_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "DISCORD_CALLBACK_URL",
+      "default": "/oauth/discord/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "FACEBOOK_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "FACEBOOK_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "FACEBOOK_CALLBACK_URL",
+      "default": "/oauth/facebook/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_CALLBACK_URL",
+      "default": "/oauth/google/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "APPLE_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "APPLE_TEAM_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "APPLE_KEY_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "APPLE_PRIVATE_KEY_PATH",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "APPLE_CALLBACK_URL",
+      "default": "/oauth/apple/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_CLIENT_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_CLIENT_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ISSUER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_SESSION_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_SCOPE",
+      "default": "openid profile email",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_CALLBACK_URL",
+      "default": "/oauth/openid/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REQUIRED_ROLE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REQUIRED_ROLE_TOKEN_KIND",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REQUIRED_ROLE_PARAMETER_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ADMIN_ROLE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ADMIN_ROLE_PARAMETER_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ADMIN_ROLE_TOKEN_KIND",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_ENABLED",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_API_ENABLED",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_SOURCE",
+      "default": "id",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_ROLE_PRIORITY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ROLE_SYNC_FALLBACK_ROLE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_USERNAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_NAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_EMAIL_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_AUDIENCE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REFRESH_AUDIENCE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_BUTTON_LABEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_IMAGE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_AUTO_REDIRECT",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_USE_PKCE",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REUSE_TOKENS",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_REUSE_MAX_SESSION_AGE_MS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_JWKS_URL_CACHE_ENABLED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_JWKS_URL_CACHE_TIME",
+      "default": "# 600000 ms eq to 10 minutes leave empty to disable caching",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_ON_BEHALF_FLOW_USERINFO_SCOPE",
+      "default": "user.read\" # example for Scope Needed for Microsoft Graph API",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_USE_END_SESSION_ENDPOINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_POST_LOGOUT_REDIRECT_URI",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_MAX_LOGOUT_URL_LENGTH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_ENTRY_POINT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_ISSUER",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_CERT",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_CALLBACK_URL",
+      "default": "/oauth/saml/callback",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_SESSION_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_EMAIL_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_USERNAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_GIVEN_NAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_FAMILY_NAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_PICTURE_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_NAME_CLAIM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_BUTTON_LABEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "SAML_IMAGE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "USE_ENTRA_ID_FOR_PEOPLE_SEARCH",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "ENTRA_ID_INCLUDE_OWNERS_AS_MEMBERS",
+      "default": "false",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "OPENID_GRAPH_SCOPES",
+      "default": "User.Read,People.Read,GroupMember.Read.All",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LDAP_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "LDAP_BIND_DN",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LDAP_BIND_CREDENTIALS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LDAP_USER_SEARCH_BASE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "LDAP_CA_CERT_PATH",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml",
+      "docker-compose.langfuse-fanout.yml",
+      ".devcontainer/docker-compose.yml",
+      ".do/gitnexus/docker-compose.yml",
+      "search/compose.yml"
+    ],
+    "services": [
+      {
+        "name": "api",
+        "image": "registry.librechat.ai/danny-avila/librechat-dev:latest",
+        "ports": []
+      },
+      {
+        "name": "admin-panel",
+        "image": "registry.librechat.ai/clickhouse/librechat-admin-panel:latest",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "mongodb",
+        "image": "mongo:8.0.20",
+        "ports": []
+      },
+      {
+        "name": "meilisearch",
+        "image": "getmeili/meilisearch:v1.35.1",
+        "ports": []
+      },
+      {
+        "name": "vectordb",
+        "image": "pgvector/pgvector:0.8.0-pg15-trixie",
+        "ports": []
+      },
+      {
+        "name": "rag_api",
+        "image": "registry.librechat.ai/danny-avila/librechat-rag-api-dev-lite:latest",
+        "ports": []
+      },
+      {
+        "name": "api",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "langfuse-fanout-collector",
+        "image": "librechat-langfuse-fanout:local",
+        "ports": []
+      },
+      {
+        "name": "langfuse-fanout-redis",
+        "image": "redis:7.4-alpine",
+        "ports": []
+      },
+      {
+        "name": "langfuse-fanout-otel",
+        "image": "otel/opentelemetry-collector-contrib:0.143.0",
+        "ports": []
+      },
+      {
+        "name": "app",
+        "image": "",
+        "ports": [
+          "3080:3080"
+        ]
+      },
+      {
+        "name": "mongodb",
+        "image": "mongo",
+        "ports": [
+          "27018:27017"
+        ]
+      },
+      {
+        "name": "meilisearch",
+        "image": "getmeili/meilisearch:v1.5",
+        "ports": [
+          "7700:7700"
+        ]
+      },
+      {
+        "name": "options",
+        "image": "",
+        "ports": []
+      },
+      {
+        "name": "gitnexus",
+        "image": "${GITNEXUS_IMAGE:-ghcr.io/danny-avila/librechat-gitnexus:latest}",
+        "ports": []
+      },
+      {
+        "name": "caddy",
+        "image": "caddy:2-alpine",
+        "ports": [
+          "80:80",
+          "443:443"
+        ]
+      },
+      {
+        "name": "ferretdb-postgres",
+        "image": "ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "ferretdb",
+        "image": "ghcr.io/ferretdb/ferretdb:2.7.0",
+        "ports": [
+          "27017:27017",
+          "8088:8088"
+        ]
+      },
+      {
+        "name": "chat_search_db",
+        "image": "pgvector/pgvector:0.8.6-pg17-trixie",
+        "ports": [
+          "5432:5432"
+        ]
+      },
+      {
+        "name": "clickhouse",
+        "image": "clickhouse/clickhouse-server:26.3.17.110",
+        "ports": [
+          "8123:8123",
+          "9000:9000"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "build": "npm run build",
+    "dev": "npm run dev"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-chat/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: bun install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-chat/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-chat/overlay.json",
+    "agents": ".navin/apps/ai-chat/agents/",
+    "env": ".env",
+    "frontend": "client/package.json",
+    "backend": "api/package.json",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "chat-agent",
+      "mcp-agent",
+      "artifact-agent",
+      "preset-agent",
+      "moderation-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
+import time
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -18,8 +20,25 @@ from navin.agent.context_governance import (
     ContextGovernor,
 )
 from navin.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from navin.agent.prompt_profile import log_request_profile
+from navin.agent.reasoning_router import route_reasoning_effort
+from navin.agent.run_policy import TurnPolicy, bind_turn_policy, reset_turn_policy
+from navin.agent.scope_anchor import (
+    calls_touch_targets,
+    is_orientation_batch,
+    scope_drift_message,
+)
 from navin.agent.tools.registry import ToolRegistry, is_tool_error_result
+from navin.agent.turn_timing import (
+    PHASE_CONTEXT,
+    PHASE_MODEL,
+    PHASE_TOOLS,
+    TurnTiming,
+    measure,
+)
+from navin.config.schema import ToolResultClearing
 from navin.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from navin.providers.session_affinity import session_affinity
 from navin.session.history_visibility import is_hidden_history_message
 from navin.utils.helpers import (
     IncrementalThinkExtractor,
@@ -34,27 +53,323 @@ from navin.utils.llm_runtime import LLMRuntime
 from navin.utils.prompt_templates import render_template
 from navin.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
+    NO_PROGRESS_STOP_FALLBACK,
     build_budget_exhausted_finalization_message,
+    build_delivery_continue_message,
     build_finalization_retry_message,
     build_goal_continue_message,
     build_length_recovery_message,
+    build_no_progress_continue_message,
+    build_verify_before_done_message,
+    build_verify_failed_message,
     is_blank_text,
     repeated_external_lookup_error,
+    repeated_readonly_tool_error,
+    repeated_tool_failure_hint,
+    repeated_tool_failure_is_hard_stop,
     repeated_workspace_violation_error,
+    reset_readonly_spin_counts,
 )
+
+_VERIFY_TOOL_NAMES = frozenset({"verify", "lint", "test_run"})
+# Only nudge verify after real edits - pure investigation must not be blocked.
+_EDIT_TOOL_NAMES = frozenset(
+    {"apply_patch", "edit_file", "write_file", "manage_files"}
+)
+PROGRESS_TOOL_NAMES = _EDIT_TOOL_NAMES | {
+    "exec",
+    "test_run",
+    "verify",
+    "lint",
+    "start_app",
+    "open_preview",
+    "write_stdin",
+}
+_PROGRESS_TOOL_NAMES = PROGRESS_TOOL_NAMES
+# Consecutive search-only iterations before a nudge, then a hard stop.
+# Reading a handful of files before the first edit is normal work, not a
+# spin, so the stop sits above a realistic investigation.
+_NO_PROGRESS_NUDGE = 5
+_NO_PROGRESS_STOP = 8
+# Look-around batches (list/find/grep/read) touching none of the targets the
+# user named before the turn is told, once, where the request pointed. Two
+# batches is a repo listing plus a README, i.e. exactly the drift.
+_SCOPE_DRIFT_NUDGE = 2
+# Red verify means the code is broken. Two repair attempts, then hand it
+# back with the failure visible instead of pretending it is done.
+_MAX_VERIFY_FAIL_NUDGES = 2
+
+
+# Programs that are a test run by themselves, and programs that are one only
+# with the right sub-command. Matched on the program token of each simple
+# command, so ``pip install pytest`` and ``echo jest`` are not runs.
+_TEST_PROGRAMS = frozenset({
+    "pytest", "py.test", "vitest", "jest", "mocha", "phpunit", "rspec", "tox",
+    "nox", "ctest", "ava", "tap", "karma", "cypress", "behave", "busted",
+})
+_TEST_SUBCOMMANDS: dict[str, frozenset[str]] = {
+    "cargo": frozenset({"test", "nextest"}),
+    "go": frozenset({"test"}),
+    "dotnet": frozenset({"test"}),
+    "make": frozenset({"test", "check", "tests"}),
+    "mix": frozenset({"test"}),
+    "swift": frozenset({"test"}),
+    "flutter": frozenset({"test"}),
+    "dart": frozenset({"test"}),
+    "deno": frozenset({"test"}),
+    "playwright": frozenset({"test"}),
+    "mvn": frozenset({"test", "verify"}),
+    "gradle": frozenset({"test", "check"}),
+    "gradlew": frozenset({"test", "check"}),
+    "stack": frozenset({"test"}),
+    "cabal": frozenset({"test"}),
+    "sbt": frozenset({"test"}),
+    "lein": frozenset({"test"}),
+    "zig": frozenset({"test"}),
+    "nx": frozenset({"test"}),
+    "turbo": frozenset({"test"}),
+    "ng": frozenset({"test"}),
+    "npm": frozenset({"test", "t"}),
+    "pnpm": frozenset({"test", "t"}),
+    "yarn": frozenset({"test"}),
+    "bun": frozenset({"test"}),
+}
+_RUN_WRAPPERS = frozenset({
+    "uv", "poetry", "pipenv", "hatch", "pdm", "rye", "npx", "bunx", "pnpx",
+    "bundle", "time", "sudo", "env", "nice", "xvfb-run", "timeout", "nix-shell",
+})
+_EXIT_CODE_RE = re.compile(r"Exit code: (-?\d+)")
+
+
+def _is_test_command(command: str) -> bool:
+    """Does any simple command in this shell line run a test suite?"""
+    for simple in re.split(r"\s*(?:&&|\|\||;|\|)\s*", command):
+        tokens = simple.strip().split()
+        while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+            tokens.pop(0)  # FOO=bar prefixes
+        while tokens and os.path.basename(tokens[0]) in _RUN_WRAPPERS:
+            tokens.pop(0)
+            # ``timeout -k 5 600 pytest``, ``nice -n 10 pytest``: flags and
+            # bare durations belong to the wrapper, not to the program.
+            while tokens and (tokens[0].startswith("-") or re.fullmatch(r"\d+[smhd]?", tokens[0])):
+                tokens.pop(0)
+            if tokens and tokens[0] in {"run", "exec"}:
+                tokens.pop(0)
+        if not tokens:
+            continue
+        program = os.path.basename(tokens[0]).lower()
+        if program.endswith(".exe"):
+            program = program[:-4]
+        args = tokens[1:]
+        if program in _TEST_PROGRAMS:
+            return True
+        if re.fullmatch(r"python[0-9.]*|pypy[0-9.]*", program):
+            if len(args) >= 2 and args[0] == "-m" and args[1] in {"pytest", "unittest", "nose2", "behave"}:
+                return True
+            continue
+        if program in {"npm", "pnpm", "yarn", "bun"} and len(args) >= 2 and args[0] == "run":
+            if args[1].split(":")[0] in {"test", "tests", "e2e"} or args[1].startswith("test"):
+                return True
+            continue
+        expected = _TEST_SUBCOMMANDS.get(program)
+        if expected and any(token in expected for token in args if not token.startswith("-")):
+            return True
+    return False
+
+
+def _exec_event_fields(params: Any, result: Any) -> dict[str, str]:
+    """What a tool event needs to say about an ``exec`` beyond its first line."""
+    command = ""
+    if isinstance(params, dict):
+        command = str(params.get("command") or "")
+    codes = _EXIT_CODE_RE.findall(str(result or ""))
+    return {"command": command[:300], "exit_code": codes[-1] if codes else ""}
+
+
+def _tests_passed_via_exec(tool_events: list[dict[str, str]]) -> bool:
+    """True when a test runner ran through ``exec`` and exited 0 after the last edit.
+
+    ``pytest`` under ``exec`` is the same evidence ``test_run`` produces. Asking
+    the model for ``verify`` on top used to cost two more model calls on
+    every small change: one to read the nudge, one to run a tool it had
+    effectively already run.
+    """
+    verified = False
+    for event in tool_events:
+        name = str(event.get("name") or "")
+        if name in _EDIT_TOOL_NAMES:
+            verified = False
+            continue
+        if name != "exec" or event.get("status") != "ok":
+            continue
+        if not _is_test_command(str(event.get("command") or "")):
+            continue
+        verified = event.get("exit_code") == "0"
+    return verified
+
+
+def _last_verify_failed(tool_events: list[dict[str, str]]) -> bool:
+    """True when the most recent verify/lint/test_run event looks red."""
+    for event in reversed(tool_events):
+        name = str(event.get("name") or "")
+        if name not in _VERIFY_TOOL_NAMES:
+            continue
+        if event.get("status") == "error":
+            return True
+        detail = str(event.get("detail") or "")
+        upper = detail.upper()
+        if "FAIL" in upper or "VERDICT_TEST_FAILURES" in upper or "VERDICT_LINT_ERRORS" in upper:
+            return True
+        if "PASS" in upper or "CLEAN" in upper or "OK" in upper:
+            return False
+        return False
+    return False
+
+
+def _verify_failure_summary(
+    spec: "AgentRunSpec",
+    tool_events: list[dict[str, str]],
+) -> str:
+    """What the model should see about the red verify, not just that it is red."""
+    if spec.workspace is not None:
+        try:
+            from navin.quality.verification_log import last_verification_summary
+
+            digest = last_verification_summary(spec.workspace)
+            if digest:
+                return digest
+        except Exception:
+            pass
+    for event in reversed(tool_events):
+        name = str(event.get("name") or "")
+        if name not in _VERIFY_TOOL_NAMES:
+            continue
+        detail = str(event.get("detail") or "").strip()
+        if detail:
+            return f"{name}: {detail}"
+    return ""
+
 
 GoalContinueMessage = str | Callable[[], str | None]
 
 _DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model."
-_ARREARAGE_ERROR_MESSAGE = (
-    "The AI provider rejected the request because the API key is out of quota or the "
-    "account is in arrears. Please top up / check the billing status of your API key and try again."
+# Sentinel consommé par le WebUI (QuotaLimitCard) - ne pas traduire / reformuler.
+_QUOTA_LIMIT_SENTINEL = "__NAVIN_QUOTA_LIMIT__"
+_PROVIDER_CREDIT_SENTINEL = "__NAVIN_PROVIDER_CREDIT__"
+# Line prefix the WebUI reads to quote the provider verbatim - keep in sync
+# with parseProviderCreditMessage in QuotaLimitCard.tsx.
+_PROVIDER_MESSAGE_PREFIX = "Provider message: "
+_PROVIDER_CREDIT_HINT = (
+    "This model runs on your own API key. Top up at the provider, or pick another model."
+)
+_PROVIDER_CREDIT_ERROR_MESSAGE = (
+    f"{_PROVIDER_CREDIT_SENTINEL}\n"
+    "The provider refused the call: the key is out of credit.\n"
+    f"{_PROVIDER_CREDIT_HINT}"
+)
+_MANAGED_QUOTA_ERROR_MESSAGE = (
+    f"{_QUOTA_LIMIT_SENTINEL}\n"
+    "Your plan's monthly model quota is used up. It resets at the start of your next "
+    "billing period. To keep working now, upgrade your plan in Settings, Account, or "
+    "add your own provider key."
 )
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+
+
+def _provider_label(runtime: LLMRuntime | None, response: LLMResponse | None) -> str:
+    """Display name of the provider that refused the call, "" when unknown."""
+    label = str(getattr(response, "error_provider", "") or "").strip()
+    if label:
+        return label
+    provider = getattr(runtime, "provider", None)
+    # Failover wrappers keep the chosen model's provider on ``_primary``.
+    for _ in range(3):
+        if provider is None:
+            break
+        spec = getattr(provider, "_spec", None)
+        for attr in ("display_name", "name"):
+            name = getattr(spec, attr, None)
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        provider = getattr(provider, "_primary", None)
+    return ""
+
+
+def _provider_credit_error_message(
+    runtime: LLMRuntime | None, response: LLMResponse | None
+) -> str:
+    """Refusal on the user's own key: who refused, their words, what to do.
+
+    The generic "out of credit" sentence hid which provider said what. Quoting
+    the provider ("Insufficient balance or no resource package. Please
+    recharge.") tells the user where to top up without guessing.
+    """
+    from navin.providers.user_facing_errors import provider_error_detail
+
+    provider = _provider_label(runtime, response) or "The provider"
+    model = str(getattr(runtime, "model", "") or "").strip()
+    detail = str(getattr(response, "error_detail", "") or "").strip()
+    if not detail:
+        detail = provider_error_detail(getattr(response, "content", None)) or ""
+    target = f" for {model}" if model else ""
+    lines = [
+        _PROVIDER_CREDIT_SENTINEL,
+        f"{provider} refused the call{target}: the key is out of credit.",
+    ]
+    if detail:
+        lines.append(f"{_PROVIDER_MESSAGE_PREFIX}{detail}")
+    lines.append(_PROVIDER_CREDIT_HINT)
+    return "\n".join(lines)
+
+
+def _arrearage_error_message(
+    runtime: LLMRuntime | None = None, response: LLMResponse | None = None
+) -> str:
+    """Plan quota only when THIS turn used the managed key.
+
+    A subscribed account can still send BYOK turns. Those 402s are the
+    user's provider credit, not the Navin monthly budget, and the provider's
+    own message is what tells the user where to top up.
+    """
+    try:
+        from navin.config.loader import load_config
+        from navin.license_sync import request_immediate_sync
+        from navin.usage_mode import runtime_uses_managed_key
+
+        config = load_config()
+        if runtime is not None and runtime_uses_managed_key(runtime, config):
+            request_immediate_sync("managed_quota_message")
+            return _MANAGED_QUOTA_ERROR_MESSAGE
+    except Exception:
+        pass
+    try:
+        return _provider_credit_error_message(runtime, response)
+    except Exception:
+        return _PROVIDER_CREDIT_ERROR_MESSAGE
+
+
+# Defaults for AgentRunSpec.max_empty_retries / max_length_recoveries; a run
+# that needs different limits sets them on its spec instead of editing these.
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
-_MAX_INJECTIONS_PER_TURN = 3
+# Keep aligned with AgentDefaults.max_concurrent_subagents: the parent must be
+# able to drain one full wave of completions per injection cycle. Draining less
+# than a wave is not lossy (the surplus waits in the queue), but it spends one
+# of the _MAX_INJECTION_CYCLES per fraction of a wave, so a fan-out wider than
+# this starves the cycles left for genuine follow-up work.
+_MAX_INJECTIONS_PER_TURN = 200
 _MAX_INJECTION_CYCLES = 5
+
+
+def _call_read_only(tool: Any, params: Any) -> bool:
+    """Whether this specific call is side-effect free (per-action aware)."""
+    checker = getattr(tool, "call_read_only", None)
+    if callable(checker):
+        try:
+            return bool(checker(params))
+        except Exception:
+            return bool(getattr(tool, "read_only", False))
+    return bool(getattr(tool, "read_only", False))
 
 @dataclass(slots=True)
 class AgentRunSpec:
@@ -73,6 +388,7 @@ class AgentRunSpec:
     workspace: Path | None = None
     session_key: str | None = None
     context_block_limit: int | None = None
+    tool_result_clearing: ToolResultClearing = field(default_factory=ToolResultClearing)
     provider_retry_mode: str = "standard"
     progress_callback: Any | None = None
     stream_progress_deltas: bool = True
@@ -80,8 +396,66 @@ class AgentRunSpec:
     checkpoint_callback: Any | None = None
     injection_callback: Any | None = None
     llm_timeout_s: float | None = None
+    # Runner-level wall clock around one tool execution. None reads
+    # NAVIN_TOOL_TIMEOUT_S (default 3600s); <= 0 disables. The ceiling is
+    # deliberately above every legitimate long wait (write_stdin's 30-min
+    # emulator boot, exec polls): it exists to catch tools that hang forever
+    # (an MCP server that never answers, a network read without its own
+    # timeout), not to police slow-but-alive work. A hit is a soft tool error,
+    # never the end of the turn.
+    tool_timeout_s: float | None = None
     goal_active_predicate: Callable[[], bool] | None = None
     goal_continue_message: GoalContinueMessage | None = None
+    # When True, a first final answer with zero successful tool calls is nudged
+    # once so delivery workflows (/studio, /campaign, …) cannot end on a plan.
+    requires_tool_delivery: bool = False
+    # When True, a first final answer that used tools but skipped verify/lint/
+    # test_run is nudged once (Build/Code /forge /cruise).
+    requires_verify_before_done: bool = False
+    # Paths, branches, services or files the user named in the request. A
+    # turn whose first look-around batches touch none of them is reminded
+    # once where to look (see navin.agent.scope_anchor).
+    scope_targets: tuple[str, ...] = ()
+    # Blank final responses re-asked before giving up on the turn.
+    max_empty_retries: int = _MAX_EMPTY_RETRIES
+    # finish_reason=length continuations before the output is cut short.
+    max_length_recoveries: int = _MAX_LENGTH_RECOVERIES
+    # How many times a red verify may be nudged back into a fix retry before
+    # the turn is allowed to finish. Build workflows (/forge, /cruise, /debug)
+    # raise it above the default so hard bugs get their full edit+verify
+    # cycles instead of closing "done" on a red gate. None = runner default.
+    verify_fail_nudge_limit: int | None = None
+    # When True, only read-only tool *calls* may run (Ask mode). Tools that
+    # multiplex reads and writes behind one name (git, board) are judged per
+    # action via Tool.call_read_only, so git status works while commit refuses.
+    read_only_tools: bool = False
+    # Plan mode: design-only turns. Read-only calls run freely; the planning
+    # surfaces (board, ask_user, set_composer_mode) may write; every other
+    # mutating call is refused until the composer switches to Agent.
+    plan_read_only: bool = False
+    # Composer mode this turn started in. A successful set_composer_mode call
+    # updates it (and the flags above) mid-turn, so the documented plan→agent
+    # simple-task handoff takes effect immediately instead of next turn.
+    composer_mode: str | None = None
+    # Kept for metadata/prompt compatibility. No longer hard-blocks tools:
+    # Agent modes may use write_file / edit_file / apply_patch freely.
+    apply_patch_only: bool = False
+    # Verify-red retries so far this turn. Each one raises the routed
+    # reasoning effort a step (see navin.agent.reasoning_router): the cheap
+    # attempt just failed, so its retry should not think at the same depth.
+    effort_escalations: int = 0
+    # Tool names refused for this turn (e.g. scrape in Code module).
+    denied_tools: frozenset[str] = field(default_factory=frozenset)
+    # Module-level denials (product decisions). Kept apart from denied_tools so
+    # a mid-turn mode switch can swap mode denials without ever lifting these.
+    locked_denied_tools: frozenset[str] = field(default_factory=frozenset)
+    # None = no allowlist. A frozenset is the only names whose schemas go to
+    # the model (/forge). MCP and every desk tool not listed stay out.
+    allowed_tools: frozenset[str] | None = None
+    # Generator pinned for the first model call when the request is an
+    # unambiguous media ask ("genere une image de ..."). Ignored once any tool
+    # has run, and when the build does not ship that tool.
+    forced_tool: str | None = None
     finalize_on_max_iterations: bool = True
 
 
@@ -97,6 +471,7 @@ class AgentRunResult:
     error: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
     had_injections: bool = False
+    prompt_profile: dict[str, Any] | None = None
 
 
 class AgentRunner:
@@ -104,6 +479,18 @@ class AgentRunner:
 
     def __init__(self) -> None:
         self.context_governor = ContextGovernor()
+
+    @staticmethod
+    def _model_tool_definitions(spec: AgentRunSpec) -> list[dict[str, Any]]:
+        """Schemas the model actually sees (allowlist + denylist + compact)."""
+        from navin.agent.tool_surface import filter_tool_definitions
+
+        return filter_tool_definitions(
+            spec.tools.get_definitions(),
+            spec.denied_tools,
+            allowed=spec.allowed_tools,
+            compact=True,
+        )
 
     @staticmethod
     def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:
@@ -156,6 +543,7 @@ class AgentRunner:
         phase: str = "after error",
         iteration: int | None = None,
         allow_goal_continue: bool = False,
+        wait: bool = True,
     ) -> tuple[bool, int]:
         """Drain pending injections. Returns (should_continue, updated_cycles).
 
@@ -163,11 +551,16 @@ class AgentRunner:
         append them to *messages* (and emit a checkpoint if *assistant_message*
         and *iteration* are both provided) and return (True, cycles+1) so the
         caller continues the iteration loop.  Otherwise return (False, cycles).
+
+        ``wait=False`` marks a mid-turn drain: take what is already queued but
+        never block on still-running subagents, because the model has its own
+        next step to run. The end-of-turn drain keeps waiting so background
+        results land in this turn instead of being dispatched separately.
         """
         injections: list[dict[str, Any]] = []
         real_injection = False
         if injection_cycles < _MAX_INJECTION_CYCLES:
-            injections = await self._drain_injections(spec)
+            injections = await self._drain_injections(spec, wait=wait)
             real_injection = bool(injections)
         if not injections and allow_goal_continue and assistant_message is not None:
             predicate = spec.goal_active_predicate
@@ -211,29 +604,31 @@ class AgentRunner:
                 custom = None
         return build_goal_continue_message(custom)
 
-    async def _drain_injections(self, spec: AgentRunSpec) -> list[dict[str, Any]]:
+    async def _drain_injections(
+        self, spec: AgentRunSpec, *, wait: bool = True,
+    ) -> list[dict[str, Any]]:
         """Drain pending user messages via the injection callback.
 
         Returns normalized user messages (capped by
         ``_MAX_INJECTIONS_PER_TURN``), or an empty list when there is
-        nothing to inject. Messages beyond the cap are logged so they
-        are not silently lost.
+        nothing to inject. A callback that over-delivers past the cap has its
+        surplus dropped, and the last surviving message says so, so a background
+        result cannot go missing without the model being told.
         """
         if spec.injection_callback is None:
             return []
         try:
             signature = inspect.signature(spec.injection_callback)
-            accepts_limit = (
-                "limit" in signature.parameters
-                or any(
-                    parameter.kind is inspect.Parameter.VAR_KEYWORD
-                    for parameter in signature.parameters.values()
-                )
+            has_var_keyword = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in signature.parameters.values()
             )
-            if accepts_limit:
-                items = await spec.injection_callback(limit=_MAX_INJECTIONS_PER_TURN)
-            else:
-                items = await spec.injection_callback()
+            kwargs: dict[str, Any] = {}
+            if "limit" in signature.parameters or has_var_keyword:
+                kwargs["limit"] = _MAX_INJECTIONS_PER_TURN
+            if "wait" in signature.parameters or has_var_keyword:
+                kwargs["wait"] = wait
+            items = await spec.injection_callback(**kwargs)
         except Exception:
             logger.exception("injection_callback failed")
             return []
@@ -259,7 +654,25 @@ class AgentRunner:
                 len(injected_messages), _MAX_INJECTIONS_PER_TURN, dropped,
             )
             injected_messages = injected_messages[:_MAX_INJECTIONS_PER_TURN]
+            # A result the model never hears about looks like a subagent that
+            # vanished, and it will either wait for it or redo the work. Naming
+            # the loss costs one line and lets it ask instead.
+            injected_messages[-1] = self._with_overflow_note(injected_messages[-1], dropped)
         return injected_messages
+
+    @staticmethod
+    def _with_overflow_note(message: dict[str, Any], dropped: int) -> dict[str, Any]:
+        """Append a note about results this turn could not carry."""
+        note = (
+            f"\n\n[{dropped} further background result(s) arrived at the same time "
+            f"and did not fit in this turn. Ask for them if you need them.]"
+        )
+        content = message.get("content")
+        if isinstance(content, str):
+            return {**message, "content": content + note}
+        if isinstance(content, list):
+            return {**message, "content": [*content, {"type": "text", "text": note}]}
+        return message
 
     @staticmethod
     def _has_injection_content(content: Any) -> bool:
@@ -274,32 +687,50 @@ class AgentRunner:
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
         hook = spec.hook or AgentHook()
         messages = list(spec.initial_messages)
-        context = AgentRunHookContext(messages=deepcopy(messages))
+        # The deepcopies below exist to isolate hook callbacks from the live
+        # conversation. A bare AgentHook is a documented no-op: nothing reads
+        # the context, so paying several full-history deep copies per run for
+        # it is pure overhead that grows with conversation size.
+        isolate = type(hook) is not AgentHook
 
+        def _snapshot(source: Any) -> Any:
+            return deepcopy(source) if isolate else list(source)
+
+        context = AgentRunHookContext(messages=_snapshot(messages))
+
+        # Published for the whole turn so tools that start background work
+        # (spawn) can inherit the inheritable guardrails: the verify gate and
+        # the module denylist must follow delegated work, not stop at the
+        # parent. contextvars carry the value into tasks created mid-turn.
+        policy_token = bind_turn_policy(TurnPolicy(
+            requires_verify_before_done=spec.requires_verify_before_done,
+            locked_denied_tools=spec.locked_denied_tools,
+            allowed_tools=spec.allowed_tools,
+        ))
         try:
             await hook.before_run(context)
             result = await self._run_core(spec, hook, messages)
         except asyncio.CancelledError as exc:
-            context.messages = deepcopy(messages)
+            context.messages = _snapshot(messages)
             context.stop_reason = "cancelled"
             context.error = None
             context.exception = exc
             raise
         except Exception as exc:
-            context.messages = deepcopy(messages)
+            context.messages = _snapshot(messages)
             context.stop_reason = "error"
             context.error = f"Error: {type(exc).__name__}: {exc}"
             context.exception = exc
             await hook.on_error(context)
             raise
         else:
-            context.messages = deepcopy(result.messages)
+            context.messages = _snapshot(result.messages)
             context.final_content = result.final_content
             context.tools_used = list(result.tools_used)
             context.usage = dict(result.usage)
             context.stop_reason = result.stop_reason
             context.error = result.error
-            context.tool_events = deepcopy(result.tool_events)
+            context.tool_events = _snapshot(result.tool_events)
             context.had_injections = result.had_injections
             context.exception = None
             if context.error is not None:
@@ -307,7 +738,8 @@ class AgentRunner:
             await hook.after_run(context)
             return result
         finally:
-            context.messages = deepcopy(messages)
+            reset_turn_policy(policy_token)
+            context.messages = _snapshot(messages)
             if context.exception is None:
                 await hook.on_finally(context)
             else:
@@ -328,41 +760,75 @@ class AgentRunner:
         final_content: str | None = None
         tools_used: list[str] = []
         usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
+        peak_prompt_tokens = 0
+        peak_request_messages: list[dict[str, Any]] | None = None
         error: str | None = None
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
         external_lookup_counts: dict[str, int] = {}
         # Per-turn throttle for repeated attempts against the same outside target.
         workspace_violation_counts: dict[str, int] = {}
+        # Soft-error retry budget: identical failing calls escalate after a few tries.
+        tool_failure_counts: dict[str, int] = {}
+        # Identical successful reads/greps: thinking models re-fetch blanked results.
+        readonly_call_counts: dict[str, int] = {}
         empty_content_retries = 0
         length_recovery_count = 0
         had_injections = False
         injection_cycles = 0
         compacted_tool_call_ids: set[str] = set()
+        from navin.agent.tool_surface import FilteredToolDefinitions
+
+        # Read denied/allowed through callables: a mid-turn set_composer_mode
+        # swap is then visible to the very next definitions read.
+        #
+        # Schemas are always compacted, not just under an allowlist. Prompt
+        # size is wall-clock: a 57k prompt costs ~2.3s per call over a small
+        # one even at a 100% cache hit, and every step pays it again. The
+        # long tail of a description is prose the model does not need to pick
+        # the right tool.
+        tools_for_model = FilteredToolDefinitions(
+            spec.tools,
+            lambda: spec.denied_tools,
+            allowed=lambda: spec.allowed_tools,
+            compact=True,
+        )
         governance_config = ContextGovernanceConfig(
             provider=spec.runtime.provider,
             model=spec.runtime.model,
-            tools=spec.tools,
+            tools=tools_for_model,
             workspace=spec.workspace,
             session_key=spec.session_key,
             max_tool_result_chars=spec.max_tool_result_chars,
             context_window_tokens=spec.runtime.context_window_tokens,
             context_block_limit=spec.context_block_limit,
+            clearing=spec.tool_result_clearing,
             max_tokens=spec.runtime.generation.max_tokens,
             inflight_start_index=len(spec.initial_messages),
         )
 
+        delivery_nudge_count = 0
+        verify_nudge_count = 0
+        verify_fail_nudge_count = 0
+        no_progress_streak = 0
+        no_progress_nudge_count = 0
+        # Scope anchor: look-around batches that never touch a named target.
+        scope_drift_streak = 0
+        scope_anchored = not spec.scope_targets
+        scope_nudge_count = 0
+        timing = TurnTiming(session_key=spec.session_key, model=spec.runtime.model)
         for iteration in range(spec.max_iterations):
             try:
                 # Keep the persisted conversation untouched. Context governance
                 # may repair or compact historical messages for the model, but
                 # those synthetic edits must not shift the append boundary used
                 # later when the caller saves only the new turn.
-                messages_for_model = self.context_governor.prepare_for_model(
-                    governance_config,
-                    messages,
-                    compacted_tool_call_ids,
-                )
+                with measure(timing, PHASE_CONTEXT):
+                    messages_for_model = self.context_governor.prepare_for_model(
+                        governance_config,
+                        messages,
+                        compacted_tool_call_ids,
+                    )
             except Exception:
                 logger.exception(
                     "Context governance failed on turn {} for {}; applying minimal repair",
@@ -388,9 +854,19 @@ class AgentRunner:
                 iteration=iteration,
                 messages=messages,
                 session_key=spec.session_key,
+                model=spec.runtime.model,
             )
             await hook.before_iteration(context)
-            response = await self._request_model(spec, messages_for_model, hook, context)
+            with measure(timing, PHASE_MODEL):
+                response = await self._request_model(
+                    spec,
+                    messages_for_model,
+                    hook,
+                    context,
+                    tool_followup=bool(tools_used),
+                    empty_retry=empty_content_retries > 0,
+                )
+            timing.end_iteration()
             context.response = response
             context.tool_calls = list(response.tool_calls)
 
@@ -401,8 +877,16 @@ class AgentRunner:
             )
             response.content = cleaned_content
             raw_usage = self._usage_or_estimate(spec, messages_for_model, response)
+            timing.add_usage(raw_usage, context.requested_reasoning_effort)
             context.usage = dict(raw_usage)
+            if spec.runtime.model:
+                context.model = spec.runtime.model
+                context.usage["model"] = spec.runtime.model
             self._accumulate_usage(usage, raw_usage)
+            prompt_n = int(raw_usage.get("prompt_tokens") or 0)
+            if prompt_n > peak_prompt_tokens:
+                peak_prompt_tokens = prompt_n
+                peak_request_messages = list(messages_for_model)
             if reasoning_text and not context.streamed_reasoning:
                 await hook.emit_reasoning(reasoning_text)
                 await hook.emit_reasoning_end()
@@ -434,14 +918,18 @@ class AgentRunner:
 
                 await hook.before_execute_tools(context)
 
-                results, new_events, fatal_error = await self._execute_tools(
-                    spec,
-                    response.tool_calls,
-                    external_lookup_counts,
-                    workspace_violation_counts,
-                    hook,
-                    context,
-                )
+                with measure(timing, PHASE_TOOLS):
+                    results, new_events, fatal_error = await self._execute_tools(
+                        spec,
+                        response.tool_calls,
+                        external_lookup_counts,
+                        workspace_violation_counts,
+                        hook,
+                        context,
+                        tool_failure_counts=tool_failure_counts,
+                        readonly_call_counts=readonly_call_counts,
+                        timing=timing,
+                    )
                 tool_events.extend(new_events)
                 tools_used.extend(
                     tool_call.name
@@ -477,6 +965,7 @@ class AgentRunner:
                     should_continue, injection_cycles = await self._try_drain_injections(
                         spec, messages, None, injection_cycles,
                         phase="after tool error",
+                        wait=False,
                     )
                     if should_continue:
                         had_injections = True
@@ -495,10 +984,64 @@ class AgentRunner:
                 )
                 empty_content_retries = 0
                 length_recovery_count = 0
-                # Checkpoint 1: drain injections after tools, before next LLM call
+                ok_names = {
+                    tool_call.name
+                    for tool_call, event in zip(response.tool_calls, new_events)
+                    if event.get("status") == "ok"
+                }
+                if ok_names & _PROGRESS_TOOL_NAMES:
+                    no_progress_streak = 0
+                elif ok_names:
+                    no_progress_streak += 1
+                if no_progress_streak >= _NO_PROGRESS_STOP:
+                    logger.warning(
+                        "Search-only loop after {} iterations for {}; stopping",
+                        no_progress_streak,
+                        spec.session_key or "default",
+                    )
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=False)
+                    final_content = await self._try_finalize_after_max_iterations(
+                        spec, hook, messages, usage,
+                    )
+                    if is_blank_text(final_content):
+                        final_content = NO_PROGRESS_STOP_FALLBACK
+                    self._append_final_message(messages, final_content)
+                    stop_reason = "no_progress"
+                    context.final_content = final_content
+                    context.stop_reason = stop_reason
+                    await hook.after_iteration(context)
+                    break
+                if (
+                    no_progress_streak == _NO_PROGRESS_NUDGE
+                    and no_progress_nudge_count < 1
+                ):
+                    no_progress_nudge_count += 1
+                    messages.append(build_no_progress_continue_message())
+                if not scope_anchored:
+                    if calls_touch_targets(response.tool_calls, spec.scope_targets):
+                        scope_anchored = True
+                    elif is_orientation_batch(response.tool_calls):
+                        scope_drift_streak += 1
+                    if (
+                        scope_drift_streak >= _SCOPE_DRIFT_NUDGE
+                        and scope_nudge_count < 1
+                    ):
+                        scope_nudge_count += 1
+                        logger.info(
+                            "Scope drift: {} look-around batches without touching {} for {}",
+                            scope_drift_streak, list(spec.scope_targets),
+                            spec.session_key or "default",
+                        )
+                        messages.append(scope_drift_message(spec.scope_targets))
+                # Checkpoint 1: drain injections after tools, before next LLM call.
+                # Non-blocking: the model has its next step to run; waiting for
+                # still-running subagents here parked the whole turn for up to
+                # five minutes between two tool batches.
                 _drained, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
                     phase="after tool execution",
+                    wait=False,
                 )
                 if _drained:
                     had_injections = True
@@ -515,13 +1058,13 @@ class AgentRunner:
             clean = hook.finalize_content(context, response.content)
             if response.finish_reason != "error" and is_blank_text(clean):
                 empty_content_retries += 1
-                if empty_content_retries < _MAX_EMPTY_RETRIES:
+                if empty_content_retries < spec.max_empty_retries:
                     logger.warning(
                         "Empty response on turn {} for {} ({}/{}); retrying",
                         iteration,
                         spec.session_key or "default",
                         empty_content_retries,
-                        _MAX_EMPTY_RETRIES,
+                        spec.max_empty_retries,
                     )
                     if hook.wants_streaming():
                         await hook.on_stream_end(context, resuming=False)
@@ -539,6 +1082,10 @@ class AgentRunner:
                 response = await self._request_finalization_retry(spec, messages_for_model)
                 retry_usage = self._usage_or_estimate(spec, retry_messages, response)
                 self._accumulate_usage(usage, retry_usage)
+                retry_n = int(retry_usage.get("prompt_tokens") or 0)
+                if retry_n > peak_prompt_tokens:
+                    peak_prompt_tokens = retry_n
+                    peak_request_messages = list(retry_messages)
                 raw_usage = self._merge_usage(raw_usage, retry_usage)
                 context.response = response
                 context.usage = dict(raw_usage)
@@ -547,13 +1094,13 @@ class AgentRunner:
 
             if response.finish_reason == "length" and not is_blank_text(clean):
                 length_recovery_count += 1
-                if length_recovery_count <= _MAX_LENGTH_RECOVERIES:
+                if length_recovery_count <= spec.max_length_recoveries:
                     logger.info(
                         "Output truncated on turn {} for {} ({}/{}); continuing",
                         iteration,
                         spec.session_key or "default",
                         length_recovery_count,
-                        _MAX_LENGTH_RECOVERIES,
+                        spec.max_length_recoveries,
                     )
                     if hook.wants_streaming():
                         await hook.on_stream_end(context, resuming=True)
@@ -573,6 +1120,89 @@ class AgentRunner:
                     reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
                 )
+
+            # Delivery workflows (/studio, …): a first text-only answer with no
+            # successful tools is almost always a plan/promise. Nudge once so
+            # the model continues into real tool calls instead of ending the turn.
+            if (
+                spec.requires_tool_delivery
+                and not tools_used
+                and delivery_nudge_count < 1
+                and response.finish_reason != "error"
+                and assistant_message is not None
+            ):
+                delivery_nudge_count += 1
+                logger.info(
+                    "Delivery workflow produced no tools on turn {}; nudging once for {}",
+                    iteration,
+                    spec.session_key or "default",
+                )
+                if hook.wants_streaming():
+                    await hook.on_stream_end(context, resuming=True)
+                messages.append(assistant_message)
+                messages.append(build_delivery_continue_message())
+                await hook.after_iteration(context)
+                continue
+
+            # Build/Code: tools ran but verify/lint/tests never did - nudge once
+            # before allowing a "done" narration.
+            if (
+                spec.requires_verify_before_done
+                and _EDIT_TOOL_NAMES.intersection(tools_used)
+                and not _VERIFY_TOOL_NAMES.intersection(tools_used)
+                and not _tests_passed_via_exec(tool_events)
+                and verify_nudge_count < 1
+                and response.finish_reason != "error"
+                and assistant_message is not None
+            ):
+                verify_nudge_count += 1
+                logger.info(
+                    "Build/Debug workflow skipped verify after edits on turn {}; "
+                    "nudging once for {}",
+                    iteration,
+                    spec.session_key or "default",
+                )
+                if hook.wants_streaming():
+                    await hook.on_stream_end(context, resuming=True)
+                messages.append(assistant_message)
+                messages.append(build_verify_before_done_message())
+                await hook.after_iteration(context)
+                continue
+
+            # Build/Code: verify ran but is still red - refuse "done" and auto-retry.
+            verify_fail_nudge_limit = (
+                spec.verify_fail_nudge_limit
+                if spec.verify_fail_nudge_limit is not None
+                else _MAX_VERIFY_FAIL_NUDGES
+            )
+            if (
+                spec.requires_verify_before_done
+                and _EDIT_TOOL_NAMES.intersection(tools_used)
+                and _VERIFY_TOOL_NAMES.intersection(tools_used)
+                and _last_verify_failed(tool_events)
+                and verify_fail_nudge_count < verify_fail_nudge_limit
+                and response.finish_reason != "error"
+                and assistant_message is not None
+            ):
+                verify_fail_nudge_count += 1
+                # The retry should think harder than the attempt that failed.
+                spec.effort_escalations += 1
+                logger.info(
+                    "Build/Debug verify still red on turn {}; "
+                    "nudging fix retry {}/{} for {}",
+                    iteration,
+                    verify_fail_nudge_count,
+                    verify_fail_nudge_limit,
+                    spec.session_key or "default",
+                )
+                if hook.wants_streaming():
+                    await hook.on_stream_end(context, resuming=True)
+                messages.append(assistant_message)
+                messages.append(build_verify_failed_message(
+                    last_summary=_verify_failure_summary(spec, tool_events),
+                ))
+                await hook.after_iteration(context)
+                continue
 
             # Check for mid-turn injections BEFORE signaling stream end.
             # If injections are found we keep the stream alive (resuming=True)
@@ -594,10 +1224,22 @@ class AgentRunner:
                 continue
 
             if response.finish_reason == "error":
-                if LLMProvider.is_arrearage_response(response):
-                    final_content = _ARREARAGE_ERROR_MESSAGE
+                from navin.providers.user_facing_errors import (
+                    is_quota_error_text,
+                    user_facing_llm_error,
+                )
+
+                # A provider that only said "insufficient credit" in prose
+                # (no 402, no billing token) is the same refusal: it must not
+                # read as "your own key" when the managed key was used.
+                if LLMProvider.is_arrearage_response(response) or is_quota_error_text(
+                    clean
+                ):
+                    final_content = _arrearage_error_message(spec.runtime, response)
                 else:
-                    final_content = clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
+                    final_content = user_facing_llm_error(
+                        clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
+                    )
                 stop_reason = "error"
                 error = final_content
                 self._append_model_error_placeholder(messages)
@@ -605,9 +1247,12 @@ class AgentRunner:
                 context.error = error
                 context.stop_reason = stop_reason
                 await hook.after_iteration(context)
+                # Fail fast: the turn is ending on an error, do not hold the
+                # error message hostage to a subagent still running.
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
                     phase="after LLM error",
+                    wait=False,
                 )
                 if should_continue:
                     had_injections = True
@@ -625,6 +1270,7 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
                     phase="after empty response",
+                    wait=False,
                 )
                 if should_continue:
                     had_injections = True
@@ -677,6 +1323,13 @@ class AgentRunner:
                 final_content = self._max_iterations_fallback(spec)
             self._append_final_message(messages, final_content)
 
+        if peak_prompt_tokens > 0:
+            usage["peak_prompt_tokens"] = peak_prompt_tokens
+        timing.log()
+        prompt_profile = self._prompt_profile_dict(
+            spec,
+            peak_request_messages if peak_request_messages is not None else messages,
+        )
         return AgentRunResult(
             final_content=final_content,
             messages=messages,
@@ -686,7 +1339,22 @@ class AgentRunner:
             error=error,
             tool_events=tool_events,
             had_injections=had_injections,
+            prompt_profile=prompt_profile,
         )
+
+    @staticmethod
+    def _prompt_profile_dict(
+        spec: AgentRunSpec,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Token breakdown of the peak request this turn, for the context meter."""
+        try:
+            from navin.agent.prompt_profile import profile_request
+
+            tools = AgentRunner._model_tool_definitions(spec)
+            return profile_request(messages, tools).as_dict()
+        except Exception:
+            return None
 
     def _build_request_kwargs(
         self,
@@ -694,6 +1362,8 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None,
+        tool_followup: bool = False,
+        empty_retry: bool = False,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "messages": messages,
@@ -705,7 +1375,19 @@ class AgentRunner:
         generation = spec.runtime.generation
         kwargs["temperature"] = generation.temperature
         kwargs["max_tokens"] = generation.max_tokens
-        kwargs["reasoning_effort"] = generation.reasoning_effort
+        kwargs["reasoning_effort"] = route_reasoning_effort(
+            generation.reasoning_effort,
+            composer_mode=spec.composer_mode,
+            escalations=spec.effort_escalations,
+            tool_followup=tool_followup,
+            empty_retry=empty_retry,
+        )
+        if spec.forced_tool and tools:
+            from navin.agent.media_intent import forced_tool_choice
+
+            choice = forced_tool_choice(spec.forced_tool, tools, messages)
+            if choice is not None:
+                kwargs["tool_choice"] = choice
         return kwargs
 
     async def _request_model(
@@ -716,24 +1398,26 @@ class AgentRunner:
         context: AgentHookContext,
         *,
         malformed_retry: bool = False,
+        tool_followup: bool = False,
+        empty_retry: bool = False,
     ):
-        timeout_s: float | None = spec.llm_timeout_s
-        if timeout_s is None:
-            # Default to a finite timeout to avoid per-session lock starvation when an LLM
-            # request hangs indefinitely (e.g. gateway/network stall).
-            # Set NAVIN_LLM_TIMEOUT_S=0 to disable.
-            raw = os.environ.get("NAVIN_LLM_TIMEOUT_S", "300").strip()
-            try:
-                timeout_s = float(raw)
-            except (TypeError, ValueError):
-                timeout_s = 300.0
-        if timeout_s is not None and timeout_s <= 0:
-            timeout_s = None
+        # Finite by default to avoid per-session lock starvation when an LLM
+        # request hangs (gateway/network stall). NAVIN_LLM_TIMEOUT_S=0 disables.
+        timeout_s = self._wall_timeout_s(spec)
 
         kwargs = self._build_request_kwargs(
             spec,
             messages,
-            tools=spec.tools.get_definitions(),
+            tools=self._model_tool_definitions(spec),
+            tool_followup=tool_followup,
+            empty_retry=empty_retry,
+        )
+        context.requested_reasoning_effort = kwargs.get("reasoning_effort")
+        log_request_profile(
+            kwargs.get("messages"),
+            kwargs.get("tools"),
+            model=spec.runtime.model,
+            session_key=spec.session_key,
         )
         wants_streaming = hook.wants_streaming()
         wants_progress_streaming = (
@@ -818,10 +1502,14 @@ class AgentRunner:
             else timeout_s
         )
         try:
-            response = (
-                await coro if outer_timeout_s is None
-                else await asyncio.wait_for(coro, timeout=outer_timeout_s)
-            )
+            # Tag the request with the session key so providers that support
+            # cache-affinity routing (OpenRouter session_id, OpenAI
+            # prompt_cache_key) keep the whole session on one warm cache.
+            with session_affinity(spec.session_key):
+                response = (
+                    await coro if outer_timeout_s is None
+                    else await asyncio.wait_for(coro, timeout=outer_timeout_s)
+                )
         except asyncio.TimeoutError:
             if outer_timeout_s is None:
                 response = LLMResponse(
@@ -855,6 +1543,8 @@ class AgentRunner:
             return await self._request_model(
                 spec, retry_messages, hook, context,
                 malformed_retry=True,
+                tool_followup=tool_followup,
+                empty_retry=empty_retry,
             )
         if (
             all_dropped
@@ -974,6 +1664,7 @@ class AgentRunner:
             response=response,
             usage=dict(raw_usage),
             session_key=spec.session_key,
+            model=spec.runtime.model,
         )
         clean = hook.finalize_content(context, response.content)
         if is_blank_text(clean):
@@ -985,8 +1676,64 @@ class AgentRunner:
         spec: AgentRunSpec,
         messages: list[dict[str, Any]],
     ) -> LLMResponse:
-        kwargs = self._build_request_kwargs(spec, messages, tools=None)
-        return await spec.runtime.provider.chat_with_retry(**kwargs)
+        kwargs = self._build_request_kwargs(
+            spec, messages, tools=None, empty_retry=True,
+        )
+        # Same wall clock as the main request path: finalization runs when the
+        # turn is already at its limit (empty responses, budget exhausted),
+        # which is precisely when a hung request must not hold the session
+        # lock forever.
+        timeout_s = self._wall_timeout_s(spec)
+        coro = spec.runtime.provider.chat_with_retry(**kwargs)
+        if timeout_s is None:
+            return await coro
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Finalization request timed out after {}s for {}",
+                timeout_s,
+                spec.session_key or "default",
+            )
+            return LLMResponse(
+                content=f"Error calling LLM: request timed out after {timeout_s:.0f}s",
+                finish_reason="error",
+                error_kind="timeout",
+            )
+
+    @staticmethod
+    def _tool_wall_timeout_s(spec: AgentRunSpec, tool: Any) -> float | None:
+        """Wall clock for one tool execution, or None when opted out.
+
+        Priority: the tool's own ``wall_timeout_s`` property (a tool that
+        knows it waits legitimately for hours can raise or disable its cap),
+        then the spec, then NAVIN_TOOL_TIMEOUT_S, then the 1-hour default.
+        """
+        per_tool = getattr(tool, "wall_timeout_s", None)
+        if isinstance(per_tool, (int, float)) and not isinstance(per_tool, bool):
+            return None if per_tool <= 0 else float(per_tool)
+        timeout_s = spec.tool_timeout_s
+        if timeout_s is None:
+            raw = os.environ.get("NAVIN_TOOL_TIMEOUT_S", "3600").strip()
+            try:
+                timeout_s = float(raw)
+            except (TypeError, ValueError):
+                timeout_s = 3600.0
+        return None if timeout_s <= 0 else timeout_s
+
+    @staticmethod
+    def _wall_timeout_s(spec: AgentRunSpec) -> float | None:
+        """The effective LLM wall clock for this spec, or None when opted out."""
+        timeout_s: float | None = spec.llm_timeout_s
+        if timeout_s is None:
+            raw = os.environ.get("NAVIN_LLM_TIMEOUT_S", "300").strip()
+            try:
+                timeout_s = float(raw)
+            except (TypeError, ValueError):
+                timeout_s = 300.0
+        if timeout_s is not None and timeout_s <= 0:
+            return None
+        return timeout_s
 
     @staticmethod
     def _budget_exhausted_finalization_messages(
@@ -1031,7 +1778,7 @@ class AgentRunner:
         response: LLMResponse,
     ) -> dict[str, int]:
         try:
-            tools = spec.tools.get_definitions()
+            tools = self._model_tool_definitions(spec)
         except Exception:
             tools = None
         prompt_tokens, _ = estimate_prompt_tokens_chain(
@@ -1095,9 +1842,17 @@ class AgentRunner:
         workspace_violation_counts: dict[str, int],
         hook: AgentHook | None = None,
         context: AgentHookContext | None = None,
+        *,
+        tool_failure_counts: dict[str, int] | None = None,
+        readonly_call_counts: dict[str, int] | None = None,
+        timing: TurnTiming | None = None,
     ) -> tuple[list[Any], list[dict[str, str]], BaseException | None]:
         hook = hook or AgentHook()
         context = context or AgentHookContext(iteration=0, messages=[])
+        tool_failure_counts = tool_failure_counts if tool_failure_counts is not None else {}
+        readonly_call_counts = (
+            readonly_call_counts if readonly_call_counts is not None else {}
+        )
         batches = self._partition_tool_batches(spec, tool_calls)
         tool_results: list[tuple[Any, dict[str, str], BaseException | None]] = []
         for batch in batches:
@@ -1110,6 +1865,9 @@ class AgentRunner:
                         workspace_violation_counts,
                         hook,
                         context,
+                        tool_failure_counts=tool_failure_counts,
+                        readonly_call_counts=readonly_call_counts,
+                        timing=timing,
                     )
                     for tool_call in batch
                 ))
@@ -1124,6 +1882,9 @@ class AgentRunner:
                         workspace_violation_counts,
                         hook,
                         context,
+                        tool_failure_counts=tool_failure_counts,
+                        readonly_call_counts=readonly_call_counts,
+                        timing=timing,
                     )
                     tool_results.append(result)
                     batch_results.append(result)
@@ -1146,10 +1907,76 @@ class AgentRunner:
         workspace_violation_counts: dict[str, int],
         hook: AgentHook | None = None,
         context: AgentHookContext | None = None,
+        *,
+        tool_failure_counts: dict[str, int] | None = None,
+        readonly_call_counts: dict[str, int] | None = None,
+        timing: TurnTiming | None = None,
+    ) -> tuple[Any, dict[str, str], BaseException | None]:
+        """Time one tool call, whichever of the many exits it takes."""
+        if timing is None:
+            return await self._dispatch_tool_call(
+                spec,
+                tool_call,
+                external_lookup_counts,
+                workspace_violation_counts,
+                hook,
+                context,
+                tool_failure_counts=tool_failure_counts,
+                readonly_call_counts=readonly_call_counts,
+            )
+        started = time.perf_counter()
+        try:
+            return await self._dispatch_tool_call(
+                spec,
+                tool_call,
+                external_lookup_counts,
+                workspace_violation_counts,
+                hook,
+                context,
+                tool_failure_counts=tool_failure_counts,
+                readonly_call_counts=readonly_call_counts,
+            )
+        finally:
+            timing.add_tool(tool_call.name, time.perf_counter() - started)
+
+    async def _dispatch_tool_call(
+        self,
+        spec: AgentRunSpec,
+        tool_call: ToolCallRequest,
+        external_lookup_counts: dict[str, int],
+        workspace_violation_counts: dict[str, int],
+        hook: AgentHook | None = None,
+        context: AgentHookContext | None = None,
+        *,
+        tool_failure_counts: dict[str, int] | None = None,
+        readonly_call_counts: dict[str, int] | None = None,
     ) -> tuple[Any, dict[str, str], BaseException | None]:
         hook = hook or AgentHook()
         context = context or AgentHookContext(iteration=0, messages=[])
+        tool_failure_counts = tool_failure_counts if tool_failure_counts is not None else {}
+        readonly_call_counts = (
+            readonly_call_counts if readonly_call_counts is not None else {}
+        )
         hint = "\n\n[Analyze the error above and try a different approach.]"
+        # Soft throttle only: after enough identical failures this turn, refuse
+        # to re-execute the same call. Never raise a fatal error here - long
+        # agents must keep the turn alive for hours.
+        if repeated_tool_failure_is_hard_stop(
+            tool_call.name, tool_call.arguments, tool_failure_counts
+        ):
+            blocked = (
+                f"Error: blocked repeated identical {tool_call.name} call after "
+                "too many identical failures this turn. Change the arguments, "
+                "use a different tool, or continue without it."
+            )
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": "repeated identical tool call blocked",
+            }
+            if spec.fail_on_tool_error:
+                return blocked + hint, event, RuntimeError(blocked)
+            return blocked + hint, event, None
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
             tool_call.arguments,
@@ -1164,6 +1991,20 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return lookup_error + hint, event, RuntimeError(lookup_error)
             return lookup_error + hint, event, None
+        spin_error = repeated_readonly_tool_error(
+            tool_call.name,
+            tool_call.arguments,
+            readonly_call_counts,
+        )
+        if spin_error:
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": "repeated identical read blocked",
+            }
+            if spec.fail_on_tool_error:
+                return spin_error + hint, event, RuntimeError(spin_error)
+            return spin_error + hint, event, None
         prepare_call = getattr(spec.tools, "prepare_call", None)
         tool, params, prep_error = None, tool_call.arguments, None
         if callable(prepare_call):
@@ -1189,12 +2030,129 @@ class AgentRunner:
             return prep_error + hint, event, (
                 RuntimeError(prep_error) if spec.fail_on_tool_error else None
             )
+        if spec.read_only_tools or spec.plan_read_only:
+            candidate = tool
+            if candidate is None:
+                tools_map = getattr(spec.tools, "_tools", None)
+                if isinstance(tools_map, dict):
+                    candidate = tools_map.get(tool_call.name)
+            if (
+                spec.read_only_tools
+                and candidate is not None
+                and not _call_read_only(candidate, params)
+            ):
+                blocked = (
+                    f"Error: tool '{tool_call.name}' is not allowed in Ask "
+                    "(read-only) mode. If the user asked you to do this, call "
+                    "set_composer_mode(mode='agent') once (it unlocks the tools "
+                    "for this turn) and then retry; otherwise answer with a "
+                    "read-only tool or action (read_file, grep, code_index, lsp, "
+                    "git status/diff/log, board list) and tell the user to "
+                    "switch to Agent for changes."
+                )
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "blocked by read-only turn",
+                }
+                return blocked + hint, event, None
+            if spec.plan_read_only and candidate is not None:
+                from navin.agent.tool_surface import PLAN_SAFE_WRITE_TOOLS
+
+                if tool_call.name not in PLAN_SAFE_WRITE_TOOLS and not _call_read_only(
+                    candidate, params
+                ):
+                    blocked = (
+                        f"Error: tool '{tool_call.name}' is not allowed in Plan "
+                        "mode. Plan designs without mutating: explore with "
+                        "read-only tools and file board tasks. For the "
+                        "simple-task exception, call "
+                        "set_composer_mode(mode='agent') first, then do the work."
+                    )
+                    event = {
+                        "name": tool_call.name,
+                        "status": "error",
+                        "detail": "blocked by plan mode",
+                    }
+                    return blocked + hint, event, None
+        from navin.agent.tool_surface import tool_name_is_allowed, tool_name_is_denied
+
+        if spec.allowed_tools is not None and not tool_name_is_allowed(
+            tool_call.name, spec.allowed_tools
+        ):
+            blocked = (
+                f"Error: tool '{tool_call.name}' is not in this workflow's "
+                "tool set. Stay on code tools (read_file, apply_patch, "
+                "verify, git, board, exec)."
+            )
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": "blocked by workflow allowlist",
+            }
+            return blocked + hint, event, None
+
+        if tool_name_is_denied(tool_call.name, spec.denied_tools) or tool_name_is_denied(
+            tool_call.name, spec.locked_denied_tools
+        ):
+            mcp_locked = tool_call.name.startswith("mcp_") and tool_name_is_denied(
+                tool_call.name, spec.locked_denied_tools
+            )
+            if mcp_locked:
+                blocked = (
+                    f"Error: tool '{tool_call.name}' is not wired for this studio "
+                    "module. Stay on the desk tools for the current view."
+                )
+                detail = "blocked by module MCP denylist"
+            elif tool_call.name in spec.locked_denied_tools or not spec.composer_mode:
+                blocked = (
+                    f"Error: tool '{tool_call.name}' is not allowed in the Code "
+                    "module. Stay on code tools (read_file, apply_patch, verify, "
+                    "lsp, code_index, exec)."
+                )
+                detail = "blocked by code module denylist"
+            else:
+                blocked = (
+                    f"Error: tool '{tool_call.name}' is not available in "
+                    f"{spec.composer_mode} mode this turn. Continue with the "
+                    "allowed tools, or call set_composer_mode to switch modes "
+                    "if the user asked for that kind of work."
+                )
+                detail = "blocked by mode denylist"
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": detail,
+            }
+            return blocked + hint, event, None
         await hook.before_execute_tool(context, tool_call, tool, params)
+        tool_wall_s = self._tool_wall_timeout_s(spec, tool)
         try:
             if tool is not None:
-                result = await tool.execute(**params)
+                exec_coro = tool.execute(**params)
             else:
-                result = await spec.tools.execute(tool_call.name, params)
+                exec_coro = spec.tools.execute(tool_call.name, params)
+            if tool_wall_s is None:
+                result = await exec_coro
+            else:
+                result = await asyncio.wait_for(exec_coro, timeout=tool_wall_s)
+        except asyncio.TimeoutError as exc:
+            # Soft error: a hung tool must cost one tool call, not the turn.
+            await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
+            payload = (
+                f"Error: tool '{tool_call.name}' was cancelled after "
+                f"{tool_wall_s:.0f}s without returning. It may be hung "
+                "(unreachable server, deadlocked process). Try a different "
+                "approach, or the same call with smaller scope."
+            )
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": f"timed out after {tool_wall_s:.0f}s",
+            }
+            return payload + hint, event, (
+                RuntimeError(payload) if spec.fail_on_tool_error else None
+            )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -1217,7 +2175,13 @@ class AgentRunner:
                 return handled
             if spec.fail_on_tool_error:
                 return payload, event, exc
-            return payload, event, None
+            # Soft path only: never abort the whole turn for a stuck tool call.
+            # Long-running agents (hours) must keep going; the escalating hint /
+            # identical-call throttle is enough to break retry loops.
+            escalation = repeated_tool_failure_hint(
+                tool_call.name, tool_call.arguments, tool_failure_counts
+            )
+            return payload + (escalation or ""), event, None
 
         if is_tool_error_result(tool_call.name, result):
             await hook.on_execute_tool_error(context, tool_call, tool, params, result)
@@ -1237,9 +2201,18 @@ class AgentRunner:
                 return handled
             if spec.fail_on_tool_error:
                 return result + hint, event, RuntimeError(result)
-            return result + hint, event, None
+            escalation = repeated_tool_failure_hint(
+                tool_call.name, tool_call.arguments, tool_failure_counts
+            )
+            return result + hint + (escalation or ""), event, None
 
         await hook.after_execute_tool(context, tool_call, tool, params, result)
+
+        if tool_call.name in _EDIT_TOOL_NAMES:
+            reset_readonly_spin_counts(readonly_call_counts)
+
+        if tool_call.name == "set_composer_mode":
+            self._apply_composer_mode_switch(spec, params)
 
         detail = "" if result is None else str(result)
         detail = detail.replace("\n", " ").strip()
@@ -1247,7 +2220,42 @@ class AgentRunner:
             detail = "(empty)"
         elif len(detail) > 120:
             detail = detail[:120] + "..."
-        return result, {"name": tool_call.name, "status": "ok", "detail": detail}, None
+        event = {"name": tool_call.name, "status": "ok", "detail": detail}
+        if tool_call.name == "exec":
+            event.update(_exec_event_fields(params, result))
+        return result, event, None
+
+    @staticmethod
+    def _apply_composer_mode_switch(spec: AgentRunSpec, params: Any) -> None:
+        """Make a successful set_composer_mode change the turn policy now.
+
+        The Plan brief documents a simple-task handoff: call
+        set_composer_mode(mode='agent') and do the work in the same turn.
+        Without this, the switch only took effect on the next turn and the
+        handoff was words the runner did not honor. The same holds for Ask:
+        the tool answers "Composer mode set to Agent", the editor flips to
+        Agent, so the turn must really be Agent from that call on. Keeping
+        Ask read-only after a successful switch produced a turn where every
+        exec / edit came back "not allowed in Ask mode" under an Agent badge,
+        which read as a broken product and burned iterations on retries.
+        Tightening applies immediately as well (agent→plan, →ask).
+        """
+        from navin.agent.tool_surface import denied_tools_for_composer_mode
+
+        mode = ""
+        if isinstance(params, dict):
+            mode = str(params.get("mode") or "").strip().lower()
+        if not mode:
+            return
+        previous = denied_tools_for_composer_mode(spec.composer_mode)
+        spec.denied_tools = frozenset(
+            (set(spec.denied_tools) - previous)
+            | denied_tools_for_composer_mode(mode)
+            | spec.locked_denied_tools
+        )
+        spec.composer_mode = mode
+        spec.plan_read_only = mode == "plan"
+        spec.read_only_tools = mode == "ask"
 
     # SSRF is a hard security block at the tool boundary, but the agent turn
     # should recover conversationally instead of aborting the runtime.
@@ -1384,7 +2392,7 @@ class AgentRunner:
         for tool_call in tool_calls:
             get_tool = getattr(spec.tools, "get", None)
             tool = get_tool(tool_call.name) if callable(get_tool) else None
-            can_batch = bool(tool and tool.concurrency_safe)
+            can_batch = bool(tool and tool.call_concurrency_safe(tool_call.arguments))
             if can_batch:
                 current.append(tool_call)
                 continue

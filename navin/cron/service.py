@@ -8,17 +8,20 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Literal
+from zoneinfo import ZoneInfo
 
 from filelock import FileLock
 from loguru import logger
 
+from navin.bus.notify import notify
 from navin.cron.session_turns import is_bound_cron_job
 from navin.cron.types import (
     CronJob,
     CronJobState,
+    CronLimits,
     CronPayload,
     CronRunRecord,
     CronSchedule,
@@ -69,7 +72,7 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     return None
 
 
-def _validate_schedule_for_add(schedule: CronSchedule) -> None:
+def validate_schedule(schedule: CronSchedule) -> None:
     """Validate schedule fields that would otherwise create non-runnable jobs."""
     if schedule.tz and schedule.kind != "cron":
         raise ValueError("tz can only be used with cron schedules")
@@ -148,11 +151,23 @@ class CronService:
         "recreate it from a chat session"
     )
 
+    # Guardrail defaults live on the class so that a job outcome can be recorded
+    # by an instance that skipped __init__, which is how the run path is
+    # exercised in isolation.
+    max_consecutive_failures = 5
+    backoff_base_ms = 60_000  # 1 minute
+    backoff_cap_ms = 21_600_000  # 6 hours
+    _timezone_name: str | None = None
+
     def __init__(
         self,
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
         max_sleep_ms: int = 300_000,  # 5 minutes
+        max_consecutive_failures: int | None = None,
+        backoff_base_ms: int | None = None,
+        backoff_cap_ms: int | None = None,
+        timezone_name: str | None = None,
     ):
         self.store_path = store_path
         self._action_path = store_path.parent / "action.jsonl"
@@ -164,6 +179,73 @@ class CronService:
         self._running = False
         self._timer_active = False
         self.max_sleep_ms = max_sleep_ms
+        if max_consecutive_failures is not None:
+            self.max_consecutive_failures = max(0, max_consecutive_failures)
+        if backoff_base_ms is not None:
+            self.backoff_base_ms = max(0, backoff_base_ms)
+        if backoff_cap_ms is not None:
+            self.backoff_cap_ms = max(0, backoff_cap_ms)
+        self._timezone_name = timezone_name
+
+    # -- Failure and spend guardrails ---------------------------------------
+
+    def _failure_ceiling(self, job: CronJob) -> int:
+        return job.limits.max_consecutive_failures or self.max_consecutive_failures
+
+    def _backoff_ms(self, failures: int) -> int:
+        """Return how long to wait after ``failures`` consecutive failures."""
+        if self.backoff_base_ms <= 0 or failures <= 0:
+            return 0
+        # Doubling from the base, so 1m, 2m, 4m... until the cap.
+        shift = min(failures - 1, 32)
+        return min(self.backoff_base_ms << shift, self.backoff_cap_ms)
+
+    def _local_day(self, now_ms: int) -> str:
+        """Return the local calendar day, which is when a daily budget resets."""
+        moment = datetime.fromtimestamp(now_ms / 1000, tz=UTC)
+        if self._timezone_name:
+            with suppress(Exception):
+                return moment.astimezone(ZoneInfo(self._timezone_name)).date().isoformat()
+        return moment.astimezone().date().isoformat()
+
+    def _roll_spend_day(self, job: CronJob, now_ms: int) -> None:
+        day = self._local_day(now_ms)
+        if job.state.tokens_day != day:
+            job.state.tokens_day = day
+            job.state.tokens_today = 0
+
+    def _budget_block_reason(self, job: CronJob, now_ms: int) -> str | None:
+        """Return why the job may not run now, if its daily budget is spent."""
+        budget = job.limits.daily_token_budget
+        if budget <= 0:
+            return None
+        self._roll_spend_day(job, now_ms)
+        if job.state.tokens_today < budget:
+            return None
+        return (
+            f"daily token budget reached ({job.state.tokens_today}/{budget}); "
+            "runs resume tomorrow"
+        )
+
+    def record_job_tokens(self, job_id: str, tokens: int) -> None:
+        """Add the tokens a run consumed to its job's daily total.
+
+        Called after the turn finishes, which for a deferred cron turn can be
+        long after the run itself, so the job is looked up again rather than
+        held across the await.
+        """
+        if tokens <= 0 or self._store is None:
+            return
+        job = next((j for j in self._store.jobs if j.id == job_id), None)
+        if job is None:
+            return
+        now = _now_ms()
+        self._roll_spend_day(job, now)
+        job.state.tokens_today += tokens
+        if job.state.run_history:
+            job.state.run_history[-1].tokens += tokens
+        with suppress(Exception):
+            self._save_store()
 
     def _is_unbound_agent_job(self, job: CronJob) -> bool:
         return job.payload.kind == "agent_turn" and not is_bound_cron_job(job)
@@ -264,15 +346,30 @@ class CronService:
                             last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
                             last_status=j.get("state", {}).get("lastStatus"),
                             last_error=j.get("state", {}).get("lastError"),
+                            consecutive_failures=j.get("state", {}).get(
+                                "consecutiveFailures", 0
+                            ),
+                            paused_reason=j.get("state", {}).get("pausedReason"),
+                            tokens_today=j.get("state", {}).get("tokensToday", 0),
+                            tokens_day=j.get("state", {}).get("tokensDay"),
                             run_history=[
                                 CronRunRecord(
                                     run_at_ms=r["runAtMs"],
                                     status=r["status"],
                                     duration_ms=r.get("durationMs", 0),
                                     error=r.get("error"),
+                                    tokens=r.get("tokens", 0),
                                 )
                                 for r in j.get("state", {}).get("runHistory", [])
                             ],
+                        ),
+                        limits=CronLimits(
+                            daily_token_budget=j.get("limits", {}).get(
+                                "dailyTokenBudget", 0
+                            ),
+                            max_consecutive_failures=j.get("limits", {}).get(
+                                "maxConsecutiveFailures", 0
+                            ),
                         ),
                         created_at_ms=j.get("createdAtMs", 0),
                         updated_at_ms=j.get("updatedAtMs", 0),
@@ -421,15 +518,24 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
+                        "consecutiveFailures": j.state.consecutive_failures,
+                        "pausedReason": j.state.paused_reason,
+                        "tokensToday": j.state.tokens_today,
+                        "tokensDay": j.state.tokens_day,
                         "runHistory": [
                             {
                                 "runAtMs": r.run_at_ms,
                                 "status": r.status,
                                 "durationMs": r.duration_ms,
                                 "error": r.error,
+                                "tokens": r.tokens,
                             }
                             for r in j.state.run_history
                         ],
+                    },
+                    "limits": {
+                        "dailyTokenBudget": j.limits.daily_token_budget,
+                        "maxConsecutiveFailures": j.limits.max_consecutive_failures,
                     },
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
@@ -583,6 +689,15 @@ class CronService:
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
         start_ms = _now_ms()
+
+        budget_reason = self._budget_block_reason(job, start_ms)
+        if budget_reason is not None:
+            # Skipping is cheaper than running: the point of the budget is that
+            # an unattended loop cannot keep spending once it hit its ceiling.
+            logger.warning("Cron: job '{}' skipped: {}", job.name, budget_reason)
+            self._finish_run(job, start_ms, status="skipped", error=budget_reason)
+            return
+
         logger.info("Cron: executing job '{}' ({})", job.name, job.id)
 
         try:
@@ -609,17 +724,60 @@ class CronService:
             job.state.last_error = str(e)
             logger.exception("Cron: job '{}' failed", job.name)
 
+        self._finish_run(
+            job,
+            start_ms,
+            status=job.state.last_status or "ok",
+            error=job.state.last_error,
+        )
+
+    def _finish_run(
+        self,
+        job: CronJob,
+        start_ms: int,
+        *,
+        status: Literal["ok", "error", "skipped"],
+        error: str | None,
+    ) -> None:
+        """Record the outcome of a run and decide when the job runs next."""
+        job.state.last_status = status
+        job.state.last_error = error
+
+        if status == "error":
+            # A scheduled job runs with nobody watching, so a failure that only
+            # reaches the log is a failure nobody learns about - the user just
+            # notices, days later, that something stopped happening. The job id
+            # keys it so a job failing on every tick stays one entry.
+            # Warning, not error: the user must learn about it, but never as
+            # a red failure banner (display policy: no red in front of the
+            # client).
+            notify(
+                title=f"Scheduled job failed: {job.name}",
+                detail=error or None,
+                level="warning",
+                source="session",
+                key=f"cron:{job.id}",
+            )
+
         end_ms = _now_ms()
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = end_ms
 
         job.state.run_history.append(CronRunRecord(
             run_at_ms=start_ms,
-            status=job.state.last_status,
+            status=status,
             duration_ms=end_ms - start_ms,
-            error=job.state.last_error,
+            error=error,
         ))
         job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
+
+        if status == "error":
+            job.state.consecutive_failures += 1
+        elif status == "ok":
+            # Only a success clears the streak: a skipped run proves nothing
+            # about whether the failure is over.
+            job.state.consecutive_failures = 0
+            job.state.paused_reason = None
 
         # Handle one-shot jobs
         if job.schedule.kind == "at":
@@ -628,9 +786,41 @@ class CronService:
             else:
                 job.enabled = False
                 job.state.next_run_at_ms = None
-        else:
-            # Compute next run
-            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            return
+
+        if status == "error" and self._pause_after_repeated_failures(job):
+            return
+
+        next_run = _compute_next_run(job.schedule, _now_ms())
+        if status == "error" and next_run is not None:
+            # Retrying a broken job on its normal cadence burns tokens on every
+            # tick, so each failure pushes the next attempt further out.
+            delay = self._backoff_ms(job.state.consecutive_failures)
+            next_run = max(next_run, _now_ms() + delay)
+        job.state.next_run_at_ms = next_run
+
+    def _pause_after_repeated_failures(self, job: CronJob) -> bool:
+        """Pause a job that keeps failing, and say so. True when paused."""
+        ceiling = self._failure_ceiling(job)
+        if ceiling <= 0 or job.state.consecutive_failures < ceiling:
+            return False
+
+        reason = (
+            f"paused automatically after {job.state.consecutive_failures} "
+            f"consecutive failures: {job.state.last_error or 'unknown error'}"
+        )
+        job.enabled = False
+        job.state.paused_reason = reason
+        job.state.next_run_at_ms = None
+        logger.error("Cron: {} ({})", reason, job.id)
+        notify(
+            title=f"Scheduled job paused: {job.name}",
+            detail=reason,
+            level="warning",
+            source="session",
+            key=f"cron:{job.id}:paused",
+        )
+        return True
 
     def _append_action(self, action: Literal["add", "del", "update"], params: dict):
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -677,7 +867,7 @@ class CronService:
         origin_metadata: dict | None = None,
     ) -> CronJob:
         """Add a new job."""
-        _validate_schedule_for_add(schedule)
+        validate_schedule(schedule)
         now = _now_ms()
 
         job = CronJob(
@@ -729,6 +919,44 @@ class CronService:
         logger.info("Cron: registered system job '{}' ({})", job.name, job.id)
         return job
 
+    def reschedule_system_job(
+        self,
+        job_id: str,
+        *,
+        schedule: CronSchedule | None = None,
+        limits: CronLimits | None = None,
+        enabled: bool | None = None,
+    ) -> CronJob | None:
+        """Apply new settings to a system job without waiting for a restart.
+
+        Unlike ``register_system_job`` this keeps the job's run history and
+        spend counters, because the loop is being reconfigured rather than
+        introduced.
+        """
+        store = self._require_store()
+        job = next((j for j in store.jobs if j.id == job_id), None)
+        if job is None or job.payload.kind != "system_event":
+            return None
+
+        if schedule is not None:
+            validate_schedule(schedule)
+            job.schedule = schedule
+        if limits is not None:
+            job.limits = limits
+        if enabled is not None:
+            job.enabled = enabled
+            if enabled:
+                job.state.consecutive_failures = 0
+                job.state.paused_reason = None
+        job.updated_at_ms = _now_ms()
+        job.state.next_run_at_ms = (
+            _compute_next_run(job.schedule, _now_ms()) if job.enabled else None
+        )
+        self._save_store()
+        self._arm_timer()
+        logger.info("Cron: rescheduled system job '{}' ({})", job.name, job.id)
+        return job
+
     def remove_job(self, job_id: str) -> Literal["removed", "protected", "not_found"]:
         """Remove a job by ID, unless it is a protected system job."""
         store = self._require_store()
@@ -763,6 +991,11 @@ class CronService:
                 job.updated_at_ms = _now_ms()
                 self._enforce_agent_binding(job)
                 if job.enabled:
+                    # Turning a job back on is the user saying the cause is
+                    # fixed, so it gets a full streak of attempts again rather
+                    # than re-pausing on its first failure.
+                    job.state.consecutive_failures = 0
+                    job.state.paused_reason = None
                     job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
                 else:
                     job.state.next_run_at_ms = None
@@ -785,6 +1018,7 @@ class CronService:
         channel: str | None = ...,
         to: str | None = ...,
         delete_after_run: bool | None = None,
+        limits: CronLimits | None = None,
     ) -> CronJob | Literal["not_found", "protected"]:
         """Update mutable fields of an existing job. System jobs cannot be updated.
 
@@ -799,7 +1033,7 @@ class CronService:
             return "protected"
 
         if schedule is not None:
-            _validate_schedule_for_add(schedule)
+            validate_schedule(schedule)
             job.schedule = schedule
         if name is not None:
             job.name = name
@@ -813,6 +1047,8 @@ class CronService:
             job.payload.to = to
         if delete_after_run is not None:
             job.delete_after_run = delete_after_run
+        if limits is not None:
+            job.limits = limits
         _normalize_agent_turn_job(job)
         self._enforce_agent_binding(job)
 

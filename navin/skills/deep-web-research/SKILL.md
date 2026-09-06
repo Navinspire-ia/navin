@@ -8,13 +8,13 @@ metadata: {"navin":{"emoji":"🌐","category":"navigation"}}
 
 ## Overview
 
-Search broadly, verify with primary sources, and deliver a sourced brief — not a single-link paraphrase.
+Search broadly, verify with primary sources, and deliver a sourced brief - not a single-link paraphrase.
 
 ## Tools
 
-- `web_search` — discovery
-- `web_fetch` — read pages
-- Optional Playwright when JS rendering is required
+- `web_search` - discovery
+- `web_fetch` - read pages
+- `browser` - read pages that need JS rendering or an interaction to reveal content; `action=network` finds the JSON endpoint behind a rendered dataset
 
 ## Workflow
 
@@ -34,7 +34,7 @@ Search broadly, verify with primary sources, and deliver a sourced brief — not
 2. ...
 
 ## Sources
-- [title](url) — why trusted
+- [title](url) - why trusted
 
 ## Open questions
 - ...

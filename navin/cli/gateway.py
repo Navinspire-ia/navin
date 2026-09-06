@@ -253,12 +253,14 @@ def create_gateway_app(
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
         config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
         name: str = typer.Option("navin-gateway", "--name", help="Service name"),
-        manager: ServiceManagerKind = typer.Option("auto", "--manager", help="auto, systemd, or launchd"),
+        manager: ServiceManagerKind = typer.Option(
+            "auto", "--manager", help="auto, systemd, launchd, or windows"
+        ),
         enable: bool = typer.Option(True, "--enable/--no-enable", help="Enable the service after writing it"),
         start_now: bool = typer.Option(True, "--start/--no-start", help="Start the service after writing it"),
         dry_run: bool = typer.Option(False, "--dry-run", help="Print generated service without installing"),
     ) -> None:
-        """Install a systemd user service or macOS LaunchAgent for the gateway."""
+        """Start the gateway at login (systemd user unit, LaunchAgent, or Windows)."""
         options = GatewayServiceOptions(
             start=start_options(port=port, verbose=verbose, workspace=workspace, config=config),
             name=name,
@@ -285,7 +287,9 @@ def create_gateway_app(
     @gateway_app.command("uninstall-service")
     def gateway_uninstall_service(
         name: str = typer.Option("navin-gateway", "--name", help="Service name"),
-        manager: ServiceManagerKind = typer.Option("auto", "--manager", help="auto, systemd, or launchd"),
+        manager: ServiceManagerKind = typer.Option(
+            "auto", "--manager", help="auto, systemd, launchd, or windows"
+        ),
         dry_run: bool = typer.Option(False, "--dry-run", help="Print actions without uninstalling"),
     ) -> None:
         """Uninstall the system gateway service."""
@@ -304,5 +308,27 @@ def create_gateway_app(
         console.print(f"[red]Gateway service was not uninstalled: {result.message}[/red]")
         print_service_result(result)
         raise typer.Exit(1)
+
+    @gateway_app.command("watchdog")
+    def gateway_watchdog(
+        port: int | None = typer.Option(None, "--port", "-p", help="Gateway port"),
+        workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+        config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+        interval: float = typer.Option(3.0, "--interval", help="Health probe interval in seconds"),
+    ) -> None:
+        """Restart the background gateway when /health stops answering."""
+        from navin.gateway.watchdog import run_watchdog
+
+        cfg = load_runtime_config(config, workspace)
+        options = start_options(
+            port=port,
+            verbose=False,
+            workspace=workspace,
+            config=config,
+            loaded_config=cfg,
+        )
+        runtime = runtime_for_instance(workspace=workspace, config=config)
+        console.print(f"Watching gateway on port {options.port} every {interval:g}s.")
+        run_watchdog(runtime, options, interval_s=interval)
 
     return gateway_app

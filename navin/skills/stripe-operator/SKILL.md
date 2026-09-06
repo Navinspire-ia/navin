@@ -29,7 +29,7 @@ If the `stripe` CLI is installed, prefer it for logs and webhook testing: `strip
 
 ## Workflow
 
-1. Clarify the question (which object, which period, live or test mode — test keys start with `sk_test_`).
+1. Clarify the question (which object, which period, live or test mode - test keys start with `sk_test_`).
 2. Query read endpoints first; paginate with `starting_after` when needed.
 3. Aggregate locally (jq/python) for reports: MRR, churn, failed payments by reason.
 4. For mutations (refunds, cancellations, coupon creation), show the exact call and ask for confirmation before executing.

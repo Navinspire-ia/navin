@@ -6,27 +6,37 @@ metadata: {"navin":{"emoji":"🤖","category":"seo"}}
 
 # GEO / AI Search Optimizer
 
-## Overview
+Generative engines cite content that is quotable, structured, and authoritative. Optimize for being *the source* in an AI answer - stacked on classic SEO, not instead of it.
 
-Generative engines cite content that is quotable, structured, and authoritative. Optimize for being *the source* in an AI answer.
+## When to use
+
+- Brand wants AI Overview / Perplexity / ChatGPT citation presence
+- Refreshing key pages for quotability
+
+## When not to use
+
+- Replacing technical SEO or keyword research entirely
+- Inventing "citation scores" without evidence
 
 ## What AI engines favor
 
-- Direct, self-contained answers near the top of the page
+- Direct, self-contained answers near the top of sections
 - Clear entity definitions ("X is a ...")
 - Stats, dates, and named sources (fresh + verifiable)
-- Structured data (FAQ, HowTo, Organization schema)
-- Author/company credibility signals (about page, expertise)
-- Consistent brand facts across the web (site, LinkedIn, directories)
+- Structured data (FAQ, HowTo, Organization)
+- Author/company credibility (about, expertise, sameAs)
+- Consistent brand facts across the web
 
 ## Workflow
 
-1. Test current visibility: ask the target questions in AI engines (user can paste responses; or use web search to see AI Overview presence).
-2. Rewrite key pages with an **answer-first block**: 40–80 word direct answer under each H2 question.
-3. Add FAQ schema for real questions; keep answers atomic and quotable.
-4. Strengthen entity clarity: who you are, what you do, where — same wording everywhere.
-5. Publish citable numbers (benchmarks, prices, dates) that answers need.
-6. Re-test monthly; log which engines cite the domain.
+1. Define target questions the buyer asks (from ICP + PAA-style research).
+2. Fetch current pages; mark which answers are buried or non-quotable.
+3. Rewrite with an **answer-first block**: 40-80 word direct answer under each H2 question.
+4. Add FAQ schema for real questions; keep answers atomic.
+5. Strengthen entity clarity: who, what, where - same wording on site + profiles.
+6. Publish only citable numbers you can source; never fake stats for GEO.
+7. Note measurement gap: AI citation tracking is manual unless user pastes engine answers.
+8. Save `seo/geo-plan-<date>.md`.
 
 ## Quotability check
 
@@ -34,5 +44,11 @@ A paragraph is GEO-ready when it can be lifted verbatim into an answer and still
 
 ## Rules
 
-- Do not sacrifice classic SEO — GEO stacks on top of it.
-- Never fake statistics to be "citable"; wrong data kills trust and citations.
+- Do not sacrifice classic SEO - GEO stacks on top.
+- Never fake statistics to be "citable".
+- Pair with `seo-content-writer` and `on-page-seo-optimizer`.
+
+## Anti-patterns
+
+- Keyword stuffing for LLMs
+- Claiming "you will appear in ChatGPT" as a guarantee

@@ -9,70 +9,38 @@ from typing import Any
 from loguru import logger
 
 from navin.providers.base import LLMProvider, LLMResponse
+from navin.providers.fallback_policy import circuit_cooldown_s
 
 # Circuit breaker tuned to match OpenAICompatProvider's Responses API breaker.
 _PRIMARY_FAILURE_THRESHOLD = 3
 _PRIMARY_COOLDOWN_S = 60
 _MISSING = object()
-_FALLBACK_ERROR_KINDS = frozenset({
-    "timeout",
-    "connection",
-    "server_error",
-    "rate_limit",
-    "overloaded",
-})
-_NON_FALLBACK_ERROR_KINDS = frozenset({
-    "authentication",
-    "auth",
-    "permission",
-    "content_filter",
-    "refusal",
-    "context_length",
-    "invalid_request",
-})
-_FALLBACK_ERROR_TOKENS = (
-    "rate_limit",
-    "rate limit",
-    "too_many_requests",
-    "too many requests",
-    "overloaded",
-    "server_error",
-    "server error",
-    "temporarily unavailable",
-    "timeout",
-    "timed out",
-    "connection",
-    "empty",  # API returned empty choices (e.g. DeepSeek peak hours), transient
-    "insufficient_quota",
-    "insufficient quota",
-    "quota_exceeded",
-    "quota exceeded",
-    "quota_exhausted",
-    "quota exhausted",
-    "billing_hard_limit",
-    "insufficient_balance",
-    "balance",
-    "out of credits",
-)
+
+#: Extra attempts on the chosen model before the switch. The operator's rule:
+#: a model that blocks is asked again twice, then the next model of the list
+#: takes the step. Only failures that clear in seconds use the budget; a
+#: definitive refusal or a timeout switches at once (fallback_policy).
+PRIMARY_STICKY_RETRIES = 2
 
 
 class FallbackProvider(LLMProvider):
     """Wrap a primary provider and transparently failover to fallback models.
 
-    When the primary model returns a fallbackable error before content has been
-    streamed, the wrapper tries each fallback model in order. Streamed timeout
-    errors are the recovery exception: the caller may close the current stream
-    segment, then the wrapper continues failover with later deltas in a new
-    segment. Each fallback model may reside on a different provider — a factory
-    callable creates the underlying provider on-the-fly.
+    When the primary model returns an error before content has been streamed,
+    the wrapper tries each fallback model in order. When content was already
+    streamed, the caller may close the current stream segment (``on_stream_recover``)
+    and the wrapper continues failover with later deltas in a new segment. Each
+    fallback model may reside on a different provider - a factory callable
+    creates the underlying provider on-the-fly.
 
     Key design:
+    - The chosen model gets up to ``sticky_retries`` quick retries for failures
+      that clear on their own, then the chain moves on. Every error switches.
     - Failover is request-scoped (the wrapper itself is stateless between turns).
-    - Skipped when content was already streamed to avoid duplicate output,
-      except timeout recovery can resume in a new stream segment.
     - Recursive failover is prevented by the factory returning plain providers.
-    - Primary provider is circuit-broken after repeated failures to avoid
-      wasting requests on a known-bad endpoint.
+    - The chosen model is circuit-broken after repeated failures, or as soon as
+      its provider names a wait longer than a sticky retry (Retry-After) or the
+      account is out of credit, so the next steps do not pay the same refusal.
     """
 
     supports_stream_recover_callback = True
@@ -82,6 +50,8 @@ class FallbackProvider(LLMProvider):
         primary: LLMProvider,
         fallback_presets: list[Any],
         provider_factory: Callable[[Any], LLMProvider],
+        on_model_switch: Callable[[str, str], Any] | None = None,
+        sticky_retries: int = PRIMARY_STICKY_RETRIES,
     ):
         self._primary = primary
         self._fallback_presets = list(fallback_presets)
@@ -89,6 +59,25 @@ class FallbackProvider(LLMProvider):
         self._has_fallbacks = bool(fallback_presets)
         self._primary_failures = 0
         self._primary_tripped_at: float | None = None
+        self._primary_cooldown_s: float = _PRIMARY_COOLDOWN_S
+        # Set to 0 for the automatic free-tier chain: there, rate limits are the
+        # normal state and hopping to the next free model is the whole design.
+        # A model the user picked deserves the wait instead.
+        self._sticky_retries = max(0, int(sticky_retries))
+        # Notified with (chosen_model, served_model) when a turn is answered by a
+        # model the user did not pick. Without this the swap is invisible and the
+        # UI keeps showing the chosen model.
+        self._on_model_switch = on_model_switch
+
+    async def _announce_switch(self, primary_model: str, served_model: str) -> None:
+        if self._on_model_switch is None or served_model == primary_model:
+            return
+        try:
+            result = self._on_model_switch(primary_model, served_model)
+            if hasattr(result, "__await__"):
+                await result
+        except Exception as exc:  # noqa: BLE001 - never fail a turn over a notice
+            logger.warning("Model switch notification failed: {}", exc)
 
     @property
     def generation(self):
@@ -97,6 +86,26 @@ class FallbackProvider(LLMProvider):
     @generation.setter
     def generation(self, value):
         self._primary.generation = value
+
+    # The credentials of a chain are those of the model the user picked. Code
+    # that classifies a turn by its key (plan quota vs the user's own provider
+    # credit, soft budget) must see them through the wrapper: hidden, a 402 on
+    # the Navin managed key was reported as "your own API key is out of credit".
+    @property
+    def api_key(self) -> str | None:
+        return getattr(self._primary, "api_key", None)
+
+    @api_key.setter
+    def api_key(self, value: str | None) -> None:
+        self._primary.api_key = value
+
+    @property
+    def api_base(self) -> str | None:
+        return getattr(self._primary, "api_base", None)
+
+    @api_base.setter
+    def api_base(self, value: str | None) -> None:
+        self._primary.api_base = value
 
     def get_default_model(self) -> str:
         return self._primary.get_default_model()
@@ -109,10 +118,18 @@ class FallbackProvider(LLMProvider):
         """Return True if the primary provider is not currently tripped."""
         if self._primary_tripped_at is None:
             return True
-        if time.monotonic() - self._primary_tripped_at >= _PRIMARY_COOLDOWN_S:
+        if time.monotonic() - self._primary_tripped_at >= self._primary_cooldown_s:
             # Half-open: allow one probe attempt.
             return True
         return False
+
+    def _open_primary_circuit(self, primary_model: str, cooldown_s: float, why: str) -> None:
+        self._primary_tripped_at = time.monotonic()
+        self._primary_cooldown_s = max(1.0, float(cooldown_s))
+        logger.warning(
+            "Primary model '{}' circuit open for {:.0f}s: {}",
+            primary_model, self._primary_cooldown_s, why,
+        )
 
     async def chat(self, **kwargs: Any) -> LLMResponse:
         if not self._has_fallbacks:
@@ -156,31 +173,15 @@ class FallbackProvider(LLMProvider):
 
         if self._primary_available():
             primary_was_attempted = True
-            response = await call(self._primary, kwargs)
+            response = await self._call_primary_stickily(
+                call, kwargs, primary_model, has_streamed
+            )
             if response.finish_reason != "error":
                 self._primary_failures = 0
                 self._primary_tripped_at = None
+                self._primary_cooldown_s = _PRIMARY_COOLDOWN_S
                 return response
             primary_error = (response.content or primary_error)[:120]
-
-            if has_streamed is not None and has_streamed[0]:
-                is_timeout = (response.error_kind or "").lower() == "timeout"
-                if is_timeout:
-                    logger.warning(
-                        "Primary model '{}' stream stalled after content was emitted; "
-                        "attempting failover anyway",
-                        primary_model,
-                    )
-                    has_streamed[0] = False
-                    if on_stream_recover:
-                        await on_stream_recover()
-                    else:
-                        kwargs["on_content_delta"] = None
-                else:
-                    logger.warning(
-                        "Primary model error but content already streamed; skipping failover"
-                    )
-                    return response
 
             if not self._should_fallback(response):
                 logger.warning(
@@ -190,12 +191,34 @@ class FallbackProvider(LLMProvider):
                 )
                 return response
 
-            self._primary_failures += 1
-            if self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
-                self._primary_tripped_at = time.monotonic()
+            if has_streamed is not None and has_streamed[0]:
                 logger.warning(
-                    "Primary model '{}' circuit open after {} consecutive failures",
-                    primary_model, self._primary_failures,
+                    "Primary model '{}' failed after content was emitted; "
+                    "starting a new stream segment and failing over",
+                    primary_model,
+                )
+                has_streamed[0] = False
+                if on_stream_recover:
+                    await on_stream_recover()
+                else:
+                    kwargs["on_content_delta"] = None
+
+            self._primary_failures += 1
+            cooldown = circuit_cooldown_s(response)
+            if cooldown is not None:
+                self._open_primary_circuit(
+                    primary_model,
+                    cooldown,
+                    "provider asked to come back later"
+                    if getattr(response, "error_retry_after_s", None)
+                    or getattr(response, "retry_after", None)
+                    else "account out of credit",
+                )
+            elif self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
+                self._open_primary_circuit(
+                    primary_model,
+                    _PRIMARY_COOLDOWN_S,
+                    f"{self._primary_failures} consecutive failures",
                 )
         else:
             logger.debug("Primary model '{}' circuit open; skipping", primary_model)
@@ -205,18 +228,20 @@ class FallbackProvider(LLMProvider):
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
             if has_streamed is not None and has_streamed[0]:
-                is_timeout = (
-                    last_response is not None
-                    and (last_response.error_kind or "").lower() == "timeout"
+                can_hop = last_response is not None and self._should_fallback(
+                    last_response
                 )
-                if is_timeout and on_stream_recover:
+                if can_hop:
                     logger.warning(
-                        "Fallback model '{}' stream stalled after content was emitted; "
+                        "Fallback model '{}' failed after content was emitted; "
                         "starting a new stream segment and trying next fallback",
                         self._fallback_presets[idx - 1].model if idx > 0 else primary_model,
                     )
                     has_streamed[0] = False
-                    await on_stream_recover()
+                    if on_stream_recover:
+                        await on_stream_recover()
+                    else:
+                        kwargs["on_content_delta"] = None
                 else:
                     break
             if idx == 0 and primary_skipped:
@@ -249,9 +274,11 @@ class FallbackProvider(LLMProvider):
             kwargs["model"] = fallback_model
             kwargs["max_tokens"] = fallback.max_tokens
             kwargs["temperature"] = fallback.temperature
-            if fallback.reasoning_effort is None:
-                kwargs.pop("reasoning_effort", None)
-            else:
+            # The effort in kwargs is this turn's routing decision (Agent
+            # steps run at "none"). A fallback preset without its own value
+            # inherits it rather than dropping it, otherwise the substitute
+            # model reasons at its default while the primary was told not to.
+            if fallback.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = fallback.reasoning_effort
             try:
                 fallback_response = await call(fallback_provider, kwargs)
@@ -267,6 +294,7 @@ class FallbackProvider(LLMProvider):
                     "Fallback '{}' succeeded after primary '{}' failed",
                     fallback_model, primary_model,
                 )
+                await self._announce_switch(primary_model, fallback_model)
                 return fallback_response
 
             last_response = fallback_response
@@ -283,32 +311,63 @@ class FallbackProvider(LLMProvider):
         # Return the last error response we saw (primary or last fallback).
         if last_response is not None:
             return last_response
-        # Primary was tripped and we have no fallbacks — synthesize an error.
+        # Primary was tripped and we have no fallbacks - synthesize an error.
         return LLMResponse(
             content=f"Primary model '{primary_model}' circuit open and no fallbacks available",
             finish_reason="error",
         )
 
+    async def _call_primary_stickily(
+        self,
+        call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
+        kwargs: dict[str, Any],
+        primary_model: str,
+        has_streamed: list[bool] | None,
+    ) -> LLMResponse:
+        """Attempt the chosen model, retrying transient failures before switching.
+
+        The budget is ``sticky_retries`` (two) for failures that clear in
+        seconds and zero for definitive refusals, timeouts and provider-named
+        waits longer than a sticky retry: there the next model is the only
+        useful move. Each wait is capped at ``STICKY_MAX_DELAY_S``. Retries stop
+        as soon as content has been streamed, since the turn is already partly
+        delivered. The outer ``chat_with_retry`` ladder does not multiply this:
+        it gives a chain a single extra pass (see ``LLMProvider``).
+        """
+        import asyncio
+
+        from navin.providers.fallback_policy import (
+            STICKY_MAX_DELAY_S,
+            retry_delay,
+            sticky_retry_budget,
+        )
+
+        response = await call(self._primary, kwargs)
+        attempt = 0
+        while response.finish_reason == "error":
+            if has_streamed is not None and has_streamed[0]:
+                return response
+            budget = sticky_retry_budget(response, self._sticky_retries)
+            if attempt >= budget:
+                return response
+            attempt += 1
+            delay = retry_delay(attempt, response, max_delay=STICKY_MAX_DELAY_S)
+            logger.info(
+                "Primary model '{}' unavailable ({}); retry {}/{} in {:.1f}s before "
+                "switching to the next model",
+                primary_model,
+                (response.content or "")[:80],
+                attempt,
+                budget,
+                delay,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
+            response = await call(self._primary, kwargs)
+        return response
+
     @staticmethod
     def _should_fallback(response: LLMResponse) -> bool:
-        if response.error_should_retry is False:
-            return False
-        status = response.error_status_code
-        kind = (response.error_kind or "").lower()
-        error_type = (response.error_type or "").lower()
-        code = (response.error_code or "").lower()
-        text = (response.content or "").lower()
+        from navin.providers.fallback_policy import should_switch_model
 
-        if status in {400, 401, 403, 404, 422}:
-            return False
-        if kind in _NON_FALLBACK_ERROR_KINDS:
-            return False
-        if any(token in value for value in (kind, error_type, code) for token in _NON_FALLBACK_ERROR_KINDS):
-            return False
-        if response.error_should_retry is True:
-            return True
-        if status is not None and (status in {408, 409, 429} or 500 <= status <= 599):
-            return True
-        if kind in _FALLBACK_ERROR_KINDS:
-            return True
-        return any(token in value for value in (kind, error_type, code, text) for token in _FALLBACK_ERROR_TOKENS)
+        return should_switch_model(response)

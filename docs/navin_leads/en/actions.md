@@ -1,4 +1,4 @@
-# Leads & sales actions — 16 cards
+# Leads & sales actions - 17 cards
 
 Each card sends `/leads` with a precise specification; your brief is appended.
 
@@ -6,10 +6,11 @@ Each card sends `/leads` with a precise specification; your brief is appended.
 
 | Action | Delivers |
 | --- | --- |
-| Search companies | Deduplicated, sourced company list matching the target profile: directories, registries, award lists, competitor ecosystems, event lists. CSV with company, website, size, sector, country, signal, source, confidence — plus the 5 best fits explained. |
-| Search people | Decision-makers at target companies: public profiles, team pages, press quotes, conference bios, bylines. Table with person, role, company, profile URL, source, confidence — public sources only. |
-| Search job postings | Postings matching the target role/sector/geography, with company, role, stack mentioned, pains stated verbatim, and posting date — companies ranked by hiring intensity. |
-| Find contact info | Email patterns inferred from public sources with confidence levels, official phones, social profiles. Everything unverified is marked as such. |
+| Search companies | Deduplicated, sourced company list (search + scrape + Exa/Firecrawl MCP when available): directories, registries, awards, ecosystems. CSV + top 5 fits. |
+| Search people | Public decision-makers: team pages, press, bios - person, role, company, profile URL, source, confidence. |
+| Search job postings | Careers/board postings with stack, verbatim pains, hiring intensity ranking. |
+| Deep web hunt | Public corpora (scrape + search + MCP) → deduped leads CSV, `score_leads.py` validation, HTML report. |
+| Find contact info | `enrich_leads.py` when Hunter/Apollo keys exist; else `unverified` patterns. Never fake verified emails. |
 
 ## Qualify
 
@@ -17,15 +18,15 @@ Each card sends `/leads` with a precise specification; your brief is appended.
 | --- | --- |
 | Define ICP | Ideal Customer Profile: firmographics, buying committee, pains and triggers, disqualifiers, and 10 matching example companies. |
 | Score & enrich leads | Every lead scored (ICP fit 0-100 + signal strength) with an explicit grid, missing fields enriched, ranked table with a recommended action per tier. |
-| Account deep-dive | Complete account sheet: business model, size/finances, org and key people, news, tech hints, pains, competitors used, and 3 talking angles — every source cited. |
-| Buying signals scan | Funding, hiring, leadership, expansion, tech and regulation signals scored by strength × recency, with evidence URL and suggested angle — top 5 accounts to contact this week. |
+| Account deep-dive | Complete account sheet: business model, size/finances, org and key people, news, tech hints, pains, competitors used, and 3 talking angles - every source cited. |
+| Buying signals scan | Funding, hiring, leadership, expansion, tech and regulation signals scored by strength × recency, with evidence URL and suggested angle - top 5 accounts to contact this week. |
 
 ## Outreach
 
 | Action | Delivers |
 | --- | --- |
 | Cold email sequence | 4-5 touch sequence: personalized openers per segment, value-first body, one CTA each, A/B subject lines, timing. |
-| Social outreach scripts | Connection note variants (<300 chars), 3-message DM sequence, comment-first warm-up play — personalized with collected signals. |
+| Social outreach scripts | Connection note variants (<300 chars), 3-message DM sequence, comment-first warm-up play - personalized with collected signals. |
 | Call script & objections | 30-second opener, discovery questions mapped to pains, value narrative, objection table (acknowledge → explore → respond) for the 8 likeliest objections, voicemail script. |
 | Follow-up cadence | 3-week multi-channel cadence: day-by-day plan, channel and goal per touch, exit criteria, personalization rules. |
 

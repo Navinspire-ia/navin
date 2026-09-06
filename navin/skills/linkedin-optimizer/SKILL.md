@@ -1,7 +1,7 @@
 ---
 name: linkedin-optimizer
-description: Optimize LinkedIn profiles — headline, about, experience, keywords, and visibility settings — for recruiters, clients, or partners. Use to improve professional visibility.
-metadata: {"navin":{"emoji":"💠","category":"careers"}}
+description: Optimize LinkedIn profiles - headline, about, experience, keywords, and visibility settings - for recruiters, clients, or partners. Use to improve professional visibility.
+metadata: {"navin":{"emoji":"💠","category":"careers","default_for":"career"}}
 ---
 
 # LinkedIn Profile Optimizer
@@ -14,7 +14,7 @@ LinkedIn is a search engine + landing page. Optimize for the searches your targe
 
 | Section | Optimization |
 |---------|-------------|
-| Headline (220 chars) | role + value + keywords — not just a job title ("CTO \| Data migration & AI agents \| Navinspire" > "CTO chez Navinspire") |
+| Headline (220 chars) | role + value + keywords - not just a job title ("CTO \| Data migration & AI agents \| Navinspire" > "CTO chez Navinspire") |
 | Photo/banner | professional photo; banner carries the value proposition |
 | About | first 3 lines hook (visible pre-clic) → story → proof → CTA (contact) |
 | Experience | achievement bullets from the CV (`cv-builder` formula), media attached |
@@ -24,7 +24,7 @@ LinkedIn is a search engine + landing page. Optimize for the searches your targe
 
 ## Keyword logic
 
-Pick the 3–5 terms your audience actually searches (job titles, skills, sector) — place them in headline, about, experience titles, and skills. Natural placement only.
+Pick the 3-5 terms your audience actually searches (job titles, skills, sector) - place them in headline, about, experience titles, and skills. Natural placement only.
 
 ## Workflow
 
@@ -36,5 +36,6 @@ Pick the 3–5 terms your audience actually searches (job titles, skills, sector
 
 ## Rules
 
-- The profile serves ONE primary goal — a profile for everyone converts no one.
+- The profile serves ONE primary goal - a profile for everyone converts no one.
 - No buzzword soup; concrete outcomes and named tools win searches.
+- Drafts only. The user pastes into LinkedIn. Never scrape the profile, never automate Easy Apply, never fetch a LinkedIn job URL.

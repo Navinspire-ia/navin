@@ -19,7 +19,7 @@ Write tests the project already understands (pytest, vitest, jest, playwright). 
    - E2E for critical user paths
 3. Add a focused test next to siblings; mirror naming/fixtures.
 4. Run the smallest command that exercises the new test.
-5. Iterate until green; avoid flaky sleeps — use explicit waits.
+5. Iterate until green; avoid flaky sleeps - use explicit waits.
 
 ## Rules
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
+from navin.agent.tools.path_utils import project_rooted_path
 from navin.agent.tools.schema import (
     ArraySchema,
     IntegerSchema,
@@ -21,6 +22,11 @@ from navin.providers.image_generation import (
     ImageGenerationProvider,
     get_image_gen_provider,
 )
+from navin.providers.media_credentials import (
+    media_credentials_ready,
+    resolve_media_tool_enabled,
+)
+from navin.providers.media_usage import report_media_usage
 from navin.security.workspace_access import current_tool_workspace
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 from navin.utils.artifacts import (
@@ -35,14 +41,30 @@ if TYPE_CHECKING:
 
 
 class ImageGenerationToolConfig(Base):
-    """Image generation tool configuration."""
-    enabled: bool = False
-    provider: str = "openrouter"
-    model: str = "openai/gpt-5.4-image-2"
+    """Image generation tool configuration.
+
+    ``enabled`` is tri-state: unset means "on as soon as the selected provider
+    holds a usable credential", so a fresh install with an API key can already
+    illustrate content instead of silently producing text only.
+    """
+
+    enabled: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Abonnés Navin : provider managed + Seedream. BYOK peut changer librement.
+    # Seedream 4.5 exige ≥ ~3,7M pixels (2K+), pas 1K.
+    # Vide = aucun choix. Les abonnés reçoivent "navin" écrit explicitement par
+    # la synchro du catalogue ; sans abonnement, ne rien présélectionner.
+    provider: str = ""
+    model: str = "google/gemini-3.1-flash-image"
     default_aspect_ratio: str = "1:1"
-    default_image_size: str = "1K"
+    default_image_size: str = "2K"
     max_images_per_turn: int = Field(default=4, ge=1, le=8)
     save_dir: str = "generated"
+    # Run the deterministic (Pillow) visual gate on each still generated inside
+    # the Marketing module and attach the verdict. This makes the QA a real
+    # interceptor of the generation flow (pixels/dimensions/aspect/sharpness),
+    # not just a tool the agent may forget to call. Fidelity/vision checks still
+    # need the visual_qa tool with references.
+    marketing_auto_qa: bool = True
 
 
 @tool_parameters(
@@ -73,6 +95,7 @@ class ImageGenerationTool(Tool):
     """Generate persistent image artifacts through the configured image provider."""
 
     config_key = "image_generation"
+    _scopes = {"core", "subagent"}
 
     @classmethod
     def config_cls(cls):
@@ -80,7 +103,12 @@ class ImageGenerationTool(Tool):
 
     @classmethod
     def enabled(cls, ctx: Any) -> bool:
-        return ctx.config.image_generation.enabled
+        config = ctx.config.image_generation
+        provider_configs = getattr(ctx, "image_generation_provider_configs", None) or {}
+        return resolve_media_tool_enabled(
+            config.enabled,
+            media_credentials_ready(config.provider, provider_configs.get(config.provider)),
+        )
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
@@ -138,7 +166,9 @@ class ImageGenerationTool(Tool):
         workspace = access.project_path or self.workspace
         try:
             resolved = resolve_allowed_path(
-                value,
+                project_rooted_path(
+                    value, workspace, [access.allowed_root, get_media_dir()],
+                ),
                 workspace=workspace,
                 allowed_root=access.allowed_root,
                 extra_allowed_roots=[get_media_dir()] if access.allowed_root is not None else None,
@@ -161,6 +191,56 @@ class ImageGenerationTool(Tool):
         if not values:
             return []
         return [self._resolve_reference_image(value) for value in values if value]
+
+    def _maybe_apply_marketing_qa(self, artifacts: list[dict[str, Any]]) -> None:
+        """Attach a deterministic visual QA verdict to marketing stills.
+
+        Enforcement lives here, in the generation path, so a marketing deliverable
+        always carries a machine verdict instead of relying on the agent to call
+        the visual_qa tool. Best-effort: QA must never fail image generation.
+        """
+        if not self.config.marketing_auto_qa:
+            return
+        try:
+            from navin.agent.tools.context import current_request_context
+            from navin.command.modules import (
+                PRODUCT_MODULE_METADATA_KEY,
+                normalize_product_module,
+            )
+
+            request = current_request_context()
+            metadata = (request.metadata if request else {}) or {}
+            module = normalize_product_module(
+                metadata.get(PRODUCT_MODULE_METADATA_KEY)
+            )
+            if module != "marketing":
+                return
+            from navin.marketing.visual_qa import deterministic_gate, pillow_ready
+
+            if not pillow_ready():
+                return
+            for artifact in artifacts:
+                path = artifact.get("path")
+                if not path:
+                    continue
+                try:
+                    verdict = deterministic_gate(path)
+                except Exception:  # noqa: BLE001 - never fail generation on QA
+                    continue
+                artifact["visual_qa"] = {
+                    "verdict": verdict.get("verdict"),
+                    "score": verdict.get("score"),
+                    "gate": "deterministic",
+                    "note": (
+                        "Run the visual_qa tool with brand/product references for "
+                        "fidelity and text checks before delivery."
+                        if verdict.get("verdict") != "PASS"
+                        else "Deterministic pixel checks passed; add reference-based "
+                        "fidelity QA before final delivery."
+                    ),
+                }
+        except Exception:  # noqa: BLE001 - QA is advisory, never blocks generation
+            return
 
     async def execute(
         self,
@@ -193,6 +273,7 @@ class ImageGenerationTool(Tool):
                     aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
                     image_size=image_size or self.config.default_image_size,
                 )
+                produced = 0
                 for image_data_url in response.images:
                     artifact = store_generated_image_artifact(
                         image_data_url,
@@ -203,8 +284,15 @@ class ImageGenerationTool(Tool):
                         provider=self.config.provider,
                     )
                     artifacts.append(artifact)
+                    produced += 1
                     if len(artifacts) >= requested:
                         break
+                await report_media_usage(
+                    self.config.model, response.raw, units=produced
+                )
+            self._maybe_apply_marketing_qa(artifacts)
             return generated_image_tool_result(artifacts)
         except (ArtifactError, ImageGenerationError, OSError) as exc:
-            return ToolResult.error(f"Error: {exc}")
+            from navin.providers.user_facing_errors import user_facing_llm_error
+
+            return ToolResult.error(user_facing_llm_error(str(exc)))

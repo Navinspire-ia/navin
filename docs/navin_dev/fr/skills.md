@@ -6,20 +6,25 @@ Les skills sont des guides en markdown que l'agent charge à la demande (ou auto
 
 | Skill | Rôle |
 | --- | --- |
-| `fullstack-dev` | Construction de fonctionnalités de bout en bout : frontend, backend, base de données. |
+| `fullstack-dev` | Construction de fonctionnalités de bout en bout : frontend, backend, base de données. Défauts web : un DS officiel (MUI / Fluent / Carbon, `ask_user` si absent) + `ui-ux-pro-max` + `framer-motion`. |
+| `ui-ux-pro-max` | Tokens / landings mappés sur MUI, Fluent ou Carbon + `framer-motion` obligatoire. Jamais Tailwind par défaut. Utilisé par `/forge` `/cruise` `/mission` `/blueprint`. |
+| `make-interfaces-feel-better` | Polish UI : motion, rayons, ombres, typo (complète `ui-ux-pro-max`). |
+| `mobile-dev` | Expo / React Native / Flutter : detect, doctor, run, preview, tap/swipe, correction redbox (utilisé par `/mobile`). |
 | `api-engineer` | Conception et implémentation d'API. |
 | `task-planner` | Découpage du travail en étapes ordonnées et vérifiables (utilisé par `/blueprint`). |
 | `test-generator` | Écriture de suites de tests pertinentes. |
-| `code-reviewer` | Méthodologie de revue de code structurée (utilisé par `/inspect`). |
+| `code-reviewer` | Méthodologie de revue de code structurée (utilisé par `/inspect` + outil `code_review`). |
 | `critic-reviewer` | Seconde passe de revue contradictoire. |
 | `skill-creator` / `skill-vetter` | Créer et auditer de nouveaux skills. |
 | `pack-builder` | Créer et auditer des packs de plugins. |
+| `debug-live` | Debug avec preuves : DebugMCP, branche isolée, `debug_repair`, rapport HTML (utilisé par `/debug`). |
+| `studio-html-report` | Contrat des rapports HTML expert / studios (File Preview auto pour Review/Security/Debug). |
 
 ## Sécurité
 
 | Skill | Rôle |
 | --- | --- |
-| `security-auditor` | Audits de sécurité systématiques (utilisé par `/fortify`). |
+| `security-auditor` | Audits de sécurité systématiques (utilisé par `/fortify` + outil `security_scan`). |
 | `vulnerability-scanner` | Chasse aux failles : OWASP, CVE, secrets (utilisé par `/probe`). |
 | `prompt-injection-defender` | Détection et neutralisation des surfaces d'injection de prompt. |
 | `secrets-manager` | Manipulation sûre des identifiants et tokens. |
@@ -65,7 +70,7 @@ Les skills sont des guides en markdown que l'agent charge à la demande (ou auto
 | --- | --- |
 | `multi-agent-orchestration` | Coordination de sous-agents sur une tâche. |
 | `adaptive-reasoning` | Choix de la bonne profondeur de raisonnement. |
-| `model-router` | Choix du bon modèle par tâche (fonctionne avec `/pilot`). |
+| `model-router` | Choix du bon modèle par tâche (auto via Routage par tâche + `/pilot`). |
 | `context-compressor` | Maintien des sessions longues dans le contexte. |
 | `self-healing-retry` | Récupération après étapes échouées. |
 | `proactive-agent` | Anticipation des besoins pendant les objectifs longs. |
@@ -73,3 +78,5 @@ Les skills sont des guides en markdown que l'agent charge à la demande (ou auto
 | `memory` | Conventions de mémoire long terme (fonctionne avec Dream). |
 
 Les skills sont chargés automatiquement par les commandes workflow (ex. `/fortify` précharge `security-auditor`, `permission-guard`, `secrets-manager`) ou sur demande : demandez simplement à l'agent « utilise le skill code-reviewer ».
+
+Outils agent derrière Review / Security / Debug : [Outils expert](./expert-tools.md).

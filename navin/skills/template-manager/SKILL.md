@@ -1,6 +1,6 @@
 ---
 name: template-manager
-description: Maintain the library of branded document templates — DOCX, PPTX, PDF styles, email blocks — versioned and reusable by all document skills. Use to create or update templates.
+description: Maintain the library of branded document templates - DOCX, PPTX, PDF styles, email blocks - versioned and reusable by all document skills. Use to create or update templates.
 metadata: {"navin":{"emoji":"🧩","category":"documents"}}
 ---
 
@@ -14,7 +14,7 @@ One source of truth for branded output. Every document skill (`docx-generator`, 
 
 ```
 templates/
-  brand-tokens.md          # colors (hex), fonts, logo paths, spacing rules — per brand
+  brand-tokens.md          # colors (hex), fonts, logo paths, spacing rules - per brand
   docx/  proposal.docx  report.docx  letter.docx  cv.docx
   pptx/  pitch.pptx  report.pptx
   pdf/   base.css  invoice.html
@@ -25,11 +25,11 @@ templates/
 ## Brand tokens format
 
 ```markdown
-# Brand — <Navinspire|Guidia|Lynara>
+# Brand - <Navinspire|Guidia|Lynara>
 - Primary: #0369FF · Secondary: ... · Text: ...
 - Fonts: headings <font>, body <font> (+ fallback installed on this machine)
 - Logo: templates/assets/<brand>-logo.png (+ white variant)
-- Rules: marges 2cm, pied de page "<brand> — confidentiel", numérotation X/Y
+- Rules: marges 2cm, pied de page "<brand> - confidentiel", numérotation X/Y
 ```
 
 ## Workflow
@@ -41,7 +41,7 @@ templates/
 4. Log in CHANGELOG.md with version + what changed.
 
 **Using**
-- Document skills load the template path; tokens come from `brand-tokens.md` — never hardcode a hex in a generator script.
+- Document skills load the template path; tokens come from `brand-tokens.md` - never hardcode a hex in a generator script.
 
 **Updating**
 - Change the template once → regenerate affected recurring documents (`report-generator` pipelines) to confirm nothing breaks.
@@ -49,5 +49,5 @@ templates/
 ## Rules
 
 - One template change per commit-like changelog entry; old versions kept (`proposal-v2.docx` → archive, not delete).
-- Multi-brand: no shared template silently serving two brands — duplicate and re-skin.
+- Multi-brand: no shared template silently serving two brands - duplicate and re-skin.
 - New document types start from the closest existing template, not from blank.

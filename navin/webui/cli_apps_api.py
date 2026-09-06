@@ -97,18 +97,29 @@ def _manager() -> CliAppManager:
     )
 
 
-async def cli_apps_payload(*, installed_only: bool = False) -> dict[str, Any]:
-    manager = _manager()
+def _payload_sync(manager: CliAppManager, *, installed_only: bool) -> dict[str, Any]:
     if installed_only:
         return manager.installed_payload()
     payload = manager.payload(cache_only=True)
-    refresh_pending = False
-    if not manager.catalog_cache_fresh(include_optional=True):
-        refresh_pending = _start_catalog_refresh(manager)
     if not payload["apps"]:
         installed = manager.installed_payload()
         if installed["apps"]:
             payload = installed
+    return payload
+
+
+async def cli_apps_payload(*, installed_only: bool = False) -> dict[str, Any]:
+    manager = _manager()
+    # Payload building probes PATH per catalog app (slow on WSL2) - keep it
+    # off the event loop so the gateway stays responsive.
+    payload = await asyncio.to_thread(
+        _payload_sync, manager, installed_only=installed_only
+    )
+    if installed_only:
+        return payload
+    refresh_pending = False
+    if not await asyncio.to_thread(manager.catalog_cache_fresh, include_optional=True):
+        refresh_pending = _start_catalog_refresh(manager)
     payload["catalog_refresh_pending"] = refresh_pending
     return payload
 

@@ -1,34 +1,30 @@
-# How AI Agent Memory Works in navin
+# How AI Agent Memory Works in Navin
 
-This guide explains how to use navin's long-term AI agent memory: session
-history, compressed archives, durable memory files, Dream consolidation, and
-Git-backed memory changes.
+This guide explains Navin's long-term AI agent memory: session history, compressed archives, durable memory files, Dream consolidation, and versioned memory changes - from the desktop app.
 
-## What you will build
+## What you will use
 
-- a workspace with persistent session history
+- a project with persistent session history
 - compressed history archives for older turns
 - durable memory files such as `USER.md` and `MEMORY.md`
 - a Dream workflow for curating long-term memory
 
 ## When to use this
 
-Use memory when an agent should remember stable preferences, project facts,
-decisions, and recurring context across sessions. Do not use memory as a dumping
-ground for every raw transcript; navin separates short-term messages from
-curated durable knowledge.
+Use memory when an agent should remember stable preferences, project facts, decisions, and recurring context across sessions. Do not use memory as a dumping ground for every raw transcript; Navin separates short-term messages from curated durable knowledge.
 
-## Install
+## Open memory in the app
 
-```bash
-python -m pip install navin-ai
-navin webui   # configure provider & model in the platform (Settings → Providers)
-navin agent -m "Hello!"
-```
+1. Open Navin and select your project.
+2. Chat normally; Navin keeps session history for that project.
+3. Open the **Memory** page (or review memory files in the project tree) when you want to inspect durable facts.
+4. Adjust Dream timing under **Settings** when you want a different consolidation cadence.
+
+You do not need a terminal. Full product detail: [`../memory.md`](../memory.md).
 
 ## Minimal working example
 
-Ask the agent to remember a stable fact in a normal session, then run Dream:
+Ask the agent to remember a stable fact in a normal chat, then run Dream from the composer:
 
 ```text
 /dream
@@ -40,33 +36,27 @@ Inspect recent memory changes:
 /dream-log
 ```
 
-The exact files live in the active workspace, usually under
-`~/.navin/workspace/`.
+These are composer actions inside Navin, not system shell commands. Durable files live in the active project (for example under that project's `memory/` folder).
 
 ## Production notes
 
-- Use one workspace per project or personal context.
-- Keep durable facts concise; old session details belong in `history.jsonl`.
-- Use `/dream-prompt init` when a workspace needs custom memory guidance.
-- Review Git-backed memory changes when memory affects important workflows.
+- Use one project per personal or team context.
+- Keep durable facts concise; old session details belong in the history archive.
+- Use `/dream-prompt init` when a project needs custom memory guidance, then edit the guide from the project tree.
+- Review versioned memory changes when memory affects important workflows.
 
 ## Security notes
 
 - Memory files may contain sensitive user or project facts.
-- Avoid sharing workspaces without reviewing `SOUL.md`, `USER.md`, and
-  `memory/MEMORY.md`.
-- Use separate workspaces for personal and team contexts.
+- Avoid sharing projects without reviewing `SOUL.md`, `USER.md`, and `memory/MEMORY.md`.
+- Use separate projects for personal and team contexts.
 
 ## Troubleshooting
 
-- If memory feels stale, run `/dream` and inspect `/dream-log`.
-- If memory changed incorrectly, use `/dream-restore` to inspect and restore
-  previous versions.
-- If a new session lacks context, confirm it uses the same workspace.
+- Memory feels stale: run `/dream` and inspect `/dream-log`.
+- Memory changed incorrectly: use `/dream-restore` to inspect and restore previous versions.
+- A new chat lacks context: confirm it uses the same project in the project picker.
 
-## Related navin docs
+## Related docs
 
-- [AI Agent Memory in navin](../memory.md)
-- [Concepts](../concepts.md)
-- [Configuration](../configuration.md#auto-compact)
-- [Chat Commands](../chat-commands.md)
+- [Memory in Navin](../memory.md)

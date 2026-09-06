@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any, Protocol
 
+from navin.cron.recurrence import recurrence_payload
 from navin.cron.types import CronJob
 from navin.session.history_visibility import is_hidden_history_message
 from navin.session.manager import _message_preview_text
@@ -150,6 +151,9 @@ def _serialize_job(
             "every_ms": job.schedule.every_ms,
             "expr": job.schedule.expr,
             "tz": job.schedule.tz,
+            # Present when the expression matches a preset, so the editor can
+            # reopen it as the preset instead of a raw expression.
+            "recurrence": recurrence_payload(job.schedule),
         },
         "payload": {
             "message": job.payload.message,
@@ -158,12 +162,22 @@ def _serialize_job(
             "next_run_at_ms": job.state.next_run_at_ms,
             "last_status": job.state.last_status,
             "pending": pending,
+            "paused_reason": job.state.paused_reason,
+            "consecutive_failures": job.state.consecutive_failures,
+            "tokens_today": job.state.tokens_today,
         },
     }
     if not include_details:
         return payload
 
     payload["protected"] = job.payload.kind == "system_event"
+    # System loops are named by their id in the store; the client owns their
+    # wording so it can be translated.
+    payload["system_key"] = job.id if job.payload.kind == "system_event" else None
+    payload["limits"] = {
+        "daily_token_budget": job.limits.daily_token_budget,
+        "max_consecutive_failures": job.limits.max_consecutive_failures,
+    }
     payload["delete_after_run"] = job.delete_after_run
     payload["created_at_ms"] = job.created_at_ms
     payload["updated_at_ms"] = job.updated_at_ms
@@ -172,12 +186,14 @@ def _serialize_job(
         {
             "last_run_at_ms": job.state.last_run_at_ms,
             "last_error": job.state.last_error,
+            "tokens_day": job.state.tokens_day,
             "run_history": [
                 {
                     "run_at_ms": record.run_at_ms,
                     "status": record.status,
                     "duration_ms": record.duration_ms,
                     "error": record.error,
+                    "tokens": record.tokens,
                 }
                 for record in job.state.run_history[-5:]
             ],

@@ -11,7 +11,13 @@ from typing import Any
 
 import yaml
 
-from navin.agent.skills import SkillsLoader
+from navin import workspace_layout
+from navin.agent.skills import (
+    SkillsLoader,
+    clear_skills_index_cache,
+    iter_skill_files,
+    resolve_skill_file,
+)
 
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_SKILL_NAME_LENGTH = 64
@@ -49,6 +55,8 @@ def webui_skill_detail_payload(
     disabled_skills: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Return a single skill's safe detail payload."""
+    from navin.webui.skills_setup import skill_setup_payload
+
     loader = SkillsLoader(workspace_path, disabled_skills=disabled_skills)
     entries = loader.list_skills(filter_unavailable=False)
     entry = next((item for item in entries if item["name"] == name), None)
@@ -57,6 +65,7 @@ def webui_skill_detail_payload(
     return {
         **_skill_payload(loader, entry),
         "requirements": loader.get_skill_requirements(name),
+        "setup": skill_setup_payload(loader, name),
         "raw_markdown": loader.load_skill(name) or "",
     }
 
@@ -69,7 +78,7 @@ def create_workspace_skill(
     markdown: str | None = None,
     disabled_skills: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Create a custom skill under ``<workspace>/skills/<name>/SKILL.md``."""
+    """Create a custom skill under ``<workspace>/.navin/skills/<name>/SKILL.md``."""
     skill_name = normalize_skill_name(name)
     desc = (description or "").strip()
     if not desc:
@@ -82,7 +91,7 @@ def create_workspace_skill(
     if skill_name in existing:
         raise SkillsApiError(f"skill already exists: {skill_name}", status=409)
 
-    skill_dir = workspace_path / "skills" / skill_name
+    skill_dir = workspace_layout.workspace_skill_dir(workspace_path, skill_name)
     if skill_dir.exists():
         raise SkillsApiError(f"skill directory already exists: {skill_name}", status=409)
 
@@ -91,6 +100,7 @@ def create_workspace_skill(
     skill_dir.mkdir(parents=True, exist_ok=False)
     skill_file = skill_dir / "SKILL.md"
     skill_file.write_text(content if content.endswith("\n") else content + "\n", encoding="utf-8")
+    clear_skills_index_cache()
 
     detail = webui_skill_detail_payload(
         workspace_path, skill_name, disabled_skills=disabled_skills
@@ -114,7 +124,7 @@ def update_workspace_skill(
         raise SkillsApiError("markdown body is required")
     _validate_skill_markdown(content, expected_name=skill_name)
 
-    skill_dir = workspace_path / "skills" / skill_name
+    skill_dir = workspace_layout.workspace_skill_dir(workspace_path, skill_name)
     skill_file = skill_dir / "SKILL.md"
     if not skill_file.is_file():
         # Creating via update is allowed only when no builtin owns the name.
@@ -128,6 +138,7 @@ def update_workspace_skill(
         skill_dir.mkdir(parents=True, exist_ok=True)
 
     skill_file.write_text(content if content.endswith("\n") else content + "\n", encoding="utf-8")
+    clear_skills_index_cache()
     detail = webui_skill_detail_payload(
         workspace_path, skill_name, disabled_skills=disabled_skills
     )
@@ -144,18 +155,312 @@ def delete_workspace_skill(
 ) -> dict[str, Any]:
     """Delete a custom workspace skill directory. Builtin skills are protected."""
     skill_name = normalize_skill_name(name)
-    skill_dir = workspace_path / "skills" / skill_name
+    skill_dir = workspace_layout.workspace_skill_dir(workspace_path, skill_name)
     if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").is_file():
         raise SkillsApiError("workspace skill not found", status=404)
 
     # Refuse to delete anything that looks like a path escape / weird name.
-    try:
-        skill_dir.resolve().relative_to((workspace_path / "skills").resolve())
-    except ValueError as exc:
-        raise SkillsApiError("invalid skill path", status=400) from exc
+    allowed_bases = (
+        workspace_layout.skills_dir(workspace_path).resolve(),
+        workspace_layout.legacy_skills_dir(workspace_path).resolve(),
+        (workspace_path / "skills").resolve(),
+    )
+    resolved = skill_dir.resolve()
+    if not any(
+        base == resolved.parent or base in resolved.parents
+        for base in allowed_bases
+    ):
+        raise SkillsApiError("invalid skill path", status=400)
 
     shutil.rmtree(skill_dir)
+    clear_skills_index_cache()
     return webui_skills_payload(workspace_path, disabled_skills=disabled_skills)
+
+
+def resolve_skill_scan_root(raw: str | None, fallback: Path) -> Path:
+    """Resolve the project folder to scan for ``.<tool>/skill(s)`` trees."""
+    from navin.utils.host import normalize_host_path
+
+    text = (raw or "").strip() or str(fallback)
+    try:
+        root = normalize_host_path(text)
+    except ValueError as exc:
+        raise SkillsApiError("workspace folder not found", status=404) from exc
+    if not root.is_dir():
+        raise SkillsApiError("workspace folder not found", status=404)
+    return root
+
+
+def resolve_skill_apply_root(
+    *,
+    scope: str | None,
+    workspace: Path | None,
+    fallback: Path,
+) -> Path:
+    """Where Install skill writes: everywhere = ``~/.navin/skills``, else the project."""
+    kind = (scope or "workspace").strip().lower()
+    if kind in {"everywhere", "user", "home", "all"}:
+        return Path.home()
+    if workspace is not None:
+        return workspace
+    return fallback
+
+
+def owned_skill_dest(apply_root: Path) -> Path:
+    return workspace_layout.coalesce_owned_skills(apply_root)
+
+
+def skill_already_present(apply_root: Path, name: str) -> bool:
+    for base in (
+        workspace_layout.skills_dir(apply_root),
+        workspace_layout.legacy_skills_dir(apply_root),
+        apply_root / "skills",
+    ):
+        if resolve_skill_file(base, name) is not None:
+            return True
+    return False
+
+
+def copy_skill_tree(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dest, ignore=_ignore_skill_copy)
+
+
+def publish_plugin_skills(
+    plugin_name: str,
+    apply_root: Path,
+    *,
+    plugins_dir: Path | None = None,
+) -> list[str]:
+    """Copy a pack's ``skills/<name>`` folders into ``.navin/skills``."""
+    from navin.plugins.manager import plugins_root
+
+    src_root = (plugins_dir or plugins_root()) / plugin_name / "skills"
+    dest_root = owned_skill_dest(apply_root)
+    copied: list[str] = []
+    if not src_root.is_dir():
+        return copied
+    dest_root.mkdir(parents=True, exist_ok=True)
+    for child in sorted(src_root.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir() or not (child / "SKILL.md").is_file():
+            continue
+        dest = dest_root / child.name
+        if dest.is_dir() and (dest / "SKILL.md").is_file():
+            continue
+        if dest.exists():
+            continue
+        copy_skill_tree(child, dest)
+        copied.append(child.name)
+    return copied
+
+
+def discover_workspace_skills(
+    scan_root: Path,
+    *,
+    catalog_workspace: Path,
+    apply_root: Path | None = None,
+) -> dict[str, Any]:
+    """List SKILL.md playbooks found under the project, without importing them."""
+    found = _discover_skill_entries(scan_root)
+    dest_root = apply_root or catalog_workspace
+    skills = []
+    for entry in found:
+        skills.append(
+            {
+                "name": entry["name"],
+                "description": entry["description"],
+                "origin": entry["origin"],
+                "already": skill_already_present(dest_root, entry["name"]),
+                "markdown": entry.get("markdown") or "",
+            }
+        )
+    return {
+        "root": str(scan_root),
+        "dest": str(owned_skill_dest(dest_root)),
+        "skills": skills,
+    }
+
+
+def import_workspace_skills(
+    catalog_workspace: Path,
+    *,
+    scan_root: Path,
+    names: list[str] | None = None,
+    apply_root: Path | None = None,
+    disabled_skills: set[str] | None = None,
+) -> dict[str, Any]:
+    """Copy selected project skills into ``.navin/skills`` so the agent owns them."""
+    wanted = {normalize_skill_name(name) for name in (names or []) if str(name).strip()}
+    found = _discover_skill_entries(scan_root)
+    imported: list[str] = []
+    skipped: list[dict[str, str]] = []
+    dest_workspace = apply_root or scan_root
+    dest_root = owned_skill_dest(dest_workspace)
+
+    for entry in found:
+        name = entry["name"]
+        if wanted and name not in wanted:
+            continue
+        src = Path(entry["path"])
+        if not _is_under(scan_root, src):
+            skipped.append({"name": name, "reason": "outside workspace"})
+            continue
+        dest = dest_root / name
+        if resolve_skill_file(dest_root, name) is not None:
+            skipped.append({"name": name, "reason": "already added"})
+            continue
+        dest_root.mkdir(parents=True, exist_ok=True)
+        if src.is_file():
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest / "SKILL.md")
+        else:
+            copy_skill_tree(src, dest)
+        imported.append(name)
+
+    if wanted:
+        known = {entry["name"] for entry in found}
+        for name in sorted(wanted):
+            if name not in known and name not in imported:
+                skipped.append({"name": name, "reason": "not found"})
+
+    clear_skills_index_cache()
+    from navin.plugins import PluginManager
+
+    return {
+        "ok": True,
+        "imported": imported,
+        "skipped": skipped,
+        "dest": str(dest_root),
+        "previews": skill_previews_from_dest(dest_root, imported),
+        "plugins": PluginManager().list(),
+        **webui_skills_payload(catalog_workspace, disabled_skills=disabled_skills),
+    }
+
+
+def _discover_skill_entries(scan_root: Path) -> list[dict[str, str]]:
+    from navin.agent.project_agents import harness_dirs
+    from navin.agent.skills import _dedup_paths, _harness_skill_dirs
+
+    bases = _dedup_paths(
+        [
+            scan_root / "skills",
+            scan_root / "skill",
+            *_harness_skill_dirs(scan_root, harness_dirs(scan_root)),
+        ]
+    )
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for base in bases:
+        if not base.is_dir():
+            continue
+        direct = base / "SKILL.md"
+        if direct.is_file():
+            entry = _entry_from_skill_file(scan_root, base, direct)
+            if entry and entry["name"] not in seen:
+                seen.add(entry["name"])
+                found.append(entry)
+        for _child_name, skill_file in iter_skill_files(base):
+            skill_dir = skill_file.parent if skill_file.name.lower() == "skill.md" else skill_file
+            entry = _entry_from_skill_file(scan_root, skill_dir, skill_file)
+            if entry and entry["name"] not in seen:
+                seen.add(entry["name"])
+                found.append(entry)
+    return found
+
+
+def _entry_from_skill_file(
+    scan_root: Path, skill_dir: Path, skill_file: Path
+) -> dict[str, str] | None:
+    loose = skill_file.is_file() and skill_file.name.lower() != "skill.md"
+    default_name = skill_file.stem if loose else skill_dir.name
+    stored = skill_file if loose else skill_dir
+    meta = _read_skill_frontmatter(skill_file)
+    raw_name = meta.get("name") if isinstance(meta.get("name"), str) else default_name
+    try:
+        name = normalize_skill_name(str(raw_name))
+    except SkillsApiError:
+        return None
+    description = meta.get("description")
+    desc = description.strip() if isinstance(description, str) and description.strip() else name
+    try:
+        origin = str(stored.relative_to(scan_root)).replace("\\", "/")
+    except ValueError:
+        origin = default_name
+    markdown = ""
+    try:
+        markdown = skill_file.read_text(encoding="utf-8")
+    except OSError:
+        markdown = ""
+    if len(markdown.encode("utf-8")) > _MAX_MARKDOWN_BYTES:
+        markdown = markdown[:_MAX_MARKDOWN_BYTES]
+    return {
+        "name": name,
+        "description": desc,
+        "origin": origin,
+        "path": str(stored),
+        "markdown": markdown,
+    }
+
+
+def skill_preview_from_file(skill_file: Path) -> dict[str, str] | None:
+    """Safe preview payload: name, description, SKILL.md body."""
+    if not skill_file.is_file():
+        return None
+    try:
+        markdown = skill_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if len(markdown.encode("utf-8")) > _MAX_MARKDOWN_BYTES:
+        markdown = markdown[:_MAX_MARKDOWN_BYTES]
+    meta = _read_skill_frontmatter(skill_file)
+    raw_name = meta.get("name") if isinstance(meta.get("name"), str) else skill_file.parent.name
+    try:
+        name = normalize_skill_name(str(raw_name))
+    except SkillsApiError:
+        name = re.sub(r"[^a-z0-9]+", "-", skill_file.parent.name.lower()).strip("-") or "skill"
+    description = meta.get("description")
+    desc = description.strip() if isinstance(description, str) and description.strip() else name
+    return {"name": name, "description": desc, "markdown": markdown}
+
+
+def skill_previews_from_dest(dest_root: Path, names: list[str]) -> list[dict[str, str]]:
+    previews: list[dict[str, str]] = []
+    for name in names:
+        preview = skill_preview_from_file(dest_root / name / "SKILL.md")
+        if preview:
+            previews.append(preview)
+    return previews
+
+
+def _read_skill_frontmatter(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    match = re.match(r"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n?", text, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        meta = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _is_under(root: Path, path: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _ignore_skill_copy(_directory: str, names: list[str]) -> set[str]:
+    return {
+        name
+        for name in names
+        if name in {".git", "__pycache__", "node_modules", ".venv", ".DS_Store"}
+    }
 
 
 def skill_body_from_headers(headers: Any) -> str | None:
@@ -214,11 +519,16 @@ def _skill_payload(loader: SkillsLoader, entry: dict[str, str]) -> dict[str, Any
     metadata = loader.get_skill_metadata(name)
     available, unavailable_reason = loader.get_skill_availability(name)
     source = entry.get("source", "unknown")
+    navin_meta = loader._get_skill_meta(name)
+    default_for = navin_meta.get("default_for")
     return {
         "name": name,
         "description": _description(metadata, name),
         "source": source,
         "category": _category(loader, name, source),
+        "default_for": default_for.strip().lower()
+        if isinstance(default_for, str) and default_for.strip()
+        else None,
         "available": available,
         "unavailable_reason": unavailable_reason,
         "editable": source == "workspace",
@@ -230,7 +540,8 @@ def _category(loader: SkillsLoader, name: str, source: str) -> str:
     navin_meta = loader._get_skill_meta(name)
     category = navin_meta.get("category")
     if isinstance(category, str) and category.strip():
-        return category.strip().lower()
+        raw = category.strip().lower()
+        return "careers" if raw == "career" else raw
     if source == "workspace":
         return "custom"
     if source.startswith("plugin:"):

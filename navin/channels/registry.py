@@ -67,7 +67,7 @@ def discover_enabled(
     """Return channels whose module names are in *enabled_names*.
 
     Uses cheap ``pkgutil.iter_modules`` to list names, then imports only
-    those that match — skipping the heavy third-party SDK imports of
+    those that match - skipping the heavy third-party SDK imports of
     unneeded channels.
     """
     names = _names if _names is not None else discover_channel_names()
@@ -99,7 +99,7 @@ def discover_enabled(
 def discover_all() -> dict[str, type[BaseChannel]]:
     """Return all channels: built-in (pkgutil) merged with external (entry_points).
 
-    Built-in channels take priority — an external plugin cannot shadow a built-in name.
+    Built-in channels take priority - an external plugin cannot shadow a built-in name.
     """
     names = discover_channel_names()
     return discover_enabled(set(names), _names=names, _include_all_external=True)

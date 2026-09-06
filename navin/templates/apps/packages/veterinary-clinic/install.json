@@ -1,0 +1,300 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "veterinary-clinic",
+  "name": "Veterinary Clinic",
+  "kind": "business",
+  "category": "healthcare",
+  "source_github": "https://github.com/pjborowiecki/ARKA-Veterinary-Clinic-Page-and-Appointment-Booking-System",
+  "source_name": "ARKA Veterinary Clinic",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/veterinary-clinic",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 13,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "ARKA Veterinary Clinit Landing Page with Appointment Booking and Management System Description > **Warning** > This project is still under active development. This project is a re-build of a website I receintly built with [Remix](https://remix.run/) and [MongoDB Atlas](https://www.mongodb.com/atlas/database) for one of my clients in Poland. I decided to re-build it with the latest and greatest in tech for my own learning purposes. The client wanted a simple website with a contact form and a full booking management system, where he would be able to confir"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "arka-weterynaria-full-stack-appointment-booking-and-management-website",
+        "scripts": {
+          "dev": "next dev --experimental-https",
+          "build": "next build",
+          "start": "next start",
+          "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+          "db:push": "drizzle-kit push --config=drizzle.config.ts",
+          "db:pull": "drizzle-kit introspect --config=drizzle.config.ts",
+          "db:drop": "drizzle-kit drop --config=drizzle.config.ts",
+          "db:check": "drizzle-kit check --config=drizzle.config.ts",
+          "db:update": "drizzle-kit up --config=drizzle.config.ts",
+          "db:studio": "drizzle-kit studio --port 4000 --verbose",
+          "lint": "next lint",
+          "lint:fix": "next lint --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "arka-weterynaria-full-stack-appointment-booking-and-management-website",
+        "scripts": {
+          "dev": "next dev --experimental-https",
+          "build": "next build",
+          "start": "next start",
+          "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
+          "db:push": "drizzle-kit push --config=drizzle.config.ts",
+          "db:pull": "drizzle-kit introspect --config=drizzle.config.ts",
+          "db:drop": "drizzle-kit drop --config=drizzle.config.ts",
+          "db:check": "drizzle-kit check --config=drizzle.config.ts",
+          "db:update": "drizzle-kit up --config=drizzle.config.ts",
+          "db:studio": "drizzle-kit studio --port 4000 --verbose",
+          "lint": "next lint",
+          "lint:fix": "next lint --fix"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "mongodb",
+      "required": true,
+      "docker_image": "mongo:7",
+      "port": 27017,
+      "env_url": "MONGODB_URI",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7",
+        "Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    27017
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "NODE_ENV",
+      "default": "development",
+      "required": false,
+      "secret": false,
+      "purpose": "Node environment",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_APP_URL",
+      "default": "https://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXTAUTH_URL",
+      "default": "https://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Public app URL for NextAuth",
+      "from": ".env.example"
+    },
+    {
+      "key": "AUTH_SECRET",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "SQL connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESEND_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESEND_EMAIL_FROM",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "RESEND_EMAIL_TO",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Email / SMTP",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_GOOGLE_MAPS_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "NEXT_PUBLIC_GOOGLE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.example"
+    },
+    {
+      "key": "GOOGLE_MAPS_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": "source:src/components/google-map-widget.tsx"
+    },
+    {
+      "key": "MONGODB_URI",
+      "default": "mongodb://127.0.0.1:27017/app",
+      "required": true,
+      "secret": false,
+      "purpose": "MongoDB connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/veterinary-clinic/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-mongodb",
+        "run": "docker compose up -d mongo || docker run -d --name navin-mongo -p 27017:27017 mongo:7 | Set MONGODB_URI=mongodb://127.0.0.1:27017/app then start the API."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/veterinary-clinic/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/veterinary-clinic/overlay.json",
+    "agents": ".navin/apps/veterinary-clinic/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "vet-admin-agent",
+      "appointment-agent",
+      "pet-records-agent",
+      "reminder-agent",
+      "billing-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

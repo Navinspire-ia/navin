@@ -1,0 +1,260 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "saas-starter",
+  "name": "SaaS Starter",
+  "kind": "business",
+  "category": "saas",
+  "source_github": "https://github.com/nextjs/saas-starter",
+  "source_name": "Next.js SaaS Starter",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "Postgres",
+    "Stripe",
+    "shadcn"
+  ],
+  "studied_from": "templates_apps/saas-starter",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 7,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [],
+    "summary": "Next.js SaaS Starter This is a starter template for building a SaaS application using **Next.js** with support for authentication, Stripe integration for payments, and a dashboard for logged-in users. **Demo: [https://next-saas-start.vercel.app/](https://next-saas-start.vercel.app/)** Features - Marketing landing page (`/`) with animated Terminal element - Pricing page (`/pricing`) which connects to Stripe Checkout - Dashboard pages with CRUD operations on users/teams - Basic RBAC with Owner and Member roles"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "pnpm",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "pnpm",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    },
+    {
+      "id": "docker",
+      "why": "Run Postgres / Mongo / Redis / Supabase locally"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "app",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "db:setup": "npx tsx lib/db/setup.ts",
+          "db:seed": "npx tsx lib/db/seed.ts",
+          "db:generate": "drizzle-kit generate",
+          "db:migrate": "drizzle-kit migrate",
+          "db:studio": "drizzle-kit studio"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "postgres",
+          "react",
+          "stripe"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "app",
+        "scripts": {
+          "dev": "next dev --turbopack",
+          "build": "next build",
+          "start": "next start",
+          "db:setup": "npx tsx lib/db/setup.ts",
+          "db:seed": "npx tsx lib/db/seed.ts",
+          "db:generate": "drizzle-kit generate",
+          "db:migrate": "drizzle-kit migrate",
+          "db:studio": "drizzle-kit studio"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "next",
+          "postgres",
+          "react",
+          "stripe"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "postgres",
+      "required": true,
+      "docker_image": "postgres:16-alpine",
+      "port": 5432,
+      "env_url": "DATABASE_URL",
+      "compose": [],
+      "bootstrap": [
+        "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine",
+        "Wait for pg_isready, then run launch.migrate and launch.seed."
+      ]
+    }
+  ],
+  "ports": [
+    3000,
+    5432
+  ],
+  "env_files": [
+    ".env.example"
+  ],
+  "env": [
+    {
+      "key": "POSTGRES_URL",
+      "default": "postgresql://***",
+      "required": false,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "default": "sk_test_***",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe secret key",
+      "from": ".env.example"
+    },
+    {
+      "key": "STRIPE_WEBHOOK_SECRET",
+      "default": "whsec_***",
+      "required": true,
+      "secret": true,
+      "purpose": "Stripe webhook secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "BASE_URL",
+      "default": "http://localhost:3000",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.example"
+    },
+    {
+      "key": "AUTH_SECRET",
+      "default": "***",
+      "required": true,
+      "secret": true,
+      "purpose": "Auth / secret",
+      "from": ".env.example"
+    },
+    {
+      "key": "DATABASE_URL",
+      "default": "postgres://navin:navin@127.0.0.1:5432/app",
+      "required": true,
+      "secret": false,
+      "purpose": "Postgres connection string",
+      "from": "inferred"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [],
+    "services": [],
+    "dockerfile": false,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "migrate": "npm run db:migrate",
+    "seed": "npm run db:seed",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/saas-starter/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.example to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: pnpm install."
+      },
+      {
+        "id": "db-postgres",
+        "run": "docker compose up -d postgres || docker run -d --name navin-postgres -e POSTGRES_PASSWORD=navin -e POSTGRES_USER=navin -e POSTGRES_DB=app -p 5432:5432 postgres:16-alpine | Wait for pg_isready, then run launch.migrate and launch.seed."
+      },
+      {
+        "id": "migrate",
+        "run": "npm run db:migrate"
+      },
+      {
+        "id": "seed",
+        "run": "npm run db:seed"
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/saas-starter/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/saas-starter/overlay.json",
+    "agents": ".navin/apps/saas-starter/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "onboarding-agent",
+      "billing-agent",
+      "admin-agent",
+      "support-agent",
+      "growth-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

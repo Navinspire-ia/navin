@@ -19,6 +19,15 @@ from loguru import logger
 from navin.bus.events import InboundMessage
 
 
+def _title_user_text(msg: InboundMessage) -> str:
+    """Prefer the user's original slash line over an expanded workflow brief."""
+    meta = getattr(msg, "metadata", None) or {}
+    original = meta.get("original_content")
+    if isinstance(original, str) and original.strip():
+        return original
+    return str(getattr(msg, "content", None) or "")
+
+
 @dataclass(frozen=True)
 class RuntimeEventContext:
     """Routing context common to turn-scoped runtime events."""
@@ -34,6 +43,7 @@ class SessionTurnStarted:
     """A user/system turn has loaded its session and is about to build context."""
 
     context: RuntimeEventContext
+    user_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -52,6 +62,8 @@ class TurnCompleted:
     context: RuntimeEventContext
     latency_ms: int | None = None
     runtime: Any | None = None
+    # Wall time spent in each turn state (restore/build/run/save...), in ms.
+    phase_timings_ms: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +80,41 @@ class RuntimeModelChanged:
 
     model: str
     model_preset: str | None
+    reason: str | None = None
+    previous_model: str | None = None
+    used_percent: int | None = None
+
+
+@dataclass(frozen=True)
+class ModelFailedOver:
+    """A turn was answered by a model the user did not pick.
+
+    Distinct from :class:`RuntimeModelChanged`: the selection did not change, so
+    the UI must report the substitution without rewriting the chosen model.
+    """
+
+    chosen_model: str
+    served_model: str
+
+
+@dataclass(frozen=True)
+class ContextCompacted:
+    """Part of a session's history was summarized to fit the context window."""
+
+    session_key: str
+    kind: str  # "consolidation" (token pressure) | "idle" (auto-compact)
+    messages_archived: int = 0
+    tokens_before: int | None = None
+    tokens_after: int | None = None
+
+
+@dataclass(frozen=True)
+class CheckpointSaved:
+    """A restore point (conversation + code) was snapshotted for a session."""
+
+    session_key: str
+    name: str
+    auto: bool = True
 
 
 RuntimeEvent = (
@@ -76,6 +123,9 @@ RuntimeEvent = (
     | TurnCompleted
     | GoalStateChanged
     | RuntimeModelChanged
+    | ModelFailedOver
+    | ContextCompacted
+    | CheckpointSaved
 )
 RuntimeEventType = (
     type[SessionTurnStarted]
@@ -83,6 +133,9 @@ RuntimeEventType = (
     | type[TurnCompleted]
     | type[GoalStateChanged]
     | type[RuntimeModelChanged]
+    | type[ModelFailedOver]
+    | type[ContextCompacted]
+    | type[CheckpointSaved]
 )
 RuntimeEventHandler = Callable[[Any], Awaitable[None] | None]
 _HandlerEntry = tuple[RuntimeEventType | None, RuntimeEventHandler]
@@ -144,6 +197,7 @@ class RuntimeEventPublisher:
         self.bus = bus or RuntimeEventBus()
         self._turn_latency_ms: dict[str, int] = {}
         self._turn_runtime: dict[str, Any] = {}
+        self._turn_phase_timings: dict[str, dict[str, int]] = {}
 
     @staticmethod
     def _context(
@@ -167,9 +221,18 @@ class RuntimeEventPublisher:
         if latency_ms is not None:
             self._turn_latency_ms[session_key] = int(latency_ms)
 
+    def record_turn_phase_timings(
+        self,
+        session_key: str,
+        timings: dict[str, int] | None,
+    ) -> None:
+        if timings:
+            self._turn_phase_timings[session_key] = dict(timings)
+
     def clear_turn(self, session_key: str) -> None:
         self._turn_latency_ms.pop(session_key, None)
         self._turn_runtime.pop(session_key, None)
+        self._turn_phase_timings.pop(session_key, None)
 
     async def session_turn_started(
         self,
@@ -183,7 +246,8 @@ class RuntimeEventPublisher:
                     chat_id=msg.chat_id,
                     session_key=session_key,
                     metadata=msg.metadata,
-                )
+                ),
+                user_text=_title_user_text(msg),
             )
         )
 
@@ -226,13 +290,39 @@ class RuntimeEventPublisher:
                 ),
                 latency_ms=self._turn_latency_ms.pop(session_key, None),
                 runtime=self._turn_runtime.pop(session_key, None),
+                phase_timings_ms=self._turn_phase_timings.pop(session_key, None),
             )
         )
 
-    def runtime_model_changed(self, model: str, model_preset: str | None) -> None:
+    def runtime_model_changed(
+        self,
+        model: str,
+        model_preset: str | None,
+        *,
+        reason: str | None = None,
+        previous_model: str | None = None,
+        used_percent: int | None = None,
+    ) -> None:
         self.bus.publish_nowait(
-            RuntimeModelChanged(model=model, model_preset=model_preset)
+            RuntimeModelChanged(
+                model=model,
+                model_preset=model_preset,
+                reason=reason,
+                previous_model=previous_model,
+                used_percent=used_percent,
+            )
         )
+
+    def model_failed_over(self, chosen_model: str, served_model: str) -> None:
+        self.bus.publish_nowait(
+            ModelFailedOver(chosen_model=chosen_model, served_model=served_model)
+        )
+
+    def context_compacted(self, event: ContextCompacted) -> None:
+        self.bus.publish_nowait(event)
+
+    def checkpoint_saved(self, event: CheckpointSaved) -> None:
+        self.bus.publish_nowait(event)
 
 
 def ensure_runtime_event_publisher(owner: Any) -> RuntimeEventPublisher:

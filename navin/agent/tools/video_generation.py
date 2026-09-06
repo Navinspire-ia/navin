@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
+from navin.agent.tools.path_utils import project_rooted_path
 from navin.agent.tools.schema import (
     IntegerSchema,
     StringSchema,
@@ -15,6 +16,11 @@ from navin.agent.tools.schema import (
 )
 from navin.config.paths import get_media_dir
 from navin.config_base import Base
+from navin.providers.media_credentials import (
+    media_credentials_ready,
+    resolve_media_tool_enabled,
+)
+from navin.providers.media_usage import report_media_usage
 from navin.providers.video_generation import (
     VideoGenerationError,
     VideoGenerationProvider,
@@ -34,11 +40,18 @@ if TYPE_CHECKING:
 
 
 class VideoGenerationToolConfig(Base):
-    """Video generation tool configuration."""
+    """Video generation tool configuration.
 
-    enabled: bool = False
-    provider: str = "gemini"
-    model: str = "veo-3.1-generate-preview"
+    ``enabled`` is tri-state: unset means "on as soon as the selected provider
+    holds a usable credential", so a fresh install with an API key can already
+    produce clips instead of silently producing text only.
+    """
+
+    enabled: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Vide = aucun choix. Les abonnés reçoivent "navin" écrit explicitement par
+    # la synchro du catalogue ; sans abonnement, ne rien présélectionner.
+    provider: str = ""
+    model: str = "minimax/hailuo-3"
     default_aspect_ratio: str = "16:9"
     default_duration_seconds: int = Field(default=8, ge=1, le=60)
     default_resolution: str = ""
@@ -75,6 +88,7 @@ class VideoGenerationTool(Tool):
     """Generate persistent video artifacts through the configured video provider."""
 
     config_key = "video_generation"
+    _scopes = {"core", "subagent"}
 
     @classmethod
     def config_cls(cls):
@@ -82,7 +96,12 @@ class VideoGenerationTool(Tool):
 
     @classmethod
     def enabled(cls, ctx: Any) -> bool:
-        return ctx.config.video_generation.enabled
+        config = ctx.config.video_generation
+        provider_configs = getattr(ctx, "image_generation_provider_configs", None) or {}
+        return resolve_media_tool_enabled(
+            config.enabled,
+            media_credentials_ready(config.provider, provider_configs.get(config.provider)),
+        )
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
@@ -137,7 +156,9 @@ class VideoGenerationTool(Tool):
         workspace = access.project_path or self.workspace
         try:
             resolved = resolve_allowed_path(
-                value,
+                project_rooted_path(
+                    value, workspace, [access.allowed_root, get_media_dir()],
+                ),
                 workspace=workspace,
                 allowed_root=access.allowed_root,
                 extra_allowed_roots=[get_media_dir()] if access.allowed_root is not None else None,
@@ -172,12 +193,13 @@ class VideoGenerationTool(Tool):
 
         try:
             ref = self._resolve_reference_image(reference_image) if reference_image else None
+            duration = duration_seconds or self.config.default_duration_seconds
             response = await client.generate(
                 prompt=prompt,
                 model=self.config.model,
                 reference_image=ref,
                 aspect_ratio=aspect_ratio or self.config.default_aspect_ratio,
-                duration_seconds=duration_seconds or self.config.default_duration_seconds,
+                duration_seconds=duration,
                 resolution=resolution or self.config.default_resolution or None,
             )
             artifact = store_generated_video_artifact(
@@ -189,6 +211,13 @@ class VideoGenerationTool(Tool):
                 save_dir=self.config.save_dir,
                 provider=self.config.provider,
             )
+            # Le prix catalogue est coté sur un clip de 8 s : on met la durée
+            # réelle à l'échelle pour le repli quand le provider n'annonce rien.
+            await report_media_usage(
+                self.config.model, response.raw, units=max(duration, 1) / 8
+            )
             return generated_video_tool_result([artifact])
         except (ArtifactError, VideoGenerationError, OSError) as exc:
-            return ToolResult.error(f"Error: {exc}")
+            from navin.providers.user_facing_errors import user_facing_llm_error
+
+            return ToolResult.error(user_facing_llm_error(str(exc)))

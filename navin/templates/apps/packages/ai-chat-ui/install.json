@@ -1,0 +1,595 @@
+{
+  "schema": "navin-app-install.v2",
+  "slug": "ai-chat-ui",
+  "name": "ChatGPT-style UI",
+  "kind": "ai-product",
+  "category": "chat",
+  "source_github": "https://github.com/ChatGPTNextWeb/NextChat",
+  "source_name": "NextChat",
+  "license": "MIT",
+  "stack": [
+    "Next.js",
+    "React"
+  ],
+  "studied_from": "templates_apps/ai-chat-ui",
+  "completeness": {
+    "studied": true,
+    "missing": [],
+    "env_count": 49,
+    "package_count": 1
+  },
+  "docs": {
+    "readme": "README.md",
+    "extra": [
+      "docs/"
+    ],
+    "summary": "English / [\u7b80\u4f53\u4e2d\u6587](./README_CN.md) \u2728 Light and Fast AI Assistant,with Claude, DeepSeek, GPT4 & Gemini Pro support. [![Saas][Saas-image]][saas-url] [![Web][Web-image]][web-url] [![Windows][Windows-image]][download-url] [![MacOS][MacOS-image]][download-url] [![Linux][Linux-image]][download-url] [NextChatAI](https://nextchat.club?utm_source=readme) / [iOS APP](https://apps.apple.com/us/app/nextchat-ai/id6743085599) / [Web App Demo](https://app.nextchat.club) / [Desktop App](https://github.com/Yidadaa/ChatGPT-Next-Web/releases) / [Enterprise Edition](#enterpri"
+  },
+  "system": {
+    "node": true,
+    "node_engine": ">=18",
+    "python": false,
+    "docker": true,
+    "package_manager": "yarn",
+    "make": false,
+    "prisma": false,
+    "supabase_cli": false
+  },
+  "tools": [
+    {
+      "id": "git",
+      "why": "Clone / update the template source"
+    },
+    {
+      "id": "yarn",
+      "why": "Install frontend / Node backend packages"
+    },
+    {
+      "id": "node",
+      "why": "Run Vite / Next / Express"
+    }
+  ],
+  "packages": {
+    "frontend": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "nextchat",
+        "scripts": {
+          "dev": "concurrently -r \"yarn run mask:watch\" \"next dev\"",
+          "build": "yarn mask && cross-env BUILD_MODE=standalone next build",
+          "start": "next start",
+          "lint": "next lint",
+          "export:dev": "concurrently -r \"yarn mask:watch\"  \"cross-env BUILD_MODE=export BUILD_APP=1 next dev\"",
+          "app:dev": "concurrently -r \"yarn mask:watch\" \"yarn tauri dev\"",
+          "app:build": "yarn mask && yarn tauri build",
+          "proxy-dev": "sh ./scripts/init-proxy.sh && proxychains -f ./scripts/proxychains.conf yarn dev",
+          "test": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --watch",
+          "test:ci": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --ci"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ],
+    "backend": [],
+    "all": [
+      {
+        "role": "frontend",
+        "path": "package.json",
+        "name": "nextchat",
+        "scripts": {
+          "dev": "concurrently -r \"yarn run mask:watch\" \"next dev\"",
+          "build": "yarn mask && cross-env BUILD_MODE=standalone next build",
+          "start": "next start",
+          "lint": "next lint",
+          "export:dev": "concurrently -r \"yarn mask:watch\"  \"cross-env BUILD_MODE=export BUILD_APP=1 next dev\"",
+          "app:dev": "concurrently -r \"yarn mask:watch\" \"yarn tauri dev\"",
+          "app:build": "yarn mask && yarn tauri build",
+          "proxy-dev": "sh ./scripts/init-proxy.sh && proxychains -f ./scripts/proxychains.conf yarn dev",
+          "test": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --watch",
+          "test:ci": "node --no-warnings --experimental-vm-modules $(yarn bin jest) --ci"
+        },
+        "node_engine": "",
+        "deps_hint": [
+          "axios",
+          "next",
+          "react"
+        ]
+      }
+    ]
+  },
+  "databases": [
+    {
+      "engine": "none",
+      "required": false,
+      "docker_image": "",
+      "port": 0,
+      "env_url": "",
+      "compose": [],
+      "bootstrap": [
+        "No server database detected. Uses local files or browser storage. Confirm in README before adding Docker."
+      ]
+    }
+  ],
+  "ports": [
+    3000
+  ],
+  "env_files": [
+    ".env.template"
+  ],
+  "env": [
+    {
+      "key": "OPENAI_API_KEY",
+      "default": "sk-xxxx",
+      "required": true,
+      "secret": true,
+      "purpose": "OpenAI API key",
+      "from": ".env.template"
+    },
+    {
+      "key": "DEEPSEEK_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "DEEPSEEK_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "CODE",
+      "default": "your-password",
+      "required": false,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "PROXY_URL",
+      "default": "http://localhost:7890",
+      "required": false,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "ENABLE_MCP",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "GOOGLE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "GOOGLE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "BASE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "OPENAI_ORG_ID",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.template"
+    },
+    {
+      "key": "AZURE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "AZURE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "AZURE_API_VERSION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "DISABLE_GPT4",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "HIDE_USER_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "ENABLE_BALANCE_QUERY",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "DISABLE_FAST_LINK",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "CUSTOM_MODELS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "DEFAULT_MODEL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "ANTHROPIC_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "Anthropic API key",
+      "from": ".env.template"
+    },
+    {
+      "key": "ANTHROPIC_API_VERSION",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.template"
+    },
+    {
+      "key": "ANTHROPIC_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Model / LLM provider",
+      "from": ".env.template"
+    },
+    {
+      "key": "WHITE_WEBDAV_ENDPOINTS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "SILICONFLOW_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "SILICONFLOW_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "AI302_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "AI302_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "XAI_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "XAI_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "MOONSHOT_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "MOONSHOT_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "STABILITY_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "STABILITY_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "BAIDU_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "BAIDU_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "BYTEDANCE_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "BYTEDANCE_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "ALIBABA_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "ALIBABA_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "TENCENT_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "TENCENT_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "IFLYTEK_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "IFLYTEK_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "CHATGLM_API_KEY",
+      "default": "",
+      "required": true,
+      "secret": true,
+      "purpose": "",
+      "from": ".env.template"
+    },
+    {
+      "key": "CHATGLM_URL",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "Service URL",
+      "from": ".env.template"
+    },
+    {
+      "key": "BUILD_MODE",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.mjs"
+    },
+    {
+      "key": "DISABLE_CHUNK",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:next.config.mjs"
+    },
+    {
+      "key": "VISION_MODELS",
+      "default": "",
+      "required": true,
+      "secret": false,
+      "purpose": "",
+      "from": "source:test/vision-model-checker.test.ts"
+    },
+    {
+      "key": "PORT",
+      "default": "3000",
+      "required": false,
+      "secret": false,
+      "purpose": "HTTP port",
+      "from": "inferred"
+    }
+  ],
+  "docker": {
+    "compose": [
+      "docker-compose.yml"
+    ],
+    "services": [
+      {
+        "name": "chatgpt-next-web",
+        "image": "yidadaa/chatgpt-next-web",
+        "ports": [
+          "3000:3000"
+        ]
+      },
+      {
+        "name": "chatgpt-next-web-proxy",
+        "image": "yidadaa/chatgpt-next-web",
+        "ports": [
+          "3000:3000"
+        ]
+      }
+    ],
+    "dockerfile": true,
+    "note": "If compose is empty, start databases[].docker_image with the bootstrap command."
+  },
+  "launch": {
+    "dev": "npm run dev",
+    "build": "npm run build"
+  },
+  "install": {
+    "steps": [
+      {
+        "id": "read-playbook",
+        "run": "Read .navin/apps/ai-chat-ui/install.json first. Do not guess env or DB."
+      },
+      {
+        "id": "env",
+        "run": "Copy .env.template to .env and fill every required secret."
+      },
+      {
+        "id": "node-deps",
+        "run": "In each packages[].path folder: yarn."
+      },
+      {
+        "id": "overlay",
+        "run": "Customize .navin/apps/ai-chat-ui/overlay.json (agents, prompts, extra env)."
+      },
+      {
+        "id": "dev",
+        "run": "npm run dev"
+      }
+    ]
+  },
+  "modify": {
+    "overlay": ".navin/apps/ai-chat-ui/overlay.json",
+    "agents": ".navin/apps/ai-chat-ui/agents/",
+    "env": ".env",
+    "frontend": "package.json",
+    "backend": "package.json / pyproject of role=backend",
+    "theme": "Use packages/<slug>/patches when present. Do not rewrite the upstream repo.",
+    "rule": "overlay.json wins over navin.json. Change prompts, tools and env there first."
+  },
+  "agents": {
+    "universal": [
+      "research-agent",
+      "analytics-agent",
+      "document-agent",
+      "knowledge-agent",
+      "automation-agent"
+    ],
+    "domain": [
+      "chat-agent",
+      "prompt-agent",
+      "model-router",
+      "export-agent",
+      "theme-agent"
+    ]
+  },
+  "agent_contract": "Before any edit: read this file, copy env, start databases with Docker, install front and back packages, then change overlay.json. Do not invent connection strings or skip DB bootstrap."
+}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from navin.channels._setup import (
 from navin.channels.registry import DEFAULT_ENABLED_CHANNELS
 from navin.config.loader import merge_missing_defaults
 from navin.config.schema import Config
+from navin.utils.proc import no_window_kwargs
 
 
 class OptionalFeatureError(Exception):
@@ -44,6 +46,43 @@ _INSTALL_TIMEOUT_SECONDS = 300
 _LOG_OUTPUT_LIMIT = 4000
 _HIDDEN_OPTIONAL_FEATURES = {"documents", "pdf"}
 _BUNDLED_FEATURE_ALIASES = {"documents", "pdf"}
+_BUNDLED_EXTRAS_FILE = "bundled_extras.txt"
+
+
+def packaged_build() -> bool:
+    """Whether this process is a PyInstaller build rather than a source install."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def bundled_extras() -> frozenset[str]:
+    """Extras compiled into this build, as recorded by the packaging script.
+
+    A packaged build carries the modules but rarely their metadata: PyInstaller
+    copies a ``dist-info`` only when a hook asks for it, so
+    ``importlib.metadata`` reports slack_sdk, telegram or aiohttp as absent while
+    ``import`` works perfectly. Asking the build what it installed is the only
+    reliable answer; the alternative is mapping every distribution name to its
+    module name and keeping that map correct forever.
+
+    Always empty for a source install, where the metadata is authoritative and
+    the file may well be lying around: the packaging scripts write it into the
+    working tree, so a developer who builds an artifact would otherwise end up
+    with a checkout claiming to ship whatever that build shipped.
+    """
+    raw = os.environ.get("NAVIN_BUNDLED_EXTRAS", "")
+    if not raw:
+        if not packaged_build():
+            return frozenset()
+        path = Path(__file__).with_name(_BUNDLED_EXTRAS_FILE)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            return frozenset()
+    return frozenset(
+        canonicalize_name(line.strip())
+        for line in raw.replace(",", "\n").splitlines()
+        if line.strip() and not line.startswith("#")
+    )
 
 
 def load_pyproject(path: Path) -> dict[str, Any]:
@@ -181,6 +220,8 @@ def requirement_installed(raw: str, extra: str = "") -> bool:
 def extra_installed(extra: str, deps: list[str] | None) -> bool:
     if deps is None:
         return True
+    if canonicalize_name(extra) in bundled_extras():
+        return True
     return all(requirement_installed(dep, extra) for dep in deps)
 
 
@@ -190,7 +231,10 @@ def run_install_command(argv: list[str]) -> subprocess.CompletedProcess[str]:
             argv,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_INSTALL_TIMEOUT_SECONDS,
+            **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
@@ -215,6 +259,20 @@ def missing_pip(proc: subprocess.CompletedProcess[str]) -> bool:
     return "no module named pip" in f"{proc.stdout}\n{proc.stderr}".lower()
 
 
+def packaged_install_refusal(extra: str) -> str:
+    """Message for a feature a packaged build cannot add to itself.
+
+    ``sys.executable`` is the Navin executable here, not an interpreter, so
+    ``-m pip install`` reaches Navin's own argument parser and answers "No such
+    option: -m". Saying what the situation is beats running that command.
+    """
+    return (
+        f"'{extra}' is not part of this packaged build, and a packaged build has no "
+        "Python interpreter to install into. Use a build that ships this feature, or "
+        "install navin from source to add it yourself."
+    )
+
+
 def install_extra(
     extra: str,
     deps: list[str] | None,
@@ -224,6 +282,10 @@ def install_extra(
     import importlib
 
     install_args, label = install_args_for_extra(extra, deps)
+    if packaged_build():
+        message = packaged_install_refusal(extra)
+        logger.info("Refusing to install '{}' in a packaged build: {}", extra, message)
+        return InstallResult(False, label, [], output=message)
     pip_cmd = [sys.executable, "-m", "pip", "install", *install_args]
     if not install_args:
         logger.info("Optional feature '{}' has no installable dependencies for this platform", extra)
@@ -339,14 +401,14 @@ def _channel_has_required_setup(section: Any, name: str) -> bool:
 
 def _local_login_state_present(section: Any, name: str) -> bool:
     """Return whether a QR-login channel has reusable local account state."""
-    from navin.config.loader import get_config_path
+    from navin.config.paths import get_runtime_subdir
 
     if name == "whatsapp":
         configured_path = channel_field_value(section, "databasePath")
         database_path = (
             Path(str(configured_path)).expanduser()
             if configured_path
-            else get_config_path().parent / "whatsapp-auth" / "neonize.db"
+            else get_runtime_subdir("whatsapp-auth") / "neonize.db"
         )
         try:
             return database_path.is_file() and database_path.stat().st_size > 0
@@ -401,7 +463,10 @@ def optional_features_payload(
             "installed": installed,
             "ready": ready,
             "status": status,
-            "install_supported": name in extras or is_channel,
+            # Offering an install a packaged build cannot perform only produces a
+            # button that always fails.
+            "install_supported": (name in extras or is_channel)
+            and (installed or not packaged_build()),
             "requires_restart": _feature_requires_restart(name, is_channel=is_channel),
         }
         if is_channel:
@@ -472,6 +537,9 @@ def enable_optional_feature(
         )
         if not result.ok:
             failed = command_text(result.failed_cmd or result.pip_cmd)
+            if not failed:
+                # Nothing was run: the build itself cannot take new packages.
+                raise OptionalFeatureError(result.output or packaged_install_refusal(name), status=409)
             detail = f": {result.output}" if result.output else ""
             raise OptionalFeatureError(f"Failed: {failed}{detail}", status=500)
 
@@ -505,7 +573,7 @@ def _feature_requires_restart(name: str, *, is_channel: bool) -> bool:
     if is_channel:
         return True
     # These libraries are imported lazily or used by a newly spawned service.
-    return name not in {"api", "documents", "pdf", "olostep"}
+    return name not in {"api", "browser", "documents", "pdf", "olostep"}
 
 
 def disable_optional_feature(

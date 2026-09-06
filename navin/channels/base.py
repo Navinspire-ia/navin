@@ -174,7 +174,7 @@ class BaseChannel(ABC):
 
         Default implementation reuses the streaming pair so plugins only
         need to override the delta/end methods. Equivalent to one delta
-        with the full content followed immediately by an end marker —
+        with the full content followed immediately by an end marker -
         keeps a single rendering path for both streamed and one-shot
         reasoning (e.g. DeepSeek-R1's final-response ``reasoning_content``).
         """
@@ -208,7 +208,7 @@ class BaseChannel(ABC):
             allow_list = getattr(self.config, "allow_from", None) or []
         if "*" in allow_list:
             return True
-        # allowFrom entries are opaque tokens — must match exactly.
+        # allowFrom entries are opaque tokens - must match exactly.
         if str(sender_id) in allow_list:
             return True
         if is_approved(self.name, str(sender_id)):
