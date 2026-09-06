@@ -2,9 +2,9 @@
 
 <p align="center">
   <img src="./assets/navin-mark.svg" alt="" width="36" height="36" valign="middle">
-  <strong>Navin</strong>
+  <strong>NAVIN AGI</strong>
   &nbsp;&nbsp;
-  <a href="https://navin.live">navin.live</a>
+  100% gratuit, open source, AGI
 </p>
 
 <p align="center">
