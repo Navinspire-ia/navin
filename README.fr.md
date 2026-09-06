@@ -33,7 +33,7 @@ Votre machine. Vos modèles. Votre agent.
 </div>
 
 <p align="center">
-  <img src="./assets/navin.gif" alt="Studio Marketing Navin: projet, campagne, loop, heartbeat" width="900">
+  <img src="./assets/navin.gif" alt="Studio Navin: Code, Tenders, Career, Trading, Leads, Marketing et plus" width="900">
 </p>
 
 ## Pourquoi Navin ?

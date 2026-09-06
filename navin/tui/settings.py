@@ -144,7 +144,7 @@ def _mask(value: Any) -> str:
 def _provider_choices(
     data: dict[str, Any], *, auto_label: str = "auto"
 ) -> tuple[tuple[str, str], ...]:
-    """Configured providers (a key, a local base URL or the navin plan) for pickers."""
+    """Configured providers (a key, a local base URL or a leftover custom slot)."""
     specs: tuple[Any, ...] = ()
     try:
         from navin.providers.registry import PROVIDERS
@@ -152,10 +152,17 @@ def _provider_choices(
         specs = tuple(PROVIDERS)
     except Exception:  # noqa: BLE001
         specs = ()
+    try:
+        from navin.providers.settings_order import is_retired_llm_provider
+    except Exception:  # noqa: BLE001
+        def is_retired_llm_provider(_name: str) -> bool:
+            return False
     providers = data.get("providers") or {}
     out: list[tuple[str, str]] = [("", auto_label)]
     seen: set[str] = set()
     for spec in specs:
+        if is_retired_llm_provider(spec.name):
+            continue
         alias = _alias(spec.name)
         section = providers.get(alias) or providers.get(spec.name) or {}
         if not isinstance(section, dict):
@@ -171,6 +178,8 @@ def _provider_choices(
             seen.add(spec.name)
     for alias, section in sorted(providers.items()):
         if alias in seen or not isinstance(section, dict) or not section.get("apiKey"):
+            continue
+        if is_retired_llm_provider(str(alias)):
             continue
         out.append((alias, alias))
     return tuple(out)

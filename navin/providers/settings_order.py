@@ -70,6 +70,7 @@ if not live_modules_available():
     SETTINGS_PROVIDER_ORDER = tuple(
         name for name in SETTINGS_PROVIDER_ORDER if name != "navin"
     )
+    RETIRED_LLM_PROVIDERS = RETIRED_LLM_PROVIDERS | {"navin"}
 
 _SETTINGS_RANK = {name: index for index, name in enumerate(SETTINGS_PROVIDER_ORDER)}
 

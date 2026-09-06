@@ -536,6 +536,7 @@ def _dynamic_provider_items(config: Any) -> list[tuple[str, ProviderConfig]]:
         (name, provider_config)
         for name, provider_config in (config.providers.model_extra or {}).items()
         if isinstance(provider_config, ProviderConfig)
+        and not is_retired_llm_provider(name)
     ]
 
 
@@ -545,6 +546,8 @@ def _resolve_settings_provider(
 ) -> tuple[Any, str, ProviderConfig] | None:
     spec = find_by_name(provider_name)
     if spec is not None:
+        if is_retired_llm_provider(spec.name):
+            return None
         provider_config = getattr(config.providers, spec.name, None)
         if isinstance(provider_config, ProviderConfig):
             return spec, spec.name, provider_config
@@ -650,6 +653,8 @@ def _provider_settings_rows(config: Any, selected_provider: str | None) -> list[
     rows: list[dict[str, Any]] = []
     for canonical in PROVIDERS:
         if canonical.settings_alias_for or is_retired_llm_provider(canonical.name):
+            continue
+        if not live_modules_available() and canonical.name == "navin":
             continue
         candidates = [canonical, *aliases.get(canonical.name, [])]
         chosen = next((spec for spec in candidates if spec.name == selected_provider), None)
@@ -1387,22 +1392,30 @@ def _media_display_provider(configured_choice: Any, resolved: str, usable: bool)
     return resolved if usable else ""
 
 
+def _visible_media_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in rows if not is_retired_llm_provider(str(row.get("name") or ""))]
+
+
 def _image_generation_provider_rows(config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in image_gen_provider_names():
+        if is_retired_llm_provider(name):
+            continue
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
         rows.append(_media_provider_row(config, name, spec=spec, provider_config=provider_config))
-    return rows
+    return _visible_media_provider_rows(rows)
 
 
 def _video_generation_provider_rows(config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in video_gen_provider_names():
+        if is_retired_llm_provider(name):
+            continue
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
         rows.append(_media_provider_row(config, name, spec=spec, provider_config=provider_config))
-    return rows
+    return _visible_media_provider_rows(rows)
 
 
 _DEFAULT_REASONING_EFFORT_VALUES: tuple[str, ...] = ("", "low", "medium", "high")
@@ -1634,6 +1647,8 @@ def _model_family_reasoning_values(model: str, provider: str) -> list[str] | Non
 def _transcription_provider_rows(config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in transcription_provider_names():
+        if is_retired_llm_provider(name):
+            continue
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
         rows.append(
@@ -1641,7 +1656,7 @@ def _transcription_provider_rows(config: Any) -> list[dict[str, Any]]:
         )
     # Navin first so subscribers land on the managed slot in the picker.
     rows.sort(key=lambda row: (0 if row.get("name") == "navin" else 1, row.get("name") or ""))
-    return rows
+    return _visible_media_provider_rows(rows)
 
 
 def _transcription_managed_models(
@@ -1692,10 +1707,12 @@ def _transcription_managed_models(
 def _music_generation_provider_rows(config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in music_gen_provider_names():
+        if is_retired_llm_provider(name):
+            continue
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
         rows.append(_media_provider_row(config, name, spec=spec, provider_config=provider_config))
-    return rows
+    return _visible_media_provider_rows(rows)
 
 
 def _tts_model_supports_reference(model: Any, provider: str | None) -> bool:
@@ -1707,10 +1724,12 @@ def _tts_model_supports_reference(model: Any, provider: str | None) -> bool:
 def _tts_provider_rows(config: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in tts_provider_names():
+        if is_retired_llm_provider(name):
+            continue
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
         rows.append(_media_provider_row(config, name, spec=spec, provider_config=provider_config))
-    return rows
+    return _visible_media_provider_rows(rows)
 
 
 def settings_payload(
@@ -1807,8 +1826,15 @@ def settings_payload(
     if effective_preset.provider != "auto":
         spec = find_by_name(effective_preset.provider)
         selected_provider = spec.name if spec else provider_name
+    if not live_account and str(selected_provider or "").strip().lower() == "navin":
+        selected_provider = ""
+        provider_name = ""
 
-    providers = _provider_settings_rows(config, selected_provider)
+    providers = [
+        row
+        for row in _provider_settings_rows(config, selected_provider)
+        if not is_retired_llm_provider(str(row.get("name") or ""))
+    ]
     for provider_key, provider_config in _dynamic_provider_items(config):
         providers.append(
             _provider_settings_row(

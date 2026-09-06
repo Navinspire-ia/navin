@@ -379,11 +379,14 @@ def _mask(value: Any) -> str:
 
 def provider_rows(config_data: dict[str, Any]) -> list[HubRow]:
     from navin.providers.registry import PROVIDERS
+    from navin.providers.settings_order import is_retired_llm_provider
 
     providers = config_data.get("providers") or {}
     rows: list[HubRow] = []
     seen: set[str] = set()
     for spec in PROVIDERS:
+        if is_retired_llm_provider(spec.name):
+            continue
         alias = _alias(spec.name)
         section = providers.get(alias) or providers.get(spec.name) or {}
         seen.add(alias)
@@ -417,6 +420,8 @@ def provider_rows(config_data: dict[str, Any]) -> list[HubRow]:
         )
     for alias, section in sorted(providers.items()):
         if alias in seen or not isinstance(section, dict):
+            continue
+        if is_retired_llm_provider(str(alias)):
             continue
         rows.append(
             HubRow(
