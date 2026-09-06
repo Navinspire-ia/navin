@@ -1,14 +1,18 @@
 #!/bin/sh
 # Start gateway (backend) and/or Vite (front), background by default.
 #
+# Dev:  Vite http://localhost:5173/ (hot reload) + gateway
+# Prod: gateway sert le build navin/web/dist sur http://localhost:<webui>/
+#
 # Usage:
-#   sh scripts/start.sh                 # backend + front
-#   sh scripts/start.sh backend
-#   sh scripts/start.sh front
+#   sh scripts/start.sh                 # DEV: backend + Vite
+#   sh scripts/start.sh backend         # gateway seul (prod UI = le build)
+#   sh scripts/start.sh front           # Vite seul
+#   sh scripts/start.sh --prod          # prod: build si besoin + gateway, sans Vite
 #   sh scripts/start.sh --fg            # gateway only, foreground
 #   sh scripts/start.sh --install       # install then start
 #
-# Make: make start   /   make start backend   /   make start front
+# Make: make start   /   make start-prod   /   make start backend   /   make start front
 # Stop: sh scripts/stop.sh
 
 set -e
@@ -20,12 +24,24 @@ ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 if ! parse_dev_args "$@"; then
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
+fi
+
+if [ "$PROD" = "1" ]; then
+    if [ "$SCOPE" = "front" ]; then
+        die "--prod sert le build via le gateway. Utilisez: make start-prod"
+    fi
+    SCOPE="backend"
 fi
 
 if [ "$DO_INSTALL" = "1" ]; then
     sh "$SCRIPT_DIR/install.sh" "$SCOPE"
+fi
+
+if [ "$PROD" = "1" ] && ! webui_dist_ready; then
+    info "Pas de build WebUI. Construction de navin/web/dist ..."
+    build_frontend
 fi
 
 if [ "$FG" = "1" ]; then
