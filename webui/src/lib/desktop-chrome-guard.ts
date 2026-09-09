@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Inside the desktop shell the page *is* the application, so nothing the
  * webview inherits from its browser engine may leak through. WebKitGTK and

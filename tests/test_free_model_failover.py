@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Automatic failover chain: the model list is the fallback list.
 
 Free OpenRouter models regularly return 429 / at-capacity. Any other model

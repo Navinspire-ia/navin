@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Provider-specific voice transcription adapters.
 
 This module only knows how to call external transcription APIs such as Groq,

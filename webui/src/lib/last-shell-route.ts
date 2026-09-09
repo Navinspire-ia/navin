@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Durable last module + chat route for restore after restart / cold boot. */
 
 export const LAST_SHELL_ROUTE_KEY = "navin-webui.lastShellRoute";

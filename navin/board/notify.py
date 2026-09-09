@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Board change fan-out to connected WebUI clients.
 
 Both the HTTP API (human edits) and the agent ``board`` tool call

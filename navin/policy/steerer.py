@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live steering, gated and soft (S4.4).
 
 The steerer never executes anything and never blocks a call. When every

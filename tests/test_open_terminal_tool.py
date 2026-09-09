@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the open_terminal tool (navin.agent.tools.open_terminal).
 
 The tool only forwards a request to the editor UI. What is pinned here is the

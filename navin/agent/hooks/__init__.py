@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Concrete agent hook implementations."""
 
 from navin.agent.hooks.file_edit_activity import (

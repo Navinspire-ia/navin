@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * CRM workbench: dashboard, contacts, companies, leads, opportunities, activities.
  * Same SQLite store the agent `crm` tool reads and writes.

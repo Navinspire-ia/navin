@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Model routing for the Tenders desk.
 
 Every AI step here picks its model from Settings -> Models -> Task routing

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Prompt caching is the difference between paying full price and a tenth of it.
 
 The whole layer had no tests, which is a poor bargain for something that is

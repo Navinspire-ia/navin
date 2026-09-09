@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fetch the image and video links a user pastes, so the model can actually see them.
 
 A pasted link used to be inert text. `https://.../shot.png` reached the model as

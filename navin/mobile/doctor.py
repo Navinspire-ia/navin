@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Environment checks for mobile development (Node, Android SDK, adb, etc.)."""
 
 from __future__ import annotations

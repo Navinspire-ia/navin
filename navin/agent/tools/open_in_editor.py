@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open a file or folder in the editor UI for the user.
 
 The counterpart of :mod:`open_terminal` for the explorer: "montre-moi ce

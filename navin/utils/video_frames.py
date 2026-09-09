@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Turn a video attachment into still frames a vision model can actually read.
 
 No chat provider accepts a raw mp4 on the OpenAI-compatible content format we

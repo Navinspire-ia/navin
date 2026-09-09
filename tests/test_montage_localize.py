@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Video localization: silence parsing, segment inversion and SRT output.
 
 The timing math is what makes or breaks a dub: a cue shifted by one silence

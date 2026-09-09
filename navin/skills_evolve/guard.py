@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Periodic guard: a promoted skill that now regresses is retired (S2.4).
 
 Run from a cron or ``navin agi guard``, never from a chat turn. For every

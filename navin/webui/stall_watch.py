@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Say *where* the gateway is stuck, while it is stuck.
 
 ``slow webui http route`` records that ``/api/webui/skills`` took 70 s. It is

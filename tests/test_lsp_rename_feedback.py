@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """An applied rename is a write, and writes report what they broke.
 
 write_file, edit_file and apply_patch all attach the linters' verdict to their

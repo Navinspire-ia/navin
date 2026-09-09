@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Reach files whose path is longer than Windows' default limit.
 
 Win32 rejects paths over 260 characters with a bare "cannot find the path

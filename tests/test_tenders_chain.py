@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A-to-Z chain: every tenders API action, index, and agent tool against an isolated store."""
 
 from __future__ import annotations

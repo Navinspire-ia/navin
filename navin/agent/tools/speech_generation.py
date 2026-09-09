@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Speech generation tool: narration and voice over as persistent artifacts.
 
 The TTS engine already existed for the realtime voice session, but no agent tool

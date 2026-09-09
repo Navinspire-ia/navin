@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Auto-discovery for built-in channel modules and external plugins."""
 from __future__ import annotations
 

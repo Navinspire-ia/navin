@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Put the agent's own plan back in front of it on every turn.
 
 The board persists to disk and survives a compaction, but nothing re-read it:

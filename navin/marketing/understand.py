@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Product understanding from brand memory, a bound workspace, or a live site."""
 
 from __future__ import annotations

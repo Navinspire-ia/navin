@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Isolated copy of the project skill layer for exams (S2.1).
 
 The exam never reads the real ``.navin/skills`` while a draft is under test

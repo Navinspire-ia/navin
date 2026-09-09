@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The book: cash, positions, orders, in one book currency.
 
 Prices reach this module already converted to the book currency (see

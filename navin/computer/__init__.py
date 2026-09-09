@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop control ("computer use"): screen capture plus OS-level mouse and keyboard.
 
 The agent already drives a Chromium page through ``browser``. This package is

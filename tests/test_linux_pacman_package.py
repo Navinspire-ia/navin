@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Arch pacman package built from a Tauri .deb payload.
 
 The packer is a stdlib script: it parses GNU ar, restages usr/..., and writes

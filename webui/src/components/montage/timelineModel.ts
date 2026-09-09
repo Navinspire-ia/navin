@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { MontageAsset, MontageMediaInfo, MontageTimeline, MontageTimelineVisual } from "@/lib/api";
 
 export const DEFAULT_IMAGE_DURATION = 4;

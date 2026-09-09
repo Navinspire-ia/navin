@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the exec tool refuses out of the box, and what an operator can add.
 
 navin ships without an opinion on which commands an agent may run: the deny set

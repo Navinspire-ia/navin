@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The frozen exam battery (S2.2).
 
 Three suites, ``code`` / ``browser`` / ``desk``, twenty cases, shipped as

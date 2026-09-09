@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A subagent given its own checkout must not touch the one the user is in.
 
 Concurrent subagents shared a working tree, so two of them editing the same file

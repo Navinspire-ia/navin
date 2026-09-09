@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Carry the chat session key down to provider requests for cache affinity.
 
 OpenRouter pins a conversation to one upstream host when a stable

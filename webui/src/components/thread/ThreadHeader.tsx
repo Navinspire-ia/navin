@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Menu } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keyless discovery that scales with the market, not with a paid plan.
 
 Three open sources feed the hunt on top of the registries:

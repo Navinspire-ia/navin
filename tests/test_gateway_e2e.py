@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """End-to-end gate: boot a real gateway and drive the real socket path.
 
 Unlike test_live_gateway_smoke (which skips when nothing is running), this

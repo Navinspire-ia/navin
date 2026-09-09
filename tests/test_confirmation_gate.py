@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A user saying "oui" to the agent's own question must start the work.
 
 The intent gate reads a bare "oui" as low-info chit-chat. Right after the

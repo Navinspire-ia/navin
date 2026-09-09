@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Code index tool: semantic navigation over the project.
 
 Gives the agent the primitives an IDE relies on - go-to-definition, find

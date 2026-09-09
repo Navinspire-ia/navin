@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Product-module scoping for slash commands and skills.
 
 The WebUI shell has multiple modules (Tenders, Career, Trading, RiskLens, Code, Scraping, Documents, Marketing,

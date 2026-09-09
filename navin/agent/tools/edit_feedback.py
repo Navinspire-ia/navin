@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Show the agent what it just broke, without waiting to be asked.
 
 navin has better verification tooling than the editors it competes with -

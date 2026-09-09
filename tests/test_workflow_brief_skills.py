@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Every skill named by a workflow brief must exist under the bundled skills.
 
 The briefs of ``/studio``, ``/campaign``, ``/seo`` and friends list skills as a

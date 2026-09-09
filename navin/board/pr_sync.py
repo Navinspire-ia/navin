@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """PR merge suggestions for board tasks (suggestion only, no auto-close).
 
 For each task that already has a ``pr_url``, ask the forge whether the pull

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Check a finished DOCX, PPTX, XLSX or PDF before it is handed over.
 
 The HTML quality passes (``word_qa``, ``ppt_qa``) look at the page before it

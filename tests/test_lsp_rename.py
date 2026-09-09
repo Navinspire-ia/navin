@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A rename the agent has to retype by hand is a rename that loses a call site.
 
 The language server already knows every edit; these tests cover turning that

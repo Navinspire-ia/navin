@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Render a finished document to page images and one contact sheet.
 
 Reading the file back is the last step before handing it over: the agent looks

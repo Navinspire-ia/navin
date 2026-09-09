@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Check the real browser and native desktop bindings in every shipped sidecar.
 
 Run with ``navin python -m navin.computer.smoke`` in a packaged installation.

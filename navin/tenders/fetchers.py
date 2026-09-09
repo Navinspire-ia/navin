@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official API / Open Data fetchers. HTML portals go through scrape_net tools.
 
 Every fetcher takes the collect brief (crafts, project types, countries,

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career desk CLI: same store as Studio #/career, Tauri, and the career tool.
 
 `navin career ...` and `python -m navin.career.desk_cli ...` are the same

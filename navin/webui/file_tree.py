@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Workspace-scoped directory listing for the WebUI Dev mode explorer."""
 
 from __future__ import annotations

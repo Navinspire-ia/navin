@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Tree-sitter symbol extraction for the code index.
 //!
 //! One generic engine driven by per-language query strings. Python keeps its

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tenders desk loop: collect official notices on a wall-clock schedule.
 
 Heartbeat still only runs silent follow. This loop is the autonomous hunt:

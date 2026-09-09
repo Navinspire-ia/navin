@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keep the gateway's ``recall`` tool in step with the projects that want it.
 
 Tools are registered once when an agent boots, for one workspace. A gateway

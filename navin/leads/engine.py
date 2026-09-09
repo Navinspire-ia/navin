@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads pipeline: normalize -> dedupe -> qualify -> export (atomic).
 
 Pure functions over lists of rows so the same core backs the agent tool, the

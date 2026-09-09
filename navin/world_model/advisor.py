@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live advice, gated (S3.5).
 
 The advisor never blocks a call. When every gate is open it may say, in a

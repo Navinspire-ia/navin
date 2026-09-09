@@ -1,7 +1,9 @@
 # Third-Party Notices
 
-Navin is released under the MIT License (see `LICENSE`). This file lists
-third-party and upstream components that remain under their own licenses.
+Navin is released under the GNU Affero General Public License v3.0 (see
+`LICENSE`); a commercial license is available from Navinspire IA (see
+`COMMERCIAL_LICENSE.md`). This file lists third-party and upstream components
+that remain under their own licenses.
 
 ## Bundled software
 

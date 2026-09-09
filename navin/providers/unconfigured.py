@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Placeholder LLM provider used when no API key / endpoint is configured yet.
 
 Allows the gateway and WebUI to start so operators can finish setup in Settings

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Push qualified notices into the project CRM as buyers and opportunities."""
 
 from __future__ import annotations

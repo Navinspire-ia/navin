@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """PDF inspection and rasterization shared by the document tools.
 
 Reading a PDF back is how a generated document gets checked the way a reader

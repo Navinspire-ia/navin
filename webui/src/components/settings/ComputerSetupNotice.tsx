@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo } from "react";
 import { Customizer, Icon, PrimaryButton, Stack, Text, createTheme } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";

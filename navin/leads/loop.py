@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads desk loop: hunt, watch, then sequences on a wall-clock schedule.
 
 Heartbeat still only runs silent watch. This loop is the autonomous hunt:

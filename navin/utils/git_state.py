@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the working tree looks like right now, read cheaply and read-only.
 
 The agent could always run ``git status`` through ``exec``, and the git skill

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Soft tool errors must not loop forever: identical failures escalate.
 
 With ``fail_on_tool_error=False`` (the product default) a failing tool call

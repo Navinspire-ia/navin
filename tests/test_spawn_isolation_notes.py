@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Isolation that silently fails is worse than isolation that never existed.
 
 When a workspace cannot be isolated - not a git repository, or one with no

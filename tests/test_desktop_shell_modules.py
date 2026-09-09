@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Lock New chat, Code and Studio desks on every Tauri host.
 
 Linux AppImage / deb / rpm / pacman, Windows WebView2 and macOS x64 / arm share the

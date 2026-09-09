@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A subagent must batch its tool calls the way the parent loop does.
 
 ``AgentRunSpec.concurrent_tools`` defaults to False and only ``AgentLoop`` ever

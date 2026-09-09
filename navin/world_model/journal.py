@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Append-only files of the world model, written by one background thread.
 
 Same recipe as ``navin.cognition.episodes``: the caller only pays a

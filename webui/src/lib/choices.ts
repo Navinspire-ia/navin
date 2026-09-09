@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export const OTHER_CHOICE_ID = "__other__";
 export const CUSTOM_CHOICE_MAX_CHARS = 2000;
 

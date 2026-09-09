@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Produce a PDF from an HTML document, or from a finished Office file.
 
 A PDF is the one deliverable a reader opens on any machine, so it deserves the

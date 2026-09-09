@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Contract suite: Navin Code phases 0-7 (prod wiring, not stubs).
 
 Each class asserts the phase's critical surfaces still exist and behave.

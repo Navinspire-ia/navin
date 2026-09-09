@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.2 - the transfer campaign: an isolated job that runs the secret suites
 against the real model with the real tools, and lets the protocol answer.
 

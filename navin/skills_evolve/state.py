@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the AGI panel and ``navin agi`` read and press (S2.5).
 
 ``agi_state`` is one JSON-friendly snapshot: flag, drafts with scores and

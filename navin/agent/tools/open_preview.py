@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open the Dev workbench Preview (web iframe) or Mobile panel for the user.
 
 After scaffolding, "show me the app" means putting the Preview panel in front

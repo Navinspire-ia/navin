@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Neutral manifest shape for settings-managed agent apps.
 
 The manifest is intentionally descriptive. Installers still live in their

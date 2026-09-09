@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tools module."""
 
 from navin.agent.tools.base import Schema, Tool, ToolResult, tool_parameters

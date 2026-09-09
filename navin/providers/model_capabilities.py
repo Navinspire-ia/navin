@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Whether a chat model can actually read an attached image.
 
 Providers disagree on how they advertise this. OpenRouter ships

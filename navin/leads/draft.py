@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Outreach drafts: one message per sequence step, in the prospect's language.
 
 Deterministic templates always work (no key, no network). When the desk AI is

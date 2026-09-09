@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keep an investigation on the targets the user named.
 
 A brief that says "compare the prod and preprod branches of forgejo/lynara,

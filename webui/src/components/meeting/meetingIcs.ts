@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Minimal ICS parser for upcoming calendar events (local-only). */
 
 export type CalendarEvent = {

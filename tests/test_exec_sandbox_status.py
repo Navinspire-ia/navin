@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The exec tool says how each command is confined, and asks before lifting it.
 
 Cursor shows "Sandboxed" on every command it runs and lets the model ask for

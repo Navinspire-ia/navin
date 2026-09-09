@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Runtime health must name RAM vs disk instead of a vague Host critical."""
 
 from __future__ import annotations

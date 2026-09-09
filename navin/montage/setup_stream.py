@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live install feed for Montage setup (agent_exec frames on the WebUI bus)."""
 
 from __future__ import annotations

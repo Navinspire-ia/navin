@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Whether the doctor can tell a batching run from a one-call-per-turn run.
 
 The batching guidance in the tool contract is a request to a model, not a

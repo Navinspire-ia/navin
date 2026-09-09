@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Switch the WebUI composer turn mode (Plan / Agent / Review / Security / Debug / Montage).
 
 Investigate modes tint the composer shell like Plan does. Agents call this

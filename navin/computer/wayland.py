@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Wayland backend: the desktop portal first, compositor tools as fallbacks.
 
 Wayland has no global "post an event" or "read the framebuffer" call; the

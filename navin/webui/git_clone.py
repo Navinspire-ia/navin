@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Clone a remote Git repository into a local project folder.
 
 Used by the Dev / composer project picker ("Import from Git", Cursor-style):

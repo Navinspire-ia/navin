@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bridge between the Textual UI and the Navin agent engine.
 
 The runtime owns the message bus, the ``AgentLoop`` task and the outbound

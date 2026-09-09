@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Labeled submodule rail (icons + names) when the Code chat is maximized. */
 export const DEV_RAIL_LABEL_WIDTH = 216;
 /** Icon-only rail: third Code layout, names hidden, tooltips remain. */

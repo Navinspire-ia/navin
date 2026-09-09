@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tool over the user's personal notes (the Notes module).
 
 Notes are the user's long-term memory: decisions, meetings, projects, ideas,

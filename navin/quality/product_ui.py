@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Product-quality gates for UI source the agent ships.
 
 Catches the junk that slips past ordinary linters:

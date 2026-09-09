@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Validate a marketing campaign brief for required senior-desk fields.
 
 Accepts a markdown file. Looks for required section keywords (case-insensitive).

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Harvest a live product site the user bound: brand, pages, images, colors."""
 
 from __future__ import annotations

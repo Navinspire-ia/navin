@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Dialogs and popups must not silently stall or fork the browser session.
 
 An unanswered ``alert()`` or ``confirm()`` blocks every later Playwright action

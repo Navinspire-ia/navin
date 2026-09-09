@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Ranked full-text search over the project, backed by tantivy.
 //!
 //! The Python code index owns change detection (it already fingerprints every

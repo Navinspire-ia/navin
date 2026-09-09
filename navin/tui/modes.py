@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Composer modes: how free text is routed to the engine.
 
 Mirrors the desktop composer (ask / plan / agent / review / security / debug)

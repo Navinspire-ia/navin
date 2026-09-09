@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Meetings -> Notes bridge: one meeting becomes one linked, durable note.
 
 A meeting record lives in the Meetings store (JSON under ``meetings/``). The

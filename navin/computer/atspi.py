@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Linux accessibility snapshot through AT-SPI (GNOME / KDE / GTK / Qt apps).
 
 ``gi.repository.Atspi`` rarely lives in Navin's own virtualenv, so the walk

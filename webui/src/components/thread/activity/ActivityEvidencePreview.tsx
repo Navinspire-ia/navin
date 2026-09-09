@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { AttachmentTile } from "@/components/AttachmentTile";
 import { cn } from "@/lib/utils";
 import type { ActivityEvidence } from "@/lib/activity-timeline";

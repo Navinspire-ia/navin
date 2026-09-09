@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tool exposing best-of-N candidate generation with a judge."""
 
 from __future__ import annotations

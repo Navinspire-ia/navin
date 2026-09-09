@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The corridor: draft, exam, correct up to K times, promote (S2.1 to S2.4).
 
 ``run_pipeline`` is the only function a job runner or the CLI needs. It

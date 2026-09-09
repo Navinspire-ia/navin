@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the AGI panel and ``navin agi world`` read and press (S3.5, S3.6).
 
 ``world_state`` is one JSON-friendly snapshot: flag, journal size, frozen

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One active debug session (Python/debugpy, Node/js-debug, Go/delve, LLDB)."""
 
 from __future__ import annotations

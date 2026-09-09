@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared Pydantic base model for configuration DTOs.
 
 This module intentionally lives outside the ``navin.config`` package so

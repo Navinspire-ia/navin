@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """System clipboard for the TUI.
 
 Textual's ``App.clipboard`` is in-process only. OSC 52 is ignored by Apple

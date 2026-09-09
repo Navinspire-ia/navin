@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Fruchterman-Reingold force layout, ported from webui/src/lib/force-layout.ts.
 //!
 //! Deterministic (golden-angle spiral init, no RNG). Sticky positions keep

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Business limits for inbound WebUI messages and attachments.
 
 The WebSocket channel owns its raw frame limit. This module owns semantic

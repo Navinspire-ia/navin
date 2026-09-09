@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Metagraph change fan-out to connected WebUI clients.
 
 After annotate, index refresh, or a debounced file-write batch, call

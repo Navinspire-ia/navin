@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The posture navin ships with: the agent is not fenced in by the product.
 
 Every limit that used to be hardcoded is now a setting, and every one of those

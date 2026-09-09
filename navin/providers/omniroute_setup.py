@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OmniRoute local setup: detect, install, start, and configure Navin.
 
 Used by the first-run wizard (Free > OmniRoute) and Settings > Providers for a

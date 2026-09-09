@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Regression: Dev mobile preview modules stay importable after usage-PWA work.
 
 The mobile *usage* client is the WebUI PWA. ``navin.mobile`` remains the Dev

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Single social pack: four networks, one still and one clip each.
 
 Produce, briefs, calendar and Studio all read this file. Nothing is published.

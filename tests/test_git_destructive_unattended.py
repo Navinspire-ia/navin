@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Destructive git with nobody watching follows the approvals posture.
 
 `git reset --hard` over uncommitted changes and a stale force push are the two

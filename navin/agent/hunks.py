@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Hunk-level selection between a baseline and the current content of a file.
 
 Review is stored as "baseline bytes, current content read from disk" (see

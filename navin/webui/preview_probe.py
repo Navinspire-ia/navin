@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Instrumented preview: capture script + telemetry ring buffer.
 
 The Dev workbench preview loads user apps through a local injection proxy

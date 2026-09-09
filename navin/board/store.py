@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project task board store: tasks, milestones, and an activity timeline.
 
 The board is the shared workspace between humans (Dev workbench UI) and

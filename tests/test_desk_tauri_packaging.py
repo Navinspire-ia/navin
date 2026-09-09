@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career, Leads, Marketing, Tenders and Trading ride the same Tauri sidecar.
 
 Linux (127.0.0.1 / http://tauri.localhost), Windows (https://tauri.localhost)

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Windows UI Automation snapshot through PowerShell (no Python dependency).
 
 Every Windows install has Windows PowerShell 5.1 and the .NET

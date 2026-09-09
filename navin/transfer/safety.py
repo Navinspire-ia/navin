@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.3 - the safety case: a dossier of bounded checks that must hold in the
 most autonomous mode already authorized (S4 steer on).
 

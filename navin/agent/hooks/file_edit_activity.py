@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent hook that observes file-editing tools and emits file-edit activity."""
 
 from __future__ import annotations

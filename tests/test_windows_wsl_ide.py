@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """IDE path when Windows opens a project that lives in WSL.
 
 The desktop app's normal case is a UNC root (``\\\\wsl.localhost\\<distro>\\...``).

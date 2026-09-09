@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Persistence for the Code Preview simple browser (recents, bookmarks). */
 
 export const PREVIEW_RECENTS_KEY = "navin.dev.previewRecents";

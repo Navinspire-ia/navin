@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OpenRouter OAuth PKCE connect flow (Free onboarding path).
 
 OpenRouter has no public API that would let Navin silently create an

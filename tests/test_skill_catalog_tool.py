@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The prompt lists skill names only; the `skill` tool serves the rest.
 
 The full catalog of descriptions cost ~10K tokens on every turn. These tests

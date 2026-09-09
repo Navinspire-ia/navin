@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Clock-anchored recurrences for scheduled jobs.
 
 A ``CronSchedule`` of kind ``every`` fires ``interval`` after the previous run,

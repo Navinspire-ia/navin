@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Typer commands: navin app list|info|create|install|publish."""
 
 from __future__ import annotations

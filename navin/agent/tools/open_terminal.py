@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open the editor's integrated terminal panel for the user.
 
 "Ouvre un shell" is a request to *see* a terminal, not to run a command. The

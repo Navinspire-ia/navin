@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Repair of near-JSON tool call arguments before execution.
 
 Smaller models routinely emit big write_file/exec payloads with literal

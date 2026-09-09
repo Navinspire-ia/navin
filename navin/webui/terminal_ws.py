@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Interactive PTY terminals streamed over the WebUI WebSocket.
 
 Each WebSocket connection can open a handful of shell sessions (bash, zsh,

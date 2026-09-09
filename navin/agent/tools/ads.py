@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Paid media engine tool, intended for the Ads product module."""
 
 from __future__ import annotations

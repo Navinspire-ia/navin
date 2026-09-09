@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """SQLite WAL connection and one-time JSON import for the project CRM."""
 
 from __future__ import annotations

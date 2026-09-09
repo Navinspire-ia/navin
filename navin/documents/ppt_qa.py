@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Visual QA for a deck, run on the slides before they become a PPTX.
 
 ``templates/ppt/_engine/quality.json`` has always declared what a good slide is:

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """JavaScript helpers injected into the page by the document converters.
 
 Everything here runs inside Chromium against the laid-out document: boxes come

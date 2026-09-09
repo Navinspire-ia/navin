@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Same clock as `navin/tenders/retention.py`. The sidecar (Tauri) reads these from profile.json. */
 
 export const DEFAULT_ARCHIVE_AFTER_DAYS = 45;

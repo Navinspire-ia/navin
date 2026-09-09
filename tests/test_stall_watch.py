@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A stalled route must name the thread it is waiting on, while it waits.
 
 "slow webui http route ... duration_ms=70946" was the whole story the log had

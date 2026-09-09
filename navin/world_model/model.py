@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The local head: a small count model that predicts the class of the next
 observation from (tool, normalized args, last calls). Pure Python, trains in
 one pass, serializes to JSON, needs no network and no GPU (S3.2).

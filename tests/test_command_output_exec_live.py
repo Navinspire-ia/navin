@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live ExecTool integration for command_output compaction.
 
 These spawn real processes (git, pytest, printf). Skip when a binary or

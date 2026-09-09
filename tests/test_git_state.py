@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent used to work with no idea what the repository looked like.
 
 Nothing told it which branch it was on, and nothing told it that a file it was

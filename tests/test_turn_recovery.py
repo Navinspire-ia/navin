@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Interrupted work resumes once, preserves scope and honours an explicit stop."""
 
 from __future__ import annotations

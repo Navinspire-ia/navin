@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OpenAI-compatible HTTP API server for a fixed navin session.
 
 Provides /v1/chat/completions and /v1/models endpoints.

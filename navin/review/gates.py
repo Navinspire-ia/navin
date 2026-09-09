@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OCR-style five-gate file filter for Review mode.
 
 Gate data (supported extensions + default test excludes) is loaded from the

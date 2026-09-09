@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The live agent eval executes the real loop and really discriminates.
 
 The keyword eval scored canned strings, so a broken runner could still ship.

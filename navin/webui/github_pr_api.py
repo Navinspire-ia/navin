@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Session HTTP helpers for PR/MR draft + CI checks, on any git forge.
 
 This used to be a thin wrapper around the ``gh`` CLI, so a machine without

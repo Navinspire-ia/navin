@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """An isolated terminal is the user's shell inside the agent's OS sandbox.
 
 Same helper and policy as exec (writes confined to the project plus toolchain

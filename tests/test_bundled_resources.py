@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Cross-workspace tests for bundled Navin templates and skills."""
 
 from __future__ import annotations

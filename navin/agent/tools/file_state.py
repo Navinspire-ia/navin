@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Track file-read state for read-before-edit warnings and read deduplication."""
 
 from __future__ import annotations

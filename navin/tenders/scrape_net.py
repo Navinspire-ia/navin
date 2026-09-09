@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official-host scrape net: real web_search + scrape tools, no invented notices.
 
 Portals without an API stay empty when search misses or a wall (login, captcha,

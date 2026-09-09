@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Give the model the pages of a PDF that has no text layer.
 
 A scanned contract or a photographed invoice extracts to nothing: ``pypdf``

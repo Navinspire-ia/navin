@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Readable beliefs: ten lines at most in ``.navin/BELIEFS.md`` (S3.4).
 
 A belief is what the active head is confident about and that is *not*

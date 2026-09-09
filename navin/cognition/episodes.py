@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Append-only episodic journal: one compact JSON line per finished turn.
 
 File: ``<project>/.navin/memory/episodes.jsonl``. A record keeps what is

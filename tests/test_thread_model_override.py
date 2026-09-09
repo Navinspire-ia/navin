@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A conversation can pin its own model without touching the global default.
 
 The webui composer sends the pinned preset name in the message metadata

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TFunction } from "i18next";

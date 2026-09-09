@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Process management on top of sysinfo: no psutil, no `ps` subprocess.
 
 use std::collections::HashMap;

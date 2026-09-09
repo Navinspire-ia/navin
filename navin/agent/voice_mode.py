@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Voice conversation turns: the WebUI is reading the reply aloud.
 
 When the live voice mode is on, the WebUI marks each turn with

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Show a vision model the images of earlier turns again.
 
 A screenshot is sent to the model as a native image block only in the turn it

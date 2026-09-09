@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-application rules for the desktop tool, and the global kill switch.
 
 Rules match the *active* window (title or application name) with

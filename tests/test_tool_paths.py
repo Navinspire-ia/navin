@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leading-slash path handling and dead-end error messages across file tools.
 
 Models routinely write `/src/app.py` meaning the top of the project rather than

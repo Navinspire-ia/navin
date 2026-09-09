@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Registry and chat-provider adapter for Marketing visual QA.
 
 The adapter deliberately speaks the existing ``LLMProvider.chat_with_retry``

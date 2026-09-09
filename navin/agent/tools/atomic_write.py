@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Multi-file writes that either all land or none do.
 
 Shared by every tool that edits more than one file at a time. A partial write is

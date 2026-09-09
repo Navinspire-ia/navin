@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Draft records and the evolution journal (S2.1).
 
 A draft is a folder ``.navin/skills-draft/<name>/`` holding ``SKILL.md``

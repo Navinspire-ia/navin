@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Persistent, recipient-specific alerts with transport acknowledgements.
 
 Enqueueing is never delivery. The gateway records the provider message ID

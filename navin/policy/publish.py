@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Publishing an adapter outside its project (S4.5): a human click, never automatic.
 
 ``publish`` copies the project's **active** adapter into the machine-level

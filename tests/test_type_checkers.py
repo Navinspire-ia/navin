@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Python had no type checker while TypeScript had one.
 
 The lint table shipped `tsc` for the frontend and, for Python, only ruff and a

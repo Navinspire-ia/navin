@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official open tender portals and country-preferential web search.
 
 Priority: Official API / Open Data, then the national portal, then ministries

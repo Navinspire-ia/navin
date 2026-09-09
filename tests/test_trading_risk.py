@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deterministic risk engine: it may only block, never enlarge a proposal."""
 
 from __future__ import annotations

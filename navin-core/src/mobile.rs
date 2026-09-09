@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Android device preview sessions driven by adb.
 //!
 //! Streams PNG screenshots, logcat lines, and light metrics off the GIL, and

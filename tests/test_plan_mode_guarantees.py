@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Plan is really non-mutating, and mode switches apply mid-turn.
 
 The audit found the Plan promise ("design only, no code until Build") was a

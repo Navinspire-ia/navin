@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The release workflow has to call scripts that exist, and has to run them.
 
 A packaging script that gets renamed or moved breaks the release build only when

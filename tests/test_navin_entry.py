@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The packaged entry point must not steal stdout from CLI invocations.
 
 `_is_windows_desktop` once matched on the executable name alone, so every

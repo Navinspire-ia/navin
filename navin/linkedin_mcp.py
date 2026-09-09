@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official stickerdaniel/linkedin-mcp-server catalogue (README order).
 
 Shared by Tenders (buyer research) and Career (user-session jobs / profile).

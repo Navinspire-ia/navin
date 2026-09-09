@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the database tool's read-only enforcement (navin.agent.tools.database).
 
 The SQL prefix check upstream classifies WITH as read-only, but MySQL 8 accepts

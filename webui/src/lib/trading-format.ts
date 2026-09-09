@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Display helpers for the Trading desk. Keep currency math out of JSX. */
 
 const MONEY_CODES = new Set(["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "HKD", "SGD"]);

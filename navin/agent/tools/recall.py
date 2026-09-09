@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``recall``: search this project's episodic journal and MEMORY.md.
 
 Registered only when the project opted in through ``.navin/cognition.json``

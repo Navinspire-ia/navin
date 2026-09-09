@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop side of the Navin Evolve engine.
 
 The Rust daemon (navin-engine) shells out to `python3 -m navin.evolve.bridge`

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * What Task routing (Settings > Models > Task routing) will do to a chat that
  * has no pinned model: which task roles leave the default model for another

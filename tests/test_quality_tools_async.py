@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The quality tools shell out to linters, test runners and git.
 
 Those subprocesses can run for minutes, and the tools serve a gateway that

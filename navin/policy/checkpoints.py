@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Versioned adapters under ``.navin/policy/checkpoints`` and the active pointer.
 
 A checkpoint is one JSON file, ``adapter-0007.json``: the head's counts plus

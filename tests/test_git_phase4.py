@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Phase 4 source-control: selective stage, branch ops, conflict flags."""
 
 from __future__ import annotations

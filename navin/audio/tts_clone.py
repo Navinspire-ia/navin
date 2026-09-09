@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Voice-clone capability for TTS, without a new provider or a local model.
 
 Catalogue voices keep working exactly as they do today. Cloning is an extra

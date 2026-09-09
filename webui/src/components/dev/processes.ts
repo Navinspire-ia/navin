@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { BackgroundProcess } from "@/lib/api";
 
 /** "3s", "4m 05s", "2h 12m" - compact elapsed time for the process list. */

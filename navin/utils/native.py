@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Access point for the optional native (Rust) extension ``navin_core``.
 
 The extension accelerates hot paths - content search, batch file reads, tree

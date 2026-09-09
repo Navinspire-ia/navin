@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.0 - the flag of the transfer protocol (``<project>/.navin/transfer.json``).
 
 S5 is not a feature; it is the threshold before anyone may even discuss a

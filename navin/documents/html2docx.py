@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Convert an HTML document master into a native, editable DOCX file.
 
 The template library ships A4 documents as HTML (``document.html``, one

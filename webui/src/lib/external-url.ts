@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { isDesktopAppHttpHost, isTauriAppHost, isTauriCustomScheme } from "./desktop";
 
 /** ``window.open`` is a no-op in the Tauri WebView. Only a real browser may use it. */

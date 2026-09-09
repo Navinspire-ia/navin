@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * One place that answers "are we inside the packaged desktop shell?" and
  * "which URL reaches the gateway?".

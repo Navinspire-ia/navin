@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI API for the agent exec permission policy (allow / deny rules).
 
 The graphical permissions panel edits ``tools.exec.allow_patterns`` /

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, type ReactNode } from "react";
 import { Download, Eye, FileIcon, ImageIcon, ImagePlus, Loader2, Music2, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";

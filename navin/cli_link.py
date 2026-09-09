@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Put the ``navin`` command where a shell will find it.
 
 The Debian and RPM packages symlink ``/usr/bin/navin`` at install time, so the

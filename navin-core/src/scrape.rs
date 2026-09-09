@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Parallel web scrape / extract / clean / export hot path.
 //!
 //! Called from the Python `scrape` tool. URL safety (SSRF) is enforced on the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keep a background gateway listening, or start it again.
 
 Never SIGTERM a live gateway because /health was slow. That is what used to

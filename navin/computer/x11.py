@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """X11 backend: XTest for input, the root window for pixels, EWMH for windows.
 
 ``python-xlib`` is the preferred driver (pure Python, so it ships in the

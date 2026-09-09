@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Forge side of board autonomy: pull requests and issue sync.
 
 The road is the forge REST API (:mod:`navin.webui.forge_api`), which covers

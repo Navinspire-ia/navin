@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """CLI used by the Vite Tools page when the live gateway catalog is stale."""
 
 from __future__ import annotations

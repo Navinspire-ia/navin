@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Application-level text-to-speech service.
 
 Resolves voice/TTS config, API credentials, and dispatches to provider adapters.

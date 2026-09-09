@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Speech model defaults and voice IDs shared by settings and runtime adapters."""
 
 from __future__ import annotations

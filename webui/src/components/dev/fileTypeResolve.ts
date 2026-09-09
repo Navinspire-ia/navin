@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Map a file or folder name to a VS Code-style icon id. */
 
 export type FileIconId =

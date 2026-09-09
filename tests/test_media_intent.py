@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Media intent routing: the request that used to come back as inline SVG.
 
 The regression these tests defend is behavioural, not cosmetic. "genere un chat

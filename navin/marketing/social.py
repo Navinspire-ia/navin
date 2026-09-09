@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Social calendar: one still and one clip per network. Drafts only, never published."""
 
 from __future__ import annotations

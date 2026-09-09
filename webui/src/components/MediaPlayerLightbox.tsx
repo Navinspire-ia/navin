@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Download, Loader2, X } from "lucide-react";

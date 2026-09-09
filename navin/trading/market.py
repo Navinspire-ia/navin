@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live market data from public Yahoo, Binance and CoinGecko endpoints.
 
 Never invent prices. Yahoo's batch quote (v7) and fundamentals (v10) need an

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTTP payloads for the Navin Career desk (Freelance + Jobs)."""
 
 from __future__ import annotations

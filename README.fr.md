@@ -13,7 +13,8 @@
 
 [English](./README.md) - [Français](./README.fr.md)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](./LICENSE)
+[![Licence : AGPL-3.0](https://img.shields.io/badge/Licence-AGPL--3.0-22c55e.svg)](./LICENSE)
+[![Licence commerciale](https://img.shields.io/badge/Commerciale-licence%20disponible-0ea5e9.svg)](./COMMERCIAL_LICENSE.md)
 [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat)](https://github.com/Navinspire-ia/navin)
 
 Navin combine **Persistent Memory**, **Auto-Skills**, **Self-Evolve**, **World Models**, **Policy Learning**, les systèmes **Multi-Agent**, les **Loops** et **Heartbeat** pour aller au-delà des assistants statiques, vers des agents qui s'améliorent avec l'expérience.
@@ -372,7 +373,14 @@ Construit par [Navinspire IA](https://navinspire.ai) et la communauté Navin.
 
 ## Licence
 
-Navin est open source sous [licence MIT](./LICENSE).
+Navin est sous double licence.
+
+- Open source : [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE).
+- Commerciale : une licence commerciale est proposée par Navinspire IA aux organisations qui souhaitent intégrer, modifier, redistribuer, embarquer ou commercialiser Navin sans les obligations de l'AGPL-3.0.
+
+Voir [LICENSE](./LICENSE) et [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md). Les contributions sont acceptées sous le [Contributor License Agreement](./CLA.md).
+
+Copyright © 2026-present Navinspire IA.
 
 <div align="center">
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Integration contract for the official Tenders source registry.
 
 API / Open Data first. Official scrape next. TED covers EU-threshold

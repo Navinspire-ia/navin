@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Run one battery case in a sandbox and turn it into trajectory steps (S4.1).
 
 The environment is the real thing: ``AgentRunner`` with the real filesystem

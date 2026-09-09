@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Filter model catalogs by the media they produce, not what they can read."""
 
 from __future__ import annotations

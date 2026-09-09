@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project-wide text search and git changes/diffs for the Dev workbench.
 
 Search prefers ripgrep (``rg --json``) when available and falls back to a

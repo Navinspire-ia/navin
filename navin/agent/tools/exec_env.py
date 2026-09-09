@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Environment forwarded into sandboxed ``exec`` commands.
 
 The shell tool used to copy only HOME / PATH / LANG plus whatever the

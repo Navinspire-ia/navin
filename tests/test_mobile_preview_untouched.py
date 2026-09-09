@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Regression: Dev mobile preview must remain after usage-PWA work.
 
 The phone *usage* client is the WebUI PWA (see docs/mobile-usage-app.md).

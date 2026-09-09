@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A max-iterations stop must never strand a task mid-run.
 
 Regression tests for the "agent freezes at max iterations" hard stop:

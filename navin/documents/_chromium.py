@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Headless Chromium plumbing shared by the HTML document converters.
 
 The converters need the *rendered* page, not the source: only a browser knows

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open-host scrape net: real web_search + scrape tools. Never LinkedIn.
 
 Closed boards stay snippets or paste-import. A login / captcha / Cloudflare

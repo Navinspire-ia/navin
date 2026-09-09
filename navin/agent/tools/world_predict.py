@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``world_predict``: what the project's world model expects from a tool call.
 
 Registered only while the project's ``.navin/world-model.json`` says

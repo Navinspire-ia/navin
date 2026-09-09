@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Montage setup stream helpers (live install console feed)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Embedding client for semantic code search.
 
 Speaks the OpenAI ``/v1/embeddings`` shape, which is what Ollama, LM Studio,
