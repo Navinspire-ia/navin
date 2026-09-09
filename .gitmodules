@@ -1,3 +1,0 @@
-[submodule "crates/navin-engine"]
-	path = crates/navin-engine
-	url = https://github.com/navinspire-ai/navin-engine.git

@@ -14,10 +14,15 @@ desktop/
 desktop-electron/
 os/
 
-# Images Docker du site (front :3100, back :3101)
-deploy/docker/site/
-deploy/docker/site-front/
-deploy/docker/site-back/
+# Images Docker du site (front :3100, back :3101) et leur .dockerignore :
+# tout deploy/ ne concerne que le site.
+deploy/
+
+# Sous-module navin-engine (daemon Evolve, optionnel) : hébergé sur l'ancien
+# compte suspendu, le lien public serait cassé. À réactiver quand le dépôt
+# aura une nouvelle adresse (retirer ces deux lignes + mettre à jour l'URL).
+.gitmodules
+crates/
 
 # Publication S3 / politique du bucket (binaires). La lecture publique
 # des templates reste dans navin/templates/apps/s3pack.py.
