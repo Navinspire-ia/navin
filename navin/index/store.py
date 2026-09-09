@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """File discovery and incremental persistence for the code index.
 
 Discovery prefers ``git ls-files`` so the index honors ``.gitignore`` exactly,

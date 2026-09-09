@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Soft budget router: apply navin.live usage.mode to live model selection.
 
 The site computes ``normal`` / ``reduced`` / ``economy`` / ``exhausted`` from

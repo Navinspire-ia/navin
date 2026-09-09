@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Path ownership checks for shared org projects (anti merge-conflict guard).
 
 Zones are globs relative to the repo root (e.g. ``webui/**``, ``navin/agent/*``).

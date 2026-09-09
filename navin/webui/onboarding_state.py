@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Persisted first-run onboarding state for the WebUI.
 
 Stored under the instance data dir (``~/.navin/webui/onboarding.json``) so an

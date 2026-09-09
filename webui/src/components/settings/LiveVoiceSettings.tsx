@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { type Dispatch, type SetStateAction } from "react";
 import {
   DefaultButton, Dropdown, Icon, MessageBar, MessageBarType, PrimaryButton,

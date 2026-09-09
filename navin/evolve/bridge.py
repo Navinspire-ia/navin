@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """LLM fix bridge for the navin-engine daemon.
 
 Protocol (navin-fix-request/v1):

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Reconfiguring the loops navin runs for itself.
 
 A system loop is re-registered from the config file on every start, so a change

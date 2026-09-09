@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Company profile helpers for the Tenders wizard. No invented facts."""
 
 from __future__ import annotations

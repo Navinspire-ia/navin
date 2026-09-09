@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo, useRef, useState, type WheelEvent } from "react";
 import { Command } from "cmdk";
 import { Check, ChevronsUpDown } from "lucide-react";

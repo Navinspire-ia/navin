@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The tool contract must keep asking the model to group its calls.
 
 Measured on 2026-08-15: 96 requests produced 12,247 output tokens, about 128

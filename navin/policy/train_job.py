@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Subprocess entry of the policy trainer: ``python -m navin.policy.train_job``.
 
 The gateway never trains in its own process (S4.2). The job runner and the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Native fill-in-the-middle (FIM) paths for Tab / ghost-text completion.
 
 Chat prompting with a ``<CURSOR>`` marker works everywhere but is slower and

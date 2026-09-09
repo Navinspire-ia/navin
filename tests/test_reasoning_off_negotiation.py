@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Asking for no thinking has to be said out loud.
 
 navin's agent modes route reasoning_effort to "none", and the provider used to

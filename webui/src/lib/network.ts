@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export function isLoopbackHost(host: string): boolean {
   let normalized = host.trim().toLowerCase();
   if (normalized.endsWith(".")) normalized = normalized.slice(0, -1);

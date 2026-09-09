@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The desktop tool: coordinate mapping, safety gates and the action vocabulary.
 
 Everything runs against a fake backend that records what it was asked to do,

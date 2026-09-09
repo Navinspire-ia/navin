@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """After create/install: write env, start DBs, install deps, launch the app."""
 
 from __future__ import annotations

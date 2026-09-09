@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Persisted WebUI sidebar workspace state.
 
 This state is UI-only metadata, scoped to the active navin instance data

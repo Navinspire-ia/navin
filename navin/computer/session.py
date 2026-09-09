@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One desktop session per agent conversation: backend, scaling, live view, audit.
 
 The model never sees the physical screen. It sees a screenshot scaled to fit

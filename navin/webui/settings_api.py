@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Settings REST helpers for the WebUI HTTP surface.
 
 The WebSocket channel owns transport/authentication. This module owns the

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { deriveTitle } from "@/lib/format";
 import type { ChatSummary, SidebarSortMode } from "@/lib/types";
 import { normalizeWorkspacePath, projectNameFromPath, sameWorkspacePath } from "@/lib/workspace";

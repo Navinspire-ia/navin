@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """X11 backend against a throwaway Xvfb: real XTest input, real pixels.
 
 Skipped when Xvfb or python-xlib is missing (Windows / macOS / minimal CI).

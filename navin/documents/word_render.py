@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Turn a semantic Word document into finished A4 HTML.
 
 Same failure as the old PPT path: the agent copied ``document.html``, changed

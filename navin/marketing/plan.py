@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """7 / 30 / 90 day campaign plans from a goal and the current positioning."""
 
 from __future__ import annotations

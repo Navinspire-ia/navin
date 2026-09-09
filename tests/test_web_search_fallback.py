@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """web_search must not die with DuckDuckGo: ddgs failures fall back to the
 keyless HTML endpoint, and when even that is empty the error points the agent
 at the Playwright browser tool instead of leaving it stranded."""

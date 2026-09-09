@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Compact noisy shell / git / test command output before it hits the LLM.
 
 Inspired by RTK-style filters, but native to Navin: no external binary.

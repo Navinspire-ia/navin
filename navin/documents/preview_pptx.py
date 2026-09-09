@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Render a PPTX to PNG images for visual inspection.
 
 With LibreOffice on the machine the deck is laid out for real (the render

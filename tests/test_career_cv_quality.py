@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career documents keep candidate facts through AI, persistence and Word export."""
 
 from __future__ import annotations

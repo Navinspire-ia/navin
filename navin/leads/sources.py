@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Catalog of lead sources. LinkedIn is a reference only, never scraped."""
 
 from __future__ import annotations

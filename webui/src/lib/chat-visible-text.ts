@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Older Team-room turns stored a hidden briefing plus the typed line.
  * The bubble still shows only what the person typed.

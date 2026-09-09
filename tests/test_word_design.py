@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Word theme layer: tokens, instant re-theming, and the audit behind it."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Lets Evolve flush unsaved Code editor buffers before a dirty proof.
 
  * Pending agent edits are already on disk. User edits in the file space are

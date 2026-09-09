@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The gateway must not let polled network routes starve everything else.
 
 Three windows polling four network-backed routes was enough to fill the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """LibreOffice plumbing shared by the document tools.
 
 LibreOffice is the one program that lays out a DOCX, a PPTX or an XLSX the way

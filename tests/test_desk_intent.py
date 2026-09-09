@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desk schemas are off by default and come back when the turn asks for them.
 
 The five desk tools cost ~9k prompt tokens together, and prompt size is

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Durable recovery of accepted interactive turns across transport/process loss."""
 
 from __future__ import annotations

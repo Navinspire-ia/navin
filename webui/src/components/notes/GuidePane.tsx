@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Reference pane for the Notes module: every slash command with its
  * description, plus the editor tricks that are otherwise easy to miss

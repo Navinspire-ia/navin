@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Discover and start a workspace project's local web server for Preview.
 
 The agent (and open_preview) must bring up the user's app - not ask the user

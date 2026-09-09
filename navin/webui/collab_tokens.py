@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Short-lived HMAC collab tokens for org members joining a host gateway.
 
 Format matches the site license token style: ``base64url(json).hmac_sha256``.

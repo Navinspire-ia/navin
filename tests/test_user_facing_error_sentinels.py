@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pin the user-facing error strings the WebUI localizes at render time.
 
 The chat stores assistant errors in English; webui/src/lib/agent-errors.ts

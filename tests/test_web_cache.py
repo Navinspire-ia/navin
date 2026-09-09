@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """web_search / web_fetch must not re-hit the network for identical calls."""
 
 from __future__ import annotations

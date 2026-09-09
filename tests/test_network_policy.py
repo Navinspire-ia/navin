@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Who the agent may reach over the network, and who decides.
 
 Private-range blocking is off unless an operator turns it on. The ranges it

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tenders wall-clock loop: start, schedule, pause, forced cycle. Never sends a bid."""
 
 from __future__ import annotations

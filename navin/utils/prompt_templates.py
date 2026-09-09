@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Load and render agent system prompt templates (Jinja2) under navin/templates/.
 
 Agent prompts live in ``templates/agent/`` (pass names like ``agent/identity.md``).

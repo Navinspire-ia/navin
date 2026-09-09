@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Visual Asset Policy for decks: type first, then a trusted source.
 
 The agent must never scrape Google Images or paste a random copyrighted file.

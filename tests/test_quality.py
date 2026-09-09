@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the quality layer: linters, test runners, and the verify loop.
 
 External tools are not assumed to exist. Tests that need one skip when it is

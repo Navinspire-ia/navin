@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """RuntimeState protocol: agent loop state exposed to MyTool."""
 
 from typing import Any, Protocol

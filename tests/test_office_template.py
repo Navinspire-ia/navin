@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """office_template: inspect, fill and build from the user's own .docx / .pptx."""
 
 from __future__ import annotations

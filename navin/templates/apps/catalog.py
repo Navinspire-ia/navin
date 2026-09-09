@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """First-party catalog of Navin app templates.
 
 `templates_apps/` is a local gitignored clone cache. This module is the

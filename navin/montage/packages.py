@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Montage package catalog: builtin (tiny) vs system vs lazy heavy installs.
 
 Cross-platform (Windows / macOS / Linux). Heavy optional deps stay opt-in so

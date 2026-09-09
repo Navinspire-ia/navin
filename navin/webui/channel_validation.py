@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Best-effort Channel setup validation for the WebUI.
 
 Validation is intentionally non-authoritative: it helps the UI explain whether a

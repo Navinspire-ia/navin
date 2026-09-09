@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project code index: symbols, references, and the call and import graphs.
 
 The index is the shared source of truth for semantic navigation. It powers the

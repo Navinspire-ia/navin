@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Build a project marketing kit from workspace signals."""
 
 from __future__ import annotations

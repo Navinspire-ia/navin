@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real harvest / produce / HTTP / CLI / tool tests against a local product site."""
 
 from __future__ import annotations

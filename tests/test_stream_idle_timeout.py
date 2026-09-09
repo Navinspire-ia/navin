@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Idle / ping floors that keep the first IDE turn alive.
 
 The website (Chromium) answers websocket pongs instantly. The desktop WebView

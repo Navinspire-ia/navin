@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // The checkpoint divider in the chat is a passive note without this: the
 // restore point it announces lives in Code > Git > Checkpoints, three
 // navigation steps away. The CTA dispatches one window event; App switches

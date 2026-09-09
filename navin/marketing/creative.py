@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Creative briefs and the image -> vision -> fix loop."""
 
 from __future__ import annotations

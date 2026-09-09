@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Native PTY sessions (portable-pty).
 //!
 //! One dedicated OS thread drains the pty master into a shared buffer; the

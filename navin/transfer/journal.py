@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The S5 journal and scoreboard: append-only JSONL under ``.navin/transfer/``.
 
 S5 has no per-turn writer: campaigns and dossiers are jobs, so writes are

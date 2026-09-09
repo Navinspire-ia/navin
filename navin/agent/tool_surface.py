@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-mode tool schema denylists and build-turn allowlists to shrink prompts.
 
 Agent still has the full registry for execution when not denied. Review /

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The runner must tag every provider request with the chat session key.
 
 Cache-affinity routing (OpenRouter session_id, OpenAI prompt_cache_key) only

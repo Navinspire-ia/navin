@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Send one entry to the WebUI notification centre.
 
 The counterpart of :mod:`navin.board.notify`, for anything that needs to tell

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Where S5 keeps its files.
 
 Inside the project, under ``.navin/transfer/``: the campaign scoreboard, the

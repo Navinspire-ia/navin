@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.1 - the public protocol: how a transfer campaign is judged.
 
 Everything in this module is public and versioned (``docs/transfer-protocol.md``

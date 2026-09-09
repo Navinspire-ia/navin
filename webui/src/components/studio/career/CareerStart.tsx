@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { DefaultButton, PrimaryButton, TextField } from "@fluentui/react";

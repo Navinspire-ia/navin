@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { isTauriAppHost } from "@/lib/desktop";
 
 /** Detect when a Preview URL would load Navin's own editor UI. */

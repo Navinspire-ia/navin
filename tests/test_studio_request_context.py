@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Direct desk HTTP requests load skills from the selected chat's project."""
 
 from __future__ import annotations

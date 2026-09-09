@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-turn hook: "the same failure N times" queues a draft job (S2.1).
 
 ``create_skills_evolve_hook`` is a turn hook factory registered next to the

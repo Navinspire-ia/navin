@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop control tool ("computer use").
 
 The agent sees the real screen and drives the real mouse and keyboard, so any

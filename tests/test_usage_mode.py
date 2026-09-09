@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Soft budget modes must clamp managed-key tiers without a restart."""
 
 from __future__ import annotations

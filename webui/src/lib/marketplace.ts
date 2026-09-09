@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Client Marketplace Navin (catalogue first-party sur le site de licence).
  * Soft-fail: réseau / API absente → liste vide + erreur typée, jamais un crash UI.

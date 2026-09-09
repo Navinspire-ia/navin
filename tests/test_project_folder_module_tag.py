@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A project folder carries the module it is worked in.
 
 Picking that folder on the new-chat screen then reopens Code (or Montage, ...)

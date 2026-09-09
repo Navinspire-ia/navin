@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Stop identical slow routes from being fetched several times at once.
 
 Every WebUI window polls the same handful of network-backed routes: the

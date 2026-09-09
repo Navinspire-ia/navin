@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """End-to-end Marketing integration: HTTP, CLI, tool, loop, heartbeat, Vite, sandbox."""
 
 from __future__ import annotations

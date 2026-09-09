@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """File and folder ``@`` mentions selected in the composer.
 
 Typing ``@src/lib/api.ts`` is how a user frames the context of a turn, which is

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTML document template library (PPT, Word, PDF, Excel).
 
 Templates live in ``<repo>/templates/<category>/<name>/`` (root overridable

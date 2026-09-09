@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Localhost debug route for the Navin desktop webview.
 
 The route exposes ``GET``/``POST`` ``/api/debug/ui-zoom`` so an agent (or a

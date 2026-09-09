@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Buffered transcript appends must never lose or reorder a record.
 
 Streaming appends one record per token. Those records are batched instead of

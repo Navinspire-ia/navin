@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Markdown inline code: color only paths, not every backtick span."""
 
 from __future__ import annotations

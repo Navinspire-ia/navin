@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Curated install.json overlays. Scanner output is merged; these win on listed keys.
 
 Use when the clone is a framework monorepo, catalog-only (no local cache),

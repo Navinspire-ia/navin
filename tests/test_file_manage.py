@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for deleting and renaming entries from the WebUI explorer."""
 
 from __future__ import annotations

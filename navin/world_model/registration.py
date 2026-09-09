@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keep the gateway's ``world_predict`` tool in step with the projects' gates.
 
 Same bridge as ``navin.cognition.registration`` for ``recall``: tools are

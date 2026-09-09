@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The project map: what the index can see, and whether its roles are current.
 
 The bug these cover was not an empty map, it was a confident wrong one. An agent

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Org-role ACL for hybrid collab (admin / member / viewer).
 
 Roles come from the license validate payload (``role``) and are stored on

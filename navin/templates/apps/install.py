@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Create / install app templates locally. AWS publish is fail-closed until audit."""
 
 from __future__ import annotations

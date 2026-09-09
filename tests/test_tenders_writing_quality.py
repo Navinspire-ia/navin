@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tender drafting invariants with fictional source facts and no provider calls."""
 
 from __future__ import annotations

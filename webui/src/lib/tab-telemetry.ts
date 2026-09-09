@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Local Tab / ghost latency ring buffer (Phase 0).
  *

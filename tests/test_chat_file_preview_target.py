@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Where a transcript file click opens: chat-side panel vs workbench editor.
 
 The eye button on a file-edit row used to hand every click to the workbench

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live happy-path smoke against a running gateway (skips when offline).
 
 Run manually or in a deploy check::

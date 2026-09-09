@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Native region/plan/protocol connections for Chinese and custom providers."""
 
 from __future__ import annotations

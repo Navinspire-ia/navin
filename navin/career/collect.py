@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Collect job sources: Remotive, ATS boards, LinkedIn public listings, keyed APIs, web, scrape."""
 
 from __future__ import annotations

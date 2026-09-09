@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Git tool: read history, record work, and sync with the remote.
 
 ``navin.utils.git_state`` already tells the model, every turn, which branch it is

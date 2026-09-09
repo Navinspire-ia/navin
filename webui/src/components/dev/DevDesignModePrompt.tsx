@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ArrowUp, FileCode2, MessageSquarePlus, SquareDashedMousePointer, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Workspace checkpoints on a WSL project opened from Windows.
 
 The shadow repo used to be pinned to the Windows home while the work-tree sat

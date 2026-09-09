@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Best-of-N candidate generation with an independent judge.
 
 For decisions where a single trajectory is the risk - an architecture

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Wiring and HTTP/tool surface for the Marketing Agent OS desk."""
 
 from __future__ import annotations

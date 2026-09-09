@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Sandbox backends for shell command execution.
 
 To add a new backend, implement a function with the signature:

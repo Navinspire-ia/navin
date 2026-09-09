@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { formatTenderMoney } from "@/components/studio/tenders/money";
 import type { TenderNotice, TenderSource } from "@/lib/tenders-api";
 import { firstNonEmpty, stripHtml } from "@/lib/plain-text";

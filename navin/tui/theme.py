@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Navin color themes for the terminal UI.
 
 Brand chrome uses a sky blue that stays readable on black without the

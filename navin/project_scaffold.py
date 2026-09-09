@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-project ``.navin/`` pack - continuity hub (like ``.cursor`` / ``.claude``).
 
 The ``.navin/`` folder holds everything Navin manages for the project: the

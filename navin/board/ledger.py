@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Mission Task / Progress Ledger (Magentic-One style) over the project board.
 
 Persisted at ``<project>/.navin/board/mission.json``. The board tasks remain the

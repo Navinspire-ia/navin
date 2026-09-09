@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Workspace checkpoints: instant snapshots + one-click restore.
 
 Snapshots live in a *shadow* git repository (a bare repo under

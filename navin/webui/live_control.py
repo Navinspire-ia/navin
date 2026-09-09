@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Route live-view controls to the exact desktop or browser the user sees."""
 
 from __future__ import annotations

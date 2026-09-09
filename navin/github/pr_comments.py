@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Post review/security findings as inline comments on a pull request.
 
 Works on GitHub, GitLab and Forgejo/Gitea through the forge REST API

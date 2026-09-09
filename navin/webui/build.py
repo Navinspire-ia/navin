@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Helpers for keeping the bundled WebUI build in sync with source checkouts."""
 
 from __future__ import annotations

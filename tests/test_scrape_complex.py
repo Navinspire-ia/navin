@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deep tests: pagination, mass crawl, checkpoint, walls, scroll helpers."""
 
 from __future__ import annotations

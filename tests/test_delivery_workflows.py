@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Delivery studio workflows must preload skills and force tool execution.
 
 Thinking models otherwise plan a whole deck in reasoning, announce upcoming

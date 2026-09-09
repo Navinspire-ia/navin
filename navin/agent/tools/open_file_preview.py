@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open a workspace file in the WebUI File Preview panel for the user.
 
 Counterpart of :mod:`open_in_editor` for studio / chat views that do not have

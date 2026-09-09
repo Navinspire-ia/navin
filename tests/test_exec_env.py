@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Sandboxed exec must see forge / git / SSH env without a manual allowlist."""
 
 from __future__ import annotations

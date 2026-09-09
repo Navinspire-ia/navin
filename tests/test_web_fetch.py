@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the web_fetch tool (navin.agent.tools.web).
 
 Two regressions matter here: the download must stop at the byte ceiling

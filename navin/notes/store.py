@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Markdown-file notes store for the Notes module.
 
 Every note is a plain ``.md`` file with a YAML frontmatter, stored in real

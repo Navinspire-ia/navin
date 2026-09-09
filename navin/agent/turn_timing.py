@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Where a turn actually spends its wall clock.
 
 A slow turn has three candidate culprits and no way to tell them apart from

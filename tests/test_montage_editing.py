@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Montage editing loop: probe, streamed progress, cancellation, background jobs,
 timeline actions shared between the agent and the studio UI."""
 

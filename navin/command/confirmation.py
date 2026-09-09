@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Short user confirmations ("oui", "go ahead") answering the agent's question.
 
 The intent gate reads a bare "oui" as low-info chit-chat. That is right on a

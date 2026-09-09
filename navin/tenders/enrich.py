@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Enrich a thin notice from its official source page. Never invent text."""
 
 from __future__ import annotations

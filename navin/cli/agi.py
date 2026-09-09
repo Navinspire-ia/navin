@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``navin agi``: the AGI panel from the terminal.
 
 Two families of switches live here, per project:

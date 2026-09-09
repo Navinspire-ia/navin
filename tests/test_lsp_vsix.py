@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Installing language servers out of VS Code extension archives.
 
 Nothing here touches the network or a real extension: the registry lookup and

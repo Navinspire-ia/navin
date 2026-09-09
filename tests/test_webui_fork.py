@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI chat fork copies the session prefix at a user-message index."""
 
 from __future__ import annotations

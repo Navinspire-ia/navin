@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads chain end to end, offline: discover -> fill -> qualify -> sequence -> loop -> API.
 
 Every network edge is injected (search_fn, http_get, jobs_fn, resolver, send_fn).

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Training jobs: kicked after a turn, run on a daemon thread, never inside.
 
 The turn hook only ever calls ``kick``: a ``queue.put`` of the workspace.

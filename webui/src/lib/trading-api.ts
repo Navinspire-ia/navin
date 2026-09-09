@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { apiBodyHeaders, apiRequest } from "@/lib/api";
 
 /** Trading desk hash. Stay in the WebView on Linux, Windows and macOS. */

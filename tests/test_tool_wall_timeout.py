@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A hung tool costs one tool call, never the whole turn.
 
 Only shell/MCP had their own timeouts; every other tool.execute was awaited

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Trading loop: real work or an explicit skip. Never a busy-wait of fake tasks.
 
 Heartbeat still only runs silent watch. This loop is the autonomous cycle:

@@ -12,7 +12,7 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 LABEL org.opencontainers.image.title="Navin" \
       org.opencontainers.image.source="https://github.com/Navinspire-ia/navin" \
       org.opencontainers.image.url="https://navin.live" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.description="Navin gateway and bundled WebUI. Public source: Navinspire-ia/navin."
 
 # ffmpeg comes from apt here rather than from packaging/vendor: this image is

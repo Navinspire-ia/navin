@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { MarketingConnector, MarketingContent, MarketingQueue } from "@/lib/marketing-api";
 
 /** Every content channel the desk knows, in the order the UI shows them. */

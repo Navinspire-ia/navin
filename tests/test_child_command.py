@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """How navin writes down the command that re-launches navin.
 
 A packaged build has no interpreter to call: ``sys.executable`` is the navin

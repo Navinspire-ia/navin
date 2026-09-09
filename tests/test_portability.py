@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Guards against changes that would break navin on another operating system.
 
 The repository is developed on Linux, so the ways it can stop working elsewhere

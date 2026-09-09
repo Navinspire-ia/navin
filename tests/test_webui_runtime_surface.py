@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop sidecar must report a native WebUI surface and serve dist via symlink."""
 
 from __future__ import annotations

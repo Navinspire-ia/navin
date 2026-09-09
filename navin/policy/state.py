@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the AGI panel and ``navin agi policy`` read and press (S4.5).
 
 ``policy_state`` is one JSON-friendly snapshot: flag, radar (S3.3), battery,

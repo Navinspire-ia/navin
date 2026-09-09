@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Remember which build installed the on-demand toolchains under ``~/.navin``.
 
 Installing Navin replaces the whole product: the Windows installers, the macOS

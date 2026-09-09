@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Inject long-running project continuity into every agent turn.
 
 Board digest already reminds the model of open tasks. Continuity adds what

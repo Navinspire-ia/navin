@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Backend contract shared by every windowing system.
 
 Coordinates are **screen pixels**, the same unit as the PNG a backend returns

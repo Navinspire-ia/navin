@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Media gateway services shared by WebUI HTTP routes and WebSocket frames."""
 
 from __future__ import annotations

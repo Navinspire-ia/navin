@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Compatibility export. Desk schedules live in ``navin.loop_schedule``."""
 
 from navin.loop_schedule import (

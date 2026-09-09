@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Graph queries: hubs, shortest path, impact cone, package cluster, find.
 
 use std::collections::{HashMap, HashSet, VecDeque};

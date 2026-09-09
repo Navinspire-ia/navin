@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Chat-scoped artifacts persisted under ``~/.navin/artifacts/<chat_id>/``."""
 
 from navin.artifacts.detect import extract_fenced_artifacts

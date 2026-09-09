@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads desk: waterfall fill, store merge, snapshot, hunt empty."""
 
 from __future__ import annotations

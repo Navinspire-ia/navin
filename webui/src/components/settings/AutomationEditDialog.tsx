@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { AlertTriangle, CalendarClock, Gauge, Loader2, MessageSquare } from "lucide-react";

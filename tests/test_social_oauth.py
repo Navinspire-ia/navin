@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Provider contracts and credential boundaries for the social login round-trip."""
 
 from __future__ import annotations

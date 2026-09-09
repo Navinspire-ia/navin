@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """User-facing LLM errors must never leak OpenRouter branding."""
 
 from __future__ import annotations

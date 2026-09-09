@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Training job, frozen exam and scoreboard (S3.2, S3.3).
 
 ``train`` is the one job of the world model. It runs on the job runner

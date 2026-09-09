@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Train / held-out split and the frozen exam set (S3.3).
 
 Every trajectory belongs to one bucket, decided once and forever by the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Updating the application the user installed, not the sidecar inside it.
 
 The gateway is a child process buried in the app: on Linux its own executable

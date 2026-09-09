@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the desktop tool asks about, and how it notices the user took over.
 
 Three guards, all cheap and all explainable to the person being asked:

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live reachability of every official tender source.
 
 P0 APIs (TED, World Bank) must work when the network is up.

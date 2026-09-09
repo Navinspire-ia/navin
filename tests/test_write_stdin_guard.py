@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """write_stdin applies the exec deny/approval policy to stdin payloads.
 
 Before this guard, exec checked the command it started but write_stdin sent

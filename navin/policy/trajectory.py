@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One line per step of an eval episode: state, action, observation, reward.
 
 The record is the whole memory of S4, so it is compact, secret-free and

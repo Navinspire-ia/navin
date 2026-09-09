@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Start child processes without flashing a console window on Windows.
 
 The desktop build runs the gateway as a windowless process, so a child started

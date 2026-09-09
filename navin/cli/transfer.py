@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``navin agi transfer``: the transfer protocol (S5) from the terminal.
 
 Same view as the AGI panel, per project (``.navin/transfer.json``): the

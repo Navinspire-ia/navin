@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Thinking-strip identity must ride every live frame, not only the answer."""
 
 from __future__ import annotations

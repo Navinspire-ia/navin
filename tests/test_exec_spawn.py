@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The shell the model asks for is the shell the command actually reaches.
 
 The Windows spawn path used to know exactly two shells: cmd got cmd semantics

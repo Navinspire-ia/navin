@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { selectNextOccurrence } from "@codemirror/search";
 import { describe, expect, it } from "vitest";

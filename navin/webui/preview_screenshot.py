@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Server-side screenshot of a Dev preview URL.
 
 The in-page probe cannot reliably rasterize a live app (tainted canvas as soon

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for inline editor assistance (ghost text and Cmd+K edits).
 
 The model call is stubbed: what matters here is that the prompt carries the

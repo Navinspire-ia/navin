@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """3-step cold sequence. Heartbeat reports due steps and never sends."""
 
 from __future__ import annotations

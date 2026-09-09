@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One MCP server must not be able to crowd out the rest of the tool catalogue.
 
 navin registered every capability a server declared, so a large connector

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """LM Studio must appear as a local OpenAI-compatible media provider."""
 
 from __future__ import annotations

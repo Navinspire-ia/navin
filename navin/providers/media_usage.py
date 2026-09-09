@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Debit managed media spend (image / video / audio) to the usage ledger.
 
 Media tools bill the same managed key as chat, so a generation the ledger

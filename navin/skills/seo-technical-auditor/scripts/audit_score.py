@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Score SEO audit findings by impact × effort for prioritization.
 
 Input JSON: list of objects or {"findings": [...]} with keys:

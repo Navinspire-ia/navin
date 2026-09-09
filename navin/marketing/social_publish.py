@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Native social publishing protocols with explicit media and processing states.
 
 Sources: Reddit /dev/api, Meta's official Postman collections, Microsoft Learn

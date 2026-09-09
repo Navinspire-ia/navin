@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Skill tool: on-demand access to the skill catalog.
 
 The system prompt lists only skill *names* (the full catalog of descriptions

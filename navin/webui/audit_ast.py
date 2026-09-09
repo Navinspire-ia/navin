@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """AST-backed Vision 360 checks for Python (high-confidence findings).
 
 Regex scans are useful across languages, but for Python we can prove the

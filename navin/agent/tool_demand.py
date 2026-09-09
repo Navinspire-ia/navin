@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Heavy tool schemas the workbench ships only when the turn can use them.
 
 Measured 2026-09-02 over the 51 instantiable tools: their schemas cost

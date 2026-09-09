@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bake-off harness: Navin agent profile vs a baseline (Claude Code style).
 
 Runs the same corpus against two models/profiles and compares scoreboards.

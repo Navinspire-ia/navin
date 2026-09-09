@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent has to see its own plan without being asked to look it up.
 
 The board survived on disk but was never re-read, so between two turns the plan

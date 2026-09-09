@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bake-off harness: champion vs baseline on the shared code corpus."""
 
 from __future__ import annotations

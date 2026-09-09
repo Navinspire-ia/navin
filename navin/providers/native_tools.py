@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Provider-native tool specs (Anthropic's server-defined ``computer`` tool, ...).
 
 Some tools also exist as a provider primitive the model was trained on. Such a

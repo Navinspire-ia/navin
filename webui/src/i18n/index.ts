@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 

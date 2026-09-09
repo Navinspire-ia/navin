@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Behavioral tests for doctor connectivity checks without live services."""
 
 from __future__ import annotations

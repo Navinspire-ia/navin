@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A PDF must reach the WebUI as something it can render, not as `binary`.
 
 `binary` is a dead end in the UI: it draws a download card and nothing else.

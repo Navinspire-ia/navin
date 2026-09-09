@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The S3.3 dependency: no policy without a radar (S4.0).
 
 S4 learns which action to take from trajectories whose observation class is

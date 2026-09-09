@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Best-of-N pipeline: candidate fan-out, judge independence, honest failure.
 
 The promise under test: N candidates are generated with varied

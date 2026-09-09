@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S2 acceptance: autonomous skill evolution (S2.0 to S2.6).
 
 The gate for "S2 is done": on a project with the flag on, a draft skill is

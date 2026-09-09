@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Which primary Source Control button to show. */
 
 export type GitPrimaryAction = "commit" | "push" | "publish";

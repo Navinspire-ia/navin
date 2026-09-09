@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Version-aware capabilities for Anthropic Claude models.
 
 Anthropic deprecated the ``temperature`` parameter starting with the

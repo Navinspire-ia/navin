@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """P0-B: marketing copy must not claim false cloud/RL features."""
 
 from __future__ import annotations

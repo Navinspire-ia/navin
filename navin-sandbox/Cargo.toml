@@ -3,7 +3,7 @@ name = "navin-sandbox"
 version = "0.1.0"
 edition = "2021"
 description = "OS-level command sandbox for the navin agent (Landlock + namespaces)"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [[bin]]
 name = "navin-sandbox"

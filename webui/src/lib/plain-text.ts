@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Turn HTML (and leftover tags like `<p>`) into readable plain text. Never invents content. */
 
 function decodeEntities(text: string): string {

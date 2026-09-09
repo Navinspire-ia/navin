@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career heartbeat: gateway tick, notify, tool/HTTP gate, loop stays free."""
 
 from __future__ import annotations

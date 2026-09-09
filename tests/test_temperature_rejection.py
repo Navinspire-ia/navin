@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Temperature handling for models that deprecated the parameter.
 
 Anthropic's Claude 4.7/5 generation rejects ``temperature``: direct

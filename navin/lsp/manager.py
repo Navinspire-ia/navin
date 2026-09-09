@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Language server pool and normalized queries.
 
 Routes a file to the right server from ``servers.json``, keeps one process per

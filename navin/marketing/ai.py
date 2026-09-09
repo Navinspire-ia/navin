@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Optional model layer for the Marketing desk.
 
 Every function returns ``None`` (or an empty list) when no model is routed,

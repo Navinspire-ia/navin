@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Approval-gated change store plus bulk exports for the platform editors.
 
 Changes are proposed by the rules, approved (or rejected) by the user, then

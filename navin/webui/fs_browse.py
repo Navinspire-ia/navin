@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Directory browsing API for the Dev project picker.
 
 Lets the WebUI browse host directories (names only, no file contents) so the

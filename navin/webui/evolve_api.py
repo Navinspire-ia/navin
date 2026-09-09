@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bridge between the WebUI gateway and the navin-engine daemon.
 
 The Rust daemon (crates/navin-engine) owns proofs, benchmarks, fixes and

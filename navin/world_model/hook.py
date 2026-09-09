@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-turn hook: one trajectory line after each tool call (S3.1).
 
 ``create_world_model_hook`` is a turn hook factory registered next to the

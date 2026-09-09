@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { CliAppInfo, CliAppsPayload } from "@/lib/types";
 
 export const CLI_APPS_CHANGED_EVENT = "navin:cli-apps-changed";

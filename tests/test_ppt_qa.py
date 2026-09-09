@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deck QA: the score the engine has always declared, and what a browser sees."""
 
 from __future__ import annotations

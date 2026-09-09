@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // The checkpoint CTA relies on two behaviours: the event reaches a mounted
 // workbench immediately, and a workbench that mounts later (App had to switch
 // to the Code module first) still finds the pending request exactly once.

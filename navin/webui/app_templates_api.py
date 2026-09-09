@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI API for the app-template gallery (list + Use / create)."""
 
 from __future__ import annotations

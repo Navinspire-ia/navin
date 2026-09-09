@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """SEO engine tool, intended for the SEO product module."""
 
 from __future__ import annotations

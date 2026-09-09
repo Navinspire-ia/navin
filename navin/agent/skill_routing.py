@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Load the actual specialist playbooks for one desk action.
 
 The agent and the tool-less desk model calls share these routes. Selection is

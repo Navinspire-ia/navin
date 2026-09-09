@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real tests for review / debug / security / PR tools - no mocks."""
 
 from __future__ import annotations

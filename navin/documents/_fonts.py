@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Mapping web fonts onto fonts Office can actually render.
 
 Templates use Google fonts that the browser downloads but that are absent from

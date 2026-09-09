@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Local AppSec scanners for the security agent mode.
 
 Combines fast heuristic checks (always available) with optional host CLIs

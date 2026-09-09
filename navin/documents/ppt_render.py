@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Turn a semantic slide into finished HTML. The LLM never writes coordinates.
 
 A lookbook layout still ships with sample copy so the picker has something to

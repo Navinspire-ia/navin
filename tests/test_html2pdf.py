@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """html2pdf: the print copy, the QA gate, the readback and the real print."""
 
 from __future__ import annotations

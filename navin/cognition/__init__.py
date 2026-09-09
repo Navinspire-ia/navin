@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Cognition sidecar: opt-in episodic journal and recall for one project.
 
 Everything here lives beside the harness, never inside it. The agent loop,

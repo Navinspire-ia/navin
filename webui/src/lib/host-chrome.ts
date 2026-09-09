@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Force the Tauri host chrome (title drag strip, sidebar glass, native-host
  * CSS) inside a plain browser tab. Same WebUI as the desktop shell, without a

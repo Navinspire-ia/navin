@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Durable, resumable Montage jobs backed by atomic JSON manifests.
 
 A job is a manifest on disk plus, while it runs in this process, an entry in

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``navin computer``: turn desktop control on, check it works, run it sandboxed."""
 
 from __future__ import annotations

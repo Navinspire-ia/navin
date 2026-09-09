@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A dead MCP server in the config used to tax every single turn.
 
 ``connect_missing_servers`` runs before the turn's first token. When a

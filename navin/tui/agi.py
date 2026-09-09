@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """AGI panel for navin-cli: the same switches as the desktop rail.
 
 Reads and writes ``.navin/skills-evolve.json``, ``world-model.json``,

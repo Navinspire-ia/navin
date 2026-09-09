@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Evolve routes, and what the gateway answers when one of them breaks.
 
 The WebUI gateway is a ``websockets`` server answering HTTP from its handshake

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Skills installed once in $HOME must be visible from every workspace.
 
 Reported as "Navin does not see my OMP Skills": the loader only ever looked

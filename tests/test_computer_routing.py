@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Phase 4 of desktop control: grounding capability, model route, native tool.
 
 - ``supports_grounding`` separates "can read an image" from "can place a click".

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Install missing skill CLI requirements from the WebUI ("Setup" button).
 
 Skills can declare install recipes in their frontmatter::

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Ollama local setup: detect, install, pull models, and configure Navin.
 
 Used by Settings → Providers for a guided Detect → Install → Pull → Configure

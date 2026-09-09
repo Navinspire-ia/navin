@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Wiring and workflow expectations for the Meeting studio."""
 
 from __future__ import annotations

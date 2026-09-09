@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Make user-installed tools findable from the packaged desktop app.
 
 A gateway launched from Finder / Explorer / a .desktop entry inherits the

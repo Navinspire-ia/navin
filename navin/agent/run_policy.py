@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Turn-level guardrails visible to tools that start background work.
 
 The runner binds the active spec's inheritable policy here for the duration

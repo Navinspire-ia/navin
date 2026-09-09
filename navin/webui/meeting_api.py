@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """In-app meeting synthesis: minutes and grounded answers, without the chat.
 
 The Meeting desk used to seed a prompt into the agent composer for every

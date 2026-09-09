@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop CLI settings reach the next agent turn and the selected instance."""
 
 from __future__ import annotations

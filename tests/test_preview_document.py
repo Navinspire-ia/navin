@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """preview_document: real render, approximation, and honest refusals."""
 
 from __future__ import annotations

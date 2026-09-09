@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """How many threads the gateway keeps for blocking work, and a way to notice
 when that number stops being enough.
 

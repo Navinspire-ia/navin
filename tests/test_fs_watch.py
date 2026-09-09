@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Workspace watcher: signature semantics and the poll/notify loop.
 
 The watcher is the reason the explorer and Git panel follow external edits

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The active model is chosen by the operator, never guessed from a vendor default."""
 
 from __future__ import annotations

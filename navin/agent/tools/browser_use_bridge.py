@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bridge to the MIT ``browser-use`` package behind Navin's ``browser`` tool.
 
 Lazy-imports only. When ``browser-use`` is not installed, callers get a clear

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Network security utilities - SSRF protection and internal URL detection."""
 
 from __future__ import annotations

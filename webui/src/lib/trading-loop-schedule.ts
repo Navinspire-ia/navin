@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { LAST_DAY, formatTimeOfDay, weekdayLabel } from "@/lib/loop-schedule";
 import type { TradingLoopKind, TradingLoopSchedule } from "@/lib/trading-api";
 

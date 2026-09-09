@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Registry for speech-to-text providers.
 
 Provider-specific HTTP adapters live in ``navin.providers.transcription``.

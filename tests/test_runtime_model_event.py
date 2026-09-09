@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``runtime_model_updated`` must say which chat picked the model.
 
 The frame reaches every open connection, so an untagged one made all threads

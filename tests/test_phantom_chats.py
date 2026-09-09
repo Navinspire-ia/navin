@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A reconnect must never leave an empty chat behind in the sidebar.
 
 Every WebSocket connection mints a throwaway default chat id. Read-only

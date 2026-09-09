@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the shell exec sandbox backends (navin.agent.tools.sandbox).
 
 The bubblewrap backend only builds a command line, so it is checked by shape.

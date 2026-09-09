@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tool over the user's recorded meetings (the Meetings module).
 
 Meetings are where decisions are actually made. Without this tool the agent

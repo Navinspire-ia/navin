@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Global test isolation.
 
 Every test writes its config to a per-test temporary path. Without this, any

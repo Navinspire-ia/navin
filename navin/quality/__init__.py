@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Code quality: diagnostics, test execution, and the verification loop.
 
 Three layers, all driven by declarative JSON tables so new tools can be added

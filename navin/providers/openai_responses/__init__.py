@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared helpers for OpenAI Responses API providers (Codex, Azure OpenAI)."""
 
 from navin.providers.openai_responses.converters import (

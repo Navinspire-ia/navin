@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Which editor files can host a real DAP session (mirrors navin.dap.session). */
 
 const PYTHON = new Set(["py", "pyw"]);

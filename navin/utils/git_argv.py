@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Build the argv prefix that runs ``git`` where the project actually lives.
 
 A project opened from Windows at ``\\\\wsl.localhost\\<distro>\\...`` belongs to

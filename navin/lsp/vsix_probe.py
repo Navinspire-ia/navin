@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Work out, without being told, whether an extension carries a usable server.
 
 A curated table does not scale to a registry, and asking a user for the path of

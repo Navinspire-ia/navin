@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """At-rest encryption for secrets written into ``config.json``.
 
 The file stays a normal JSON document so operators can still edit host, port,

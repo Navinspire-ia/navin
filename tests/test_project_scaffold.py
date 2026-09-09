@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project scaffold creates durable memory / board / metadata files."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Background warming of the code index (A1 of the hot-path plan).
 
 The first ``code_index``/symbol tool of a session used to pay the full cold

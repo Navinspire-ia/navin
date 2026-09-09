@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Configuration hubs: one screen per domain, mirroring Navin Desktop settings.
 
 Each hub is a table of the current state plus keyboard actions. Editing always

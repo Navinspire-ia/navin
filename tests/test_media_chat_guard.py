@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Media generation models must never run chat/agent turns - in any mode.
 
 2026-08-09 incident: a degraded catalog payload made google/lyria-3-clip-preview

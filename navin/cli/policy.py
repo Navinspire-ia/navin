@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``navin agi policy``: policy learning (S4) from the terminal.
 
 Same switches as the AGI panel, per project (``.navin/policy.json``): the

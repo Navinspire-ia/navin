@@ -7,7 +7,7 @@ name = "navin-core"
 version = "0.1.0"
 description = "Native (Rust) hot paths for the navin agent tools"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 
 [tool.maturin]
 module-name = "navin_core"

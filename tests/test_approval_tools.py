@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The three places a tool stops to ask, driven end to end.
 
 Each one is checked three ways, because the third is the one that regresses:

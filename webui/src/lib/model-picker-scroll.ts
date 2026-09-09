@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Pixel cap for the chat model list, independent of Radix CSS variables. */
 export const MODEL_PICKER_LIST_MIN_PX = 160;
 export const MODEL_PICKER_LIST_MAX_PX = 360;

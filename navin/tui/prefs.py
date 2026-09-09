@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """TUI-only preferences stored next to the Navin config (``~/.navin/tui.json``).
 
 Kept separate from ``config.json`` so the terminal UI never rewrites the

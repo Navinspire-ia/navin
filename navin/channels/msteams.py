@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Microsoft Teams channel MVP using a tiny built-in HTTP webhook server.
 
 Scope:

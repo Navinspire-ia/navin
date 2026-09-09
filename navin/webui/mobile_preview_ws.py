@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Mobile preview sessions streamed over the WebUI WebSocket.
 
 Mirrors the terminal pattern: one session per connection id, frames and logs

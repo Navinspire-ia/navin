@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { cn } from "@/lib/utils";
 import { factDisplay, type TenderFact } from "@/lib/tender-facts";
 import type { Tx } from "@/components/studio/tenders/tenders-ui";

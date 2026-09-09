@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The signed manifest has to describe the store the artifacts really sit in.
 
 A manifest is only as good as its URLs: signing a download that 404s produces a

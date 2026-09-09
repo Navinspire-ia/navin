@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Every child process navin starts must stay invisible on Windows.
 
 The desktop build has no console, so Windows hands each child a fresh one. It

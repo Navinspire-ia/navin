@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Places where a POSIX assumption silently broke the Windows build.
 
 Each case here stood for a feature that reported success while doing nothing:

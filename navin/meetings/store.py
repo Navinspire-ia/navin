@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Disk-backed source of truth for the Meetings product.
 
 The store deliberately uses plain JSON, JSONL and media files. Records remain

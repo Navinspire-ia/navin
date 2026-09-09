@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Convert HTML slide masters into a native, editable PPTX deck.
 
 The document template library ships 1920x1080 HTML slides. Rasterizing each

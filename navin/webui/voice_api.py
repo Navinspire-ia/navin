@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Preview a configured speech provider without starting a microphone session."""
 
 from __future__ import annotations

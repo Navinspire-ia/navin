@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, ChevronRight, Eye, EyeOff, FlaskConical, Loader2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";

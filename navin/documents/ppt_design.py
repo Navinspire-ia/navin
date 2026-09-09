@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Presentation design system: tokens, layouts, Visual Director, materialize.
 
 The LLM emits a semantic slide. This module picks a layout and a component

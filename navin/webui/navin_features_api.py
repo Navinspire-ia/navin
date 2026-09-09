@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Navin optional feature helpers for WebUI Settings."""
 from __future__ import annotations
 

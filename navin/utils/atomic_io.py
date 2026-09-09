@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Durable atomic file writes and lightweight inter-process locking.
 
 Temporary files are created beside their destination so ``os.replace`` stays

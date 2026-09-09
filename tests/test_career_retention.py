@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career offer retention: archive at 45 days, delete at 60."""
 
 from __future__ import annotations

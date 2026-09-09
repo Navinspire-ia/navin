@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OmniRoute helpers: the keyless catalog behind its authenticated ``/v1/models``.
 
 OmniRoute (https://github.com/diegosouzapw/OmniRoute) serves chat completions

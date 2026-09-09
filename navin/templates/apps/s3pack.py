@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pack app templates and read them from the public S3 prefix."""
 
 from __future__ import annotations

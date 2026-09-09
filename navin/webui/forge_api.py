@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pull / merge requests on any forge: GitHub, GitLab, Forgejo (Gitea).
 
 The Code panel used to shell out to ``gh``, so a machine without the GitHub

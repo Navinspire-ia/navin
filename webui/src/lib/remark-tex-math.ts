@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { Root } from "mdast";
 import type { Code, Construct, Effects, Extension, State, Token } from "micromark-util-types";
 import type { Plugin } from "unified";

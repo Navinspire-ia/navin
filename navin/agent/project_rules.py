@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project rules carried by imported repositories, read natively.
 
 Repositories configured for other coding agents already carry durable rules:

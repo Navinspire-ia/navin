@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Publish desk content to real channels, with a scheduled queue and UTM links.
 
 API channels include LinkedIn, Facebook Pages, Reddit, Instagram and TikTok.

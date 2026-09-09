@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The update pipeline's dev-only env overrides must die in packaged builds.
 
 NAVIN_UPDATE_PUBLIC_KEY swaps the Ed25519 signature key and

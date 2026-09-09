@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """End-to-end shape of an inbound audio attachment.
 
 Transcription recognizes an audio attachment by file extension, so the whole

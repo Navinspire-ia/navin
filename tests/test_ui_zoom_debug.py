@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the localhost ``/api/debug/ui-zoom`` debug route.
 
 The handler uses :mod:`navin.webui.http_utils` and

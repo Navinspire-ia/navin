@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A background command's exit reaches the agent without a poll.
 
 Every ``write_stdin`` poll while a build ran was one model call. The exit is

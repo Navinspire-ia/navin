@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { ShellRunSummary } from "@/components/thread/activity/ShellRunCard";
 import type { CliRunSummary, McpRunSummary } from "@/components/thread/activity/runSummaries";
 import {

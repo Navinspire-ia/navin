@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deterministic paid-media rules: rows -> findings + approval-gated changes.
 
 Every finding carries the exported numbers it was computed from. Thresholds

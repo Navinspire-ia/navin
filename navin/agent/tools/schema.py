@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """JSON Schema fragment types: all subclass :class:`~navin.agent.tools.base.Schema` for descriptions and constraints on tool parameters.
 
 - ``to_json_schema()``: returns a dict compatible with :meth:`~navin.agent.tools.base.Schema.validate_json_schema_value` /

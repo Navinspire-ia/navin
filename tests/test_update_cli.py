@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The packaged CLI updates itself: kind ``cli``, signed archive, directory swap.
 
 A user who ran ``curl https://navin.live/install`` has a ``navin-dist/`` tree

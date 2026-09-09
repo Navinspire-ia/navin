@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Readable transcript view: one block per speech turn, with the speaker on
  * its own line (stable colour + initials avatar), the relative timecode, the

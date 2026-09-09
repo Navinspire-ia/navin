@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Walk a daily series with the live screen, the live specialists and the live risk rules.
 
 What differs from the paper desk is stated, not hidden: there is no news

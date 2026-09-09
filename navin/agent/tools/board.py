@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Board tool: the agent side of the shared project task board.
 
 Humans manage the same board from the Dev workbench (kanban + Evolutions

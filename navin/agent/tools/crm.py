@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """CRM tool: the chat reads and writes the same store as the workbench."""
 
 from __future__ import annotations

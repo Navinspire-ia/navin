@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marketplace skill package signing (HMAC-SHA256, mirrors site/src/lib/marketplace.ts)."""
 
 from __future__ import annotations

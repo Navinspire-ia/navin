@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Acceptance tests for S5 - the transfer protocol (a hidden exam plus a shutdown dossier).
 
 The contract under test, in the order of the spec:

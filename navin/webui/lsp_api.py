@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTTP helpers for editor LSP: hover, completion, signature, code actions, rename."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Composer message queue: prompts typed while a turn is running.
  *
  * The queue lives in the composer but its rules are pure functions here so the

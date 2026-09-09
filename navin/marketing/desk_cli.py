@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marketing desk CLI: same store as Studio #/marketing, Tauri, and the marketing tool.
 
 `navin marketing ...` and `python -m navin.marketing.desk_cli ...` are the same

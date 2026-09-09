@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """P3-4: the empty-response and length-recovery limits are per-run settings.
 
 They were module constants, so a caller that wanted a more patient run (long

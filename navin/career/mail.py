@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Career application mail with durable intent, SMTP receipts and bounded automation."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Collect from official APIs first, then web_search + scrape on official hosts."""
 
 from __future__ import annotations

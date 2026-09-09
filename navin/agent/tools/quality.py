@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Quality tools: lint, run tests, and verify a change end to end.
 
 These exist so the agent can *verify* instead of assume. Each returns parsed,

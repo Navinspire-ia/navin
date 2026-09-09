@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Who writes and corrects a draft (S2.1, S2.3).
 
 ``TemplateAuthor`` is deterministic and offline: it turns a brief (which

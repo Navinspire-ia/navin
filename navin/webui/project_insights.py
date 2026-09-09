@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project insight helpers for the Dev status bar: git status and file diagnostics.
 
 Git information is read with the ``git`` CLI (porcelain v2, stable output).

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Line-level diff between a file's pre-agent baseline and its current text,
  * shaped for an inline review in the editor: green lines stay in the document,

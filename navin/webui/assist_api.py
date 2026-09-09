@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Inline AI assistance for the editor: ghost-text completion and Cmd+K edits.
 
 - ``complete`` continues the code at the cursor (fill-in-the-middle).

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Subprocess entry of the transfer campaign: ``python -m navin.transfer.campaign_job``.
 
 The gateway never runs a campaign in its own process (S5.2: an isolated job,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Cell text <-> note property conversions used by the database views. */
 
 import { describe, expect, it } from "vitest";

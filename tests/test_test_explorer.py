@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Test Explorer collection and API payloads.
 
 The explorer promises that a test shown in the tree runs with the exact

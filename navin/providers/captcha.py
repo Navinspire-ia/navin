@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """CAPTCHA-solving provider registry (CapSolver, 2Captcha).
 
 These providers return a solution *token* for a known challenge (reCAPTCHA v2/v3,

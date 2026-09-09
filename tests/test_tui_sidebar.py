@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Sidebar chrome: path wrap and mode-routing stay readable in a narrow column."""
 
 from __future__ import annotations

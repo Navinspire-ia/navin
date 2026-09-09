@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useCallback, useEffect, useState } from "react";
 import { Download, ExternalLink, Loader2, Store } from "lucide-react";
 import { useTranslation } from "react-i18next";

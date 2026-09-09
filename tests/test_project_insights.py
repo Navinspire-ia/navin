@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Dev status bar must tell the truth: real branch, real host, real context.
 
 The footer used to say "no git" for a healthy repository opened across the

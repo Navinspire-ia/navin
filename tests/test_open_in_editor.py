@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the open_in_editor tool (navin.agent.tools.open_in_editor).
 
 The tool never opens anything itself: it validates the request and puts an

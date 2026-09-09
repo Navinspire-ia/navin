@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Task progress blobs for rich clients (bars, ETA, step labels).
 
 Tools and orchestrators call :func:`emit_task_progress` while a turn is active.

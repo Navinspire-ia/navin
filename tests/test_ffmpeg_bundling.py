@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The bundled ffmpeg: staging at build time, resolution at runtime, licence.
 
 Navin redistributes a GPL binary, so the compliance parts are asserted here

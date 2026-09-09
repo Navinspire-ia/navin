@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fixture tools for the browser and desk suites of the policy battery.
 
 The eval runner executes the real agent loop with real filesystem tools in

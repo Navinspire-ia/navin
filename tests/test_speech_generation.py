@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Voice over generation: the missing layer of a full video.
 
 The TTS engine already existed for the realtime voice session, but no tool

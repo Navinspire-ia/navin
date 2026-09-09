@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Embedded web UI assets.
 
 The ``dist/`` subdirectory holds the production WebUI bundle served by the

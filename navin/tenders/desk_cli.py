@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tenders desk CLI: same store as Studio #/tenders, Tauri, and the tenders tool.
 
 `navin tenders ...` and `python -m navin.tenders.desk_cli ...` are the same

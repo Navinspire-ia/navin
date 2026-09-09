@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """``policy_next``: what this project's successful eval runs did next.
 
 Registered only while the project's ``.navin/policy.json`` says ``steer``

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Training jobs: counted after a turn, run in a child process, never inside.
 
 The turn hook only ever calls ``note_turn``: one counter increment and, when

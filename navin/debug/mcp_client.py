@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real DebugMCP Streamable HTTP client (initialize + tools/list).
 
 Speaks the MCP JSON-RPC handshake used by DebugMCP / the MCP SDK - no GET probe

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Saying "do not think" out loud, on every wire navin speaks.
 
 The failure this module prevents was measured, not imagined. On 2026-09-02 an

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Charts travel from the slide JSON to a native, editable PowerPoint chart."""
 
 from __future__ import annotations

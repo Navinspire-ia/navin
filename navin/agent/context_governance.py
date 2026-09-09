@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Model-message governance for agent runner requests.
 
 This module owns model-facing message shaping and tool-result content normalization.

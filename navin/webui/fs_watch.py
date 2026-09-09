@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Cross-platform workspace file watching for the IDE (stdlib polling).
 
 The explorer tree and Git panel used to rely on manual refresh plus a 12s

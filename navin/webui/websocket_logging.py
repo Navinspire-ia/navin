@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Logging helpers for the WebUI WebSocket server surface."""
 
 from __future__ import annotations

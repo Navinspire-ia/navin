@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """CLI for Studio Career web search. Prints JSON hits (title, url, snippet)."""
 
 from __future__ import annotations

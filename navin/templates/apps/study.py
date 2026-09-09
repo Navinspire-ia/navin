@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Study each app-template clone and write a complete packages/<slug>/install.json."""
 
 from __future__ import annotations

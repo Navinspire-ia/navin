@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Mattermost channel implementation using WebSocket + REST API."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """LinkedIn public job listings (guest search, no login, no Easy Apply).
 
 linkedin.com serves its job search to anonymous visitors through

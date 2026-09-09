@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Campaign submission and daemon reachability, gateway side.
 
 The Evolve daemon is reached over a loopback TCP port it publishes, with a

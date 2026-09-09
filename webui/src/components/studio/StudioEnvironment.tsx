@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Environment, Lightformer } from "@react-three/drei";
 
 /** Local softboxes keep reflective materials readable without an HDR download. */

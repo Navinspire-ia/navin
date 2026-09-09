@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, TerminalSquare, X } from "lucide-react";
 import { useTranslation } from "react-i18next";

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Video localization: timed transcription (SRT) and voice-track dubbing.
 
 Full localization pipeline built only on what navin already ships: ffmpeg

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Enrich lead CSVs with Hunter / Apollo when API keys are present.
 
 Reads a prospects CSV, optionally looks up emails/people via public APIs,

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A restore point must reach the chat transcript.
 
 Auto checkpoints existed for a long time, but nothing told the chat about

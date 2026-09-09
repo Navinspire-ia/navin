@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTTP helpers for the Code workbench DAP debugger."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """ICP + BANT-F scoring with evidence. This is the desk score, not a vanity number."""
 
 from __future__ import annotations

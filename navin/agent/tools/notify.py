@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Notify tool: how an agent asks a human to look up from what they are doing.
 
 Everything an agent says already reaches the user through the transcript. This

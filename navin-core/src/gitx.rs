@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Git hot paths as library calls (libgit2): status, log, diff, branch.
 //!
 //! A `git status` subprocess costs 30-80 ms of spawn before any work happens;

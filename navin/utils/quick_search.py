@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Small synchronous web search for desk research (DuckDuckGo, no key).
 
 Uses the `ddgs` package when installed and falls back to the DuckDuckGo HTML

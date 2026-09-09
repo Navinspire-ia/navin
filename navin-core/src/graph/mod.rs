@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Project metagraph engine: build, layout, diff, and query.
 //!
 //! Python still owns discovery and import resolution (`navin.index`). This

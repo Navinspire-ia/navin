@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Design mode for the preview browser: the probe injected in the previewed
  * page describes the element the user clicked, and this module turns that

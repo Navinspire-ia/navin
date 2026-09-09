@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads desk CLI: same store as Studio #/leads, Tauri, and the leads tool.
 
 `navin leads ...` and `python -m navin.leads.desk_cli ...` are the same

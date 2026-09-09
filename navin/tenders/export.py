@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Render a ready Word / PowerPoint pack from the written dossier."""
 
 from __future__ import annotations

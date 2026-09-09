@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Draft jobs: queued during a turn, run after it, never inside it (S2.1).
 
 The turn hook only ever calls ``enqueue_draft_job``: one line appended to

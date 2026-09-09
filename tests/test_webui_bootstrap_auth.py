@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Who is allowed to bootstrap the WebUI, and who has to prove it.
 
 The installer generates a token issue secret without asking, so requiring it

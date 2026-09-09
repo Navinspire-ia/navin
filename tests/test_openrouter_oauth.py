@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OpenRouter OAuth PKCE: the Free onboarding path.
 
 The key minted at the end of the flow belongs to the USER's OpenRouter

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Terminal capability hints applied before Textual is imported.
 
 Rich (and therefore Textual) only trusts ``COLORTERM=truecolor`` or a

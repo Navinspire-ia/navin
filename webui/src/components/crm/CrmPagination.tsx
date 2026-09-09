@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Button } from "@/components/ui/button";
 import { pageRange, visiblePages } from "@/lib/crm-list";
 import { cn } from "@/lib/utils";

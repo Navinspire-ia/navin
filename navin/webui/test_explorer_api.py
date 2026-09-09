@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTTP payloads for the IDE Test Explorer panel.
 
 Two modes over one endpoint: ``collect`` lists suites and their individual

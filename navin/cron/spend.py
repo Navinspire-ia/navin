@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Attributing token spend to the scheduled loop that caused it.
 
 A loop's daily budget can only be enforced if the tokens a run burns are

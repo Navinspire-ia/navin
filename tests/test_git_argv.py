@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Web / desktop parity: git must run where the project lives.
 
 The Git panel already routed WSL projects through the distribution. Review and

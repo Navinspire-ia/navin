@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Security profiles tighten tools without changing factory autonomy defaults."""
 
 from __future__ import annotations

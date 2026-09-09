@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Perf regression tests: CLI Apps payload must not block the event loop.
 
 Context: /api/settings/cli-apps built its payload with one shutil.which()

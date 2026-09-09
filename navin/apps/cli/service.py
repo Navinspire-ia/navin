@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """CLI-Anything catalog, install state, and safe CLI execution."""
 
 from __future__ import annotations

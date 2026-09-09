@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Auto compact: proactive compression of idle sessions to reduce token cost and latency."""
 
 from __future__ import annotations

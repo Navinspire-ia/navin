@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tool over the same Trading Agent OS store as Studio #/trading."""
 
 from __future__ import annotations

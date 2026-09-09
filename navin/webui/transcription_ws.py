@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI transcription envelope handling.
 
 The WebSocket channel owns transport and subscription fan-out. This module owns

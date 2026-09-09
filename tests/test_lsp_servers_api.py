@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Extensions panel: what it is told, and what it is allowed to do.
 
 The install path itself is covered by test_lsp_vsix; what matters here is the

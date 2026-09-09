@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Ground-truth helpers for Review / Security / Debug findings.
 
 Findings without a real code/runtime excerpt are treated as invented and

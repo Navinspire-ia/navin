@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A screenshot must never be described by a model that could not see it.
 
 The provider-rejects case is handled by ``LLMProvider._strip_image_content``.

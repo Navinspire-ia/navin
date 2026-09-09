@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The managed catalog becomes tier aliases + selectable navin presets."""
 
 from __future__ import annotations

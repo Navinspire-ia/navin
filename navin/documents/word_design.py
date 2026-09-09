@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Word design system: theme tokens, instant re-theming, palette audit.
 
 Every template under ``templates/word`` declares its colours and fonts once, in

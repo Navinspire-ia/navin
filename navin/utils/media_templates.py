@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marketing / Montage media templates hosted on AWS (S3).
 
 The gallery catalog lives in ``templates/media/catalog.json`` and is overridden

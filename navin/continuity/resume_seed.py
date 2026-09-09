@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unified Resume seed for Project Home and the Code workbench.
 
 One payload feeds the UI composer and mirrors what the agent already sees via

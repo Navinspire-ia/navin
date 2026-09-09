@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Hatch build hook that bundles the webui (Vite) into navin/web/dist.
 
 Triggered automatically by `python -m build` (and any other hatch-driven build)

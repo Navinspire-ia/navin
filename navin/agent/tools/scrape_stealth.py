@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Realistic browser identities for the scrape fetcher.
 
 A single hard-coded ``NavinScrape/0.1`` User-Agent with no client hints is the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for recent-edit context in Tab completion (next-edit prediction).
 
 The model call is stubbed: what matters is that the completion prompt and the

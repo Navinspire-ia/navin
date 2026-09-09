@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The WebUI bundle a packaged target ships is the one the release built.
 
 The desktop apps do not embed the interface in the Tauri binary: they serve it

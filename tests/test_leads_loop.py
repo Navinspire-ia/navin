@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads desk loop: start, stop, schedule, tick, lock, heartbeat stay isolated.
 
 Same contract as Career / Tenders / Trading. Zero holes.

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Format Document backend: formatter routing and stdin formatting.
 
 VS Code and Cursor route Format Document to real formatters (Prettier, ruff,

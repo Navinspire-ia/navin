@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One line per tool call: what was asked (hashed) and what came back (classed).
 
 The record is the whole memory of S3, so it must be cheap to write, safe to

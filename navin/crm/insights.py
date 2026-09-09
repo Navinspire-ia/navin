@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deal / contact health shared by the UI and the ``crm`` tool."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Graph engine: packages view, queries, diffs, and notify fan-out."""
 
 from __future__ import annotations

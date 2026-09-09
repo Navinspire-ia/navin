@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The Thinking ladder follows the provider+model pair, whatever the spelling.
 
 One bug report (MiniMax-M3 refusing "low" with a bare "invalid

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Canonical lead schema and validation.
 
 The old CSV path required only 4 columns (company/website/source/confidence),

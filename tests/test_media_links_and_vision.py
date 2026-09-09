@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pasted media links, and telling the truth when a model cannot see an image.
 
 Four behaviours are pinned here, all of which used to fail silently:

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Key names as models write them, normalised once for every backend.
 
 Models mix conventions freely: ``ctrl+c``, ``Control_L``, ``Cmd+Shift+T``,

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, Globe, Loader2, Network, RotateCcw, TerminalSquare } from "lucide-react";
 import { useTranslation } from "react-i18next";

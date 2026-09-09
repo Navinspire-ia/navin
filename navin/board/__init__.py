@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared human/agent project task board persisted inside the project."""
 
 from navin.board.ledger import MissionLedgerStore, mission_runtime_lines_for_project

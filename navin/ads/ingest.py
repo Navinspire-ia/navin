@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Ads Manager exports (CSV / TSV / XLSX) and MCP rows -> normalized ``AdRow``.
 
 Handles what real exports look like: UTF-16 tab-separated Google downloads,

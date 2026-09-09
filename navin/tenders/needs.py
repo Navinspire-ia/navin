@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official need catalogs for wizard step 5 (TED / BOAMP / CPV).
 
 Stored values stay human labels. Scoring, collect and the writer expand them

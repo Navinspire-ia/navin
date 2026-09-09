@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //! Local file hot paths: batch reads, directory walking, content hashing.
 //!
 //! The agent routinely reads ten files in one turn and hashes whole trees for

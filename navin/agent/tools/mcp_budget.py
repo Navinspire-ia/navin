@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Keep one MCP server from crowding every other tool out of the catalogue.
 
 An MCP server declares as many tools as it likes and navin registered all of

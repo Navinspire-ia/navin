@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, CircleDot, Hammer, Loader2, Pause, Play, Square, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";

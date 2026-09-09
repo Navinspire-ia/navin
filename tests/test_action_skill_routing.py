@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Exercise real prompt construction with local playbooks and fake providers."""
 
 from __future__ import annotations

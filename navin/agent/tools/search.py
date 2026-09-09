@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Search tools: file discovery and grep.
 
 ``grep`` prefers the native Rust backend (the ``navin_core`` extension, built

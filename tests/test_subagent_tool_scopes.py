@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A subagent's tool set must be narrowed by scope, never by a dropped config.
 
 Media generation used to vanish inside subagents for two independent reasons:

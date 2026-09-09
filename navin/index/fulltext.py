@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Ranked full-text search over the project, backed by native tantivy.
 
 The code index already fingerprints every file; this module diffs those

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """iOS preview tooling: Xcode simctl + libimobiledevice, selected by host OS.
 
 On macOS Navin installs/detects the Apple stack (Xcode CLT, simulators,

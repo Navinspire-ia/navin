@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project metagraph: files as nodes, imports/references as edges.
 
 Builds the dependency graph for the Dev workbench Graph tab on top of

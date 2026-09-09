@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Task → model-preset routing.
 
 Settings stores ``model_routes`` as ``{role: preset_name}``. Workflow slash

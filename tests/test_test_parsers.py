@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Counts alone do not tell an agent what to fix, and can be flatly wrong.
 
 Three runners were parsed by a counts-only regex. For `unittest` that regex read

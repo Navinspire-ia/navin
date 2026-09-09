@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Query facade over the code index.
 
 :class:`CodeIndex` owns the refresh cycle and every lookup the agent and the

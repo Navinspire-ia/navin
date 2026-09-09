@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Secure, signed updates for frozen Navin binaries: desktop app and CLI."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Enforce plan limits returned by the navin.live license API.
 
 The site ships ``limits.stepsPerTask`` and ``limits.concurrentAgents`` with

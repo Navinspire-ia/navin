@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Format an editor buffer with the project's formatter.
 
 VS Code and Cursor route Format Document to a real formatter (Prettier, ruff,

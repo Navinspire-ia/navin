@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-turn hook of policy learning: count the turn, keep the live A/B honest.
 
 ``create_policy_hook`` is a turn hook factory registered next to the world

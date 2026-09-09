@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Visual QA for a Word document, run on the page before it becomes a DOCX.
 
 The document is laid out in Chromium and inspected the way a reader would: does

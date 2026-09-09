@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Probe every official catalog source, one id at a time.
 
 A 404 or a missing DNS name is a catalog bug. A WAF / login / timeout

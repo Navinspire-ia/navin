@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for @-mentions of files and folders.
 
 Covers the two halves: the fuzzy lookup that feeds the composer palette, and

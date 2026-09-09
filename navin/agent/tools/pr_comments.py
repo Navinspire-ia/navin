@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Agent tool: post review/security findings as inline PR/MR comments."""
 
 from __future__ import annotations

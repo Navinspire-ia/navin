@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Word constructs the converters need beyond what python-docx exposes.
 
 python-docx covers paragraphs, runs and tables. A document that reads as though

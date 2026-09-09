@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Legacy WebUI JSON snapshot path helpers (JSON file); transcripts use transcript."""
 
 from __future__ import annotations

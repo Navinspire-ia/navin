@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { CareerOpportunity, CareerProfile, CareerTrack } from "@/lib/career-api";
 import { scoreOpportunity, stableJobId, stripHtml } from "@/lib/career-match";
 
