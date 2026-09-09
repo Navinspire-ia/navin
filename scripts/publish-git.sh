@@ -200,6 +200,8 @@ restore_gitlinks() {
   local line mode sha path
   while read -r mode sha path; do
     [ "$mode" = "160000" ] || continue
+    # Sous-module listé dans l'exclusion : on ne recrée pas le gitlink.
+    is_excluded "$path" && continue
     rm -rf "$dest/$path"
     mkdir -p "$dest/$(dirname "$path")"
     git -C "$dest" update-index --add --cacheinfo "160000,$sha,$path"
