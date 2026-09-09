@@ -44,7 +44,13 @@ def _load_webui_build_module() -> ModuleType:
 class WebUIBuildHook(BuildHookInterface):
     PLUGIN_NAME = "webui-build"
 
+    # Masters de documents embarqués dans la wheel quand ils sont présents
+    # (arbre privé). L'arbre public n'a pas templates/ : le CLI les télécharge
+    # dans .navin/resources/document-templates/ à la demande.
+    TEMPLATE_MASTERS = ("ppt", "word", "pdf", "excel")
+
     def initialize(self, version: str, build_data: dict) -> None:  # noqa: D401
+        self._include_template_masters(build_data)
         # Independent of the webui bundle: editable installs skip Vite but
         # still need the OS command jail on Linux and macOS.
         self._ensure_sandbox_binary(version)
@@ -107,6 +113,30 @@ class WebUIBuildHook(BuildHookInterface):
                 "check webui/vite.config.ts outDir."
             )
         self.app.display_info(f"[webui-build] webui ready at {dist_dir}")
+
+    def _include_template_masters(self, build_data: dict) -> None:
+        """Ship templates/<kind> as navin/resources/templates/<kind> when present.
+
+        Replaces a static ``[tool.hatch.build.targets.wheel.force-include]``:
+        hatch aborts the build on a missing forced path, which is exactly the
+        public tree's situation.
+        """
+        if self.target_name != "wheel":
+            return
+        root = Path(self.root)
+        force_include = build_data.setdefault("force_include", {})
+        missing: list[str] = []
+        for kind in self.TEMPLATE_MASTERS:
+            src = root / "templates" / kind
+            if src.is_dir():
+                force_include[str(src)] = f"navin/resources/templates/{kind}"
+            else:
+                missing.append(kind)
+        if missing:
+            self.app.display_info(
+                "[templates] masters absents, non embarqués (téléchargés à la "
+                "demande) : " + ", ".join(missing)
+            )
 
     def _ensure_sandbox_binary(self, version: str) -> None:
         """Compile navin-sandbox for an editable source install.

@@ -1,6 +1,6 @@
 [project]
 name = "navin-ai"
-version = "2.0.1"
+version = "2.0.2"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -254,11 +254,10 @@ artifacts = [
 [tool.hatch.build.targets.wheel]
 packages = ["navin"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"templates/ppt" = "navin/resources/templates/ppt"
-"templates/word" = "navin/resources/templates/word"
-"templates/pdf" = "navin/resources/templates/pdf"
-"templates/excel" = "navin/resources/templates/excel"
+# Les masters templates/{ppt,word,pdf,excel} -> navin/resources/templates/ sont
+# ajoutés par hatch_build.py (build_data["force_include"]) seulement s'ils
+# existent : un force-include statique ici casse `pip install -e .` sur
+# l'arbre public, où templates/ est absent (le CLI les télécharge).
 
 [tool.hatch.build.targets.wheel.sources]
 "navin" = "navin"
