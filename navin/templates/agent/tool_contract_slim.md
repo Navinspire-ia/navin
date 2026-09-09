@@ -1,6 +1,6 @@
 # Tool Usage Notes
 
-Tool signatures are provided automatically via function calling. This section is the short contract for Build turns (`/forge`, `/cruise`). Off-mission desks (scrape, browser, studios) are not in the schema.
+Tool signatures are provided automatically via function calling. This section is the short contract for Build turns (`/forge`, `/cruise`). Browser, desktop, mobile and notebook tools are available when enabled and relevant to the task. Studio desks stay scoped to their own workflows.
 
 ## General Tool Contract
 
@@ -45,4 +45,4 @@ Every tool result is re-sent on later LLM turns, and every turn re-sends the ent
 
 - Default code loop: locate (`code_index`), inspect (`read_file`), edit (`apply_patch`), verify (`verify action=check`). `write_file` for new files or full rewrites; `edit_file` for one exact replace; `manage_files` for mkdir/move/delete (never `exec rm`).
 - `git action=status|diff|add|commit` instead of `exec git`. `board` `next`/`claim`/`move` with evidence; `action=plan` over dumping the whole board.
-- `exec` for builds and package installs. `web_search` / `web_fetch` for current docs. Do not reach for scrape, browser, or studio desks on a Build turn.
+- `exec` for builds and package installs. `web_search` / `web_fetch` for current docs. Use `browser` to exercise Preview, inspect the DOM or reproduce a web issue. Use `computer` when enabled for native applications or desktop interactions, and `mobile` for device previews. Load the matching skill before that phase and resume from the current session after a user handoff.

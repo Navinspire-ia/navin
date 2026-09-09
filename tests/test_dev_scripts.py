@@ -102,10 +102,10 @@ def test_docker_has_no_nanobot_and_points_at_public_repo() -> None:
     assert "navin-claw" not in blob
     assert "EIAGEN" not in blob
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "https://github.com/navinspire-ai/navin-agi" in dockerfile
+    assert "https://github.com/Navinspire-ia/navin" in dockerfile
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert "navin-gateway" in compose
-    assert "navinspire-ai/navin-agi" in compose
+    assert "Navinspire-ia/navin" in compose
 
 
 def test_dev_lib_defaults_to_schema_ports() -> None:

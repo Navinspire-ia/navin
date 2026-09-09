@@ -244,6 +244,11 @@ def repeated_tool_failure_is_hard_stop(
     return seen_counts.get(signature, 0) >= _HARD_STOP_IDENTICAL_TOOL_FAILURES
 
 
+def reset_tool_failure_count(tool_name: str, arguments: Any, seen_counts: dict[str, int]) -> None:
+    """A successful retry ends the consecutive failure streak for this call."""
+    seen_counts.pop(_tool_failure_signature(tool_name, arguments), None)
+
+
 def reset_readonly_spin_counts(seen_counts: dict[str, int]) -> None:
     """Drop read-only signatures after a successful edit so a re-read is allowed."""
     stale = [

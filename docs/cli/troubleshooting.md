@@ -8,6 +8,24 @@ navin install-cli
 
 Open a new terminal after a Windows PATH change. On macOS, `~/.local/bin` must be on PATH.
 
+## `Operation not permitted` on macOS (`~/.local/bin/navin`)
+
+A previous install often leaves `~/.local/bin/navin` as a symlink into `Navin.app` (or a signed copy of the engine). Truncating that file in place fails with EPERM.
+
+Retry after removing the old commands:
+
+```bash
+rm -f ~/.local/bin/navin ~/.local/bin/navin-cli
+curl https://navin.live/install -fsS | bash
+```
+
+If that directory is locked, pick another prefix:
+
+```bash
+NAVIN_PREFIX="$HOME/navin" curl https://navin.live/install -fsS | bash
+export PATH="$HOME/navin/bin:$PATH"
+```
+
 WSL: use the Linux one-liner (`curl … | bash`). The Windows installer does not put `navin` on the WSL PATH.
 
 ## `/install` 404

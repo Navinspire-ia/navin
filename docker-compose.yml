@@ -1,5 +1,5 @@
 # Navin gateway / API / CLI. Built from this repository.
-# Public source: https://github.com/navinspire-ai/navin-agi
+# Public source: https://github.com/Navinspire-ia/navin
 # Usage: docker compose up navin-gateway
 x-common-config: &common-config
   build:

@@ -40,6 +40,20 @@ const edit = (path: string): JournalStep => ({
 const count = (html: string, needle: string): number => html.split(needle).length - 1;
 
 describe("ActivityJournal render", () => {
+  it("shows a setup card instead of raw Computer permission errors", () => {
+    const setupEntries = buildJournalTimeline([{
+      kind: "tool", name: "computer", args: '{"action":"screenshot"}', status: "error",
+      error: "Error: computer screenshot failed: Accessibility is not granted. [Analyze the error above and try a different approach.]",
+    }], { streaming: false });
+    const html = renderToStaticMarkup(createElement(ActivityJournal, { entries: setupEntries, streaming: false }));
+    expect(html).toContain('data-testid="computer-setup-notice"');
+    expect(html).toContain("section=computer&amp;step=permissions");
+    expect(html).not.toContain("screenshot");
+    expect(html).not.toContain("Accessibility is not granted");
+    expect(html).not.toContain("try a different approach");
+    expect(summarizeJournal(setupEntries)).toMatchObject({ errors: 0, setup: 1 });
+  });
+
   const entries = buildJournalTimeline([
     read("webui/src/a.ts"),
     search("navin"),

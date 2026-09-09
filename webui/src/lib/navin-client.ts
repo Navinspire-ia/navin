@@ -142,6 +142,24 @@ export interface AgentBrowserUpdate {
   data?: string;
   width?: number;
   height?: number;
+  userControl?: boolean;
+}
+export type AgentBrowserInputAction = "click" | "move" | "scroll" | "text" | "key" | "takeover" | "release";
+export interface AgentBrowserInputPayload {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  dx?: number;
+  dy?: number;
+  text?: string;
+  key?: string;
+  count?: number;
+  button?: "left" | "right" | "middle";
+}
+export interface AgentBrowserControlResult {
+  userControl: boolean;
+  closed: boolean;
 }
 type AgentBrowserHandler = (update: AgentBrowserUpdate) => void;
 export interface EditorOpenRequest {
@@ -344,6 +362,14 @@ export class NavinClient {
   private terminalOpenRequestHandlers = new Set<TerminalOpenRequestHandler>();
   private agentExecHandlers = new Set<AgentExecHandler>();
   private agentBrowserHandlers = new Set<AgentBrowserHandler>();
+  private pendingBrowserControls = new Map<string, {
+    chatId: string;
+    id: string;
+    resolve: (result: AgentBrowserControlResult) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  private browserControlSequence = 0;
   private editorOpenRequestHandlers = new Set<EditorOpenRequestHandler>();
   private composerModeRequestHandlers = new Set<ComposerModeRequestHandler>();
   private productModuleRequestHandlers = new Set<ProductModuleRequestHandler>();
@@ -986,6 +1012,27 @@ export class NavinClient {
     return requestId;
   }
 
+  /**
+   * Live conversation: ask the gateway to turn a raw transcript into the
+   * message the user would have typed. Answered by `voice_prompt_ready`
+   * (or `voice_session_error`) carrying the same request id.
+   */
+  requestVoicePrompt(
+    sessionId: string,
+    text: string,
+    options: { context?: string } = {},
+  ): string {
+    const requestId = crypto.randomUUID();
+    this.queueSend({
+      type: "voice_prompt",
+      request_id: requestId,
+      session_id: sessionId,
+      text,
+      ...(options.context ? { context: options.context } : {}),
+    });
+    return requestId;
+  }
+
   endVoiceSession(
     sessionId: string,
     options?: { speakText?: string; bargeIn?: boolean },
@@ -1309,25 +1356,40 @@ export class NavinClient {
    */
   agentBrowserInput(
     chatId: string,
-    action: "click" | "move" | "scroll" | "text" | "key",
-    payload: {
-      x?: number;
-      y?: number;
-      width?: number;
-      height?: number;
-      dx?: number;
-      dy?: number;
-      text?: string;
-      key?: string;
-      count?: number;
-    } = {},
-  ): void {
-    this.queueSend({ type: "agent_browser_input", chat_id: chatId, action, ...payload });
+    action: AgentBrowserInputAction,
+    payload: AgentBrowserInputPayload = {},
+    id = "",
+  ): Promise<AgentBrowserControlResult> {
+    return this.sendBrowserControl({ type: "agent_browser_input", chat_id: chatId, id, action, ...payload });
   }
 
   /** Close the browser this chat opened, freeing Chromium. */
-  agentBrowserClose(chatId: string): void {
-    this.queueSend({ type: "agent_browser_close", chat_id: chatId });
+  agentBrowserClose(chatId: string, id = ""): Promise<AgentBrowserControlResult> {
+    return this.sendBrowserControl({ type: "agent_browser_close", chat_id: chatId, id });
+  }
+
+  private sendBrowserControl(
+    frame: Extract<Outbound, { type: "agent_browser_input" | "agent_browser_close" }>,
+  ): Promise<AgentBrowserControlResult> {
+    if (!this.socket || this.socket.readyState !== WS_OPEN) {
+      return Promise.reject(new Error("The live view is disconnected. Reconnect before sending input."));
+    }
+    const requestId = `live-${Date.now()}-${++this.browserControlSequence}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingBrowserControls.delete(requestId);
+        reject(new Error("The live session did not confirm the action. Check its state before retrying."));
+      }, 15_000);
+      this.pendingBrowserControls.set(requestId, { chatId: frame.chat_id, id: frame.id ?? "", resolve, reject, timer });
+      try {
+        // Physical input must never enter the reconnect queue and replay later.
+        this.socket!.send(JSON.stringify({ ...frame, request_id: requestId }));
+      } catch {
+        clearTimeout(timer);
+        this.pendingBrowserControls.delete(requestId);
+        reject(new Error("The live view is disconnected."));
+      }
+    });
   }
 
   mobilePreviewSwipe(
@@ -1418,6 +1480,8 @@ export class NavinClient {
       productModule?: string;
       /** Absolute/relative paths of open editor tabs (Code workbench). */
       openFiles?: string[];
+      /** Turn sent from the live voice conversation (reply is read aloud). */
+      voiceMode?: boolean;
     },
   ): void {
     this.knownChats.add(chatId);
@@ -1445,6 +1509,7 @@ export class NavinClient {
         ? { product_module: options.productModule }
         : {}),
       ...(options?.openFiles?.length ? { open_files: options.openFiles } : {}),
+      ...(options?.voiceMode ? { voice_mode: true as const } : {}),
       webui: true,
     };
     this.queueSend(frame);
@@ -1670,6 +1735,19 @@ export class NavinClient {
       return;
     }
 
+    if (parsed.event === "agent_browser_input_done" || parsed.event === "agent_browser_closed" || parsed.event === "agent_browser_error") {
+      const pending = this.pendingBrowserControls.get(parsed.request_id ?? "");
+      if (!pending || parsed.chat_id !== pending.chatId || (pending.id && parsed.id !== pending.id)) return;
+      clearTimeout(pending.timer);
+      this.pendingBrowserControls.delete(parsed.request_id!);
+      if (parsed.event === "agent_browser_error") {
+        pending.reject(new Error(parsed.detail || "The live session refused the action."));
+      } else {
+        pending.resolve({ userControl: parsed.user_control === true, closed: parsed.closed === true });
+      }
+      return;
+    }
+
     if (parsed.event === "agent_browser") {
       const frame = parsed as unknown as {
         chat_id?: string;
@@ -1681,6 +1759,7 @@ export class NavinClient {
         data?: string;
         width?: number;
         height?: number;
+        user_control?: boolean;
       };
       if (typeof frame.id !== "string" || !frame.id) return;
       const phase =
@@ -1701,6 +1780,7 @@ export class NavinClient {
         ...(typeof frame.data === "string" && frame.data ? { data: frame.data } : {}),
         ...(typeof frame.width === "number" ? { width: frame.width } : {}),
         ...(typeof frame.height === "number" ? { height: frame.height } : {}),
+        ...(typeof frame.user_control === "boolean" ? { userControl: frame.user_control } : {}),
       };
       for (const handler of this.agentBrowserHandlers) {
         handler(update);
@@ -2062,6 +2142,7 @@ export class NavinClient {
       parsed.event === "voice_session_started"
       || parsed.event === "voice_session_ended"
       || parsed.event === "transcript_partial"
+      || parsed.event === "voice_prompt_ready"
       || parsed.event === "tts_audio"
       || parsed.event === "tts_cancelled"
       || parsed.event === "voice_session_error"
@@ -2177,6 +2258,11 @@ export class NavinClient {
 
   private handleClose(event?: { code?: number }): void {
     this.socket = null;
+    for (const pending of this.pendingBrowserControls.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("The live view is disconnected."));
+    }
+    this.pendingBrowserControls.clear();
     if (this.pendingNewChat) {
       clearTimeout(this.pendingNewChat.timer);
       this.pendingNewChat.reject(new Error("socket closed"));

@@ -527,6 +527,8 @@ class ChannelManager:
 
     async def stop_all(self) -> None:
         """Stop all channels and the dispatcher."""
+        from navin.bus.alerts import stop_alert_dispatch
+
         logger.info("Stopping all channels...")
         self._started = False
 
@@ -535,6 +537,7 @@ class ChannelManager:
             self._dispatch_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._dispatch_task
+        await stop_alert_dispatch(self.bus)
 
         # Stop all channels
         for name in list(self.channels):
@@ -569,6 +572,9 @@ class ChannelManager:
 
     async def _dispatch_outbound(self) -> None:
         """Dispatch outbound messages to the appropriate channel."""
+        from navin.bus.alerts import bind_alert_runtime, schedule_queued_alert
+
+        bind_alert_runtime(self.bus, asyncio.get_running_loop(), self.channels)
         logger.info("Outbound dispatcher started")
 
         # Buffer for messages that couldn't be processed during delta coalescing
@@ -585,6 +591,9 @@ class ChannelManager:
                         self.bus.consume_outbound(),
                         timeout=1.0
                     )
+
+                if schedule_queued_alert(self.channels.get(msg.channel), msg):
+                    continue
 
                 event = outbound_event_from_message(msg)
                 progress_event = event if isinstance(event, ProgressEvent) else None

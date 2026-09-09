@@ -1,3 +1,6 @@
+import { supportsMediaModel } from "./media-models";
+import type { MediaModelKind } from "./types";
+
 /** Chat-defaultable modalities only (media presets are specialty tools). */
 export type ModelModality = "text" | "image" | "video" | "audio" | "music" | "stt";
 
@@ -27,6 +30,8 @@ export function isMediaModality(
 export function isMediaModelSlug(slug: string | null | undefined): boolean {
   const cleaned = (slug || "").trim().toLowerCase();
   if (!cleaned) return false;
+  if ((["stt", "tts", "image", "video", "music"] as MediaModelKind[])
+    .some((kind) => supportsMediaModel({ id: cleaned }, kind))) return true;
   const leaf = cleaned.includes("/") ? cleaned.split("/").pop() ?? cleaned : cleaned;
   return (
     leaf.includes("lyria")
@@ -79,6 +84,12 @@ const VISION_FAMILY_MARKERS: readonly string[] = [
   "qwen2-vl",
   "qwen2.5-vl",
   "qwen3-vl",
+  "qwen3.8-max",
+  "qwen3.8-flash",
+  "qwen3.8-27b",
+  "qwen3.7-plus",
+  "qwen3.6-plus",
+  "qwen3.5-plus",
   "qvq",
   "pixtral",
   "mistral-medium-3",

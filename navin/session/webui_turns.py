@@ -165,6 +165,11 @@ def reconnect_turn_action(
         if session is not None and isinstance(getattr(session, "metadata", None), dict)
         else None
     )
+    from navin.session.turn_recovery import RECOVERY_KEY, recovery_pending
+
+    if session is not None and recovery_pending(session.metadata):
+        started = session.metadata[RECOVERY_KEY].get("started_at")
+        return ("running", float(started) if isinstance(started, int | float) else time.time())
     if not isinstance(state, dict) or state.get("status") != "running":
         return ("none", None)
     if _last_visible_role(session) == "assistant":

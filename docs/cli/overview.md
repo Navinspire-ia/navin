@@ -20,7 +20,7 @@ navin status
 navin doctor
 ```
 
-From a `navin-agi` clone, after install:
+From a `navin` clone, after install:
 
 ```bash
 .venv/bin/navin-cli

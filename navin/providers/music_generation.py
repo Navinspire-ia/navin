@@ -19,7 +19,7 @@ _DEFAULT_TIMEOUT_S = 180.0
 # because the httpx timeout only bounds each individual read.
 _DEFAULT_MAX_WAIT_S = 420.0
 _OPENROUTER_ATTRIBUTION_HEADERS = {
-    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "HTTP-Referer": "https://github.com/Navinspire-ia/navin",
     "X-OpenRouter-Title": "navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }

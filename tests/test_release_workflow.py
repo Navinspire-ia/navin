@@ -231,9 +231,21 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("skip helper DLL", sign)
         self.assertIn("exit 0", sign[skip : skip + 400])
         self.assertIn("$SidecarExe", desktop)
+        self.assertIn("NavinUpdater.exe", desktop)
         self.assertIn("$MsiOut", desktop)
         self.assertIn("$NsisOut", desktop)
-        self.assertIn("Get-AuthenticodeSignature", desktop)
+        self.assertIn("verify-windows-signatures.ps1", desktop)
+        # powershell -File cannot bind -Path @(a, b); the second file becomes
+        # a positional argument and aborts a successful sign (Navin 2.0.1).
+        self.assertNotIn("-File $VerifyScript -Path @", desktop)
+        self.assertIn("foreach ($Artifact in @($MsiOut, $NsisOut))", desktop)
+        verify = (
+            REPO_ROOT / "packaging" / "windows" / "verify-windows-signatures.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Get-AuthenticodeSignature", verify)
+        self.assertIn("Status, StatusMessage, SignerCertificate", verify)
+        self.assertIn("SmartScreen", verify)
+        self.assertIn("NavinUpdater.exe", verify)
 
     def test_the_linux_sidecar_is_version_stamped_and_gated(self):
         """Same guarantee as macOS and Windows for the Linux bundles.

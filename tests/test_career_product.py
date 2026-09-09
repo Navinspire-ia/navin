@@ -259,8 +259,8 @@ class CareerWorldDeskTest(unittest.TestCase):
             oid = by_company["Paris Co"]["id"]
             prepared = prepare_application(store, oid)
             pack = prepared["prepared"]
-            self.assertIn("Do not invent", pack["summary"])
-            self.assertIn(str(len(MASTER_CV)), pack["summary"])
+            self.assertNotIn("Do not invent", pack["summary"])
+            self.assertIn("Spark", pack["summary"])
             self.assertNotIn("Google", pack["summary"])
             self.assertNotIn("Google", pack["cv_text"])
             self.assertNotIn("\u2014", pack["cover"])
@@ -330,7 +330,7 @@ class CareerWorldDeskTest(unittest.TestCase):
             rescored = rescore(store)
             self.assertTrue(any(row.get("match_score") for row in rescored["opportunities"]))
 
-    def test_http_desk_rejects_bad_actions_and_linkedin_autopilot(self) -> None:
+    def test_http_desk_rejects_bad_actions_and_keeps_linkedin_submission_manual(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = CareerStore(Path(tmp))
             store.save_profile({"apply_mode": "autopilot", "titles": ["Data Engineer"], **GOLDEN_PROFILE})
@@ -349,8 +349,9 @@ class CareerWorldDeskTest(unittest.TestCase):
                 with self.assertRaises(CareerError) as unknown:
                     handle_career_action("explode")
                 self.assertEqual(unknown.exception.status, 400)
-                with self.assertRaises(CareerError):
-                    handle_career_action("apply", {"id": "job-li"})
+                applied = handle_career_action("apply", {"id": "job-li"})
+                self.assertEqual(applied["applications"][0]["stage"], "ready")
+                self.assertFalse(applied["applications"][0].get("applied_at"))
                 with self.assertRaises(CareerError):
                     handle_career_action("prepare", {})
                 with self.assertRaises(CareerError):
@@ -525,10 +526,11 @@ class CareerCvPackTest(unittest.TestCase):
 
         with zipfile.ZipFile(io.BytesIO(blob)) as archive:
             xml = archive.read("word/document.xml").decode("utf-8")
+            styles = archive.read("word/styles.xml").decode("utf-8")
         self.assertIn("1B365D", xml)
-        self.assertIn("Calibri", xml)
+        self.assertIn("Calibri", styles)
         self.assertIn("Aymen GHADGHADI", xml)
-        self.assertIn("EXPERIENCE", xml)
+        self.assertIn("EXPÉRIENCE", xml)
         self.assertIn("Acme", xml)
         self.assertIn("FORMATION", xml)
         self.assertNotIn("Do not invent", xml)

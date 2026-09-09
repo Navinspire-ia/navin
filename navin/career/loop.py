@@ -1,7 +1,8 @@
 """Career desk loop: hunt authorized sources on a wall-clock schedule.
 
 Heartbeat still only runs silent watch. This loop is the autonomous hunt:
-collect (Remotive, ATS, official APIs, open web) then watch. Never apply.
+collect (Remotive, ATS, official APIs, open web), explicitly authorized mail, then watch.
+Professional email requires its own persisted opt-in, published recipient and limits.
 Never scrape LinkedIn.
 
 Start / stop / schedule always persist, even while a hunt holds the desk lock.
@@ -246,6 +247,11 @@ def maybe_tick(
     clock = now if now is not None else _now()
     state = peek_loop(desk, now=clock)
     profile = desk.load_profile()
+    mailbox = profile.get("mailbox") or {}
+    if mailbox.get("enabled") and mailbox.get("read_replies"):
+        from navin.career.mailbox import poll_replies
+
+        poll_replies(desk)
     if not profile_is_armed(profile) and not force:
         return {
             "did_work": False,
@@ -349,6 +355,22 @@ def _run_hunt(
             }
 
         remaining = max(8.0, MAX_HUNT_S - max(0.0, time.time() - as_float(state.get("hunt_started_at"))))
+        mail_result: dict[str, Any] = {"sent": 0}
+        mail_config = desk.load_profile().get("mailbox") or {}
+        if mail_config.get("enabled") and mail_config.get("auto_send") and was_enabled and remaining > 15:
+            from navin.career.mail import run_mail_cycle
+
+            mail_budget = min(120.0, remaining - 8)
+            deadline = time.monotonic() + mail_budget
+            try:
+                mail_result = call_with_deadline(
+                    lambda: run_mail_cycle(desk, deadline=deadline), timeout_s=mail_budget,
+                    label="application-mail", thread_prefix="navin-career",
+                )
+            except Exception:
+                logger.exception("Career application mail cycle failed")
+                mail_result = {"sent": 0, "error": "mail_cycle_failed"}
+        remaining = max(8.0, MAX_HUNT_S - max(0.0, time.time() - as_float(state.get("hunt_started_at"))))
         watch_budget = min(WATCH_S, remaining)
         watch_error = ""
         try:
@@ -396,6 +418,7 @@ def _run_hunt(
                 "added": added,
                 "scanned": scanned,
                 "alerts": alerts,
+                "mail_sent": int(mail_result.get("sent") or 0),
             }
         )
         state = _finish_hunt_state(desk, state, clock=clock)
@@ -414,6 +437,7 @@ def _run_hunt(
             "loop": state,
             "hunt": hunt,
             "watch": watch,
+            "mail": mail_result,
         }
     finally:
         mark_loop_hunting(desk, False)

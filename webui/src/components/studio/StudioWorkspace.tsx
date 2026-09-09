@@ -743,6 +743,30 @@ function adsGroups(tx: Tx): StudioGroup[] {
   });
   return [
     {
+      id: "adsEngine",
+      label: tx("studio.groups.adsEngine", "Analysis engine (exports & MCP data)"),
+      cards: [
+        card(
+          "adsImportAnalyze",
+          "Audit from exports",
+          "Real numbers from your Ads Manager exports: waste, CPA, CTR, pacing.",
+          "Run the `ads` engine on my real data: action=pipeline with paths = the Ads Manager exports I attach to this message (CSV/XLSX from Google, Microsoft, Meta, LinkedIn, TikTok or Reddit; campaign report + search terms report when available) or the files under ads/imports/. Ask for my monthly budget and currency first if I did not give them. Then walk me through: account KPIs, wasted spend, high-CPA and low-CTR entities, pacing, and the proposed changes (ids, estimated savings). Write ads/ads-report.html + a Track A ads-report-* UI (Three.js, open_preview, not PDF). Do not apply anything: changes stay proposed until I approve them. No invented numbers; keep the data_gap entries visible.",
+        ),
+        card(
+          "adsWasteNegatives",
+          "Wasted spend & negatives",
+          "Search terms that spend without converting, as ready negatives.",
+          "Focus on wasted spend with the `ads` engine: action=pipeline on my search terms / keyword exports (attached or under ads/imports/), then list the search terms and keywords that spend without converting with their clicks, cost and monthly projection. Prepare the negative keyword proposals (exact match, ad group scope when known) and, once I approve them (action=changes status=approved ids=...), action=export_changes format=google_editor or microsoft_bulk so I can import the file in the editor. Save under ads/. Real exported numbers only.",
+        ),
+        card(
+          "adsChangesReview",
+          "Approve & apply changes",
+          "Review proposals, approve, export or apply via MCP.",
+          "Open the change queue with the `ads` engine: action=changes (list proposed / approved / applied). Present each proposal with its evidence and estimated monthly savings, ask me which ids to approve or reject, then record my decision (action=changes status=approved|rejected ids=...). For approved changes: action=export_changes (csv / google_editor / microsoft_bulk) or, if the platform MCP is connected, execute the mcp_plan steps one by one with the MCP write tools, verify each read-back, and mark them applied (status=applied). Never touch budgets, bids or status without an approved change id.",
+        ),
+      ],
+    },
+    {
       id: "googleAds",
       label: tx("studio.groups.googleAds", "Google Ads"),
       cards: [
@@ -762,7 +786,31 @@ function adsGroups(tx: Tx): StudioGroup[] {
           "googleAdsOptimize",
           "Weekly optimization",
           "Kill/scale decisions from recent metrics.",
-          "Pull recent Google Ads metrics via MCP `google-ads` (or CSV if unavailable). Produce a weekly kill/scale report: winners, losers, search-term negatives, budget shifts - evidence only. Save ads/google/optimize-*.md + ads-report-*.html; no mutations without explicit approval.",
+          "Pull recent Google Ads metrics via MCP `google-ads` (or CSV if unavailable), feed the rows to the `ads` engine (action=pipeline, data=rows or paths=exports). Produce a weekly kill/scale report from its findings: winners, losers, search-term negatives, budget shifts - evidence only. Save ads/google/optimize-*.md + ads-report-*.html; no mutations without an approved change id.",
+        ),
+      ],
+    },
+    {
+      id: "microsoftAds",
+      label: tx("studio.groups.microsoftAds", "Microsoft Ads"),
+      cards: [
+        card(
+          "microsoftAdsOverview",
+          "Account overview",
+          "Accounts, campaigns and reports via Microsoft Ads MCP.",
+          "Use MCP `microsoft-ads` when connected (Settings → MCP). List accessible accounts, summarize active campaigns/ad groups and a last-7-day performance report (spend, clicks, CTR, conversions) with source metrics. If MCP is missing, ask for Microsoft Advertising exports and run the `ads` engine on them - never invent numbers. Save under ads/microsoft/ + ads-report-*.html.",
+        ),
+        card(
+          "microsoftAdsStructure",
+          "Campaign structure",
+          "Search structure imported or mirrored from Google.",
+          "As paid-ads-manager for Microsoft Ads: prefer MCP `microsoft-ads` live reads first, then propose campaign → ad group → keyword structure with negatives, budgets, UET tracking checklist, and whether to import from Google Ads. Do not invent account topology. New entities stay paused unless the user explicitly asks to activate. Save ads/microsoft/structure-*.md + ads-report-*.html.",
+        ),
+        card(
+          "microsoftAdsOptimize",
+          "Weekly optimization",
+          "Kill/scale, negatives and quality score from reports.",
+          "Pull recent Microsoft Ads reports via MCP `microsoft-ads` (or exports if unavailable) and feed the rows to the `ads` engine (action=pipeline). Weekly kill/scale report: wasted spend, search-term negatives, quality score, budget shifts - evidence only. Approved changes go out through action=export_changes format=microsoft_bulk or the MCP write tools; no mutations without approval.",
         ),
       ],
     },
@@ -1370,10 +1418,10 @@ const MODULE_META: Record<
     titleDefault: "Ads studio",
     subtitleKey: "studio.ads.subtitle",
     subtitleDefault:
-      "Paid media desk: Google, Meta, TikTok, and Reddit Ads via live MCP connectors.",
+      "Paid media desk: real analysis of your exports plus Google, Microsoft, Meta, TikTok, Reddit and LinkedIn Ads via MCP.",
     tipKey: "studio.ads.tip",
     tipDefault:
-      "Connect the platform MCP under Settings → MCP, click a card, fill account / KPI in chat, then send.",
+      "Start with Audit from exports (attach your Ads Manager CSV/XLSX) or connect the platform MCP under Settings → MCP, then click a card.",
     groups: adsGroups,
   },
   seo: {

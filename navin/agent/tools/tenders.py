@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -9,7 +10,6 @@ from navin.agent.tools.base import Tool, ToolResult, tool_parameters
 from navin.agent.tools.schema import StringSchema, tool_parameters_schema
 from navin.tenders.heartbeat import HEARTBEAT_TENDERS_ACTIONS
 from navin.webui.tenders_api import normalize_tenders_action
-
 
 _READ_ACTIONS = frozenset({"status", "snapshot", "get", "search", "list", "file"})
 _TOOL_ACTIONS = (
@@ -35,6 +35,7 @@ _TOOL_ACTIONS = (
     "crm-sync",
     "discover-accept",
     "notify",
+    "retry-alerts",
     "upload",
     "file",
     "remove-file",
@@ -344,7 +345,7 @@ class TendersTool(Tool):
             # schema has no approved field and must never forge one.
             body.pop("approved", None)
         try:
-            payload = handle_tenders_action(action, body)
+            payload = await asyncio.to_thread(handle_tenders_action, action, body)
         except TenderError as exc:
             return ToolResult.error(exc.message)
         if action == "status":

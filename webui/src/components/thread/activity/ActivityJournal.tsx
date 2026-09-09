@@ -25,6 +25,7 @@ import { useTranslation } from "react-i18next";
 
 import { cliAppInitials, mcpPresetInitials } from "@/components/CliAppMentionText";
 import { FileReferenceChip } from "@/components/FileReferenceChip";
+import { ComputerSetupNotice } from "@/components/settings/ComputerSetupNotice";
 import { ActivityEvidencePreview } from "@/components/thread/activity/ActivityEvidencePreview";
 import { DiffPair } from "@/components/thread/activity/DiffPair";
 import { SandboxBadge, ShellRunCard, type ShellRunSummary } from "@/components/thread/activity/ShellRunCard";
@@ -43,6 +44,7 @@ import {
 } from "@/components/thread/activity/activityJournalModel";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { logoFallbackUrls } from "@/lib/provider-brand";
+import { computerSetupIssue } from "@/lib/computer-setup";
 import type { CliAppInfo, McpPresetInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { requestOpenBoardTask, type BoardTaskFocusRequest } from "@/lib/workbench-events";
@@ -280,6 +282,9 @@ export function ActivityDigest({
       label: t("message.activityDigestRecovered", { count: digest.recovered, defaultValue: "{{count}} fixed" }),
     });
   }
+  if (digest.setup) {
+    parts.push({ key: "setup", tone: "tool", label: t("settings.computer.setupNeeded") });
+  }
   if (digest.errors > 0) {
     parts.push({
       key: "errors",
@@ -421,6 +426,13 @@ function JournalRow({
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     toggle();
   };
+
+  const setupIssue = entry.status === "error" ? computerSetupIssue(entry.tool, entry.error) : null;
+  if (setupIssue) {
+    return <div data-kind={entry.kind} data-tone="tool" data-status="setup" data-testid="activity-journal-row">
+      <ComputerSetupNotice issue={setupIssue} />
+    </div>;
+  }
 
   return (
     <div
@@ -1016,7 +1028,7 @@ function JournalDetails({
       ) : null}
       {entry.output && entry.kind !== "cli" ? (
         <DetailBlock label={t("message.activityJournalOutput", { defaultValue: "Output" })}>
-          <pre className={OUTPUT_PRE_CLASS}>{tailText(entry.output, 4000)}</pre>
+          <pre className={OUTPUT_PRE_CLASS}>{tailText(entry.tool === "computer" ? entry.output.replace(/screenshot/gi, "Screen") : entry.output, 4000)}</pre>
         </DetailBlock>
       ) : null}
       {entry.evidence?.length ? <ActivityEvidencePreview evidence={entry.evidence} /> : null}

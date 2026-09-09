@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any
 
@@ -114,6 +115,7 @@ def snapshot(store: TenderStore | None = None) -> dict[str, Any]:
     profile = store.load_profile()
     tenders = [row for row in store.load_tenders() if looks_like_notice(row)]
     live = [row for row in tenders if not row.get("archived")]
+    from navin.bus.alerts import delivery_snapshot
     from navin.tenders.index import format_agent_status, local_paths, write_local_index
     from navin.tenders.notify import channel_readiness
 
@@ -169,6 +171,7 @@ def snapshot(store: TenderStore | None = None) -> dict[str, Any]:
         "stages": list(STAGES),
         "send_modes": ["draft", "approval", "autonomous"],
         "channels": channel_readiness(),
+        "alert_deliveries": delivery_snapshot(store, module="tenders"),
         "models": routing_snapshot(profile),
         "follow_up": _follow_up(store),
         "loop": _loop_payload(store),
@@ -287,7 +290,7 @@ def run_collect(store: TenderStore | None = None) -> dict[str, Any]:
     snap["brief"] = result.get("brief")
     snap["new"] = len(fresh)
     snap["auto_drafted"] = drafted
-    if incoming:
+    if fresh:
         from navin.tenders.notify import deliver_alert
 
         go_n = sum(1 for row in incoming if row.get("go"))
@@ -301,7 +304,12 @@ def run_collect(store: TenderStore | None = None) -> dict[str, Any]:
                 "Open #/tenders."
             ),
             level="warning" if (snap["kpis"].get("deadline_7d") or 0) else "info",
+            event_id="new_notices:" + hashlib.sha256("\n".join(sorted(str(row["id"]) for row in fresh)).encode()).hexdigest()[:24],
+            event_type="new_notices",
         )
+        from navin.bus.alerts import delivery_snapshot
+
+        snap["alert_deliveries"] = delivery_snapshot(store, module="tenders")
     return snap
 
 

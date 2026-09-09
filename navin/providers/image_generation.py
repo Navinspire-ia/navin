@@ -18,7 +18,7 @@ from navin.providers.registry import find_by_name
 from navin.utils.helpers import detect_image_mime
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
-    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "HTTP-Referer": "https://github.com/Navinspire-ia/navin",
     "X-OpenRouter-Title": "navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }

@@ -11,9 +11,10 @@ from typing import Any
 from pydantic import AliasChoices, Field
 
 from navin.agent.checkpoints import record_file_before
+from navin.agent.project_instructions import scoped_project_instructions
 from navin.agent.tools.atomic_write import encode_for
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
-from navin.agent.tools.file_state import FileStates, _hash_file, current_file_states
+from navin.agent.tools.file_state import FileStates, _hash_content, current_file_states
 from navin.agent.tools.path_utils import closest_existing_match, resolve_workspace_path
 from navin.agent.tools.schema import (
     BooleanSchema,
@@ -558,6 +559,8 @@ class ReadFileTool(_FsTool):
                         path=str(recovered), offset=offset, limit=limit,
                         pages=pages, force=force,
                     )
+                    if isinstance(result, ToolResult) and result.is_error:
+                        return ToolResult.error(note + result)
                     return note + result if isinstance(result, str) else result
                 return self._missing_path_msg("File", path, fp)
             if not fp.is_file():
@@ -571,52 +574,31 @@ class ReadFileTool(_FsTool):
             if fp.suffix.lower() in {".docx", ".xlsx", ".pptx"}:
                 return self._read_office_doc(fp)
 
+            read_mtime = fp.stat().st_mtime
             raw = fp.read_bytes()
             if not raw:
-                return f"(Empty file: {path})"
+                self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
+                return f"(Empty file: {path})" + scoped_project_instructions(self._display_workspace(), fp)
 
             mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if mime and mime.startswith("image/"):
                 return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
 
-            # Read dedup: same path + offset + limit + unchanged mtime → stub
-            # Always check for external modifications before dedup
+            # Reuse the bytes already read for MIME detection, deduplication
+            # and edit freshness. Reopening and hashing the same file four
+            # times made network-mounted and large workspaces feel stalled.
             entry = self._file_states.get(fp)
-            try:
-                current_mtime = os.path.getmtime(fp)
-            except OSError:
-                current_mtime = 0.0
             if (
                 not force
                 and entry
                 and entry.can_dedup
                 and entry.offset == offset
                 and entry.limit == limit
+                and read_mtime == entry.mtime
+                and _hash_content(raw) == entry.content_hash
             ):
-                if current_mtime != entry.mtime:
-                    # File was modified externally - force full read and mark as not dedupable
-                    entry.can_dedup = False
-                    self._file_states.record_read(fp, offset=offset, limit=limit)  # Update state with new mtime
-                    # Continue to read full content (don't return dedup message)
-                else:
-                    # File unchanged - return dedup message
-                    # But only if content is actually unchanged (not just mtime)
-                    current_hash = _hash_file(str(fp))
-                    if current_hash == entry.content_hash:
-                        return f"[File unchanged since last read: {path}]"
-                    else:
-                        # Content changed despite same mtime - force full read
-                        entry.can_dedup = False
-                        self._file_states.record_read(fp, offset=offset, limit=limit)
-            else:
-                # No previous state or marked as not dedupable - read full content
-                self._file_states.record_read(fp, offset=offset, limit=limit)
-                # Force full read by setting can_dedup to False for this read
-                if entry:
-                    entry.can_dedup = False
+                return f"[File unchanged since last read: {path}]" + scoped_project_instructions(self._display_workspace(), fp)
 
-            # Read the file content after dedup check
-            raw = fp.read_bytes()
             # Decoding also strips any BOM and normalizes CRLF -> LF before
             # line-splitting. CRLF is primarily a Windows concern (git checkouts
             # with autocrlf, editors saving CRLF) but is normalized on all
@@ -692,8 +674,8 @@ class ReadFileTool(_FsTool):
                 result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
             else:
                 result += f"\n\n(End of file - {total} lines total)"
-            self._file_states.record_read(fp, offset=offset, limit=limit)
-            return result
+            self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
+            return result + scoped_project_instructions(self._display_workspace(), fp)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1453,7 +1435,7 @@ class ListDirTool(_FsTool):
         return (
             "List the contents of a directory (project tree). "
             "Set recursive=true for a nested tree of files and folders. "
-            "Available in every agent mode/module except Ask. "
+            "Available in every agent mode/module. "
             "Heavy trees (node_modules, .git, build, ...) are listed at the "
             "point they appear but not walked, so the call stays fast."
         )
@@ -1535,12 +1517,12 @@ class ListDirTool(_FsTool):
                     items.append(f"{pfx}{item.name}")
 
             if not items:
-                return f"Directory {path} is empty"
+                return f"Directory {path} is empty" + scoped_project_instructions(self._display_workspace(), dp, directory=True)
 
             result = "\n".join(items)
             if truncated:
                 result += f"\n\n(truncated, showing first {cap} entries)"
-            return result
+            return result + scoped_project_instructions(self._display_workspace(), dp, directory=True)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:

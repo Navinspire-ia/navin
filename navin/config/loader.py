@@ -3,10 +3,12 @@
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pydantic
+from filelock import FileLock
 from loguru import logger
 from pydantic import BaseModel
 
@@ -64,13 +66,39 @@ def load_config(config_path: Path | None = None) -> Config:
         except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             raise ValueError(f"Failed to load config from {path}: {e}") from e
         if rewrite_secrets:
+            _remember_config_source(config, path)
             try:
                 save_config(config, path)
             except OSError as exc:
                 logger.warning("could not encrypt secrets in {}: {}", path, exc)
 
+    _remember_config_source(config, path)
     _apply_ssrf_whitelist(config)
     return config
+
+
+def _remember_config_source(config: Config, path: Path) -> None:
+    config._loaded_path = str(path.resolve())
+    config._loaded_values = config.model_dump(mode="json")
+
+
+_ABSENT = object()
+
+
+def _merge_config_edits(before: Any, edited: Any, latest: Any) -> Any:
+    """Overlay this caller's edits; leave concurrently changed fields intact."""
+    if edited == before:
+        return latest
+    if isinstance(before, dict) and isinstance(edited, dict):
+        merged = dict(latest) if isinstance(latest, dict) else {}
+        for key in before.keys() | edited.keys():
+            value = _merge_config_edits(before.get(key, _ABSENT), edited.get(key, _ABSENT), merged.get(key, _ABSENT))
+            if value is _ABSENT:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        return merged
+    return edited
 
 
 def _apply_ssrf_whitelist(config: Config) -> None:
@@ -151,24 +179,41 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = _configured_values(config)
-    if config.providers.openai_codex.proxy is not None:
-        data.setdefault("providers", {})["openaiCodex"] = {
-            "proxy": config.providers.openai_codex.proxy,
-        }
-
-    data = encrypt_config_data(data, path)
-    payload = json.dumps(data, indent=2, ensure_ascii=False)
-    if not payload.endswith("\n"):
-        payload += "\n"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    fd = os.open(path, flags, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(payload)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    with FileLock(str(path) + ".lock", timeout=15, mode=0o600):
+        current = config
+        if (config._loaded_path == str(path.resolve()) and config._loaded_values is not None and path.is_file()):
+            # Read directly: load_config may migrate plaintext secrets by saving,
+            # which would try to acquire this same interprocess lock again.
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            latest = Config.model_validate(_migrate_config(decrypt_config_data(raw, path)))
+            merged = _merge_config_edits(config._loaded_values, config.model_dump(mode="json"), latest.model_dump(mode="json"))
+            current = Config.model_validate(merged)
+        data = _configured_values(current)
+        if current.providers.openai_codex.proxy is not None:
+            data.setdefault("providers", {})["openaiCodex"] = {
+                "proxy": current.providers.openai_codex.proxy,
+            }
+        data = encrypt_config_data(data, path)
+        payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        temporary: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+                temporary = handle.name
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        if current is not config:
+            config.__dict__.update(current.__dict__)
+        _remember_config_source(config, path)
 
 
 def merge_missing_defaults(existing: Any, defaults: Any) -> Any:

@@ -1,6 +1,14 @@
-# Ads actions - 15 cards
+# Ads actions - 21 cards
 
-Each card sends `/ads` with a platform-specific brief. Connect the matching MCP under **Settings → MCP** for live account data.
+Each card sends `/ads` with a brief. The three engine cards work from your Ads Manager exports; the platform cards use the matching MCP under **Settings → MCP** (or exports as fallback). All numbers go through the `ads` engine.
+
+## Analysis engine (exports & MCP data)
+
+| Action | Delivers |
+| --- | --- |
+| Audit from exports | `ads` action=pipeline on attached CSV/XLSX (campaign + search terms reports): KPIs, wasted spend, high CPA, low CTR, fatigue, pacing, health score, `ads/ads-report.html`, proposed changes in `ads/changes.jsonl`. |
+| Wasted spend & negatives | Search terms and keywords that spend without converting, monthly projection, exact-match negative proposals, `google_editor` / `microsoft_bulk` export once approved. |
+| Approve & apply changes | Change queue review: approve / reject by id, bulk export or MCP execution plan with read-back verification, `applied` status. |
 
 ## Google Ads
 
@@ -9,6 +17,14 @@ Each card sends `/ads` with a platform-specific brief. Connect the matching MCP 
 | Account overview | Accessible customers, live campaign/ad-group map, last-7-day metrics via MCP `google-ads` (or export fallback). Saved under `ads/google/` + `ads-report-*.html`. |
 | Campaign structure | Search/PMax structure from live reads: campaign → ad group → keywords/themes, negatives, budgets, tracking checklist. |
 | Weekly optimization | Kill/scale report from recent metrics: winners, losers, search-term negatives, budget shifts - no mutations without approval. |
+
+## Microsoft Ads
+
+| Action | Delivers |
+| --- | --- |
+| Account overview | Accounts, campaigns/ad groups and a 7-day report via MCP `microsoft-ads` (or exports through the engine). Saved under `ads/microsoft/` + `ads-report-*.html`. |
+| Campaign structure | Search structure (import from Google or native), negatives, budgets, UET tracking checklist; new entities stay paused. |
+| Weekly optimization | Engine findings on MCP reports or exports: wasted spend, negatives, quality score, budget shifts; approved changes via `microsoft_bulk` export or MCP write tools. |
 
 ## Meta Ads
 

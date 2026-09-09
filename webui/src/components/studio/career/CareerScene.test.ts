@@ -10,6 +10,7 @@ vi.mock("@react-three/fiber", () => ({
 vi.mock("@react-three/drei", () => ({
   ContactShadows: () => null,
   Environment: () => null,
+  Lightformer: () => null,
   OrbitControls: () => null,
 }));
 

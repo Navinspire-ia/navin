@@ -18,7 +18,11 @@ from textual.widgets import Button, Input, Markdown, OptionList, Static, TextAre
 from textual.widgets.option_list import Option
 
 from navin.tui.brand import MARK, tide_text, wave_frame
+from navin.tui.markdown import install_path_styles
 from navin.tui.modes import display_user_text
+from navin.tui.paths import PATH_INK, looks_like_path
+
+install_path_styles()
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -40,6 +44,7 @@ _TOOL_ICONS: dict[str, str] = {
     "web_search": "◍",
     "web_fetch": "◍",
     "browser": "◍",
+    "computer": "▣",
     "spawn": "⑂",
     "ask_user": "?",
     "message": "›",
@@ -66,6 +71,7 @@ _TOOL_COLORS: dict[str, str] = {
     "web_search": "#E040FB",
     "web_fetch": "#E040FB",
     "browser": "#E040FB",
+    "computer": "#00E5FF",
     "board": "#7C4DFF",
     "todo": "#7C4DFF",
     "spawn": "#FF6D00",
@@ -138,7 +144,7 @@ _PATHISH_KEYS = frozenset(
 _CMD_KEYS = frozenset({"command", "cmd"})
 _SEARCH_KEYS = frozenset({"pattern", "query"})
 _URL_KEYS = frozenset({"url"})
-_PATH_COLOR = "#0369FF"
+_PATH_COLOR = PATH_INK
 _CMD_COLOR = "#FFB000"
 _SEARCH_COLOR = "#FF2E93"
 _URL_COLOR = "#E040FB"
@@ -146,26 +152,15 @@ _OP_COLOR = "#FF8F1C"
 
 
 def _arg_ink(key: str, raw: str) -> str:
-    if key in _PATHISH_KEYS or _looks_like_path(raw):
-        return _PATH_COLOR
     if key in _CMD_KEYS:
         return _CMD_COLOR
+    if key in _PATHISH_KEYS or looks_like_path(raw):
+        return _PATH_COLOR
     if key in _SEARCH_KEYS:
         return _SEARCH_COLOR
     if key in _URL_KEYS:
         return _URL_COLOR
     return _OP_COLOR
-
-
-def _looks_like_path(value: str) -> bool:
-    text = value.strip()
-    if not text:
-        return False
-    if "/" in text or "\\" in text:
-        return True
-    return text.endswith(
-        (".py", ".ts", ".tsx", ".js", ".json", ".md", ".toml", ".yml", ".yaml", ".css")
-    )
 
 
 def tool_args_markup(arguments: dict[str, Any], limit: int = 90) -> str:
@@ -616,8 +611,16 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownBlock > .code_inline,
     AssistantMessage > .assistant-body MarkdownBlock:dark > .code_inline,
     AssistantMessage > .assistant-body MarkdownBlock:light > .code_inline {
-        text-style: bold;
-        color: $primary;
+        color: $foreground;
+        background: transparent;
+    }
+    AssistantMessage > .assistant-body MarkdownBlock > .code_path,
+    AssistantMessage > .assistant-body MarkdownBlock:dark > .code_path {
+        color: #8FBC8F;
+        background: transparent;
+    }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .code_path {
+        color: #2D6A4F;
         background: transparent;
     }
     """
@@ -1122,10 +1125,16 @@ class Composer(TextArea):
         Binding("shift+enter", "newline", "Newline", show=False),
         Binding("alt+enter", "newline", "Newline", show=False),
         Binding("ctrl+a", "select_all", "Select all", show=False),
+        Binding("super+a", "select_all", "Select all", show=False),
         Binding("ctrl+v", "paste_any", "Paste", show=False),
+        Binding("super+v", "paste_any", "Paste", show=False),
+        Binding("ctrl+c", "copy_any", "Copy", show=False),
+        Binding("super+c", "copy_any", "Copy", show=False),
         Binding("ctrl+shift+v", "paste_any", "Paste", show=False),
+        Binding("super+shift+v", "paste_any", "Paste", show=False),
         Binding("shift+insert", "paste_any", "Paste", show=False),
         Binding("ctrl+f", "find", "Find", show=False),
+        Binding("super+f", "find", "Find", show=False),
         Binding("pageup", "page_chat", "Page up", show=False),
         Binding("pagedown", "page_chat_down", "Page down", show=False),
     ]
@@ -1235,6 +1244,20 @@ class Composer(TextArea):
 
     def action_newline(self) -> None:
         self.insert("\n")
+
+    def action_copy_any(self) -> None:
+        """Prefer transcript selection; otherwise copy the prompt selection."""
+        from textual.actions import SkipAction
+
+        selected = None
+        with contextlib.suppress(Exception):
+            selected = self.screen.get_selected_text()
+        if not selected:
+            selected = self.selected_text
+        if selected:
+            self.app.copy_to_clipboard(selected)
+            return
+        raise SkipAction()
 
     def action_paste_any(self) -> None:
         """Paste OS clipboard (Windows / WSL) or the in-app clipboard."""
@@ -1636,19 +1659,8 @@ def account_price_label(payload: dict[str, Any]) -> str:
     return f"${price}/month"
 
 
-def account_spend_label(payload: dict[str, Any]) -> str:
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-    if not usage:
-        return ""
-    spent = int(usage.get("spent_micro_usd") or 0) / 1_000_000
-    budget = int(usage.get("budget_micro_usd") or 0) / 1_000_000
-    if not (budget or spent):
-        return ""
-    return f"${spent:.2f} / ${budget:.2f}"
-
-
 def account_side_text(payload: dict[str, Any]) -> str:
-    """Panel body: plan, usage %, plan price, then spend / budget."""
+    """Panel body: plan, usage %, monthly price. No spent / budget dollars."""
     if not payload.get("connected"):
         return ""
     plan = str(payload.get("plan_label") or payload.get("plan") or "plan")
@@ -1659,11 +1671,7 @@ def account_side_text(payload: dict[str, Any]) -> str:
     price = account_price_label(payload)
     if price and price.casefold() != plan.casefold():
         bits.append(price)
-    lines = ["  ".join(bits)]
-    spend = account_spend_label(payload)
-    if spend:
-        lines.append(spend)
-    return "\n".join(lines)
+    return "  ".join(bits)
 
 
 def fit_path(path: str, width: int) -> str:
@@ -1685,13 +1693,13 @@ def fit_path(path: str, width: int) -> str:
     return f"{head}/{mark}/{leaf}"
 
 
-def _key_markup(key: str) -> str:
-    """Shortcut column: muted color, pad with spaces outside the markup."""
+def _key_markup(key: str, *, ink: str = "$text-muted") -> str:
+    """Shortcut column: muted by default, pad with spaces outside the markup."""
     shown = escape(key)
     pad = max(0, _KEY_WIDTH - len(key))
     if not key:
         return " " * _KEY_WIDTH
-    return f"[$text-muted]{shown}[/]{' ' * pad}"
+    return f"[{ink}]{shown}[/]{' ' * pad}"
 
 
 class SideAction(Static):
@@ -1735,6 +1743,7 @@ class SideCard(Vertical):
     SideCard:hover { color: $foreground; }
     SideCard > .card-head { height: 1; color: $foreground; }
     SideCard > .card-body { height: auto; color: $text-muted; padding: 0 0 0 8; }
+    SideCard.-accent > .card-body { color: $primary; }
     SideCard > .card-meter {
         width: 1fr;
         height: 1;
@@ -1765,6 +1774,7 @@ class SideCard(Vertical):
         id: str | None = None,
         boxed: bool = False,
         bare: bool = False,
+        accent: bool = False,
     ) -> None:
         super().__init__(id=id)
         self.key = key
@@ -1772,13 +1782,16 @@ class SideCard(Vertical):
         self.action = action
         self._body_raw = ""
         self._wrap_as_path = False
+        self._key_ink = "$primary" if accent else "$text-muted"
         if boxed:
             self.add_class("-boxed")
         if bare:
             self.add_class("-bare")
+        if accent:
+            self.add_class("-accent")
 
     def compose(self) -> ComposeResult:
-        pad = _key_markup(self.key) if self.key else (" " * _KEY_WIDTH)
+        pad = _key_markup(self.key, ink=self._key_ink) if self.key else (" " * _KEY_WIDTH)
         yield Static(f"{pad}{escape(self.title_text)}", classes="card-head", markup=True)
         yield Static("", classes="card-body", markup=True)
         yield Static("", classes="card-meter -empty")
@@ -1812,7 +1825,7 @@ class SideCard(Vertical):
 
     def set_title(self, text: str) -> None:
         self.title_text = text
-        pad = _key_markup(self.key) if self.key else (" " * _KEY_WIDTH)
+        pad = _key_markup(self.key, ink=self._key_ink) if self.key else (" " * _KEY_WIDTH)
         self.query_one(".card-head", Static).update(f"{pad}{escape(text)}")
 
     def on_click(self) -> None:
@@ -1914,7 +1927,13 @@ class Sidebar(Vertical):
             from navin.optional_live import live_modules_available
 
             if live_modules_available():
-                yield SideCard("ctrl+d", "Account", "open_account", id="side-account")
+                yield SideCard(
+                    "ctrl+d",
+                    "Account",
+                    "open_account",
+                    id="side-account",
+                    accent=True,
+                )
             yield Static("[$text-muted]navin[/]", id="side-version", markup=True)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -2038,4 +2057,6 @@ class Sidebar(Vertical):
     def set_account(self, text: str) -> None:
         with contextlib.suppress(Exception):
             body = "" if text in {"", "Account", "not connected"} else escape(text)
+            if body:
+                body = f"[$primary]{body}[/]"
             self.query_one("#side-account", SideCard).set_body(body)

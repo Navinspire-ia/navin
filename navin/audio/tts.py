@@ -12,11 +12,13 @@ from typing import Any
 
 from loguru import logger
 
+from navin.audio.models import default_voice
 from navin.audio.tts_registry import (
     get_tts_provider,
     resolve_tts_provider,
 )
 from navin.providers.registry import find_by_name
+from navin.providers.tts import delivered_response_format, wire_voice
 
 TtsProviderName = str
 
@@ -116,10 +118,10 @@ def resolve_tts_config(config: Any) -> EffectiveTtsConfig:
     voice = (getattr(voice_cfg, "voice", None) or spec.default_voice).strip() or spec.default_voice
     api_key = _resolve_tts_api_key(provider, provider_cfg, config)
     api_base = _resolve_tts_api_base(provider, provider_cfg)
-    # Voix toujours branchée quand une clé existe : provider sans clé -> Navin
-    # (clé managée du plan) puis OpenRouter BYOK (même protocole, mêmes slugs).
-    # Keep local providers on their own base URL even without a real API key.
-    if not api_key and not _is_local_tts_provider(provider):
+    # Resolve legacy automatic settings, but honor an explicit provider choice.
+    # A missing BYOK key must lead to setup, not send speech to another account.
+    explicit_provider = bool(getattr(voice_cfg, "tts_provider", None))
+    if not api_key and not explicit_provider and not _is_local_tts_provider(provider):
         for fallback in ("navin", "openrouter"):
             if provider == fallback:
                 continue
@@ -138,6 +140,10 @@ def resolve_tts_config(config: Any) -> EffectiveTtsConfig:
             api_key = fb_key
             api_base = _resolve_tts_api_base(fallback, fb_cfg)
             break
+    requested_format = (getattr(voice_cfg, "response_format", None) or "mp3").strip() or "mp3"
+    if voice.lower() == "auto":
+        voice = default_voice(model) or spec.default_voice
+    voice = wire_voice(model, voice)
     return EffectiveTtsConfig(
         provider=provider,
         model=model,
@@ -145,17 +151,13 @@ def resolve_tts_config(config: Any) -> EffectiveTtsConfig:
         auto_speak=bool(getattr(voice_cfg, "auto_speak", False)),
         api_key=api_key,
         api_base=api_base,
-        response_format=(getattr(voice_cfg, "response_format", None) or "mp3").strip() or "mp3",
+        # Announce the container the provider adapter actually delivers.
+        response_format=delivered_response_format(model, requested_format, provider=provider),
     )
 
 
 def voice_realtime_allowed(config: Any) -> bool:
-    """Pro+/Team plan gate, overridable via ``voice.realtime_enabled`` settings flag.
-
-    Realtime voice (duplex STT + TTS session) is a Pro / Ultra / Team feature.
-    Free and Plus keep STT-only transcription. Set ``voice.realtime_enabled``
-    explicitly to force-enable or force-disable regardless of plan (BYOK / dev).
-    """
+    """Live is available with Navin Pro+/Team or configured BYOK speech engines."""
     voice_cfg = getattr(config, "voice", None)
     flag = getattr(voice_cfg, "realtime_enabled", None)
     if flag is True:
@@ -163,7 +165,58 @@ def voice_realtime_allowed(config: Any) -> bool:
     if flag is False:
         return False
     plan = (getattr(getattr(config, "license", None), "plan", "") or "").strip().lower()
-    return plan in _REALTIME_VOICE_PLANS
+    if plan in _REALTIME_VOICE_PLANS:
+        return True
+    # BYOK and local speech do not consume a Navin subscription. Both sides
+    # must be selected and configured; a chat API key alone is not a voice setup.
+    from navin.audio.transcription import resolve_transcription_config
+
+    stt = resolve_transcription_config(config)
+    tts = resolve_tts_config(config)
+    return bool(getattr(getattr(config, "transcription", None), "provider", None)
+                and getattr(voice_cfg, "tts_provider", None)
+                and stt.enabled and stt.configured and tts.configured
+                and stt.provider != "navin" and tts.provider != "navin")
+
+
+def live_voice_status(config: Any, *, stt: Any = None, tts: Any = None) -> dict[str, Any]:
+    """One readiness contract for the Live button, Settings and WebSocket start."""
+    from navin.audio.transcription import resolve_transcription_config
+
+    stt = stt if stt is not None else resolve_transcription_config(config)
+    tts = tts if tts is not None else resolve_tts_config(config)
+    stt_selected = bool(getattr(getattr(config, "transcription", None), "provider", None))
+    tts_selected = bool(getattr(getattr(config, "voice", None), "tts_provider", None))
+    # Managed defaults may be resolved before catalog sync writes the fields.
+    stt_ready = stt.configured and (stt_selected or stt.provider == "navin")
+    tts_ready = tts.configured and (tts_selected or tts.provider == "navin")
+    missing: list[str] = []
+    if not stt.enabled:
+        missing.append("stt_disabled")
+    elif not stt_ready:
+        missing.append("stt_not_configured")
+    if not tts_ready:
+        missing.append("tts_not_configured")
+    allowed = voice_realtime_allowed(config)
+    if getattr(getattr(config, "voice", None), "realtime_enabled", None) is False:
+        reason = "voice_disabled"
+    elif missing:
+        reason = missing[0]
+    elif not allowed:
+        reason = "plan_required"
+    else:
+        reason = None
+    return {
+        "ready": reason is None,
+        "reason": reason,
+        "missing": missing,
+        "mode": "navin" if "navin" in {stt.provider, tts.provider} else "byok",
+        "settings_section": "voice",
+        "stt": {"provider": stt.provider, "model": getattr(stt, "model", ""),
+                "configured": stt_ready, "enabled": stt.enabled},
+        "tts": {"provider": tts.provider, "model": tts.model,
+                "configured": tts_ready, "voice": tts.voice},
+    }
 
 
 def should_cancel_tts(*, playing: bool, user_speaking: bool) -> bool:

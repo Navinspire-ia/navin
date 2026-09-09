@@ -70,6 +70,7 @@ from navin.webui.settings_api import (
     update_agent_settings,
     update_api_settings,
     update_image_generation_settings,
+    update_live_voice_settings,
     update_model_configuration,
     update_model_route,
     update_music_generation_settings,
@@ -164,7 +165,16 @@ class WebUISettingsRouter:
         if path == "/api/settings/reasoning-effort-values":
             return self._handle_settings_reasoning_effort_values(request)
         if path == "/api/settings/update":
-            return self._handle_settings_update(request)
+            response = self._handle_settings_update(request)
+            if response.status_code == 200:
+                from navin.webui.computer_api import close_disabled_computer_sessions
+
+                await close_disabled_computer_sessions(self._query(request))
+            return response
+        if path in {"/api/settings/computer/doctor", "/api/settings/computer/permissions",
+                    "/api/settings/computer/stop", "/api/settings/computer/go",
+                    "/api/settings/computer/models", "/api/settings/computer/model"}:
+            return await self._handle_computer_action(connection, request, path.rsplit("/", 1)[-1])
         if path == "/api/settings/model-configurations/create":
             return self._handle_settings_model_configuration_create(request)
         if path == "/api/settings/model-configurations/import":
@@ -223,6 +233,10 @@ class WebUISettingsRouter:
             return self._handle_settings_transcription_update(request)
         if path == "/api/settings/voice/update":
             return self._handle_settings_voice_update(request)
+        if path == "/api/settings/voice/live/update":
+            return self._handle_settings_live_voice_update(request)
+        if path == "/api/settings/voice/preview":
+            return await self._handle_settings_voice_preview(request)
         if path == "/api/settings/network-safety/update":
             return self._handle_settings_network_safety_update(request)
         if path == "/api/settings/cli-apps":
@@ -421,6 +435,40 @@ class WebUISettingsRouter:
                 "code": code,
             })
         )
+
+    async def _handle_computer_action(
+        self, connection: Any, request: WsRequest, action: str
+    ) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        if action == "permissions" and not _is_local_browser_request(connection, request.headers):
+            return self._error_response(403, "Open OS permissions from Navin on the computer being controlled")
+        from navin.computer.base import ComputerError
+        from navin.webui.computer_api import computer_control, probe_computer
+
+        try:
+            if action in {"models", "model"}:
+                from navin.webui.computer_models import (
+                    computer_models_payload,
+                    update_computer_model,
+                )
+
+                handler = computer_models_payload if action == "models" else update_computer_model
+                payload = await asyncio.to_thread(handler, self._query(request))
+            elif action in {"stop", "go"}:
+                payload = await computer_control(action)
+            elif action == "permissions":
+                kind = _query_first(self._query(request), "kind") or "screen_recording"
+                if kind not in {"all", "screen_recording", "accessibility", "automation"}:
+                    return self._error_response(400, "Unknown desktop permission")
+                payload = await probe_computer(kind)
+            else:
+                payload = await probe_computer(passive=_query_first(self._query(request), "passive") == "true")
+        except ComputerError as exc:
+            return self._error_response(400, str(exc))
+        except WebUISettingsError as exc:
+            return self._error_response(exc.status, exc.message)
+        return self._json_response(payload)
 
     def _handle_settings_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):
@@ -774,6 +822,15 @@ class WebUISettingsRouter:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload))
 
+    def _handle_settings_live_voice_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_live_voice_settings(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload))
+
     def _handle_settings_network_safety_update(self, request: WsRequest) -> Response:
         if not self._authorized(request):
             return self._unauthorized()
@@ -796,6 +853,20 @@ class WebUISettingsRouter:
         except Exception:
             self.logger.exception("failed to load CLI Apps payload")
             return self._error_response(500, "failed to load CLI Apps")
+        return self._json_response(payload)
+
+    async def _handle_settings_voice_preview(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        from navin.webui.voice_api import voice_preview_payload
+
+        try:
+            payload = await voice_preview_payload(self._query(request))
+        except WebUISettingsError as exc:
+            return self._error_response(exc.status, exc.message)
+        except Exception:
+            self.logger.exception("voice preview failed")
+            return self._error_response(502, "voice preview failed")
         return self._json_response(payload)
 
     async def _handle_settings_cli_apps_action(

@@ -13,28 +13,31 @@ import shutil
 import time
 from contextlib import suppress
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from navin import __version__
-from navin.optional_live import live_modules_available
 from navin.agent.tools.web import SEARCH_PROVIDER_OPTIONS
+from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 from navin.audio.transcription import resolve_transcription_config
 from navin.audio.transcription_registry import (
     resolve_transcription_provider,
     transcription_provider_names,
 )
-from navin.audio.tts import resolve_tts_config, voice_realtime_allowed
+from navin.audio.tts import live_voice_status, resolve_tts_config, voice_realtime_allowed
 from navin.audio.tts_registry import resolve_tts_provider, tts_provider_names
 from navin.config.loader import get_config_path, load_config, resolve_config_env_vars, save_config
 from navin.config.schema import (
+    Config,
     ModelPresetConfig,
     ProviderConfig,
     provider_supports_auth_mode,
     resolve_provider_auth_mode,
 )
 from navin.config.secrets import unlocked_secret
+from navin.optional_live import live_modules_available
 from navin.providers.connection_presets import (
     connection_payload,
     lookup_connection_base,
@@ -49,7 +52,17 @@ from navin.providers.media_credentials import (
     media_credentials_ready,
     resolve_media_tool_enabled,
 )
-from navin.providers.model_capabilities import vision_flag_for_row
+from navin.providers.media_models import (
+    MEDIA_MODEL_KINDS,
+    OPENROUTER_OUTPUT_MODALITIES,
+    media_model_kinds,
+    supports_media_model,
+)
+from navin.providers.model_capabilities import (
+    supports_grounding,
+    supports_vision,
+    vision_flag_for_row,
+)
 from navin.providers.music_generation import (
     get_music_gen_provider,
     music_gen_provider_names,
@@ -722,6 +735,7 @@ def _model_context_window(row: Any) -> int | None:
         "max_context_length",
         "max_model_len",
         "max_input_tokens",
+        "inputTokenLimit",
     ):
         value = row.get(key)
         if isinstance(value, int) and value > 0:
@@ -766,7 +780,7 @@ def _model_row_payload(row: Any) -> dict[str, Any] | None:
     description: str | None = None
     owned_by: str | None = None
     if isinstance(row, dict):
-        raw_label = row.get("display_name") or row.get("label") or row.get("name")
+        raw_label = row.get("display_name") or row.get("displayName") or row.get("label") or row.get("name")
         if isinstance(raw_label, str) and raw_label.strip() and raw_label.strip() != model_id:
             label = raw_label.strip()
         raw_description = row.get("description")
@@ -785,8 +799,26 @@ def _model_row_payload(row: Any) -> dict[str, Any] | None:
         payload["description"] = description
     if _model_row_is_free(row, model_id):
         payload["free"] = True
-    if vision_flag_for_row(model_id, row if isinstance(row, dict) else None):
-        payload["vision"] = True
+    # Keep an explicit false: the picker must not override a provider's
+    # text-only declaration with a name-based vision guess.
+    payload["vision"] = vision_flag_for_row(model_id, row if isinstance(row, dict) else None)
+    payload["media_modalities"] = media_model_kinds(model_id, row)
+    if isinstance(row, dict):
+        architecture = row.get("architecture")
+        architecture = architecture if isinstance(architecture, dict) else {}
+        output_modalities = row.get("output_modalities", architecture.get("output_modalities"))
+        if isinstance(output_modalities, list):
+            payload["output_modalities"] = [m for m in output_modalities if isinstance(m, str)]
+        from navin.audio.models import default_voice, known_voices
+
+        declared_voices = row.get("supported_voices", row.get("voices"))
+        voices = (declared_voices if isinstance(declared_voices, list)
+                  else list(known_voices(model_id)))
+        if voices:
+            payload["voices"] = [v for v in voices if isinstance(v, str) and v.strip()]
+            preferred = default_voice(model_id)
+            payload["default_voice"] = (preferred if preferred in payload["voices"]
+                                        else next(iter(payload["voices"]), ""))
     return payload
 
 
@@ -804,7 +836,7 @@ def _omniroute_keyless_rows(
 
 
 def _extract_model_rows(body: Any) -> list[dict[str, Any]]:
-    raw_rows = body.get("data") if isinstance(body, dict) else body
+    raw_rows = body.get("data", body.get("models")) if isinstance(body, dict) else body
     if not isinstance(raw_rows, list):
         return []
     rows: list[dict[str, Any]] = []
@@ -830,6 +862,9 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
         raise WebUISettingsError("provider is required")
 
     config = load_config()
+    media_kind = (_query_first(query, "modality") or "").strip()
+    if media_kind and media_kind not in MEDIA_MODEL_KINDS:
+        raise WebUISettingsError("modality must be stt, tts, image, video or music")
     resolved_provider = _resolve_settings_provider(config, provider_name)
     if resolved_provider is None:
         raise WebUISettingsError("unknown provider")
@@ -863,6 +898,8 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
             }
             for model in spec.builtin_models
         ]
+        if media_kind:
+            rows = [_model_row_payload(row) for row in rows if supports_media_model(row["id"], media_kind)]
         return {
             **base_payload,
             "status": "available",
@@ -885,6 +922,20 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
         }
 
     api_key = unlocked_secret(_resolve_env_placeholders(provider_config.api_key))
+    if media_kind in {"stt", "tts"} and not api_key:
+        # Use the same managed-key / environment resolution as actual speech.
+        # Catalog sync may not have copied the license key into providers yet.
+        speech_config = config.model_copy(deep=True)
+        if media_kind == "tts":
+            speech_config.voice.tts_provider = provider_key
+            effective_speech = resolve_tts_config(speech_config)
+        else:
+            speech_config.transcription.provider = provider_key
+            effective_speech = resolve_transcription_config(speech_config)
+        if effective_speech.provider == provider_key:
+            api_key = unlocked_secret(effective_speech.api_key)
+    if media_kind and spec.name == "navin" and not api_key:
+        api_key = unlocked_secret(config.license.managed_api_key or "")
     if _provider_requires_api_key(spec) and not api_key:
         return {
             **base_payload,
@@ -913,6 +964,14 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
 
     # The Anthropic Models API paginates (default page size 20).
     params = {"limit": "1000"} if is_anthropic_backend else None
+    if media_kind and spec.name in {"navin", "openrouter"}:
+        params = {"output_modalities": OPENROUTER_OUTPUT_MODALITIES[media_kind]}
+    native_google = bool(media_kind and spec.name == "gemini"
+                         and urlsplit(normalized_base).hostname == "generativelanguage.googleapis.com")
+    if native_google:
+        models_url = normalized_base.removesuffix("/openai") + "/models"
+        headers = {"Accept": "application/json", "x-goog-api-key": api_key}
+        params = {"pageSize": "1000"}
 
     try:
         response = httpx.get(
@@ -923,12 +982,39 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
             follow_redirects=False,
         )
         response.raise_for_status()
-        rows = _extract_model_rows(response.json())
+        body = response.json()
+        if native_google and isinstance(body, dict):
+            native_rows = list(body.get("models") or [])
+            next_page = body.get("nextPageToken")
+            for _ in range(3):
+                if not isinstance(next_page, str) or not next_page:
+                    break
+                page = httpx.get(models_url, headers=headers, params={**params, "pageToken": next_page},
+                                 timeout=10.0, follow_redirects=False)
+                page.raise_for_status()
+                next_body = page.json()
+                native_rows.extend(next_body.get("models") or [])
+                next_page = next_body.get("nextPageToken")
+            body = {"data": [
+                {**row, "id": str(row.get("name") or "").removeprefix("models/")}
+                for row in native_rows if isinstance(row, dict)
+            ]}
+        rows = _extract_model_rows(body)
+        if media_kind:
+            from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
+
+            rows = [row for row in rows if supports_media_model(row["id"], media_kind, row)]
+            recommended = {"tts": NAVIN_TTS_MODEL, "stt": NAVIN_STT_MODEL}.get(media_kind, "")
+            rows.sort(key=lambda row: (row["id"] != recommended,
+                                      not row["id"].startswith("qwen/"),
+                                      str(row.get("label") or row["id"]).lower()))
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         if status in {401, 403}:
             keyless_rows = _omniroute_keyless_rows(spec, api_base, api_key)
             if keyless_rows is not None:
+                if media_kind:
+                    keyless_rows = [row for row in keyless_rows if supports_media_model(row["id"], media_kind, row)]
                 return {
                     **base_payload,
                     "status": "available",
@@ -1382,14 +1468,13 @@ def _media_provider_row(
 def _media_display_provider(configured_choice: Any, resolved: str, usable: bool) -> str:
     """Return the provider Settings should display for STT / TTS.
 
-    An explicit choice always shows, even when its credential is missing, so a
-    user never loses track of what they picked. With no choice at all, only a
-    fallback that can actually run is worth showing; anything else would put a
-    provider on screen that the user neither picked nor can use.
+    Preserve explicit choices and the managed Navin default. A legacy BYOK
+    fallback is not a saved Live setup: displaying it as selected prevents the
+    user from choosing that same provider and enabling the Save button.
     """
     if str(configured_choice or "").strip():
         return resolved
-    return resolved if usable else ""
+    return resolved if usable and resolved == "navin" else ""
 
 
 def _visible_media_provider_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1848,10 +1933,8 @@ def settings_payload(
     image_config = config.tools.image_generation
     transcription = resolve_transcription_config(config)
     tts = resolve_tts_config(config)
-    # The resolvers fall back to a runtime provider so the mic and the voice
-    # still work off whichever key is around. Settings may show that fallback
-    # only when it can actually run: an unusable one (Navin without a plan) is
-    # not a setup, it is a provider the user never chose.
+    # Keep Settings aligned with Live readiness: BYOK speech providers must
+    # be explicitly selected, while a usable Navin default is automatic.
     transcription_provider = _media_display_provider(
         config.transcription.provider, transcription.provider, transcription.configured
     )
@@ -1966,6 +2049,8 @@ def settings_payload(
                 defaults.provider, defaults.model, "text"
             ),
             "modality": "text",
+            "vision": supports_vision(defaults.model),
+            "grounding": supports_grounding(defaults.model),
             "unit_price_usd": None,
             "price_note": None,
         }
@@ -2002,6 +2087,8 @@ def settings_payload(
                     preset.provider, preset.model, modality
                 ),
                 "modality": modality,
+                "vision": supports_vision(preset.model, input_modalities=preset.input_modalities),
+                "grounding": supports_grounding(preset.model, input_modalities=preset.input_modalities),
                 "unit_price_usd": getattr(preset, "unit_price_usd", None),
                 "price_note": getattr(preset, "price_note", None),
                 "billing_unit": getattr(preset, "billing_unit", None),
@@ -2076,6 +2163,7 @@ def settings_payload(
             "headless": config.tools.browser.headless,
             "live_view": config.tools.browser.live_view,
         },
+        "computer": _computer_payload(config),
         "observability": {
             "provider": "langfuse",
             "configured": bool(
@@ -2173,7 +2261,7 @@ def settings_payload(
                 ),
                 transcription.configured,
             ),
-            "model": transcription.model,
+            "model": transcription.model if transcription_provider else "",
             "language": transcription.language,
             "max_duration_sec": transcription.max_duration_sec,
             "max_upload_mb": transcription.max_upload_mb,
@@ -2186,13 +2274,15 @@ def settings_payload(
         "voice": {
             "tts_provider": tts_provider,
             "tts_provider_configured": bool(tts_provider) and tts.configured,
-            "tts_model": tts.model,
-            "voice": tts.voice,
+            "tts_model": tts.model if tts_provider else "",
+            "voice": tts.voice if tts_provider else "auto",
             "auto_speak": tts.auto_speak,
             "response_format": tts.response_format,
             "realtime_enabled": getattr(config.voice, "realtime_enabled", None),
             "realtime_allowed": voice_realtime_allowed(config),
             "realtime_required_plans": ["pro", "ultra", "team"],
+            "live": live_voice_status(config),
+            "managed_defaults": {"stt_model": NAVIN_STT_MODEL, "tts_model": NAVIN_TTS_MODEL, "voice": "auto"},
             "providers": _tts_provider_rows(config),
             "managed_models": [
                 {
@@ -2255,7 +2345,6 @@ def settings_payload(
             "justInstalled": consume_completed_update(),
         },
         "docs": _docs_payload(),
-        "live_account": live_account,
     }
     return decorate_settings_payload(
         payload,
@@ -2421,8 +2510,8 @@ def update_agent_settings(query: QueryParams) -> dict[str, Any]:
     if forge_host is not None:
         changed = _apply_forge_host(config, query, forge_host) or changed
 
-    # The agent's browser (Settings > Tools). Both only bite when the next
-    # browser session starts, so neither asks for a restart.
+    # Settings > Computer > Agent browser. Window mode follows the next
+    # launch; live view follows the next action. Neither needs a restart.
     browser_headless = _query_first_alias(query, "browser_headless", "browserHeadless")
     if browser_headless is not None:
         parsed_flag = _parse_bool(browser_headless, "browser_headless")
@@ -2437,9 +2526,160 @@ def update_agent_settings(query: QueryParams) -> dict[str, Any]:
             config.tools.browser.live_view = parsed_flag
             changed = True
 
+    # Settings > Computer. Disabling closes live sessions; other options are
+    # reread before the next action. Tool registration follows on the next turn.
+    computer_changed, computer_restart = _apply_computer_settings(config, query)
+    changed = changed or computer_changed
+    restart_required = restart_required or computer_restart
+
     if changed:
         save_config(config)
     return settings_payload(requires_restart=restart_required)
+
+
+_COMPUTER_ASK_VALUES = ("never", "destructive", "always")
+_COMPUTER_SESSION_MODES = ("shared", "dedicated")
+
+
+def _computer_payload(config: Any) -> dict[str, Any]:
+    """What Settings shows for the desktop-control tool."""
+    cfg = config.tools.computer
+    payload: dict[str, Any] = {
+        "enabled": bool(cfg.enabled),
+        "ask": str(cfg.ask),
+        "session_mode": str(cfg.session_mode),
+        "live_view": bool(cfg.live_view),
+        "audit_log": bool(cfg.audit_log),
+        "anthropic_native": bool(cfg.anthropic_native),
+        "protected_apps": list(cfg.protected_apps),
+        "route_preset": config.model_routes.get("computer") or "",
+        "stopped": None,
+        "backend": "",
+        "backend_reason": "",
+        "backend_preference": str(cfg.backend),
+        "display": cfg.display or "",
+        "audit_screenshots": bool(cfg.audit_screenshots),
+        "settle_ms": int(cfg.settle_ms),
+        "type_delay_ms": int(cfg.type_delay_ms),
+        "max_actions_per_turn": int(cfg.max_actions_per_turn),
+        "screenshot_max_width": int(cfg.screenshot_max_width),
+        "screenshot_max_height": int(cfg.screenshot_max_height),
+        "user_takeover_px": int(cfg.user_takeover_px),
+        "failsafe_corner": bool(cfg.failsafe_corner),
+        "allowed_apps": list(cfg.allowed_apps),
+        "blocked_apps": list(cfg.blocked_apps),
+        "ask_apps": list(cfg.ask_apps),
+    }
+    try:
+        from navin.computer.detect import detect_platform
+        from navin.computer.policy import stop_reason
+
+        payload["stopped"] = stop_reason()
+        choice = detect_platform(preferred=str(cfg.backend), display=cfg.display)
+        payload["backend"] = choice.name
+        payload["backend_reason"] = choice.reason
+        payload["backend_notes"] = list(choice.notes)
+    except Exception:  # noqa: BLE001 - never fail the settings page over a probe
+        pass
+    from navin.providers.model_capabilities import supports_grounding, supports_vision
+
+    preset = config.model_presets.get(payload["route_preset"]) or config.resolve_default_preset()
+    payload["model"] = preset.model
+    payload["model_provider"] = preset.provider if preset.provider != "auto" else config.get_provider_name(preset.model)
+    payload["model_vision"] = supports_vision(preset.model, input_modalities=preset.input_modalities)
+    payload["model_grounding"] = supports_grounding(preset.model, input_modalities=preset.input_modalities)
+    return payload
+
+
+def _apply_computer_settings(config: Any, query: QueryParams) -> tuple[bool, bool]:
+    """Apply ``computer_*`` query fields; returns (changed, restart_required)."""
+    cfg = config.tools.computer
+    changed = False
+    restart = False
+
+    enabled = _query_first_alias(query, "computer_enabled", "computerEnabled")
+    if enabled is not None:
+        parsed_flag = _parse_bool(enabled, "computer_enabled")
+        if cfg.enabled != parsed_flag:
+            cfg.enabled = parsed_flag
+            changed = True
+
+    ask = _query_first_alias(query, "computer_ask", "computerAsk")
+    if ask is not None:
+        value = ask.strip().lower()
+        if value not in _COMPUTER_ASK_VALUES:
+            raise WebUISettingsError("computer_ask must be never, destructive or always")
+        if cfg.ask != value:
+            cfg.ask = value  # type: ignore[assignment]
+            changed = True
+
+    session_mode = _query_first_alias(query, "computer_session_mode", "computerSessionMode")
+    if session_mode is not None:
+        value = session_mode.strip().lower()
+        if value not in _COMPUTER_SESSION_MODES:
+            raise WebUISettingsError("computer_session_mode must be shared or dedicated")
+        if cfg.session_mode != value:
+            cfg.session_mode = value  # type: ignore[assignment]
+            changed = True
+
+    for field, names in (
+        ("live_view", ("computer_live_view", "computerLiveView")),
+        ("audit_log", ("computer_audit_log", "computerAuditLog")),
+        ("anthropic_native", ("computer_anthropic_native", "computerAnthropicNative")),
+        ("audit_screenshots", ("computer_audit_screenshots", "computerAuditScreenshots")),
+        ("failsafe_corner", ("computer_failsafe_corner", "computerFailsafeCorner")),
+    ):
+        raw = _query_first_alias(query, *names)
+        if raw is None:
+            continue
+        parsed_flag = _parse_bool(raw, names[0])
+        if getattr(cfg, field) != parsed_flag:
+            setattr(cfg, field, parsed_flag)
+            changed = True
+
+    from pydantic import ValidationError
+
+    from navin.agent.tools.computer import ComputerToolConfig
+
+    updates: dict[str, Any] = {}
+    for field in (
+        "backend", "display", "settle_ms", "type_delay_ms", "max_actions_per_turn",
+        "screenshot_max_width", "screenshot_max_height", "user_takeover_px",
+        "protected_apps", "allowed_apps", "blocked_apps", "ask_apps",
+    ):
+        camel = "computer" + "".join(part.title() for part in field.split("_"))
+        raw = _query_first_alias(query, f"computer_{field}", camel)
+        if raw is None:
+            continue
+        value: Any = raw.strip()
+        if field.endswith("_apps"):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise WebUISettingsError(f"computer_{field} must be a JSON list of application names") from exc
+            if (not isinstance(value, list) or len(value) > 100
+                    or any(not isinstance(item, str) or len(item) > 256 or "\x00" in item for item in value)):
+                raise WebUISettingsError(f"computer_{field} must contain at most 100 application names")
+            value = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        elif field == "display":
+            if len(value) > 256 or "\x00" in value:
+                raise WebUISettingsError("invalid computer_display")
+            value = value or None
+        updates[field] = value
+    if updates:
+        try:
+            validated = ComputerToolConfig.model_validate({**cfg.model_dump(), **updates})
+        except ValidationError as exc:
+            error = exc.errors(include_input=False)[0]
+            field = ".".join(str(part) for part in error["loc"])
+            raise WebUISettingsError(f"computer_{field}: {error['msg']}") from exc
+        for field in updates:
+            value = getattr(validated, field)
+            if getattr(cfg, field) != value:
+                setattr(cfg, field, value)
+                changed = True
+
+    return changed, restart
 
 
 def create_model_configuration(query: QueryParams) -> dict[str, Any]:
@@ -2748,8 +2988,9 @@ def update_model_route(query: QueryParams) -> dict[str, Any]:
     """Assign (or clear) the model preset used for a task role.
 
     ``role`` is a short slug such as "deep", "fast", "search", "plan",
-    "review", "security", "dev", or "docs". ``preset`` is the model preset
-    name to route that role to; an empty ``preset`` clears the route.
+    "review", "security", "dev", "docs", "vision" or "computer". ``preset`` is
+    the model preset name to route that role to; an empty ``preset`` clears
+    the route.
     """
     role = (_query_first(query, "role") or "").strip().lower()
     if not role or not _MODEL_ROUTE_ROLE_RE.match(role):
@@ -2761,6 +3002,15 @@ def update_model_route(query: QueryParams) -> dict[str, Any]:
     if preset:
         if preset != "default" and preset not in config.model_presets:
             raise WebUISettingsError("unknown model preset")
+        selected = config.resolve_default_preset() if preset == "default" else config.model_presets[preset]
+        if (getattr(selected, "modality", "text") != "text" or _is_media_model_slug(selected.model)):
+            raise WebUISettingsError("task routing requires a chat model, not a media generator")
+        if role in {"vision", "computer"}:
+            inputs = getattr(selected, "input_modalities", None)
+            compatible = (supports_grounding(selected.model, input_modalities=inputs) if role == "computer"
+                          else supports_vision(selected.model, input_modalities=inputs))
+            if not compatible:
+                raise WebUISettingsError("this task requires a compatible vision model")
         if config.model_routes.get(role) != preset:
             config.model_routes[role] = preset
             changed = True
@@ -3436,6 +3686,12 @@ def update_video_generation_settings(query: QueryParams) -> dict[str, Any]:
 
 def update_transcription_settings(query: QueryParams) -> dict[str, Any]:
     config = load_config()
+    if _apply_transcription_settings(config, query):
+        save_config(config)
+    return settings_payload()
+
+
+def _apply_transcription_settings(config: Config, query: QueryParams) -> bool:
     transcription = config.transcription
     changed = False
 
@@ -3456,6 +3712,8 @@ def update_transcription_settings(query: QueryParams) -> dict[str, Any]:
             provider = provider_spec.name
         if transcription.provider != provider:
             transcription.provider = provider
+            if _query_first(query, "model") is None:
+                transcription.model = ""
             changed = True
 
     model = _query_first(query, "model")
@@ -3500,9 +3758,10 @@ def update_transcription_settings(query: QueryParams) -> dict[str, Any]:
             transcription.max_upload_mb = parsed_upload
             changed = True
 
-    if changed:
-        save_config(config)
-    return settings_payload()
+    if (provider is not None or model is not None) and not transcription.selection_explicit:
+        transcription.selection_explicit = True
+        changed = True
+    return changed
 
 
 def update_music_generation_settings(query: QueryParams) -> dict[str, Any]:
@@ -3561,6 +3820,22 @@ def update_music_generation_settings(query: QueryParams) -> dict[str, Any]:
 
 def update_voice_settings(query: QueryParams) -> dict[str, Any]:
     config = load_config()
+    if _apply_voice_settings(config, query):
+        save_config(config)
+    return settings_payload()
+
+
+def update_live_voice_settings(query: QueryParams) -> dict[str, Any]:
+    """Validate and save both speech engines together, without resetting either draft."""
+    config = load_config()
+    stt_changed = _apply_transcription_settings(config, query)
+    tts_changed = _apply_voice_settings(config, query)
+    if stt_changed or tts_changed:
+        save_config(config)
+    return settings_payload()
+
+
+def _apply_voice_settings(config: Config, query: QueryParams) -> bool:
     voice = config.voice
     changed = False
 
@@ -3574,6 +3849,10 @@ def update_voice_settings(query: QueryParams) -> dict[str, Any]:
             tts_provider = provider_spec.name
         if voice.tts_provider != tts_provider:
             voice.tts_provider = tts_provider
+            if _query_first_alias(query, "tts_model", "ttsModel") is None:
+                voice.tts_model = ""
+            if _query_first(query, "voice") is None:
+                voice.voice = "auto"
             changed = True
 
     tts_model = _query_first_alias(query, "tts_model", "ttsModel")
@@ -3583,11 +3862,13 @@ def update_voice_settings(query: QueryParams) -> dict[str, Any]:
             raise WebUISettingsError("TTS model is too long")
         if voice.tts_model != tts_model:
             voice.tts_model = tts_model
+            if _query_first(query, "voice") is None:
+                voice.voice = "auto"
             changed = True
 
     voice_name = _query_first(query, "voice")
     if voice_name is not None:
-        voice_name = voice_name.strip() or "alloy"
+        voice_name = voice_name.strip() or "auto"
         if len(voice_name) > 80:
             raise WebUISettingsError("voice name is too long")
         if voice.voice != voice_name:
@@ -3621,6 +3902,7 @@ def update_voice_settings(query: QueryParams) -> dict[str, Any]:
             voice.realtime_enabled = parsed_flag
             changed = True
 
-    if changed:
-        save_config(config)
-    return settings_payload()
+    if (tts_provider is not None or tts_model is not None) and not voice.selection_explicit:
+        voice.selection_explicit = True
+        changed = True
+    return changed

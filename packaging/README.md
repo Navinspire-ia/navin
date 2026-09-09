@@ -88,6 +88,7 @@ une distribution sans friction, exporter `MACOS_SIGN_IDENTITY` (certificat
 ```bash
 make aws-upload                 # publie os/ vers S3 sous v<version>/
 make aws-upload VERSION=1.1.0   # autre version
+make aws-upload VERSION=2.0.1 PLATFORM=linux
 ```
 
 `scripts/publish-os-to-s3.sh` lit les identifiants AWS dans `.env`, téléverse
@@ -97,7 +98,9 @@ version = nouveau préfixe), génère le `SHA256SUMS.txt`, et met à jour
 dynamiquement : aucune édition manuelle de `site/src/lib/releases.ts` n'est
 nécessaire pour publier une version. Les artefacts absents (macOS pas encore
 construit, par exemple) sont signalés sans bloquer, et un second passage
-complète le manifeste.
+complète le manifeste. `PLATFORM=linux|windows|macos` n'envoie que cet OS :
+les autres fichiers déjà sur S3 restent, checksums et manifeste d'update
+sont fusionnés.
 
 Le manifeste doit être lisible publiquement, sinon `getReleases()` retombe
 sans erreur sur le catalogue de secours et la page de téléchargement continue
@@ -292,6 +295,24 @@ c'est le *self-heal* de `navin/cli_link.py`, exécuté au premier lancement de
 l'app, qui crée les liens (`navin` sur POSIX, `navin.cmd` + shim WSL sur
 Windows) et étend le PATH utilisateur. Taper `navin .` dans PowerShell, WSL,
 ou un terminal Linux/macOS ouvre l'éditeur sur le dossier courant.
+
+## Signature Windows et SmartScreen
+
+Azure Artifact Signing (compte `Navin`, profil `navin-certif`) signe le setup
+NSIS, le MSI, `Navin.exe`, `navin.exe`, `NavinUpdater.exe` et
+`navin-sandbox.exe` avec la meme identite. `make windows` refuse de publier
+si `Get-AuthenticodeSignature` ne rend pas `Valid`.
+
+L'ecran bleu SmartScreen ("Windows a protege votre ordinateur") peut
+quand meme apparaitre : Microsoft note aussi la reputation du hash
+telecharge. Un certificat EV ne l'evite plus tout seul. Ne jamais retoucher
+un fichier apres signature. Pour controler l'installeur reellement
+telecharge :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\verify-windows-signatures.ps1 `
+  -Path .\Navin-Desktop-2.0.1-windows-x64-setup.exe
+```
 
 ## Mises à jour signées
 

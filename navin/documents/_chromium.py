@@ -103,10 +103,15 @@ def find_chromium(explicit: str | None = None) -> str:
     # would abort the search before the installed browsers are even considered.
     with suppress(RuntimeError, OSError):
         home = Path.home()
+        if os.name != "nt":
+            candidates.extend(str(home / app.lstrip("/")) for app in _MAC_CHROMIUM_APPS)
         raw_caches += [
             str(home / ".cache/ms-playwright"),
             str(home / "Library/Caches/ms-playwright"),
         ]
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        raw_caches.append(str(Path(xdg_cache) / "ms-playwright"))
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         raw_caches.append(str(Path(local_appdata) / "ms-playwright"))
@@ -125,6 +130,8 @@ def find_chromium(explicit: str | None = None) -> str:
                 "chrome-linux64/chrome",
                 "chrome-linux/chrome",
                 "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+                "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
                 "chrome-win64/chrome.exe",
                 "chrome-win/chrome.exe",
             ):

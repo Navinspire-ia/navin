@@ -105,7 +105,7 @@ def handle_marketing_action(action: str, body: dict[str, Any] | None = None) -> 
         incoming = _object_or_fields(
             body,
             "settings",
-            ("execution_mode", "auto_publish", "ai_assist", "winner_multiple", "publish", "analytics", "channels", "utm_campaign"),
+            ("execution_mode", "auto_publish", "ai_assist", "winner_multiple", "publish", "analytics", "channels", "utm_campaign", "media_base_url"),
         )
         # Nested connector forms legitimately send empty strings to clear a field.
         for key in ("publish", "analytics", "channels"):
@@ -113,6 +113,8 @@ def handle_marketing_action(action: str, body: dict[str, Any] | None = None) -> 
                 incoming[key] = body[key]
         if "utm_campaign" in body and isinstance(body.get("utm_campaign"), str):
             incoming["utm_campaign"] = body["utm_campaign"]
+        if "media_base_url" in body and isinstance(body.get("media_base_url"), str):
+            incoming["media_base_url"] = body["media_base_url"]
         if not incoming:
             raise MarketingError("settings payload is required")
         store.save_settings(incoming)
@@ -124,6 +126,28 @@ def handle_marketing_action(action: str, body: dict[str, Any] | None = None) -> 
         store.save_secret(name, str(body.get("value") or ""))
         store.append_journal({"kind": "settings", "text": f"secret {name} {'set' if body.get('value') else 'cleared'}"})
         return snapshot(store)
+    if act in {"oauth-configure", "oauth-connect", "oauth-disconnect", "oauth-select-account"}:
+        from navin.agent.tools.context import current_request_context
+        from navin.marketing.oauth import (
+            configure_connection,
+            disconnect,
+            select_account,
+            start_connection,
+        )
+
+        provider = str(body.get("provider") or "")
+        if act == "oauth-configure":
+            result = configure_connection(store, provider, body)
+        elif act == "oauth-connect":
+            context = current_request_context()
+            result = start_connection(store, provider, session_key=context.session_key if context else "")
+        elif act == "oauth-disconnect":
+            result = disconnect(store, provider)
+        else:
+            result = select_account(store, provider, str(body.get("account_id") or ""))
+        snap = snapshot(store)
+        snap["oauth"] = result
+        return snap
     if act in {"connection", "test-connection"}:
         channel = str(body.get("channel") or "").strip().lower()
         if channel in {"analytics", "plausible", "matomo"}:
@@ -143,14 +167,35 @@ def handle_marketing_action(action: str, body: dict[str, Any] | None = None) -> 
                 for cid in ids
             ]
             report = {
-                "sent": [row for row in results if row.get("ok") and not row.get("dry_run")],
-                "failed": [row for row in results if not row.get("ok")],
+                "sent": [row for row in results if row.get("ok") and not row.get("dry_run") and not row.get("pending")],
+                "failed": [row for row in results if not row.get("ok") and not row.get("pending")],
                 "preview": [row for row in results if row.get("dry_run")],
+                "pending": [row for row in results if row.get("pending")],
             }
         else:
-            report = publish_due(store, limit=_int_field(body, "limit", 0) or None)
+            report = publish_due(store, limit=_int_field(body, "limit", 0) or None, dry_run=dry_run)
         snap = snapshot(store)
         snap["publish"] = report
+        return snap
+    if act == "content-options":
+        from navin.marketing.publication_options import update_publication_options
+
+        update_publication_options(store, str(body.get("id") or ""), body)
+        return snapshot(store)
+    if act in {"creator-info", "content-capabilities", "publish-status"}:
+        from navin.marketing.publish import content_capabilities, creator_info, publish_status
+
+        if act == "creator-info":
+            result = creator_info(store, str(body.get("channel") or "tiktok"))
+            key = "creator_info"
+        elif act == "content-capabilities":
+            result = content_capabilities(store, store.get_content(str(body.get("id") or "")))
+            key = "content_capabilities"
+        else:
+            result = publish_status(store, str(body.get("id") or ""))
+            key = "publication_status"
+        snap = snapshot(store)
+        snap[key] = result
         return snap
     if act in {"approve-content", "content-approve"}:
         cid = str(body.get("id") or "").strip()

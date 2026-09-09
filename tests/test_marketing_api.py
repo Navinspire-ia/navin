@@ -7,6 +7,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from navin.agent.model_routes import (
+    PRODUCT_MODULE_ROUTE_ROLES,
+    WORKFLOW_ROUTE_ROLES,
+    product_module_role,
+    workflow_role_for_content,
+)
 from navin.agent.tools.marketing import MarketingTool
 from navin.command.builtin import (
     _DELIVERY_WORKFLOWS,
@@ -14,12 +20,6 @@ from navin.command.builtin import (
     _WORKFLOW_BRIEFS,
     BUILTIN_COMMAND_SPECS,
     builtin_command_palette,
-)
-from navin.agent.model_routes import (
-    PRODUCT_MODULE_ROUTE_ROLES,
-    WORKFLOW_ROUTE_ROLES,
-    product_module_role,
-    workflow_role_for_content,
 )
 from navin.command.modules import (
     CODE_HIDDEN_COMMANDS,
@@ -95,7 +95,7 @@ class MarketingProductModuleTest(unittest.TestCase):
         self.assertIn('id: "home"', desk)
         self.assertIn('id: "qa"', desk)
         self.assertIn("MarketingQA", desk)
-        self.assertIn('useState<Pane>("home")', desk)
+        self.assertIn('id: "settings"', desk)
         self.assertIn("MarketingKpiGrid", desk)
         self.assertIn("MarketingScene", desk)
         self.assertIn('run("pipeline"', desk)

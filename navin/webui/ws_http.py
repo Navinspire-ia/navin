@@ -26,6 +26,12 @@ from loguru import logger
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from navin.agent.tools.context import (
+    RequestContext,
+    bind_request_context,
+    request_context,
+    reset_request_context,
+)
 from navin.agent.tools.shell import request_exec_policy_reload
 from navin.board.notify import publish_board_update
 from navin.board.store import BoardError
@@ -34,6 +40,7 @@ from navin.cron.recurrence import RecurrenceError, recurrence_from_payload
 from navin.cron.session_turns import is_bound_cron_job
 from navin.cron.types import CronJob, CronLimits, CronSchedule
 from navin.dap.session import DebugSessionError
+from navin.optional_live import live_modules_available
 from navin.runtime_context import public_history_messages
 from navin.templates.apps.install import AppTemplateError
 from navin.triggers.local_types import LocalTrigger
@@ -45,7 +52,6 @@ from navin.utils.document_templates import (
 )
 from navin.utils.media_templates import list_media_templates
 from navin.utils.subagent_channel_display import scrub_subagent_messages_for_channel
-from navin.optional_live import live_modules_available
 
 if live_modules_available():
     try:
@@ -673,6 +679,9 @@ class GatewayHTTPHandler:
         # OpenRouter OAuth PKCE handoff (browser redirect target, loopback only)
         if got == "/webui/openrouter/callback":
             return await self._handle_webui_openrouter_callback(connection, request)
+
+        if got == "/api/marketing/oauth/callback":
+            return await self._handle_marketing_oauth_callback(request)
 
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
@@ -2585,6 +2594,41 @@ class GatewayHTTPHandler:
             return _http_error(e.status, e.message)
         return _http_json_response(payload)
 
+    def _studio_request_context(
+        self,
+        module: str,
+        action: str,
+        query: dict[str, list[str]],
+        body: dict[str, Any],
+        *,
+        session_key: str | None = None,
+    ) -> RequestContext:
+        """Use the desk's bound project when loading task-specific skills."""
+        raw_key = str(
+            session_key
+            or _query_first(query, "session_key")
+            or body.get("session_key")
+            or ""
+        ).strip()
+        key = _decode_api_key(raw_key) if raw_key else None
+        if raw_key and (key is None or not _is_websocket_channel_session_key(key)):
+            raise ValueError("invalid session key")
+        controller = getattr(self, "workspaces", None)
+        scope = (
+            controller.scope_for_session_key(key) if key else controller.default_scope()
+        ) if controller is not None else None
+        return RequestContext(
+            channel="websocket",
+            chat_id=key.partition(":")[2] if key else module,
+            session_key=key,
+            workspace=Path(scope.project_path) if scope is not None else None,
+            metadata={
+                "product_module": module,
+                "action": action,
+                "disabled_skills": sorted(getattr(self, "disabled_skills", set())),
+            },
+        )
+
     async def _handle_tenders(self, request: WsRequest) -> Response:
         """Navin Tenders desk. Same store as the `tenders` tool."""
         if not self.check_api_token(request):
@@ -2607,7 +2651,12 @@ class GatewayHTTPHandler:
         from navin.webui.tenders_api import handle_tenders_action
 
         try:
-            payload = await asyncio.to_thread(handle_tenders_action, action, body)
+            context = self._studio_request_context("tenders", action, query, body)
+        except ValueError as exc:
+            return _http_error(400, str(exc))
+        try:
+            with request_context(context):
+                payload = await asyncio.to_thread(handle_tenders_action, action, body)
         except TenderError as exc:
             return _http_error(exc.status, exc.message)
         except Exception as exc:
@@ -2667,7 +2716,12 @@ class GatewayHTTPHandler:
         from navin.webui.career_api import handle_career_action
 
         try:
-            payload = await asyncio.to_thread(handle_career_action, action, body)
+            context = self._studio_request_context("career", action, query, body)
+        except ValueError as exc:
+            return _http_error(400, str(exc))
+        try:
+            with request_context(context):
+                payload = await asyncio.to_thread(handle_career_action, action, body)
         except CareerError as exc:
             return _http_error(exc.status, exc.message)
         except Exception as exc:
@@ -2743,13 +2797,63 @@ class GatewayHTTPHandler:
         from navin.webui.marketing_desk_api import handle_marketing_action
 
         try:
-            payload = await asyncio.to_thread(handle_marketing_action, action, body)
+            context = self._studio_request_context("marketing", action, query, body)
+        except ValueError as exc:
+            return _http_error(400, str(exc))
+        try:
+            if action == "oauth-connect":
+                from urllib.parse import urlsplit
+
+                from navin.marketing.oauth import connection_status
+                from navin.marketing.store import MarketingStore
+
+                target = connection_status(MarketingStore(), str(body.get("provider") or ""))["redirect_uri"]
+                host = _safe_host_header(_case_insensitive_header(request.headers, "Host"))
+                if target and urlsplit(target).netloc.lower() != host.lower():
+                    return _http_error(400, "Open Navin at the public callback address before connecting; authorization must finish in the same browser origin")
+            with request_context(context):
+                payload = await asyncio.to_thread(handle_marketing_action, action, body)
         except MarketingError as exc:
             return _http_error(exc.status, exc.message)
         except Exception as exc:
             self._log.exception("marketing desk failed action={}", action)
             return _http_error(500, str(exc) or "marketing desk failed")
-        return _http_json_response(payload)
+        cookie = (payload.get("oauth") or {}).pop("_set_cookie", "")
+        response = _http_json_response(payload)
+        response.headers["Cache-Control"] = "no-store"
+        if cookie:
+            response.headers["Set-Cookie"] = cookie
+        return response
+
+    async def _handle_marketing_oauth_callback(self, request: WsRequest) -> Response:
+        """Public provider return, gated by one-use state and an HttpOnly cookie."""
+        from urllib.parse import urlencode
+
+        from navin.marketing.errors import MarketingError
+        from navin.marketing.oauth import CALLBACK_PATH, cookie_name, finish_connection
+        from navin.marketing.store import MarketingStore
+
+        query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
+        destination = {"pane": "settings"}
+        try:
+            result = await asyncio.to_thread(
+                finish_connection, MarketingStore(), query,
+                _case_insensitive_header(request.headers, "Cookie"),
+            )
+            if result.get("session_key"):
+                destination["chat"] = str(result["session_key"])
+        except MarketingError as exc:
+            destination["oauth_error"] = exc.message
+        response = _http_response(
+            b"", status=303,
+            extra_headers=[
+                ("Location", "/#/marketing?" + urlencode(destination)),
+                ("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer"),
+            ],
+        )
+        if query.get("state"):
+            response.headers["Set-Cookie"] = f"{cookie_name(query['state'])}=; Path={CALLBACK_PATH}; Max-Age=0; HttpOnly; SameSite=Lax"
+        return response
 
     async def _handle_meeting(self, request: WsRequest, key: str | None) -> Response:
         """Meeting minutes and grounded answers, without going through the agent."""
@@ -2776,6 +2880,11 @@ class GatewayHTTPHandler:
 
         speakers_raw = body.get("speakers")
         speakers = [str(x) for x in speakers_raw] if isinstance(speakers_raw, list) else []
+        try:
+            context = self._studio_request_context("meeting", mode, query, body, session_key=key)
+        except ValueError as exc:
+            return _http_error(400, str(exc))
+        context_token = bind_request_context(context)
         try:
             if mode == "report":
                 raw_duration = body.get("duration_min")
@@ -2878,6 +2987,8 @@ class GatewayHTTPHandler:
                 return _http_error(400, f"unknown meeting mode: {mode}")
         except MeetingError as e:
             return _http_error(e.status, e.message)
+        finally:
+            reset_request_context(context_token)
         return _http_json_response(payload)
 
     async def _handle_project_search(self, request: WsRequest, key: str) -> Response:

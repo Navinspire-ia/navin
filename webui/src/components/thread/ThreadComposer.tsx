@@ -26,6 +26,7 @@ import { INLINE_TOKEN_HIGHLIGHT_COLOR } from "@/components/InlineTokenHighlight"
 import {
   Activity,
   ArrowUp,
+  AudioLines,
   BadgeDollarSign,
   BarChart3,
   BookOpen,
@@ -127,6 +128,7 @@ import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import type { SendAttachment, SendOptions } from "@/hooks/useNavinStream";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
+import type { LiveVoiceState } from "@/lib/live-voice";
 import type {
   CliAppInfo,
   GoalStateWsPayload,
@@ -348,6 +350,11 @@ interface ThreadComposerProps {
   skills?: SkillSummary[];
   onStop?: () => void;
   onTranscribeAudio?: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
+  /**
+   * Live voice conversation toggle (listen + speak with the agent). Owned by
+   * ThreadShell, which also renders the status bar above this composer.
+   */
+  liveVoice?: { state: LiveVoiceState; toggle: () => void; disabled?: boolean } | null;
   /** Unix seconds from server; turn elapsed timer above input while set. */
   runStartedAt?: number | null;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
@@ -895,6 +902,7 @@ function ThreadComposerImpl({
   skills = [],
   onStop,
   onTranscribeAudio,
+  liveVoice = null,
   runStartedAt = null,
   goalState,
   workspaceScope = null,
@@ -2206,7 +2214,14 @@ function ThreadComposerImpl({
   );
 
   const attachButtonDisabled = disabled || full;
-  const showVoiceButton = Boolean(onTranscribeAudio);
+  // While the live conversation is on, the microphone is already open: the
+  // push-to-talk dictation button would only compete with it.
+  const liveVoiceActive =
+    liveVoice !== null && liveVoice.state !== "off" && liveVoice.state !== "error";
+  const showVoiceButton = Boolean(onTranscribeAudio) && !liveVoiceActive;
+  const liveVoiceLabel = liveVoiceActive
+    ? t("thread.composer.liveVoice.toggleOff", { defaultValue: "End voice conversation" })
+    : t("thread.composer.liveVoice.toggleOn", { defaultValue: "Voice conversation" });
   const voiceRecordingStatusLabel = t("thread.composer.voice.recordingStatus", {
     time: voiceRecorder.elapsedLabel,
     defaultValue: `Recording ${voiceRecorder.elapsedLabel}`,
@@ -2679,6 +2694,56 @@ function ThreadComposerImpl({
                       <kbd className="rounded-full bg-muted px-2 py-0.5 font-sans text-[12px] font-semibold leading-none text-muted-foreground dark:bg-white/10 dark:text-white/80">
                         {voiceShortcutLabel}
                       </kbd>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+            {liveVoice && !voiceRecorder.isRecording ? (
+              <TooltipProvider delayDuration={220} skipDelayDuration={80}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      disabled={disabled || liveVoice.disabled || liveVoice.state === "starting"}
+                      aria-label={liveVoiceLabel}
+                      aria-pressed={liveVoiceActive}
+                      data-live-voice-toggle
+                      onClick={liveVoice.toggle}
+                      className={cn(
+                        "relative h-7 w-7 shrink-0 rounded-md border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
+                        liveVoiceActive &&
+                          "rounded-full bg-primary text-primary-foreground shadow-[0_8px_20px_rgba(37,99,235,0.28)] hover:bg-primary hover:text-primary-foreground",
+                      )}
+                    >
+                      {liveVoice.state === "starting" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AudioLines className="h-3.5 w-3.5" />
+                      )}
+                      {liveVoiceActive && liveVoice.state === "listening" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/35 motion-reduce:hidden"
+                        />
+                      ) : null}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    align="center"
+                    className="max-w-[16rem] rounded-xl border border-border/70 bg-background px-3 py-2 text-[12px] text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.13)] dark:border-white/10 dark:bg-neutral-900 dark:text-white"
+                  >
+                    <span className="block font-medium">{liveVoiceLabel}</span>
+                    {!liveVoiceActive ? (
+                      <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
+                        {t("thread.composer.liveVoice.hint", {
+                          defaultValue:
+                            "Talk with the agent: it listens, explains what it will do, asks when unsure and tells you when it is done.",
+                        })}
+                      </span>
                     ) : null}
                   </TooltipContent>
                 </Tooltip>

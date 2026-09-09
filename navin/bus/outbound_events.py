@@ -189,6 +189,7 @@ class AgentBrowserEvent(OutboundEvent):
     data: str | None = None  # base64 JPEG for phase="frame"
     width: int | None = None
     height: int | None = None
+    user_control: bool | None = None
 
 
 @dataclass(frozen=True)

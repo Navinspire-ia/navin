@@ -25,10 +25,11 @@ from navin.agent.model_routes import (
     product_module_role,
     workflow_role_for_content,
 )
+from navin.agent.tool_surface import tool_name_is_denied
+from navin.agent.tools.context import RequestContext, is_heartbeat_turn, request_context
 from navin.agent.tools.loader import ToolLoader
 from navin.agent.tools.sandbox import writable_host_paths
 from navin.agent.tools.tenders import TendersTool
-from navin.config.paths import get_runtime_subdir
 from navin.command.builtin import (
     _DELIVERY_WORKFLOWS,
     _HTML_REPORT_WORKFLOWS,
@@ -37,7 +38,6 @@ from navin.command.builtin import (
     BUILTIN_COMMAND_SPECS,
     builtin_command_palette,
 )
-from navin.agent.tools.context import RequestContext, is_heartbeat_turn, request_context
 from navin.command.modules import (
     CODE_HIDDEN_COMMANDS,
     HEARTBEAT_DENIED_TOOLS,
@@ -50,6 +50,7 @@ from navin.command.modules import (
     is_command_allowed_for_module,
     kept_tools_for_module,
 )
+from navin.config.paths import get_runtime_subdir
 from navin.tenders.ai import (
     ask,
     keeps_only_known_facts,
@@ -60,8 +61,27 @@ from navin.tenders.ai import (
     task_role,
 )
 from navin.tenders.collect import _country_code, collect
+from navin.tenders.desk import revise_one, snapshot, write_one
+from navin.tenders.enrich import enrich_notice, fetch_text_is_noise, html_to_text, notice_is_thin
 from navin.tenders.errors import TenderError
-from navin.tenders.normalize import host_of, iso_date, looks_like_notice, normalize_tender, tender_id
+from navin.tenders.heartbeat import profile_is_armed, tick_watch
+from navin.tenders.index import format_dossier, search_notices, write_local_index
+from navin.tenders.needs import (
+    TENDER_TYPES,
+    expand_need_terms,
+    lookup_need,
+    official_cpv_divisions,
+    public_needs_catalog,
+)
+from navin.tenders.normalize import (
+    SEND_MODES,
+    host_of,
+    iso_date,
+    looks_like_notice,
+    normalize_tender,
+    tender_id,
+)
+from navin.tenders.profile import filed_documents, normalize_templates, wizard_ready
 from navin.tenders.score import score_tender
 from navin.tenders.scrape_net import (
     host_is_official,
@@ -75,17 +95,6 @@ from navin.tenders.sources import (
     sources_for_countries,
     web_search_queries,
 )
-from navin.tenders.desk import revise_one, snapshot, write_one
-from navin.tenders.enrich import enrich_notice, fetch_text_is_noise, html_to_text, notice_is_thin
-from navin.tenders.index import format_dossier, search_notices, write_local_index
-from navin.tenders.needs import (
-    TENDER_TYPES,
-    expand_need_terms,
-    lookup_need,
-    official_cpv_divisions,
-    public_needs_catalog,
-)
-from navin.tenders.profile import filed_documents, normalize_templates, wizard_ready
 from navin.tenders.stack import (
     LINKEDIN_MCP_CONFIRM,
     LINKEDIN_MCP_JOBS,
@@ -97,22 +106,19 @@ from navin.tenders.stack import (
     TENDERS_TOOLS,
     module_stack,
 )
-from navin.tenders.heartbeat import profile_is_armed, tick_watch
-from navin.tenders.normalize import SEND_MODES
 from navin.tenders.store import TenderStore, default_channels, default_profile, extract_office_text
-from navin.agent.tool_surface import tool_name_is_denied
-from navin.webui.mcp_presets_api import (
-    MCP_PRESETS,
-    _materialize_server,
-    mcp_deny_prefixes,
-    mcp_servers_denied_for_module,
-)
 from navin.tenders.writer import (
     analyse_tender,
     build_response,
     commercial_draft,
     extract_requirements,
     go_nogo,
+)
+from navin.webui.mcp_presets_api import (
+    MCP_PRESETS,
+    _materialize_server,
+    mcp_deny_prefixes,
+    mcp_servers_denied_for_module,
 )
 from navin.webui.tenders_api import (
     HEARTBEAT_TENDERS_ACTIONS,
@@ -1415,10 +1421,13 @@ class TendersNeedsCatalogTest(unittest.TestCase):
             texts = " ".join(row["query"] for row in snap["queries"])
             self.assertIn("Services informatiques", texts)
             self.assertIn("Travaux", texts)
-            letter = build_response(_notice(), saved)["letter"]
+            response = build_response(_notice(), saved)
+            letter = response["letter"]
             self.assertIn("Services informatiques", letter)
-            self.assertIn("Travaux", letter)
-            self.assertIn("Plateforme data / BI", letter)
+            self.assertNotIn("Travaux", letter)
+            self.assertNotIn("Ponts", letter)
+            self.assertIn("Travaux", response["company"])
+            self.assertIn("Plateforme data / BI", response["company"])
 
 
 class TendersWriterTest(unittest.TestCase):
@@ -1460,7 +1469,8 @@ class TendersWriterTest(unittest.TestCase):
         self.assertIn(notice["title"], dossier["letter"])
         self.assertIn("SI decisionnel ministere", dossier["references"])
         self.assertEqual(dossier["send_mode"], "approval")
-        self.assertIn("AI", dossier["architecture"])
+        self.assertNotIn("lot AI", dossier["architecture"])
+        self.assertTrue(dossier["review_needed"])
         self.assertIn(notice["title"], dossier["architecture"])
         self.assertIn("2099-12-31", dossier["planning"])
         self.assertNotIn("Effort estime", dossier["planning"])
@@ -1477,7 +1487,7 @@ class TendersWriterTest(unittest.TestCase):
         self.assertIn("RACI", dossier["raci_risks"])
         self.assertIn("Gouvernance", dossier["governance"])
         self.assertIn("180", str(dossier["financial_schedule"]))
-        self.assertGreaterEqual(dossier["requirements_count"], 4)
+        self.assertGreaterEqual(dossier["requirements_count"], 3)
         self.assertIn("ISO 27001", dossier["compliance_matrix"])
         self.assertIn(notice["title"], commercial_draft(notice, "clarification"))
         self.assertIn("acknowledge", commercial_draft(notice, "ack").lower())
@@ -1567,7 +1577,7 @@ class TendersWriterTest(unittest.TestCase):
         self.assertIn("Architecture", dossier["architecture"])
         self.assertIn("Chef de projet", dossier["planning"])
         self.assertIn("depot PLACE", dossier["compliance_matrix"])
-        self.assertGreaterEqual(dossier["compliance_matrix"].count("\n| "), 5)
+        self.assertGreaterEqual(dossier["compliance_matrix"].count("\n| "), 4)
         self.assertTrue(dossier["ready"])
         reqs = extract_requirements(notice, profile, notice["analysis"])
         self.assertTrue(any("ISO 27001" in row["text"] for row in reqs))
@@ -1647,6 +1657,7 @@ class TendersWriterTest(unittest.TestCase):
         self.assertLess(dossier["company"].count("non renseigne"), 3)
         self.assertIn("Aucun nom au dossier societe", dossier["staffing"])
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_filled_file_dossier_has_no_holes(self) -> None:
         from navin.tenders.bid_pack import SECTION_KEYS, SECTION_TITLES
 
@@ -1710,6 +1721,7 @@ class TendersWriterTest(unittest.TestCase):
             self.assertNotIn(hole, ppt_text)
             self.assertIn("DOSSIER DE CANDIDATURE", ppt_text)
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_write_builds_word_and_ppt_and_revise_keeps_remarks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TenderStore(Path(tmp))
@@ -1728,7 +1740,8 @@ class TendersWriterTest(unittest.TestCase):
             written = write_one(store, notice["id"])
             row = next(item for item in written["tenders"] if item["id"] == notice["id"])
             self.assertEqual(row["stage"], "drafting")
-            self.assertIn("AI", row["response"]["architecture"])
+            self.assertTrue(row["response"]["review_needed"])
+            self.assertFalse(row["response"]["submission_ready"])
             self.assertTrue(row["response"].get("pack_ready"))
             self.assertIn("docx", row["response"]["exports"])
             self.assertIn("pptx", row["response"]["exports"])
@@ -1752,7 +1765,8 @@ class TendersWriterTest(unittest.TestCase):
             updated = next(item for item in revised["tenders"] if item["id"] == notice["id"])
             self.assertEqual(updated["stage"], "validating")
             self.assertIn("Ajouter le lot data", updated["response"]["revision_notes"])
-            self.assertIn("Ajouter le lot data", updated["response"]["letter"])
+            self.assertNotIn("Ajouter le lot data", updated["response"]["letter"])
+            self.assertFalse(updated["response"]["revision_applied"])
             self.assertTrue(updated["response_reviews"])
 
 
@@ -1828,7 +1842,7 @@ class TendersModelRoutingTest(unittest.TestCase):
             keeps_only_known_facts(material, "References : trois plateformes data livrees.")
         )
 
-    def test_a_polished_letter_replaces_the_template_only_when_it_is_clean(self) -> None:
+    def test_unstructured_prose_does_not_replace_canonical_facts(self) -> None:
         tender = _notice()
         profile = self._profile()
         base = build_response(tender, profile)
@@ -1845,14 +1859,13 @@ class TendersModelRoutingTest(unittest.TestCase):
         )
         with patch("navin.tenders.ai.ask", return_value=clean):
             polished = polish_response(tender, profile, base)
-        self.assertIn("Acme Digital depose une offre", polished["letter"])
-        self.assertIn("comprend le besoin", polished["executive_summary"])
-        self.assertEqual(polished["model"], "qwen/qwen3.8-max")
-        self.assertEqual(polished["route"], "docs")
+        self.assertEqual(polished["letter"], base["letter"])
+        self.assertEqual(polished["executive_summary"], base["executive_summary"])
+        self.assertEqual(polished["generation"]["mode"], "deterministic")
+        self.assertIn("rejetee", " ".join(polished["generation"]["warnings"]))
 
     def test_the_model_explains_the_verdict_but_never_flips_it(self) -> None:
         tender = _notice()
-        profile = self._profile()
         with tempfile.TemporaryDirectory() as tmp:
             store = TenderStore(Path(tmp))
             store.save_tenders([tender])
@@ -2381,6 +2394,7 @@ class TendersGuardTest(unittest.TestCase):
             self.assertIn("heartbeat", str(draft).lower())
             self.assertTrue(getattr(score, "is_error", False))
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_agent_aliases_write_and_read_off_heartbeat(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TenderStore(Path(tmp))
@@ -2866,9 +2880,10 @@ class TendersKnowledgeFilesTest(unittest.TestCase):
             notice["score"] = 82
             dossier = build_response(notice, store.load_profile())
             self.assertTrue(dossier["from_file"])
-            self.assertIn("House style Atelier Cloud", dossier["letter"])
-            self.assertIn("House style Atelier Cloud", dossier["methodology"])
-            self.assertIn("Slide reuse Gulf bid", dossier["methodology"])
+            self.assertNotIn("House style Atelier Cloud", dossier["letter"])
+            material = "\n".join(row["excerpt"] for row in dossier["template_material"])
+            self.assertIn("House style Atelier Cloud", material)
+            self.assertIn("Slide reuse Gulf bid", material)
             self.assertIn("SI decisionnel", dossier["references"])
             self.assertIn("SI decisionnel ministere 2024", dossier["references"])
             self.assertIn("voice-a.docx", dossier["used_files"])
@@ -2963,6 +2978,7 @@ class TendersApiTest(unittest.TestCase):
                         "crafts": "Data,Cloud",
                         "min_score": 70,
                         "min_budget": 50_000,
+                        "certifications": ["ISO 27001"],
                         "references": [
                             {"title": "SI decisionnel ministere", "year": "2024"},
                             {"title": "Plateforme data groupe", "year": "2025"},
@@ -2983,6 +2999,7 @@ class TendersApiTest(unittest.TestCase):
                 after = {row["title"]: row for row in narrowed["tenders"]}
                 self.assertFalse(after["Modernisation du SI decisionnel"]["go"])
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_open_kpi_matches_the_desk_in_play_rule(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TenderStore(Path(tmp))
@@ -2998,6 +3015,7 @@ class TendersApiTest(unittest.TestCase):
                 self.assertEqual(row["stage"], "drafting")
                 self.assertEqual(drafted["kpis"]["open"], 1)
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_full_happy_path_without_inventing_notices(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = TenderStore(Path(tmp))

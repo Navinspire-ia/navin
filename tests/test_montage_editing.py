@@ -405,6 +405,26 @@ class TestNotify:
 
 
 class TestImportMedia:
+    def test_equal_names_and_sizes_do_not_substitute_a_different_clip(self, tmp_path):
+        root = tmp_path / "project"
+        root.mkdir()
+        first = tmp_path / "first" / "clip.mp4"
+        second = tmp_path / "second" / "clip.mp4"
+        first.parent.mkdir()
+        second.parent.mkdir()
+        first.write_bytes(b"first-take")
+        second.write_bytes(b"other-take")
+        first_path = import_media(root, first)
+        second_path = import_media(root, second)
+        assert first_path != second_path
+        assert (root / first_path).read_bytes() == b"first-take"
+        assert (root / second_path).read_bytes() == b"other-take"
+        second.write_bytes(b"third-take")
+        third_path = import_media(root, second)
+        assert third_path not in {first_path, second_path}
+        assert (root / second_path).read_bytes() == b"other-take"
+        assert (root / third_path).read_bytes() == b"third-take"
+
     def test_files_inside_the_workspace_are_left_in_place(self, tmp_path):
         inside = tmp_path / "media" / "a.mp4"
         inside.parent.mkdir()

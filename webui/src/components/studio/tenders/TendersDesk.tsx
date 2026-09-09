@@ -41,6 +41,7 @@ import {
   type PipelineFilter,
 } from "@/components/studio/tenders/pipeline";
 import { DossierPreview } from "@/components/studio/DossierPreview";
+import { DocumentGenerationNotice } from "@/components/studio/DocumentGenerationNotice";
 import { retentionDays } from "@/components/studio/tenders/retention";
 import {
   BUTTON_STYLES,
@@ -65,6 +66,7 @@ import {
 import { openInOsBrowser } from "@/lib/api";
 import type {
   TenderDesk,
+  TenderExportKind,
   TenderFollowUpEvent,
   TenderNotice,
   TenderProfile,
@@ -797,7 +799,7 @@ export function NoticesPane({
 
   const offerRows = useMemo(() => readyOfferNotices(visible), [visible]);
 
-  const fetchPack = async (id: string, kind: "docx" | "pptx"): Promise<boolean> => {
+  const fetchPack = async (id: string, kind: TenderExportKind): Promise<boolean> => {
     if (!token) return false;
     try {
       const result = await postTenders(token, "download", { id, kind });
@@ -811,7 +813,7 @@ export function NoticesPane({
     return false;
   };
 
-  const downloadPack = async (id: string, kind: "docx" | "pptx") => {
+  const downloadPack = async (id: string, kind: TenderExportKind) => {
     if (!token || downloading) return;
     setListNote("");
     setDownloading(`${id}:${kind}`);
@@ -1293,7 +1295,7 @@ export function PipelineList({
   locale?: string;
   sourceNames?: Record<string, string>;
   onAction: (action: NoticeRowAction, id: string) => void;
-  onDownload?: (id: string, kind: "docx" | "pptx") => void;
+  onDownload?: (id: string, kind: TenderExportKind) => void;
   onOfficial?: (id: string) => void;
 }) {
   const renderMenu = (row: TenderNotice, packReady: boolean, official: string | null) => {
@@ -1528,7 +1530,7 @@ function rowMenuItems({
   goMark: "go" | "nogo" | null;
   tx: Tx;
   onAction: (action: NoticeRowAction) => void;
-  onDownload: (kind: "docx" | "pptx") => void;
+  onDownload: (kind: TenderExportKind) => void;
   onOfficial: () => void;
 }) {
   const viewItem = {
@@ -1725,7 +1727,7 @@ export function DossierPane({
   const [remarks, setRemarks] = useState("");
   const [downloading, setDownloading] = useState("");
   const [downloadNote, setDownloadNote] = useState("");
-  const downloadPack = async (kind: "docx" | "pptx") => {
+  const downloadPack = async (kind: TenderExportKind) => {
     if (!token) return;
     setDownloading(kind);
     setDownloadNote("");
@@ -1850,7 +1852,7 @@ export function DossierPane({
         <p className="text-pretty text-sm text-muted-foreground">
           {tx(
             "writeHint",
-            "A ready dossier from your file and this notice. Study it, then leave remarks only if you need a change. Nothing is invented.",
+            "A response built from the notice and your company file. Review the requirements, evidence and open points before submission.",
           )}
         </p>
         {selected.enriched ? (
@@ -1860,6 +1862,7 @@ export function DossierPane({
         ) : null}
         {selected.response?.letter || selected.response?.executive_summary ? (
           <>
+            <DocumentGenerationNotice generation={selected.response.generation} />
             <DossierPreview title={chapterTitle(selected.response.language, "cover", tx("cover", "Cover page"))} body={asText(selected.response.cover)} />
             <DossierPreview title={chapterTitle(selected.response.language, "toc", tx("toc", "Contents"))} body={asText(selected.response.toc)} />
             <DossierPreview title={chapterTitle(selected.response.language, "letter", tx("letter", "Submission letter"))} body={asText(selected.response.letter)} />
@@ -1909,6 +1912,16 @@ export function DossierPane({
                 onClick={() => void downloadPack("pptx")}
                 styles={BUTTON_STYLES}
               />
+              {selected.response.exports?.diagram_html ? (
+                <DefaultButton
+                  text={tx("downloadDiagram", "Download interactive diagram")}
+                  iconProps={{ iconName: "Flow" }}
+                  disabled={Boolean(busy) || Boolean(downloading)}
+                  data-testid="tenders-download-diagram"
+                  onClick={() => void downloadPack("diagram_html")}
+                  styles={BUTTON_STYLES}
+                />
+              ) : null}
             </div>
             {downloadNote ? <p className="text-pretty text-sm text-rose-700 dark:text-rose-300">{downloadNote}</p> : null}
             <TextField

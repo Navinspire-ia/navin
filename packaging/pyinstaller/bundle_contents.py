@@ -33,6 +33,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # `navin python -m playwright install chromium` cannot fetch a browser on a
 # machine that has none. HTML→PDF goes through Chromium / ReportLab, not
 # weasyprint (GTK stack is a packaging landmine on Windows/macOS).
+# Xlib (python-xlib) is imported lazily inside navin.computer.x11, so the
+# analyzer never sees it; without it a frozen Linux build falls back to the
+# xdotool CLI for desktop control and cannot drive an Xvfb display on its own.
 _SKILL_LIBRARIES = (
     "reportlab",
     "pdfplumber",
@@ -41,6 +44,8 @@ _SKILL_LIBRARIES = (
     "playwright",
     # yt-dlp PyInstaller hook prefers Cryptodome (pycryptodomex) over Crypto.
     "Cryptodome",
+    "Xlib",
+    "PIL",
 )
 
 # The tools behind `lint`, `test_run`, `verify` and `lsp`. Nothing in navin

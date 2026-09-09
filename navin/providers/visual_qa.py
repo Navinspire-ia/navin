@@ -10,12 +10,15 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import json_repair
 
 from navin.providers.base import LLMResponse
 from navin.providers.image_generation import image_path_to_data_url
+
+if TYPE_CHECKING:
+    from navin.agent.skill_routing import ActionSkillContext
 
 
 class VisualQAProviderError(RuntimeError):
@@ -166,7 +169,22 @@ class ChatVisualQAProvider:
         claims: list[str],
         context: dict[str, Any],
     ) -> VisualQAProviderResult:
-        prompt = (
+        return await self.analyze_with_skill_context(
+            candidate=candidate, references=references, claims=claims,
+            context=context, skill_context=None,
+        )
+
+    async def analyze_with_skill_context(
+        self,
+        *,
+        candidate: Path,
+        references: list[Path],
+        claims: list[str],
+        context: dict[str, Any],
+        skill_context: ActionSkillContext | None,
+    ) -> VisualQAProviderResult:
+        """The calling desk may supply its loaded playbooks for this one call."""
+        contract = (
             "You are a strict visual QA inspector. Compare the candidate with the "
             "reference images when present. Never infer fidelity without a reference. "
             "Return JSON only with this exact shape: "
@@ -176,6 +194,9 @@ class ChatVisualQAProvider:
             '"color_fidelity":{...},"composition":{...}}}. '
             "Every dimension needs concrete visible evidence. BLOCK a claimed fidelity "
             "dimension when no adequate reference exists. "
+        )
+        prompt = (
+            contract +
             f"Claims: {json.dumps(claims, ensure_ascii=True)}. "
             f"Context: {json.dumps(context, ensure_ascii=True, default=str)}."
         )
@@ -197,8 +218,11 @@ class ChatVisualQAProvider:
                 ]
             )
         content.append({"type": "text", "text": prompt})
+        messages: list[dict[str, Any]] = [{"role": "user", "content": content}]
+        if skill_context is not None:
+            messages.insert(0, {"role": "system", "content": skill_context.augment_system(contract)})
         response = await self.runtime.provider.chat_with_retry(
-            messages=[{"role": "user", "content": content}],
+            messages=messages,
             model=self.runtime.model,
             max_tokens=self.max_tokens,
             temperature=0.0,
@@ -221,4 +245,3 @@ class ChatVisualQAProvider:
 
 
 register_visual_qa_provider("chat", ChatVisualQAProvider)
-

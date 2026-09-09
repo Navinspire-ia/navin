@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -10,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from navin.agent.skill_routing import build_action_skill_context
 from navin.providers.visual_qa import (
     VisualQAProvider,
     VisualQAProviderResult,
@@ -385,6 +387,7 @@ async def run_visual_qa(
     requirements: dict[str, Any] | None = None,
     provider: VisualQAProvider | None = None,
     policy: VisualQAPolicy | None = None,
+    workspace: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run deterministic and vision checks and return a conservative gate."""
     active_policy = policy or VisualQAPolicy()
@@ -408,6 +411,7 @@ async def run_visual_qa(
         "usage": {},
         "cost_usd": None,
     }
+    skill_metadata: dict[str, Any] | None = None
 
     fidelity_without_reference = sorted(
         set(normalized_claims) & FIDELITY_CLAIMS if not reference_paths else set()
@@ -437,12 +441,23 @@ async def run_visual_qa(
         )
     else:
         try:
-            result = await provider.analyze(
-                candidate=candidate_path,
-                references=reference_paths,
-                claims=normalized_claims,
-                context=dict(requirements or {}),
-            )
+            arguments = {
+                "candidate": candidate_path,
+                "references": reference_paths,
+                "claims": normalized_claims,
+                "context": dict(requirements or {}),
+            }
+            analyze = getattr(provider, "analyze_with_skill_context", None)
+            if callable(analyze):
+                skills = await asyncio.to_thread(
+                    build_action_skill_context, "marketing", "visual-qa", workspace=workspace,
+                )
+                skill_metadata = skills.metadata
+                result = await analyze(**arguments, skill_context=skills)
+            else:
+                # Installed adapters retain their existing analyze contract.
+                # No skill metadata is claimed if an adapter cannot accept it.
+                result = await provider.analyze(**arguments)
             vision.extend(_vision_findings(result))
             provider_meta = {
                 "provider": result.provider,
@@ -479,6 +494,7 @@ async def run_visual_qa(
         "requirements": dict(requirements or {}),
         "policy": asdict(active_policy),
         "provider": provider_meta,
+        "skill_context": skill_metadata,
         "scores": {
             "deterministic": round(deterministic_score, 2),
             "vision": round(vision_score, 2),
@@ -543,4 +559,3 @@ def write_visual_qa_report(
     )
     atomic_write_text(markdown_path, format_markdown_report(report))
     return {"json": str(json_path), "markdown": str(markdown_path)}
-

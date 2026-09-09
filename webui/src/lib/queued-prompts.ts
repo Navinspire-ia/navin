@@ -21,7 +21,7 @@ export const QUEUED_PROMPTS_LIMIT = 20;
 export const QUEUED_PROMPT_MAX_BYTES = 64 * 1024;
 /** Mirrors ``MAX_ATTACHMENTS_PER_MESSAGE``; kept local so the queue rules stay
  * free of hook imports. */
-export const QUEUED_PROMPT_MAX_IMAGES = 4;
+export const QUEUED_PROMPT_MAX_IMAGES = 20;
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;

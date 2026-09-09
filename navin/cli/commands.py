@@ -93,6 +93,7 @@ from navin.cli.lsp import create_lsp_app  # noqa: E402
 from navin.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
 from navin.config.paths import get_workspace_path, is_default_workspace  # noqa: E402
 from navin.config.schema import Config  # noqa: E402
+from navin.optional_live import live_modules_available as _live_account_enabled  # noqa: E402
 from navin.security.network import is_loopback_host  # noqa: E402
 from navin.utils.evaluator import evaluate_response, resolve_evaluator_prompt  # noqa: E402
 from navin.utils.helpers import sync_workspace_templates  # noqa: E402
@@ -2940,9 +2941,14 @@ async def _close_agent_subprocesses() -> None:
     belongs here.
     """
     from navin.agent.tools.browser import shutdown_browser_sessions
+    from navin.agent.tools.computer import shutdown_computer_sessions
     from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
 
-    for closer in (DEFAULT_EXEC_SESSION_MANAGER.shutdown, shutdown_browser_sessions):
+    for closer in (
+        DEFAULT_EXEC_SESSION_MANAGER.shutdown,
+        shutdown_browser_sessions,
+        shutdown_computer_sessions,
+    ):
         try:
             await closer()
         except Exception as exc:  # noqa: BLE001 - shutdown must not mask the turn's result
@@ -3092,7 +3098,9 @@ def agent(
             signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
         async def run_interactive():
-            bus_task = asyncio.create_task(agent_loop.run())
+            bus_task = asyncio.create_task(agent_loop.run(
+                recovery_channel=cli_channel, recovery_session_key=session_id,
+            ))
             turn_done = asyncio.Event()
             turn_done.set()
             turn_response: list[Any] = []
@@ -3360,6 +3368,11 @@ def channels_login(
 
 app.add_typer(create_lsp_app(console=console), name="lsp")
 app.add_typer(create_app_templates_app(console=console), name="app")
+
+# Desktop control (computer use): enable / doctor / dedicated display.
+from navin.cli.computer import create_computer_app  # noqa: E402
+
+app.add_typer(create_computer_app(console=console), name="computer")
 
 
 # ============================================================================
@@ -3973,7 +3986,6 @@ def status(
 # ============================================================================
 
 license_app = typer.Typer(help="Manage the navin.live subscription of this device")
-from navin.optional_live import live_modules_available as _live_account_enabled
 
 if _live_account_enabled():
     app.add_typer(license_app, name="license")

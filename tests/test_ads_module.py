@@ -46,7 +46,9 @@ from navin.webui.mcp_presets_api import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-ADS_PRESETS = ("google-ads", "meta-ads", "tiktok-ads", "reddit-ads", "linkedin-ads")
+ADS_PRESETS = (
+    "google-ads", "meta-ads", "tiktok-ads", "reddit-ads", "linkedin-ads", "microsoft-ads",
+)
 # Ads studio platforms + Search Console (SEO companion used with paid/search).
 CONNECTION_PRESETS = (*ADS_PRESETS, "search-console")
 ADS_CARDS = (
@@ -65,6 +67,14 @@ ADS_CARDS = (
     "linkedinAdsOverview",
     "linkedinAdsStructure",
     "linkedinAdsOptimize",
+)
+ENGINE_CARDS = (
+    "adsImportAnalyze",
+    "adsWasteNegatives",
+    "adsChangesReview",
+    "microsoftAdsOverview",
+    "microsoftAdsStructure",
+    "microsoftAdsOptimize",
 )
 
 
@@ -160,6 +170,29 @@ class AdsMcpPresetsTest(unittest.TestCase):
             None,
         )
         self.assertEqual(cfg.env["LINKEDIN_ACCESS_TOKEN"], "AQVTOKEN")
+
+    def test_microsoft_ads_npx_env_scoped_to_ads(self) -> None:
+        preset = self.by_name["microsoft-ads"]
+        self.assertEqual(preset.transport, "stdio")
+        self.assertEqual(preset.server.command, "npx")
+        self.assertIn("@cesteral/msads-mcp", preset.server.args)
+        self.assertEqual(preset.modules, ("ads",))
+        cfg = _materialize_server(
+            preset,
+            {
+                "msads_access_token": ["tok"],
+                "msads_developer_token": ["dev"],
+                "msads_customer_id": ["123"],
+                "msads_account_id": ["456"],
+            },
+            None,
+        )
+        self.assertEqual(cfg.env["MSADS_ACCESS_TOKEN"], "tok")
+        self.assertEqual(cfg.env["MSADS_DEVELOPER_TOKEN"], "dev")
+        self.assertEqual(cfg.env["MSADS_CUSTOMER_ID"], "123")
+        self.assertEqual(cfg.env["MSADS_ACCOUNT_ID"], "456")
+        with self.assertRaises(McpPresetError):
+            _materialize_server(preset, {"msads_access_token": ["tok"]}, None)
 
     def test_catalogue_payload_lists_all_ads_presets(self) -> None:
         names = {item["name"] for item in mcp_presets_payload()["presets"]}
@@ -263,6 +296,12 @@ def _sample_cfg(name: str) -> MCPServerConfig:
             "reddit_refresh_token": ["rt"],
         },
         "linkedin-ads": {"linkedin_access_token": ["AQVTOKEN"]},
+        "microsoft-ads": {
+            "msads_access_token": ["tok"],
+            "msads_developer_token": ["dev"],
+            "msads_customer_id": ["123"],
+            "msads_account_id": ["456"],
+        },
         "search-console": {
             "gsc_oauth_client_secrets_file": ["/tmp/client_secrets.json"],
         },
@@ -333,6 +372,11 @@ class AdsMcpConnectionTest(unittest.IsolatedAsyncioTestCase):
                 type="stdio",
                 command="npx",
                 args=["-y", "@cesteral/linkedin-mcp"],
+            ),
+            "microsoft-ads": MCPServerConfig(
+                type="stdio",
+                command="npx",
+                args=["-y", "@cesteral/msads-mcp"],
             ),
             "search-console": MCPServerConfig(
                 type="stdio", command="uvx", args=["mcp-search-console"]
@@ -449,12 +493,17 @@ class AdsWorkflowTest(unittest.TestCase):
         for token in (
             "paid-ads-manager",
             "google-ads",
+            "microsoft-ads",
             "meta-ads",
             "tiktok-ads",
             "reddit-ads",
             "linkedin-ads",
             "ads-report",
             "mcp.facebook.com/ads",
+            "`ads` engine",
+            "action=pipeline",
+            "ads/changes.jsonl",
+            "status=approved",
         ):
             self.assertIn(token, blob, token)
         for skill in (name.strip() for name in skills.split(",") if name.strip()):
@@ -516,6 +565,7 @@ class AdsSkillAndDocsTest(unittest.TestCase):
         self.assertIn("ads", front)
         for token in (
             "google-ads",
+            "microsoft-ads",
             "meta-ads",
             "tiktok-ads",
             "reddit-ads",
@@ -523,6 +573,8 @@ class AdsSkillAndDocsTest(unittest.TestCase):
             "#/ads",
             "/ads",
             "ads-report",
+            "action=pipeline",
+            "changes",
         ):
             self.assertIn(token, text, token)
 
@@ -553,6 +605,9 @@ class AdsSkillAndDocsTest(unittest.TestCase):
                     "linkedin-ads",
                 ):
                     self.assertIn(token, text, token)
+                if path.name in {"README.md", "actions.md"}:
+                    self.assertIn("microsoft-ads" if path.name == "README.md" else "Microsoft Ads", text)
+                    self.assertIn("`ads`", text)
                 if path.name == "README.md":
                     for token in ("#/ads", "/ads", "actions.md", "skills.md"):
                         self.assertIn(token, text, token)
@@ -637,6 +692,16 @@ class AdsFrontendWiringTest(unittest.TestCase):
             with self.subTest(card=card_id):
                 self.assertIn(f'"{card_id}"', text)
 
+    def test_studio_has_engine_and_microsoft_cards(self) -> None:
+        text = (
+            ROOT / "webui/src/components/studio/StudioWorkspace.tsx"
+        ).read_text(encoding="utf-8")
+        for card_id in ENGINE_CARDS:
+            with self.subTest(card=card_id):
+                self.assertIn(f'"{card_id}"', text)
+        for token in ('"adsEngine"', '"microsoftAds"', "action=pipeline", "export_changes", "microsoft_bulk"):
+            self.assertIn(token, text, token)
+
     def test_i18n_ads_keys_en_and_fr(self) -> None:
         for locale in ("en", "fr"):
             path = ROOT / f"webui/src/i18n/locales/{locale}/common.json"
@@ -651,7 +716,9 @@ class AdsFrontendWiringTest(unittest.TestCase):
                 self.assertIn("ads", data["thread"]["sessionInfo"]["modules"])
                 groups = data["studio"]["groups"]
                 for key in (
+                    "adsEngine",
                     "googleAds",
+                    "microsoftAds",
                     "metaAds",
                     "tiktokAds",
                     "redditAds",
@@ -663,6 +730,7 @@ class AdsFrontendWiringTest(unittest.TestCase):
                     "linkedinAdsOverview",
                     "linkedinAdsStructure",
                     "linkedinAdsOptimize",
+                    *ENGINE_CARDS,
                 ):
                     self.assertTrue(cards[card_id]["label"])
                     self.assertTrue(cards[card_id]["desc"])

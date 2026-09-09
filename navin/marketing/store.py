@@ -29,20 +29,30 @@ CHANNELS = (
 )
 CREATIVE_KINDS = ("image", "video", "audio", "banner")
 CAMPAIGN_STATUSES = ("draft", "planned", "approved", "running", "paused", "done")
-CONTENT_STATUSES = ("draft", "ready", "approved", "scheduled", "published", "failed", "winner", "retired")
+CONTENT_STATUSES = ("draft", "ready", "approved", "scheduled", "publishing", "published", "failed", "winner", "retired")
 # Channels the desk can post to through an API or a local sink. The others
-# (instagram, tiktok, youtube, reddit, producthunt) stay copy-and-paste.
-PUBLISH_CHANNELS = ("linkedin", "x", "facebook", "telegram", "email", "webhook", "blog")
+# (youtube, producthunt) stay copy-and-paste or use a configured bridge.
+PUBLISH_CHANNELS = ("linkedin", "x", "facebook", "instagram", "tiktok", "reddit", "telegram", "email", "webhook", "blog")
 SECRET_NAMES: dict[str, tuple[str, ...]] = {
     "linkedin": ("linkedin_token",),
     "x": ("x_api_key", "x_api_secret", "x_access_token", "x_access_secret"),
     "facebook": ("facebook_page_token",),
+    "instagram": ("instagram_access_token",),
+    "tiktok": ("tiktok_access_token",),
+    "reddit": ("reddit_access_token",),
     "telegram": ("telegram_bot_token",),
     "email": (),
     "webhook": ("webhook_secret",),
     "blog": (),
     "plausible": ("plausible_key",),
     "matomo": ("matomo_token",),
+    "social_oauth": (
+        "linkedin_client_secret", "linkedin_refresh_token",
+        "facebook_client_secret", "facebook_user_token",
+        "instagram_client_secret", "instagram_refresh_token",
+        "tiktok_client_secret", "tiktok_refresh_token",
+        "reddit_client_secret", "reddit_refresh_token",
+    ),
 }
 
 
@@ -279,7 +289,10 @@ def default_publish() -> dict[str, Any]:
     return {
         "linkedin": {"enabled": False, "author": ""},
         "x": {"enabled": False},
-        "facebook": {"enabled": False, "page_id": ""},
+        "facebook": {"enabled": False, "page_id": "", "api_version": "v23.0"},
+        "instagram": {"enabled": False, "instagram_user_id": "", "auth_mode": "instagram", "api_version": "v23.0"},
+        "tiktok": {"enabled": False},
+        "reddit": {"enabled": False, "subreddit": "", "user_agent": "", "flair_id": ""},
         "telegram": {"enabled": False, "chat_id": ""},
         "email": {"enabled": False, "to": ""},
         "webhook": {"enabled": False, "url": ""},
@@ -315,6 +328,7 @@ def default_settings() -> dict[str, Any]:
         "analytics": default_analytics_source(),
         "channels": default_alert_channels(),
         "utm_campaign": "",
+        "media_base_url": "",
         "created_at": _now(),
     }
 
@@ -581,9 +595,12 @@ class MarketingStore:
         row["analytics"] = normalize_analytics_source(row.get("analytics"))
         row["channels"] = normalize_alert_channels(row.get("channels"))
         row["utm_campaign"] = str(row.get("utm_campaign") or "").strip()
+        row["media_base_url"] = str(row.get("media_base_url") or "").strip()
         return row
 
     def save_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        from navin.marketing.media_delivery import validate_media_base_url
+
         current = self.load_settings()
         merged = {**current, **data}
         mode = str(merged.get("execution_mode") or "approval").strip().lower()
@@ -613,6 +630,7 @@ class MarketingStore:
             merged["channels"] = {**(current.get("channels") or {}), **data["channels"]}
         merged["channels"] = normalize_alert_channels(merged.get("channels"))
         merged["utm_campaign"] = str(merged.get("utm_campaign") or "").strip()
+        merged["media_base_url"] = validate_media_base_url(str(merged.get("media_base_url") or ""))
         return self._save_object("settings.json", merged)
 
     # -- secrets (API keys) -------------------------------------------------
@@ -628,20 +646,29 @@ class MarketingStore:
 
     def save_secret(self, name: str, value: str) -> None:
         """Store one key at 0600. An empty value removes the key."""
+        self.save_secrets({name: value})
+
+    def save_secrets(self, values: dict[str, str]) -> None:
+        """Rotate a token pair atomically without losing other connectors' keys."""
+        from navin.utils.atomic_io import InterProcessLock
+
         known = {key for pair in SECRET_NAMES.values() for key in pair}
-        if name not in known:
-            raise MarketingError(f"unknown secret {name}", status=400)
-        secrets = self.load_secrets()
-        if value:
-            secrets[name] = value.strip()
-        else:
-            secrets.pop(name, None)
-        path = self.secrets_path()
-        _atomic_write(path, secrets)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        unknown = set(values) - known
+        if unknown:
+            raise MarketingError(f"unknown secret {sorted(unknown)[0]}", status=400)
+        with InterProcessLock(self.root / ".secrets.lock", timeout=5):
+            secrets = self.load_secrets()
+            for name, value in values.items():
+                if value:
+                    secrets[name] = value.strip()
+                else:
+                    secrets.pop(name, None)
+            path = self.secrets_path()
+            _atomic_write(path, secrets)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
 
     def get_secret(self, name: str) -> str:
         return self.load_secrets().get(name, "")

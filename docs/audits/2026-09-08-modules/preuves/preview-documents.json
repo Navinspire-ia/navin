@@ -1,0 +1,13 @@
+{
+  "fictional": true,
+  "checks": [
+    "Rich canonical CV visible; CV and cover downloaded separately",
+    "Failed generation keeps the previous complete CV and reports the error",
+    "Failed Word download reports its error and never substitutes a text file",
+    "Assisted drafting toggle persists enabled then disabled without generating a document",
+    "Tender Word, PowerPoint and actual source-linked Archify HTML downloaded via the UI",
+    "Downloaded Archify HTML opens as a standalone diagram"
+  ],
+  "errors": [],
+  "ok": true
+}

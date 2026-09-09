@@ -256,6 +256,8 @@ _MODULE_DEFAULT_PRELOAD_SKILLS: dict[str, tuple[str, ...]] = {
         "email-marketing",
         "marketing-analytics",
     ),
+    "montage": ("montage-studio",),
+    "meeting": ("meeting-studio",),
 }
 
 
@@ -277,6 +279,9 @@ def extra_denied_tools_for_module(module: str | None) -> frozenset[str]:
 
 def default_preload_skills_for_module(module: str | None) -> list[str]:
     """Skills to preload from the active product module (may be empty)."""
+    # Montage shares the Marketing tool scope, but has its own workflow.
+    if isinstance(module, str) and module.strip().lower() == "montage":
+        return list(_MODULE_DEFAULT_PRELOAD_SKILLS["montage"])
     normalized = normalize_product_module(module)
     if normalized is None:
         return []
@@ -306,7 +311,7 @@ def _skill_names_csv(skills: str) -> set[str]:
 
 
 def _studio_brief_skills() -> dict[str, set[str]]:
-    """Map studio module → skills listed in that module's workflow brief."""
+    """Skills used by each studio's workflow brief and action prompts."""
     # Imported lazily to avoid circular import at module load (builtin imports us).
     from navin.command.builtin import _WORKFLOW_BRIEFS
 
@@ -321,6 +326,12 @@ def _studio_brief_skills() -> dict[str, set[str]]:
         if module is None:
             continue
         out[module].update(_skill_names_csv(skills_csv))
+    from navin.agent.skill_routing import module_skill_names
+
+    for module, names in out.items():
+        # A specialist shared by real actions must remain loadable in both
+        # desks, even when an older slash brief only names it in one desk.
+        names.update(module_skill_names(module))
     return out
 
 

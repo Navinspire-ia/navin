@@ -114,7 +114,7 @@ from navin.webui.terminal_ws import (
     encode_output,
 )
 from navin.webui.transcription_ws import webui_transcription_event
-from navin.webui.voice_session_ws import webui_voice_session_events
+from navin.webui.voice_session_ws import close_voice_sessions, webui_voice_session_events
 from navin.webui.websocket_logging import websockets_server_logger
 
 # The gateway's HTTP layer has no request bodies, so file-save, notes and
@@ -393,6 +393,10 @@ class WebSocketChannel(BaseChannel):
         self._fs_watcher = WorkspaceWatcherService(self._notify_fs_changed)
         # Inline Tab completion streams: connection -> request_id -> Task.
         self._assist_tasks: dict[Any, dict[str, asyncio.Task[Any]]] = {}
+        # Live voice frames (STT, prompt rewrite, TTS synthesis) run off the
+        # receive loop: a 10 s synthesis must not hold back the barge-in or the
+        # next utterance queued behind it.
+        self._voice_tasks: dict[Any, set[asyncio.Task[Any]]] = {}
         self._mobile_previews = MobilePreviewManager()
         self._presence = PresenceTracker()
         # connection -> collab identity {member_id, display_name, role, org_id}
@@ -554,6 +558,9 @@ class WebSocketChannel(BaseChannel):
         self._terminals.cleanup_connection(connection)
         for task in self._assist_tasks.pop(connection, {}).values():
             task.cancel()
+        for task in self._voice_tasks.pop(connection, set()):
+            task.cancel()
+        close_voice_sessions(connection)
         self._mobile_previews.cleanup_connection(connection)
         conn_id = self._conn_ids.get(connection)
         if conn_id:
@@ -1153,7 +1160,7 @@ class WebSocketChannel(BaseChannel):
         if t in {"assist_complete", "assist_edit", "assist_cancel"}:
             await self._dispatch_assist_envelope(connection, t, envelope)
             return
-        if t in {"voice_session_start", "voice_audio_chunk", "voice_session_end"}:
+        if t in {"voice_session_start", "voice_audio_chunk", "voice_session_end", "voice_prompt"}:
             if t == "voice_session_start" and not action_allowed(
                 self._role_for(connection), "message"
             ):
@@ -1164,7 +1171,10 @@ class WebSocketChannel(BaseChannel):
                     reason="viewer_read_only",
                 )
                 return
-            for event, payload in await webui_voice_session_events(envelope):
+            if t in {"voice_audio_chunk", "voice_prompt"}:
+                self._spawn_voice_task(connection, envelope)
+                return
+            for event, payload in await webui_voice_session_events(envelope, owner=connection):
                 await self._send_event(connection, event, **payload)
             return
         if t == "approval_decision":
@@ -1229,7 +1239,8 @@ class WebSocketChannel(BaseChannel):
         if t in {"agent_browser_input", "agent_browser_close"}:
             if not action_allowed(self._role_for(connection), "agent_browser_input"):
                 await self._send_event(
-                    connection, "agent_browser_error", detail="forbidden_role"
+                    connection, "agent_browser_error", detail="forbidden_role",
+                    **{key: envelope.get(key) for key in ("chat_id", "id", "request_id")},
                 )
                 return
             if t == "agent_browser_close":
@@ -1361,6 +1372,12 @@ class WebSocketChannel(BaseChannel):
             product_module = normalize_product_module(envelope.get("product_module"))
             if product_module is not None:
                 metadata[PRODUCT_MODULE_METADATA_KEY] = product_module
+            # Live voice conversation: the WebUI reads the reply aloud, so the
+            # agent gets the "colleague on a call" brief for this turn.
+            if envelope.get("voice_mode") is True:
+                from navin.agent.voice_mode import VOICE_MODE_METADATA_KEY
+
+                metadata[VOICE_MODE_METADATA_KEY] = True
             metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
             self._workspaces.persist_scope(cid, scope)
             if metadata.get("webui") is True and self.is_allowed(client_id):
@@ -1606,6 +1623,38 @@ class WebSocketChannel(BaseChannel):
 
         bucket[request_id] = asyncio.create_task(_run())
 
+    # -- Live voice (WebUI) --------------------------------------------------
+
+    def _spawn_voice_task(self, connection: Any, envelope: dict[str, Any]) -> None:
+        """Run one STT / rewrite / TTS frame concurrently with the receive loop.
+
+        The client orders TTS chunks by request id and sends one utterance at a
+        time, so results may arrive in any order; what matters is that a slow
+        synthesis never delays the barge-in or the next utterance behind it.
+        """
+        bucket = self._voice_tasks.setdefault(connection, set())
+
+        async def _run() -> None:
+            try:
+                for event, payload in await webui_voice_session_events(envelope, owner=connection):
+                    await self._send_event(connection, event, **payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.warning("voice frame failed: {}", exc)
+                with suppress(Exception):
+                    await self._send_event(
+                        connection,
+                        "voice_session_error",
+                        session_id=str(envelope.get("session_id") or ""),
+                        request_id=envelope.get("request_id"),
+                        detail="voice_failed",
+                    )
+            finally:
+                bucket.discard(asyncio.current_task())  # type: ignore[arg-type]
+
+        bucket.add(asyncio.create_task(_run()))
+
     # -- Interactive terminals (WebUI Dev mode) ------------------------------
 
     async def _dispatch_terminal_envelope(
@@ -1769,28 +1818,29 @@ class WebSocketChannel(BaseChannel):
     async def _dispatch_agent_browser_close(
         self, connection: Any, envelope: dict[str, Any]
     ) -> None:
-        """Close the browser this chat opened, at the user's request."""
+        """Close exactly the live session visible to the user."""
+        reply = {key: envelope.get(key) for key in ("chat_id", "id", "request_id")}
         if not self._workspace_controls_available(connection):
             await self._send_event(
-                connection, "agent_browser_error", detail="localhost_only"
+                connection, "agent_browser_error", **reply, detail="localhost_only"
             )
             return
         chat_id = envelope.get("chat_id")
         if not isinstance(chat_id, str) or not chat_id:
             await self._send_event(
-                connection, "agent_browser_error", detail="invalid chat_id"
+                connection, "agent_browser_error", **reply, detail="invalid chat_id"
             )
             return
 
-        from navin.agent.tools.browser import close_browser_session
+        from navin.webui.live_control import close_session
 
         try:
-            closed = await close_browser_session(f"websocket:{chat_id}")
-        except Exception as exc:
-            self.logger.debug("agent browser close failed: {}", exc)
-            closed = False
+            closed = await close_session(f"websocket:{chat_id}", live_id=envelope.get("id"))
+        except ValueError as exc:
+            await self._send_event(connection, "agent_browser_error", **reply, detail=str(exc))
+            return
         await self._send_event(
-            connection, "agent_browser_closed", chat_id=chat_id, closed=closed
+            connection, "agent_browser_closed", **reply, closed=closed
         )
 
     async def _dispatch_agent_browser_input(
@@ -1802,43 +1852,47 @@ class WebSocketChannel(BaseChannel):
         machine: the mirror is shareable, but driving the browser it mirrors is
         not something a remote viewer should be able to do.
         """
+        reply = {key: envelope.get(key) for key in ("chat_id", "id", "request_id")}
         if not self._workspace_controls_available(connection):
             await self._send_event(
-                connection, "agent_browser_error", detail="localhost_only"
+                connection, "agent_browser_error", **reply, detail="localhost_only"
             )
             return
         chat_id = envelope.get("chat_id")
         action = envelope.get("action")
         if not isinstance(chat_id, str) or not chat_id:
             await self._send_event(
-                connection, "agent_browser_error", detail="invalid chat_id"
+                connection, "agent_browser_error", **reply, detail="invalid chat_id"
             )
             return
         if not isinstance(action, str) or not action:
             await self._send_event(
-                connection, "agent_browser_error", detail="invalid action"
+                connection, "agent_browser_error", **reply, detail="invalid action"
             )
             return
 
-        from navin.agent.tools.browser import dispatch_live_input
+        from navin.webui.live_control import dispatch_input
 
         payload = {
             key: envelope.get(key)
-            for key in ("x", "y", "width", "height", "dx", "dy", "text", "key", "count")
+            for key in ("x", "y", "width", "height", "dx", "dy", "text", "key", "count", "button")
         }
         try:
-            result = await dispatch_live_input(f"websocket:{chat_id}", action, payload)
+            result = await dispatch_input(
+                f"websocket:{chat_id}", action, payload, live_id=envelope.get("id")
+            )
         except ValueError as exc:
-            await self._send_event(connection, "agent_browser_error", detail=str(exc))
+            await self._send_event(connection, "agent_browser_error", **reply, detail=str(exc))
             return
         except Exception as exc:
             self.logger.debug("agent browser input failed: {}", exc)
             await self._send_event(
-                connection, "agent_browser_error", detail="the browser did not accept it"
+                connection, "agent_browser_error", **reply, detail="the live session did not accept it"
             )
             return
         await self._send_event(
-            connection, "agent_browser_input_done", chat_id=chat_id, url=result.get("url")
+            connection, "agent_browser_input_done", **reply, url=result.get("url"),
+            user_control=bool(result.get("user_control")),
         )
 
     async def _dispatch_mobile_preview_envelope(
@@ -2804,6 +2858,8 @@ class WebSocketChannel(BaseChannel):
             body["width"] = event.width
         if event.height:
             body["height"] = event.height
+        if event.user_control is not None:
+            body["user_control"] = event.user_control
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" agent_browser ")

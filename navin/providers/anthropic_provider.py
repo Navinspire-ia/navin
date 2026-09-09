@@ -494,11 +494,25 @@ class AnthropicProvider(LLMProvider):
     def _convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
         if not tools:
             return None
+        from navin.providers.native_tools import native_tool_spec
+
         result = []
         for tool in tools:
             func = tool.get("function", tool)
-            entry: dict[str, Any] = {
-                "name": func.get("name", ""),
+            name = func.get("name", "")
+            # A tool that Claude knows as a server-defined primitive (the
+            # ``computer`` tool) goes out as that primitive: same name, no
+            # input_schema, the model was trained on it.
+            native = native_tool_spec("anthropic", str(name))
+            if native is not None:
+                entry = dict(native.definition)
+                entry.setdefault("name", name)
+                if "cache_control" in tool:
+                    entry["cache_control"] = tool["cache_control"]
+                result.append(entry)
+                continue
+            entry = {
+                "name": name,
                 "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
             }
             desc = func.get("description")
@@ -707,6 +721,16 @@ class AnthropicProvider(LLMProvider):
                 **self.extra_headers,
                 **kwargs.get("extra_headers", {}),
             }
+
+        # Native tools (computer use) ride on beta flags; add them to whatever
+        # beta header is already there instead of replacing it.
+        from navin.providers.native_tools import merge_beta_header, native_betas
+
+        betas = native_betas("anthropic", tools)
+        if betas:
+            headers = dict(kwargs.get("extra_headers") or {})
+            headers["anthropic-beta"] = merge_beta_header(headers.get("anthropic-beta"), betas)
+            kwargs["extra_headers"] = headers
 
         return kwargs
 

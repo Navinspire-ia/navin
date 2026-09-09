@@ -6,6 +6,7 @@ import {
   GENERIC_ACTIVITY_LABELS,
 } from "@/lib/activity-labels";
 import type { ActivityEvidence } from "@/lib/activity-timeline";
+import { computerSetupIssue } from "@/lib/computer-setup";
 
 export type ActivityJournalKind =
   | "explore"
@@ -176,6 +177,7 @@ export type ActivityJournalDigest = {
   commands: number;
   tools: number;
   errors: number;
+  setup?: number;
   recovered: number;
 };
 
@@ -664,6 +666,11 @@ export function buildJournalTimeline(
       : journalTargetFromArgs(step.args) || (!mapped && step.name ? leaf : "");
     const tone: ActivityJournalTone = url ? "browser" : journalToneForTool(step.name || "");
     const facts = step.text ? [] : journalFactsFromArgs(step.args);
+    if (leaf === "computer") {
+      for (const fact of facts) {
+        if (fact.label === "action" && fact.value === "screenshot") fact.value = "screen";
+      }
+    }
     const taskId = leaf === "board" && !step.text ? journalTaskIdFromArgs(step.args) : "";
     const occurrence = facts
       .filter((fact) => fact.label !== "action")
@@ -757,7 +764,10 @@ export function summarizeJournal(entries: ActivityJournalEntry[]): ActivityJourn
       default:
         break;
     }
-    if (entry.status === "error") digest.errors += 1;
+    if (entry.status === "error") {
+      if (computerSetupIssue(entry.tool, entry.error)) digest.setup = (digest.setup ?? 0) + 1;
+      else digest.errors += 1;
+    }
     if (entry.recovered) digest.recovered += 1;
   }
   return digest;

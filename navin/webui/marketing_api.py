@@ -228,6 +228,7 @@ async def run_marketing_qa(
         requirements=requirements,
         provider=provider,
         policy=policy,
+        workspace=root,
     )
     paths = write_visual_qa_report(report, root)
     report["reports"] = paths

@@ -45,6 +45,7 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 from navin.config.schema import Config, ModelPresetConfig
 
 DEFAULT_CATALOG_URL = "https://navin.live/api/models"
@@ -324,15 +325,31 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
             ],
         },
         "audio": {
-            "defaultModel": "google/gemini-3.1-flash-tts-preview",
+            "defaultModel": NAVIN_TTS_MODEL,
             "models": [
+                {
+                    "slug": NAVIN_TTS_MODEL,
+                    "name": "Qwen Audio 3.0 TTS Flash",
+                    "unitPriceUsd": 15,
+                    "billingUnit": "million_characters",
+                    "billingRate": 15,
+                    "priceNote": "Défaut TTS. Qwen. 15 $ / 1M caractères.",
+                },
+                {
+                    "slug": "qwen/qwen-audio-3.0-tts-plus",
+                    "name": "Qwen Audio 3.0 TTS Plus",
+                    "unitPriceUsd": 20,
+                    "billingUnit": "million_characters",
+                    "billingRate": 20,
+                    "priceNote": "Qwen. 20 $ / 1M caractères.",
+                },
                 {
                     "slug": "google/gemini-3.1-flash-tts-preview",
                     "name": "Gemini 3.1 Flash TTS",
                     "unitPriceUsd": None,
                     "billingUnit": "token",
                     "priceNote": (
-                        "Défaut TTS. 1 $/M input + 20 $/M output tokens. "
+                        "1 $/M input + 20 $/M output tokens. "
                         "Coût final via usage.cost."
                     ),
                 },
@@ -393,7 +410,7 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
             ],
         },
         "stt": {
-            "defaultModel": "nvidia/parakeet-tdt-0.6b-v3",
+            "defaultModel": NAVIN_STT_MODEL,
             "models": [
                 {
                     "slug": "nvidia/parakeet-tdt-0.6b-v3",
@@ -403,7 +420,7 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
                     "billingRate": 0.0015,
                     "estimatedGenerationCost": 0.0015,
                     "defaultProfile": "1 min",
-                    "priceNote": "Défaut STT. NVIDIA. 0,0015 $ / minute. UE + détection de langue.",
+                    "priceNote": "NVIDIA. 0,0015 $ / minute. UE + détection de langue.",
                 },
                 {
                     "slug": "qwen/qwen3-asr-flash-2026-02-10",
@@ -413,7 +430,7 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
                     "billingRate": 0.000035,
                     "estimatedGenerationCost": 0.0021,
                     "defaultProfile": "1 min",
-                    "priceNote": "0,000035 $/s ≈ 0,0021 $ / minute. Multilingue (arabe inclus).",
+                    "priceNote": "Défaut STT. Qwen. 0,000035 $/s ≈ 0,0021 $ / minute. Multilingue.",
                 },
                 {
                     "slug": "openai/gpt-transcribe",
@@ -735,6 +752,10 @@ def is_media_model_slug(slug: str) -> bool:
         return False
     if cleaned in known_media_slugs():
         return True
+    from navin.providers.media_models import media_model_kinds
+
+    if media_model_kinds(cleaned):
+        return True
     leaf = cleaned.rsplit("/", 1)[-1].lower()
     return any(token in leaf for token in _MEDIA_SLUG_TOKENS)
 
@@ -961,9 +982,8 @@ def apply_catalog(
     *force_managed*: after a paid activate/validate, rewrite the default model
     and catalog-owned role routes so Flash ↔ Plus switches take effect.
 
-    *steer_tools*: on activate / new key / plan change, force image / video /
-    TTS onto Navin catalog defaults. Routine syncs leave an explicit BYOK
-    provider (openrouter, openai, …) alone.
+    *steer_tools*: on activate / new key / plan change, steer generated media
+    onto Navin catalog defaults. Saved speech choices are always preserved.
     """
     changed = False
     presets = catalog_presets(catalog)
@@ -1049,6 +1069,21 @@ def apply_catalog(
                     config.model_routes["vision"] = vision_key
                     changed = True
 
+    # Computer needs a visual model even when the chat default is text-only.
+    # Seed the route once and keep later choices made in Computer settings.
+    if not config.model_routes.get("computer"):
+        from navin.providers.model_capabilities import supports_vision
+
+        computer_slug = next((slug for slug in (
+            "qwen/qwen3.8-max", "qwen/qwen3.8-flash", DEFAULT_VISION_MODEL,
+            ECONOMY_VISION_MODEL, FREE_VISION_MODEL,
+        ) if slug in catalog_slugs and supports_vision(slug)), "")
+        if computer_slug:
+            computer_key = slug_preset_key(computer_slug)
+            if computer_key in config.model_presets and config.model_presets[computer_key].enabled:
+                config.model_routes["computer"] = computer_key
+                changed = True
+
     if force_managed:
         for role, target in list(config.model_routes.items()):
             if target in TIERS and target not in config.model_presets:
@@ -1128,11 +1163,6 @@ def apply_catalog(
             (video_bucket.default_model if video_bucket else "")
             or "minimax/hailuo-3"
         )
-        audio_bucket = catalog.media.get("audio")
-        audio_slug = (
-            (audio_bucket.default_model if audio_bucket else "")
-            or "google/gemini-3.1-flash-tts-preview"
-        )
 
         def _should_steer(provider: str | None) -> bool:
             name = (provider or "").strip().lower()
@@ -1160,57 +1190,7 @@ def apply_catalog(
             vid.provider = "navin"
             vid.model = video_slug
             changed = True
-        voice = config.voice
-        if _should_steer(voice.tts_provider) and (
-            voice.tts_provider != "navin" or voice.tts_model != audio_slug
-        ):
-            voice.tts_provider = "navin"
-            voice.tts_model = audio_slug
-            changed = True
-        if _should_steer(voice.tts_provider) and (
-            (voice.voice or "").strip().lower() in {"", "alloy"}
-        ):
-            voice.voice = "eve"
-            changed = True
-
-        stt_bucket = catalog.media.get("stt")
-        stt_slug = (
-            (stt_bucket.default_model if stt_bucket else "")
-            or "nvidia/parakeet-tdt-0.6b-v3"
-        )
-        curated_stt = {
-            m.slug for m in (stt_bucket.models if stt_bucket else []) if m.slug
-        } or {stt_slug}
-        transcription = config.transcription
-        stt_provider = (transcription.provider or "").strip().lower()
-        stt_cfg = getattr(config.providers, stt_provider, None) if stt_provider else None
-        stt_has_key = bool(getattr(stt_cfg, "api_key", None))
-        stt_model = (transcription.model or "").strip()
-        # Keep a curated Navin pick (Deepgram, Parakeet, …). Only heal empty /
-        # whisper / obsolete slugs, or an unconfigured Groq leftover.
-        needs_stt_model = (
-            not stt_model
-            or stt_model.startswith("whisper")
-            or stt_model not in curated_stt
-        )
-        should_steer_stt = (
-            not stt_has_key and stt_provider in {"", "groq", "auto"}
-        ) or (
-            stt_provider in {"", "navin", "auto"} and needs_stt_model
-        ) or (
-            steer_tools
-            and stt_provider in {"", "auto"}
-        )
-        if should_steer_stt and (
-            transcription.provider != "navin" or transcription.model != stt_slug
-        ):
-            transcription.provider = "navin"
-            transcription.model = stt_slug
-            changed = True
-        # Legacy configs often left the mic toggle off while pointing at an
-        # unconfigured Groq slot - turn STT on when we heal onto Navin.
-        if should_steer_stt and not bool(getattr(transcription, "enabled", True)):
-            transcription.enabled = True
+        if _seed_managed_voice_defaults(config):
             changed = True
 
         music_bucket = catalog.media.get("music")
@@ -1364,9 +1344,7 @@ def fallback_stt_managed_models() -> list[dict[str, Any]]:
     try:
         catalog = parse_catalog(FALLBACK_CATALOG_PAYLOAD)
         bucket = catalog.media.get("stt")
-        default_slug = (bucket.default_model if bucket else "") or (
-            "nvidia/parakeet-tdt-0.6b-v3"
-        )
+        default_slug = (bucket.default_model if bucket else "") or NAVIN_STT_MODEL
         for model in bucket.models if bucket else []:
             if not model.slug:
                 continue
@@ -1382,10 +1360,10 @@ def fallback_stt_managed_models() -> list[dict[str, Any]]:
     except Exception:
         rows = [
             {
-                "slug": "nvidia/parakeet-tdt-0.6b-v3",
-                "name": "Parakeet TDT 0.6B v3",
-                "unitPriceUsd": 0.0015,
-                "priceNote": "Défaut STT. NVIDIA. 0,0015 $ / minute. UE + détection de langue.",
+                "slug": NAVIN_STT_MODEL,
+                "name": "Qwen3 ASR Flash",
+                "unitPriceUsd": 0.0021,
+                "priceNote": "Défaut STT. Qwen. 0,0021 $ / minute.",
                 "isDefault": True,
             }
         ]
@@ -1393,12 +1371,7 @@ def fallback_stt_managed_models() -> list[dict[str, Any]]:
 
 
 def heal_managed_voice_settings(config: Config) -> bool:
-    """Rewrite stale STT/TTS onto Navin when a paid plan key is active.
-
-    Settings → Voice must not keep showing Groq + whisper as "Not configured"
-    for subscribers: catalog sync can miss a heal (offline, throttle, old
-    binary). This offline path runs on every Settings load.
-    """
+    """Prepare subscriber speech offline while preserving saved choices."""
     from navin.optional_live import live_modules_available
 
     if not live_modules_available():
@@ -1406,47 +1379,37 @@ def heal_managed_voice_settings(config: Config) -> bool:
     plan = (getattr(config.license, "plan", None) or "").strip().lower()
     from navin.config.secrets import unlocked_secret
 
-    managed_key = unlocked_secret(getattr(config.license, "managed_api_key", None))
+    managed_key = unlocked_secret(getattr(config.license, "managed_api_key", None)) or unlocked_secret(
+        getattr(config.providers.navin, "api_key", None)
+    )
     if not managed_key or plan in {"", "free"}:
         return False
 
-    changed = False
-    stt_slug = "nvidia/parakeet-tdt-0.6b-v3"
-    tts_slug = "google/gemini-3.1-flash-tts-preview"
-    curated_stt: set[str] = {stt_slug}
-    try:
-        catalog = parse_catalog(FALLBACK_CATALOG_PAYLOAD, plan=plan or None)
-        stt_bucket = catalog.media.get("stt")
-        if stt_bucket and stt_bucket.default_model:
-            stt_slug = stt_bucket.default_model
-        if stt_bucket:
-            curated_stt = {m.slug for m in stt_bucket.models if m.slug} or curated_stt
-        audio_bucket = catalog.media.get("audio")
-        if audio_bucket and audio_bucket.default_model:
-            tts_slug = audio_bucket.default_model
-    except Exception:
-        pass
+    return _seed_managed_voice_defaults(config)
 
+
+def _seed_managed_voice_defaults(config: Config) -> bool:
+    """Seed missing choices; an incomplete/offline catalog never invalidates a pick."""
+    changed = False
     transcription = config.transcription
     stt_provider = (transcription.provider or "").strip().lower()
     stt_cfg = getattr(config.providers, stt_provider, None) if stt_provider else None
     stt_has_key = bool(getattr(stt_cfg, "api_key", None))
-    legacy_stt = stt_provider in {"", "groq", "auto"} or (
-        stt_provider != "navin" and not stt_has_key and stt_provider in {"groq", "auto", ""}
+    legacy_stt = not transcription.selection_explicit and (
+        stt_provider in {"", "auto"} or (stt_provider == "groq" and not stt_has_key)
     )
     model_raw = (transcription.model or "").strip()
-    # Whisper leftovers, empty model, or STT slug no longer in the curated list.
     wrong_navin_model = stt_provider == "navin" and (
-        model_raw in {"", "whisper-large-v3", "whisper-1"}
-        or model_raw.startswith("whisper")
-        or (model_raw and model_raw not in curated_stt)
+        not model_raw or (
+            not transcription.selection_explicit and model_raw in {"whisper-large-v3", "whisper-1"}
+        )
     )
     if legacy_stt or wrong_navin_model:
-        if transcription.provider != "navin" or transcription.model != stt_slug:
+        if transcription.provider != "navin" or transcription.model != NAVIN_STT_MODEL:
             transcription.provider = "navin"
-            transcription.model = stt_slug
+            transcription.model = NAVIN_STT_MODEL
             changed = True
-        if not bool(getattr(transcription, "enabled", True)):
+        if legacy_stt and not transcription.enabled:
             transcription.enabled = True
             changed = True
 
@@ -1454,19 +1417,21 @@ def heal_managed_voice_settings(config: Config) -> bool:
     tts_provider = (voice.tts_provider or "").strip().lower()
     tts_cfg = getattr(config.providers, tts_provider, None) if tts_provider else None
     tts_has_key = bool(getattr(tts_cfg, "api_key", None))
-    legacy_tts = tts_provider in {"", "auto"} or (
-        tts_provider != "navin" and not tts_has_key and tts_provider in {"", "auto", "openai"}
+    legacy_tts = not voice.selection_explicit and (
+        tts_provider in {"", "auto"} or (tts_provider == "openai" and not tts_has_key)
     )
     if legacy_tts or (
         tts_provider == "navin"
-        and (voice.tts_model or "").strip() in {"", "tts-1", "tts-1-hd"}
+        and (not voice.tts_model or (
+            not voice.selection_explicit and voice.tts_model in {"tts-1", "tts-1-hd"}
+        ))
     ):
-        if voice.tts_provider != "navin" or voice.tts_model != tts_slug:
+        if voice.tts_provider != "navin" or voice.tts_model != NAVIN_TTS_MODEL:
             voice.tts_provider = "navin"
-            voice.tts_model = tts_slug
+            voice.tts_model = NAVIN_TTS_MODEL
             changed = True
         if (voice.voice or "").strip().lower() in {"", "alloy"}:
-            voice.voice = "eve"
+            voice.voice = "auto"
             changed = True
 
     return changed
@@ -1480,8 +1445,8 @@ def heal_managed_media_settings(config: Config) -> bool:
     even when the catalog sync is disabled or unreachable, so an empty pick is
     filled in here. An explicit BYOK choice is never touched.
     """
-    from navin.optional_live import live_modules_available
     from navin.config.secrets import unlocked_secret
+    from navin.optional_live import live_modules_available
 
     if not live_modules_available():
         return False

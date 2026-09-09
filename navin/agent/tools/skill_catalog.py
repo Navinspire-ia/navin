@@ -7,6 +7,7 @@ SKILL.md bodies when the model actually needs a playbook.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,10 @@ class SkillCatalogTool(Tool):
     @property
     def name(self) -> str:
         return "skill"
+
+    @property
+    def read_only(self) -> bool:
+        return True
 
     @property
     def description(self) -> str:
@@ -73,24 +78,11 @@ class SkillCatalogTool(Tool):
         from navin.agent.skills import SkillsLoader
         from navin.security.workspace_access import current_tool_workspace
 
-        root = self._workspace
-        try:
-            scoped = current_tool_workspace(self._workspace).project_path
-            if scoped:
-                scoped_path = Path(scoped)
-                # Skills live in the gateway workspace; a scoped project only
-                # wins when it actually carries its own skills folder
-                # (.navin/skill, .navin/skills, or the root skills/).
-                if (
-                    (scoped_path / ".navin" / "skill").is_dir()
-                    or (scoped_path / ".navin" / "skills").is_dir()
-                    or (scoped_path / "skills").is_dir()
-                ):
-                    root = scoped_path
-        except Exception:
-            pass
-        if root is None:
-            root = Path.cwd()
+        # Use the same project as ContextBuilder and the filesystem tools.
+        # SkillsLoader owns discovery across every harness, user library and
+        # plugin. A second folder allowlist here hid .agents/.claude skills
+        # and could load another project's instructions under the same name.
+        root = current_tool_workspace(self._workspace).project_path or self._workspace or Path.cwd()
         return SkillsLoader(
             root,
             builtin_skills_dir=self._builtin_skills_dir,
@@ -98,6 +90,12 @@ class SkillCatalogTool(Tool):
         )
 
     async def execute(self, action: str = "find", query: str = "", name: str = "", **kwargs: Any) -> Any:
+        # Scanning user libraries and parsing YAML must not freeze live
+        # frames, approvals or other chats. to_thread preserves workspace
+        # ContextVars, including when several projects search concurrently.
+        return await asyncio.to_thread(self._execute, action, query, name)
+
+    def _execute(self, action: str, query: str, name: str) -> Any:
         loader = self._loader()
         action = (action or "find").strip().lower()
         if action == "find":
@@ -124,8 +122,16 @@ class SkillCatalogTool(Tool):
             if not (name or "").strip():
                 return self.error("action=read requires name=<skill name>")
             key = name.strip()
+            if key in loader.disabled_skills:
+                return self.error(f"Skill '{key}' is disabled. Choose an enabled skill with action=find.")
             content = loader.load_skill(key)
             if content is None:
+                folder = loader.skill_dir(key)
+                if folder is not None:
+                    return self.error(
+                        f"Could not read skill '{key}' in {folder.as_posix()}. "
+                        "Check the file's UTF-8 encoding and permissions, or choose another skill."
+                    )
                 rows = loader.search_skills(key, limit=5)
                 if rows:
                     hints = ", ".join(row["name"] for row in rows)
@@ -150,7 +156,7 @@ class SkillCatalogTool(Tool):
                     f"(Warning - missing dependencies: {why}. Install them "
                     "first or pick another approach.)\n\n"
                 )
-            return header + loader.load_skills_for_context([key])
+            return header + f"### Skill: {key}\n\n{loader._strip_frontmatter(content)}"
         if action == "list":
             index = loader.build_skills_index()
             return index or "No skills installed."

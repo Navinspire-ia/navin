@@ -1,6 +1,8 @@
 import { apiBodyHeaders, apiRequest } from "@/lib/api";
 import { officialSearchPack, type OfficialPortal } from "@/lib/career-portals";
 import { externalHttpUrl } from "@/lib/external-url";
+import { studioSessionQuery } from "@/lib/studio-request";
+import type { DocumentGeneration } from "@/lib/document-generation";
 
 export type { OfficialPortal };
 
@@ -81,15 +83,19 @@ export interface MatchReason {
 }
 
 export interface CareerCv {
+  name?: string;
+  language?: string;
   headline?: string;
   contacts?: string[];
   target?: string;
   summary?: string;
   skills?: string;
   strengths?: string[];
+  highlights?: string[];
   experiences?: { title?: string; company?: string; period?: string; bullets?: string[] }[];
   education?: { diploma?: string; school?: string; year?: string }[];
   languages?: string[];
+  sections?: { kind?: string; heading: string; paragraphs: string[] }[];
 }
 
 export interface CareerOpportunity {
@@ -117,6 +123,7 @@ export interface CareerOpportunity {
   cv?: CareerCv;
   ats_notes?: string;
   pack_ready?: boolean;
+  generation?: DocumentGeneration;
   next_action?: string;
   attribution?: string;
   languages?: string[];
@@ -127,6 +134,10 @@ export interface CareerOpportunity {
   created_at?: number;
   applied_at?: number;
   employer_opened?: boolean;
+  application_email?: string;
+  application_email_source?: string;
+  mail_receipt?: CareerMailReceipt;
+  last_reply_at?: number;
   duration?: string;
   hybrid_days_min?: number;
   hybrid_days_max?: number;
@@ -145,6 +156,7 @@ export interface CareerApplication {
   summary?: string;
   ats_notes?: string;
   pack_ready?: boolean;
+  generation?: DocumentGeneration;
   keywords_matched?: string[];
   stage?: string;
   apply_mode?: string;
@@ -153,7 +165,9 @@ export interface CareerApplication {
   created_at?: number;
   updated_at?: number;
   applied_at?: number;
-  exports?: { docx?: { file_id?: string; name?: string; mime?: string } };
+  mail_receipt?: CareerMailReceipt;
+  last_reply_at?: number;
+  exports?: Partial<Record<"docx" | "cv_docx" | "cover_docx", { file_id?: string; name?: string; mime?: string }>>;
 }
 
 export interface CareerInboxItem {
@@ -164,6 +178,111 @@ export interface CareerInboxItem {
   body?: string;
   classification?: string;
   received_at?: number;
+  application_id?: string;
+  source?: "imap" | string;
+  message_id?: string;
+  in_reply_to?: string;
+  automatic_reply?: boolean;
+  delivery_report?: boolean;
+}
+
+export interface CareerMailbox {
+  enabled: boolean;
+  sender_name: string;
+  sender_email: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: "ssl" | "starttls";
+  smtp_username: string;
+  imap_host: string;
+  imap_port: number;
+  imap_security: "ssl" | "starttls";
+  imap_username: string;
+  imap_folder: string;
+  read_replies: boolean;
+  auto_send: boolean;
+  min_match_score: number;
+  max_per_day: number;
+  poll_interval_minutes: number;
+  allowed_recipient_domains: string[];
+}
+
+export interface CareerMailAttachment {
+  kind: "cv_docx" | "cover_docx";
+  file_id: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+}
+
+export interface CareerMailReceipt {
+  opportunity_id: string;
+  application_id: string;
+  status: "sending" | "accepted" | "failed" | "unknown";
+  message_id: string;
+  sender: string;
+  recipient: string;
+  subject: string;
+  revision: string;
+  attachments: CareerMailAttachment[];
+  attempted_at?: number;
+  accepted_at?: number;
+  smtp_code?: number;
+  smtp_reply?: string;
+  error?: string;
+  delivery_status?: string;
+  attempts?: number;
+  retry_at?: number;
+  automatic?: boolean;
+  deduplicated?: boolean;
+  retry_required?: boolean;
+}
+
+export interface CareerMailDraft {
+  opportunity_id: string;
+  application_id: string;
+  sender: string;
+  sender_name?: string;
+  recipient: string;
+  recipient_source?: string;
+  subject: string;
+  body: string;
+  attachments: CareerMailAttachment[];
+  requires_review: boolean;
+  generation?: DocumentGeneration;
+  revision: string;
+}
+
+export interface CareerMailCheck {
+  status: "connected" | "failed";
+  checked_at?: number;
+  error?: string;
+}
+
+export interface CareerMailSync {
+  status?: "complete" | "failed" | "disabled" | "waiting" | "busy";
+  received?: number;
+  scanned?: number;
+  skipped_large?: number;
+  checked_at?: number;
+  next_due?: number;
+  has_more?: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export interface CareerMailboxStatus {
+  enabled?: boolean;
+  smtp_password_set?: boolean;
+  imap_password_set?: boolean;
+  checks?: { smtp?: CareerMailCheck; imap?: CareerMailCheck };
+  sync?: CareerMailSync;
+  accepted?: number;
+  failed?: number;
+  uncertain?: number;
+  pending_notifications?: number;
+  receipts?: CareerMailReceipt[];
 }
 
 export interface CareerProject {
@@ -218,6 +337,7 @@ export interface CareerChannels {
 }
 
 export interface CareerProfile {
+  mailbox?: CareerMailbox;
   track?: CareerTrack | string;
   account_kind?: "solo" | "company" | string;
   wizard_complete?: boolean;
@@ -360,6 +480,11 @@ export interface CareerUserEmployer {
 }
 
 export interface CareerDesk {
+  mailbox_status?: CareerMailboxStatus;
+  mail_draft?: CareerMailDraft;
+  mail_receipt?: CareerMailReceipt;
+  mail_checks?: { smtp?: CareerMailCheck; imap?: CareerMailCheck };
+  mail_sync?: CareerMailSync;
   profile: CareerProfile;
   opportunities: CareerOpportunity[];
   applications: CareerApplication[];
@@ -1041,7 +1166,7 @@ export function emptyCareerDesk(): CareerDesk {
 }
 
 function careerUrl(action: string): string {
-  return `/api/career?action=${encodeURIComponent(action)}`;
+  return `/api/career?action=${encodeURIComponent(action)}${studioSessionQuery()}`;
 }
 
 export async function fetchCareerDesk(token: string): Promise<CareerDesk> {

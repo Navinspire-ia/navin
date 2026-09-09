@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,9 +44,15 @@ def test_posix_script_uses_official_channel() -> None:
     assert 'PREFIX="${NAVIN_PREFIX:-${HOME}/.local}"' in text
     assert "navin-cli-" in text
     assert "install_from_tarball" in text
+    assert "replace_file()" in text
+    assert 'rm -f "$dest"' in text
+    assert "chflags nouchg" in text
+    assert "xattr -s -c" in text
+    assert 'cat > "$out"' not in text
     # navin-cli wrapper: the terminal UI in the current folder.
     assert '${BIN_DIR}/navin-cli' in text
-    assert 'tui "\\$@"' in text
+    assert '_emit_wrapper "${BIN_DIR}/navin-cli" "tui "' in text
+    assert '${sub}"\\$@"' in text
     assert "navin-cli " in text
     assert "navin agent" not in text
     assert "cd your-project && navin-cli" in text
@@ -96,8 +103,10 @@ def test_cli_install_tracks_download_events() -> None:
     assert "cli-win32" in event
     assert "install.sh" in event
     assert "install.ps1" in event
+    assert "/api/cli-install" in event
     schema = (ROOT / "site/back/supabase/schema.sql").read_text(encoding="utf-8")
     assert "'macos', 'windows', 'linux', 'cli'" in schema
+    assert "filename like 'navin-cli-%'" in schema
     migration = (
         ROOT / "site/back/supabase/2026-09-04-download-cli.sql"
     ).read_text(encoding="utf-8")
@@ -111,8 +120,24 @@ def test_cli_install_tracks_download_events() -> None:
     stats_api = (
         ROOT / "site/back/src/app/api/admin/stats/route.ts"
     ).read_text(encoding="utf-8")
+    assert "CLI_DOWNLOAD_OR" in stats_api
     assert "cliInstallCounts" in stats_api
-    assert 'eq("platform", "cli")' in stats_api
+    helper = (ROOT / "site/back/src/lib/cli-downloads.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "navin-cli-" in helper
+    assert "install.sh" in helper
+    download = (ROOT / "site/back/src/app/api/download/route.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "insertDownloadEvent" in download
+    cli_api = (ROOT / "site/back/src/app/api/cli-install/route.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "cli-posix" in cli_api
+    install_route = ROUTE.read_text(encoding="utf-8")
+    assert "no-store" in install_route
+    assert "max-age=300" not in install_route
     tabs = (
         ROOT / "site/front/src/components/platform-download-tabs.tsx"
     ).read_text(encoding="utf-8")
@@ -151,6 +176,41 @@ def test_public_docs_catalog_lists_cli_hub() -> None:
         slug = "cli" if page == "overview" else f"cli/{page}"
         assert f'slug: "{slug}"' in catalog, rel
         assert f'file: "{rel}"' in back, rel
+
+
+def test_replace_file_does_not_follow_symlink(tmp_path: Path) -> None:
+    """macOS EPERM: cat > dest followed a symlink into a signed binary."""
+    posix = POSIX.read_text(encoding="utf-8")
+    start = posix.index("replace_file()")
+    end = posix.index("\nwrite_wrapper()")
+    func = posix[start:end]
+    engine = tmp_path / "Navin.app" / "Contents" / "Resources" / "navin-dist" / "navin"
+    engine.parent.mkdir(parents=True)
+    engine.write_bytes(b"SIGNED-BINARY")
+    engine.chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    dest = bindir / "navin"
+    dest.symlink_to(engine)
+    script = tmp_path / "run.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
+        f"{func}\n"
+        f"replace_file '{dest}' <<'EOF'\n"
+        "#!/bin/sh\n"
+        "echo wrapper\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["TMPDIR"] = str(tmp_path)
+    subprocess.run(["bash", str(script)], check=True, env=env)
+    assert engine.read_bytes() == b"SIGNED-BINARY"
+    assert dest.is_file()
+    assert not dest.is_symlink()
+    assert "echo wrapper" in dest.read_text(encoding="utf-8")
 
 
 def test_generated_scripts_match_sources() -> None:

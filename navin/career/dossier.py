@@ -62,6 +62,7 @@ def format_dossier(profile: dict[str, Any]) -> str:
     )
     company = profile.get("company") if isinstance(profile.get("company"), dict) else {}
     channels = profile.get("channels") if isinstance(profile.get("channels"), dict) else {}
+    mailbox = profile.get("mailbox") if isinstance(profile.get("mailbox"), dict) else {}
     parts = [
         "# Career dossier",
         "",
@@ -85,6 +86,9 @@ def format_dossier(profile: dict[str, Any]) -> str:
         f"- Prospect email approved: {bool(profile.get('prospect_email_approved'))}",
         f"- Source ids: {_join(profile.get('source_ids')) or '(live defaults)'}",
         f"- Official APIs: {_api_key_line(profile)}",
+        f"- Professional mail: {'enabled' if mailbox.get('enabled') else 'disabled'}; sender={mailbox.get('sender_email') or '-'}",
+        f"- Reply sync authorized: {mailbox.get('read_replies') is True}",
+        f"- Automatic email authorized: {mailbox.get('auto_send') is True}; limit={mailbox.get('max_per_day') or 3}/day; score>={mailbox.get('min_match_score') or 85}",
     ]
     if kind == "company":
         parts.extend(

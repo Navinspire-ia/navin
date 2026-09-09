@@ -21,6 +21,10 @@ class ReadState:
 _HASH_MAX_BYTES = 512 * 1024
 
 
+def _hash_content(content: bytes) -> str | None:
+    return hashlib.sha256(content).hexdigest() if len(content) <= _HASH_MAX_BYTES else None
+
+
 def _hash_file(p: str) -> str | None:
     """Content hash for read-dedup. Skip large files (mtime is enough)."""
     try:
@@ -45,18 +49,22 @@ class FileStates:
     def __init__(self) -> None:
         self._state: dict[str, ReadState] = {}
 
-    def record_read(self, path: str | Path, offset: int = 1, limit: int | None = None) -> None:
+    def record_read(
+        self, path: str | Path, offset: int = 1, limit: int | None = None,
+        *, content: bytes | None = None, mtime: float | None = None,
+    ) -> None:
         """Record that a file was read (called after successful read)."""
         p = str(Path(path).resolve())
         try:
-            mtime = os.path.getmtime(p)
+            if mtime is None:
+                mtime = os.path.getmtime(p)
         except OSError:
             return
         self._state[p] = ReadState(
             mtime=mtime,
             offset=offset,
             limit=limit,
-            content_hash=_hash_file(p),
+            content_hash=_hash_content(content) if content is not None else _hash_file(p),
             can_dedup=True,
         )
 

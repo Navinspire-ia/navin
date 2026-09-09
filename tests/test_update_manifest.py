@@ -40,7 +40,13 @@ class SignedManifestTests(unittest.TestCase):
         ).decode()
         self.public = private.public_key()
 
-    def _sign(self, *artifacts: str, version: str = "1.0.3", prefix: str = "") -> dict:
+    def _sign(
+        self,
+        *artifacts: str,
+        version: str = "1.0.3",
+        prefix: str = "",
+        merge_manifest: str = "",
+    ) -> dict:
         out = self.tmp / "manifest"
         args = [
             sys.executable,
@@ -54,6 +60,8 @@ class SignedManifestTests(unittest.TestCase):
         ]
         if prefix:
             args += ["--url-prefix", prefix]
+        if merge_manifest:
+            args += ["--merge-manifest", merge_manifest]
         for artifact in artifacts:
             args += ["--artifact", artifact]
         subprocess.run(
@@ -189,6 +197,41 @@ class SignedManifestTests(unittest.TestCase):
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
             ),
         )
+
+    def test_partial_os_publish_keeps_the_other_platforms(self):
+        windows = self._artifact("Navin-Desktop-1.0.3-windows-x64-setup.exe")
+        first = self._sign(f"windows-setup-x64={windows}", prefix="v1.0.3")
+        prev = self.tmp / "prev-manifest.json"
+        prev.write_text(json.dumps(first), encoding="utf-8")
+        linux = self._artifact("Navin-1.0.3-x86_64.AppImage")
+        merged = self._sign(
+            f"linux-appimage-x64={linux}",
+            prefix="v1.0.3",
+            merge_manifest=str(prev),
+        )
+        self.assertIn("windows-setup-x64", merged["artifacts"])
+        self.assertIn("linux-appimage-x64", merged["artifacts"])
+        self.assertEqual(
+            merged["artifacts"]["windows-setup-x64"]["filename"],
+            "Navin-Desktop-1.0.3-windows-x64-setup.exe",
+        )
+
+    def test_merge_does_not_keep_artifacts_from_another_version(self):
+        windows = self._artifact("Navin-Desktop-1.0.2-windows-x64-setup.exe")
+        old = self._sign(
+            f"windows-setup-x64={windows}", version="1.0.2", prefix="v1.0.2"
+        )
+        prev = self.tmp / "old-manifest.json"
+        prev.write_text(json.dumps(old), encoding="utf-8")
+        linux = self._artifact("Navin-1.0.3-x86_64.AppImage")
+        merged = self._sign(
+            f"linux-appimage-x64={linux}",
+            version="1.0.3",
+            prefix="v1.0.3",
+            merge_manifest=str(prev),
+        )
+        self.assertNotIn("windows-setup-x64", merged["artifacts"])
+        self.assertIn("linux-appimage-x64", merged["artifacts"])
 
 
 if __name__ == "__main__":

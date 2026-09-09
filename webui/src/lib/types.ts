@@ -1460,6 +1460,8 @@ export interface RuntimeCapabilities {
   can_export_diagnostics: boolean;
 }
 
+export type MediaModelKind = "stt" | "tts" | "image" | "video" | "music";
+
 export interface ProviderModelInfo {
   id: string;
   label?: string | null;
@@ -1470,6 +1472,20 @@ export interface ProviderModelInfo {
   free?: boolean;
   /** Reads image input, as declared by the provider catalog when available. */
   vision?: boolean;
+  output_modalities?: string[];
+  media_modalities?: MediaModelKind[];
+  voices?: string[];
+  default_voice?: string;
+}
+
+export interface LiveVoiceSetup {
+  ready: boolean;
+  reason: string | null;
+  missing: string[];
+  mode: "navin" | "byok";
+  settings_section: "voice";
+  stt: { provider: string; model: string; configured: boolean; enabled: boolean };
+  tts: { provider: string; model: string; configured: boolean; voice: string };
 }
 
 export interface ProviderModelsPayload {
@@ -1609,9 +1625,34 @@ export interface OAuthLoginState {
   error: string | null;
 }
 
+export interface ComputerModelsPayload {
+  provider: string;
+  status: string;
+  message: string | null;
+  recommended: string | null;
+  models: Array<{
+    id: string;
+    label: string;
+    vision: boolean;
+    grounding: boolean;
+    preset: string;
+    context_window: number | null;
+  }>;
+}
+
+export interface ComputerDiagnostics {
+  backend: string;
+  backend_reason: string;
+  notes: string[];
+  enabled: boolean;
+  passive?: boolean;
+  ready: boolean;
+  checks: Array<{ name: string; ok: boolean; detail: string; fix: string; optional?: boolean }>;
+  screen: { width: number; height: number; left: number; top: number } | null;
+  stopped: string | null;
+}
+
 export interface SettingsPayload {
-  /** navin.live account + managed Navin provider. Off on main / navin-agi. */
-  live_account?: boolean;
   oauth?: OAuthLoginState;
   surface?: RuntimeSurface;
   runtime_surface?: RuntimeSurface;
@@ -1657,6 +1698,8 @@ export interface SettingsPayload {
     /** False when the managed catalog forbids this chat model at the current spend. */
     budget_allowed?: boolean;
     modality?: "text" | "image" | "video" | "audio" | "music" | "stt";
+    vision?: boolean;
+    grounding?: boolean;
     unit_price_usd?: number | null;
     price_note?: string | null;
     billing_unit?: string | null;
@@ -1753,6 +1796,41 @@ export interface SettingsPayload {
     /** Hidden by default; a window is what makes a captcha solvable. */
     headless: boolean;
     live_view: boolean;
+  };
+  /** Desktop control (`computer` tool): screen, mouse and keyboard in any app. */
+  computer?: {
+    /** Enabled by default in Tauri and the CLI; explicit opt-outs are preserved. */
+    enabled: boolean;
+    ask: "never" | "destructive" | "always" | string;
+    session_mode: "shared" | "dedicated" | string;
+    live_view: boolean;
+    audit_log: boolean;
+    anthropic_native: boolean;
+    protected_apps: string[];
+    /** Model preset routed for desktop turns (Task routing > Desktop control). */
+    route_preset: string;
+    /** Kill-switch reason when `navin computer stop` is engaged, else null. */
+    stopped: string | null;
+    backend: string;
+    backend_reason: string;
+    backend_preference?: "auto" | "windows" | "macos" | "x11" | "wayland" | "none";
+    backend_notes?: string[];
+    display?: string;
+    audit_screenshots?: boolean;
+    settle_ms?: number;
+    type_delay_ms?: number;
+    max_actions_per_turn?: number;
+    screenshot_max_width?: number;
+    screenshot_max_height?: number;
+    user_takeover_px?: number;
+    failsafe_corner?: boolean;
+    allowed_apps?: string[];
+    blocked_apps?: string[];
+    ask_apps?: string[];
+    model?: string;
+    model_vision?: boolean;
+    model_grounding?: boolean;
+    model_provider?: string | null;
   };
   observability?: {
     provider: "langfuse" | string;
@@ -1880,6 +1958,8 @@ export interface SettingsPayload {
     realtime_enabled: boolean | null;
     realtime_allowed: boolean;
     realtime_required_plans: string[];
+    managed_defaults?: { stt_model: string; tts_model: string; voice: string };
+    live?: LiveVoiceSetup;
     providers: Array<{
       name: string;
       label: string;
@@ -2318,6 +2398,26 @@ export interface SettingsUpdate {
   boardOpenPr?: boolean;
   browserHeadless?: boolean;
   browserLiveView?: boolean;
+  computerEnabled?: boolean;
+  computerAsk?: "never" | "destructive" | "always";
+  computerSessionMode?: "shared" | "dedicated";
+  computerLiveView?: boolean;
+  computerAuditLog?: boolean;
+  computerAnthropicNative?: boolean;
+  computerBackend?: "auto" | "windows" | "macos" | "x11" | "wayland" | "none";
+  computerDisplay?: string;
+  computerAuditScreenshots?: boolean;
+  computerSettleMs?: number;
+  computerTypeDelayMs?: number;
+  computerMaxActionsPerTurn?: number;
+  computerScreenshotMaxWidth?: number;
+  computerScreenshotMaxHeight?: number;
+  computerUserTakeoverPx?: number;
+  computerFailsafeCorner?: boolean;
+  computerProtectedApps?: string[];
+  computerAllowedApps?: string[];
+  computerBlockedApps?: string[];
+  computerAskApps?: string[];
   /** Forge token entry to add, update or remove (Settings > Git). */
   forgeHost?: string;
   /** Empty string clears the stored token for `forgeHost`. */
@@ -2736,6 +2836,17 @@ export type InboundEvent =
       data?: string;
       width?: number;
       height?: number;
+      user_control?: boolean;
+    }
+  | {
+      event: "agent_browser_input_done" | "agent_browser_closed" | "agent_browser_error";
+      chat_id?: string;
+      id?: string;
+      request_id?: string;
+      user_control?: boolean;
+      url?: string;
+      closed?: boolean;
+      detail?: string;
     }
   | {
       event: "editor_open_request";
@@ -2883,6 +2994,15 @@ export type InboundEvent =
       session_id: string;
       text: string;
       final?: boolean;
+      request_id?: string;
+    }
+  | {
+      /** Live conversation: the spoken transcript rewritten as the chat prompt. */
+      event: "voice_prompt_ready";
+      session_id: string;
+      text: string;
+      raw_text: string;
+      rewritten?: boolean;
       request_id?: string;
     }
   | {
@@ -3266,6 +3386,13 @@ export type Outbound =
       cancel_tts?: boolean;
     }
   | {
+      type: "voice_prompt";
+      request_id: string;
+      session_id: string;
+      text: string;
+      context?: string;
+    }
+  | {
       type: "voice_session_end";
       request_id: string;
       session_id: string;
@@ -3316,7 +3443,9 @@ export type Outbound =
       /** A click or keystroke the user made on the mirror of the agent's browser. */
       type: "agent_browser_input";
       chat_id: string;
-      action: "click" | "move" | "scroll" | "text" | "key";
+      id?: string;
+      request_id?: string;
+      action: "click" | "move" | "scroll" | "text" | "key" | "takeover" | "release";
       /** Point on the streamed frame, in that frame's own pixels. */
       x?: number;
       y?: number;
@@ -3328,8 +3457,9 @@ export type Outbound =
       text?: string;
       key?: string;
       count?: number;
+      button?: "left" | "right" | "middle";
     }
-  | { type: "agent_browser_close"; chat_id: string }
+  | { type: "agent_browser_close"; chat_id: string; id?: string; request_id?: string }
   | {
       type: "assist_complete";
       request_id: string;
@@ -3369,6 +3499,9 @@ export type Outbound =
       product_module?: string;
       /** Open editor tabs from the Code workbench (agent context pack). */
       open_files?: string[];
+      /** Sent from the live voice conversation: the reply is read aloud, so
+       * the agent talks like a colleague on a call. */
+      voice_mode?: true;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

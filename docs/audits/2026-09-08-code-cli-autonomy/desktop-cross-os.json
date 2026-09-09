@@ -1,0 +1,65 @@
+{
+  "date": "2026-09-08",
+  "scope": "Browser and computer integration in Tauri Linux, Windows and macOS; Code interface unchanged",
+  "changes": [
+    "Prepare Chromium automatically on the first browser request when no compatible local browser exists; share preparation between concurrent chats.",
+    "Use the embedded interpreter in packaged builds; preserve paths containing spaces, avoid installing into a read-only application bundle, and reap installer subprocesses on cancellation.",
+    "Recognize recent Intel and Apple Silicon Playwright caches, macOS per-user applications and Linux XDG caches.",
+    "Use the same browser preparation for Playwright and browser-use.",
+    "Run the real browser and native computer binding smoke check in Windows, macOS and Linux sidecar release checks and in the existing three-OS CI matrix."
+  ],
+  "platforms": {
+    "linux": {
+      "computer": "X11 and Wayland",
+      "native_tauri_preview": "passed on X11 under WSL"
+    },
+    "windows": {
+      "computer": "SendInput, GDI and UI Automation",
+      "native_execution_this_session": false
+    },
+    "macos": {
+      "computer": "CoreGraphics, screencapture, Accessibility and Automation",
+      "native_execution_this_session": false
+    }
+  },
+  "validation": {
+    "python": {
+      "passed": 318,
+      "subtests_passed": 34,
+      "junit": "cross-os-tests.xml"
+    },
+    "verify": "cross-os-verify.txt",
+    "native_tauri": "cross-os-tauri-preview.json",
+    "runtime_smoke": {
+      "ok": true,
+      "platform": "linux",
+      "browser_unicode_input": true,
+      "browser_screenshot": true,
+      "backend": "x11",
+      "desktop_input_tested": false
+    },
+    "typescript": "passed with no errors; reported issues do not reproduce in current files",
+    "voice_and_media_frontend_tests": {
+      "files": 2,
+      "passed": 59
+    },
+    "workflow_yaml": "parsed and linted",
+    "shell_syntax": "sh -n passed",
+    "shellcheck": "not installed",
+    "code_ui": {
+      "files_compared": 104,
+      "changed": []
+    }
+  },
+  "limits": [
+    "The CI configuration was updated locally; no hosted workflow was dispatched.",
+    "Windows and macOS native execution and installer rebuilds were not performed on this Linux host.",
+    "The native binding smoke check reports desktop permissions and never requests access or sends input to the host desktop. Actual manual takeover was validated separately in the Linux Tauri preview.",
+    "The first Chromium download needs Internet access when no existing browser is available; Linux runtime system libraries and native desktop permissions remain OS requirements."
+  ],
+  "references": {
+    "playwright_browser_installation": "https://playwright.dev/python/docs/browsers",
+    "playwright_linux_runtime_dependencies": "https://raw.githubusercontent.com/microsoft/playwright/main/packages/playwright-core/src/server/registry/nativeDeps.ts"
+  },
+  "latest_user_note": "Preserve the existing CSV/MCP behavior for Meta, LinkedIn, TikTok and Reddit; no advertising exporter was changed in this task."
+}

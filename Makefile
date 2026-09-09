@@ -104,6 +104,7 @@ help:
 	@echo "  Publication:"
 	@echo "    aws-upload       Téléverser les builds de os/ vers S3 (v<VERSION>/, écrase si même nom)"
 	@echo "                     + met à jour releases.json (le site l'affiche automatiquement)"
+	@echo "                     PLATFORM=linux|windows|macos : n'envoie que cet OS, les autres restent"
 	@echo "    local-releases   Prépare site/front/public/downloads pour curl localhost:3100/install"
 	@echo "    aws-upload-temp  Téléverser les templates apps vers S3 (templates/v1/, écrase)"
 	@echo "                     make aws-upload-temp SLUG=crm  pour un seul slug"
@@ -116,11 +117,12 @@ help:
 	@echo "    make appimage VERSION=1.1.0    build Linux estampillé 1.1.0"
 	@echo "    make electron-linux VERSION=1.2.1 && make electron-appimage-release VERSION=1.2.1"
 	@echo "    make aws-upload VERSION=1.1.0  publie v1.1.0/ + manifeste site"
+	@echo "    make aws-upload VERSION=1.1.0 PLATFORM=linux  n'écrase que Linux"
 	@echo ""
 	@echo "  Git (Forgejo privé / GitHub public):"
 	@echo "    publish-forgejo     Pousser la branche prod vers Forgejo (arbre complet)"
 	@echo "    publish-github-dry  Aperçu de l'arbre public CLI (sans site / desktop / AWS / navin.live)"
-	@echo "    publish-github      Pousser cet arbre filtré vers GitHub main (navin-agi)"
+	@echo "    publish-github      Pousser cet arbre filtré vers GitHub main (Navinspire-ia/navin)"
 	@echo "    publish-remotes     Afficher / créer les remotes origin + github"
 	@echo ""
 	@echo "  Nettoyage:"
@@ -242,8 +244,11 @@ publish-github:
 # - nouvelle version : un nouveau préfixe v<version>/ est créé.
 # Met aussi à jour releases.json (manifeste des versions) à la racine du
 # bucket : le site le lit dynamiquement, plus rien à éditer à la main.
+# PLATFORM=linux|windows|macos n'envoie que cet OS : les autres fichiers
+# déjà présents sous v<VERSION>/ restent (pas de delete S3).
+PLATFORM ?=
 aws-upload:
-	@bash scripts/publish-os-to-s3.sh "$(VERSION)"
+	@bash scripts/publish-os-to-s3.sh "$(VERSION)" "$(PLATFORM)"
 
 # One-liner local: curl http://localhost:3100/install | bash
 # (navin.live / S3 unchanged; this only fills site/front/public/downloads).

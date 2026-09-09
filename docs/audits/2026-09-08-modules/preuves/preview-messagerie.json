@@ -1,0 +1,16 @@
+{
+  "fictional": true,
+  "real_email": false,
+  "real_imap": false,
+  "notifications": "captured mock",
+  "checks": [
+    "Both Word attachments downloaded from the actual mail preview",
+    "Click Send passes the exact draft revision, actual SMTP DATA is captured, and a 250 receipt appears",
+    "Repeated send returns the persisted Message-ID without a second DATA command",
+    "Click Sync reads a captured IMAP reply, attaches it by Message-ID and advances the application to interview",
+    "Account controls save and test SMTP/IMAP; automatic sending stays off and the test sends no message",
+    "SMTP recipient refusal is visible and leaves the application ready, without a sent state"
+  ],
+  "page_errors": [],
+  "status": "passed"
+}

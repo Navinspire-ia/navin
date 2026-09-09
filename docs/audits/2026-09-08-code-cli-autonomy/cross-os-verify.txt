@@ -1,0 +1,32 @@
+PASS - no lint errors, tests green
+
+Changed files (33):
+  navin/agent/project_instructions.py
+  navin/agent/context.py
+  navin/agent/project_agents.py
+  navin/agent/skills.py
+  navin/agent/tool_surface.py
+  navin/agent/runner.py
+  navin/agent/loop.py
+  navin/agent/tools/file_state.py
+  navin/agent/tools/filesystem.py
+  navin/agent/tools/skill_catalog.py
+  navin/agent/tools/browser.py
+  navin/agent/tools/computer.py
+  navin/utils/runtime.py
+  navin/cli/computer.py
+  navin/quality/testing.py
+  navin/templates/agent/tool_contract_slim.md
+  webui/src/hooks/useVoiceSession.ts
+  tests/test_code_autonomy.py
+  tests/test_cli_computer.py
+  navin/session/turn_recovery.py
+  … 13 more
+
+Lint: clean (eslint, product-ui, pyflakes_syntax, ruff, yamllint)
+  not run: shellcheck (shellcheck not installed)
+
+Tests:
+  pytest: 22 passed (1519 ms)
+
+Next: safe to keep

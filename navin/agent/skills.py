@@ -6,6 +6,7 @@ import re
 import shutil
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -36,8 +37,9 @@ _SKILL_META_CACHE: dict[str, tuple[int, int, dict | None]] = {}
 # stat can take a second, and the scan froze every open chat for ~2 s each
 # time the cache expired. Keep the answer for 10 minutes and never probe
 # Windows mounts for a skill's Linux binary.
-_WHICH_CACHE: dict[str, tuple[float, bool]] = {}
+_WHICH_CACHE: dict[tuple[str, str], tuple[float, bool]] = {}
 _WHICH_TTL_S = 600.0
+_MISSING_WHICH_TTL_S = 2.0
 _WHICH_PATH_CACHE: tuple[str, str] | None = None
 
 
@@ -143,6 +145,8 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
 
 def resolve_skill_file(root: Path, name: str) -> Path | None:
     """``root/<name>/SKILL.md`` first, then ``root/<name>.md``, then ``root/SKILL.md``."""
+    if not _valid_skill_name(name):
+        return None
     nested = root / name / "SKILL.md"
     if nested.is_file():
         return nested
@@ -176,19 +180,20 @@ def _harness_skill_dirs(root: Path, harnesses: list[str]) -> list[Path]:
     return dirs
 
 
-# $HOME is scanned once per process (keyed by the path), not once per
+# $HOME is scanned once per directory stamp, not once per
 # SkillsLoader. A wave of subagents each built a loader, and 300 parallel
 # scandirs of a real home were enough to miss the 60s drain in tests.
-_HOME_SKILL_DIRS_CACHE: tuple[str, tuple[Path, ...]] | None = None
+_HOME_SKILL_DIRS_CACHE: tuple[tuple[str, int], tuple[Path, ...]] | None = None
 _HOME_DIRS_LOCK = threading.Lock()
 
 # The name index walks every SKILL.md (YAML + requirement checks). Fifty
 # subagents doing that at once serialize on the GIL and never reach the
 # runner before the 60s drain. One in-flight build, then reuse until a
 # skill directory's mtime changes.
-_INDEX_CACHE: dict[tuple, str] = {}
+_INDEX_CACHE: dict[tuple, tuple[float, str]] = {}
 _INDEX_LOCK = threading.Lock()
 _INDEX_CACHE_MAX = 64
+_INDEX_TTL_S = 2.0
 
 _PLUGIN_SKILL_DIRS_CACHE: tuple[float, tuple[tuple[str, Path], ...]] | None = None
 _PLUGIN_SKILL_TTL_S = 5.0
@@ -204,8 +209,26 @@ _SCAN_TTL_S = 2.0
 _SCAN_GENERATION = 0
 
 
-_SKILL_MENTION_RE = re.compile(r"\$([A-Za-z0-9][A-Za-z0-9_-]{0,63})")
+_SKILL_MENTION_RE = re.compile(r"(?<![\w$])\$([\w][\w-]{0,127})(?![\w-])")
 MAX_OWNED_PRELOAD = 32
+
+
+def _valid_skill_name(name: str) -> bool:
+    """A catalog name is one component on both POSIX and Windows."""
+    return bool(name and name not in {".", ".."} and not any(c in name for c in "/\\:\0"))
+
+
+def _search_text(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(char)
+    )
+
+
+_SEARCH_STOP_WORDS = frozenset({
+    "a", "an", "and", "the", "for", "to", "of", "or", "in", "with", "use",
+    "le", "la", "les", "un", "une", "des", "du", "de", "et", "pour", "avec", "sur", "dans",
+})
 
 # Slim preload: keep the operating rules, drop recipes/appendices. Full
 # playbooks stay behind `skill action=read`.
@@ -235,6 +258,7 @@ def clear_skills_index_cache() -> None:
     with _INDEX_LOCK:
         _INDEX_CACHE.clear()
         _SCAN_GENERATION += 1
+        _WHICH_CACHE.clear()
     _PLUGIN_SKILL_DIRS_CACHE = None
 
 
@@ -282,7 +306,10 @@ def _home_skill_dirs() -> list[Path]:
         home = Path.home().expanduser().resolve(strict=False)
     except (OSError, RuntimeError):
         return []
-    key = str(home)
+    try:
+        key = (str(home), home.stat().st_mtime_ns)
+    except OSError:
+        return []
     cached = _HOME_SKILL_DIRS_CACHE
     if cached is not None and cached[0] == key:
         return list(cached[1])
@@ -299,11 +326,17 @@ def _cached_which(command: str) -> bool:
     import time
 
     now = time.monotonic()
-    hit = _WHICH_CACHE.get(command)
-    if hit is not None and now - hit[0] < _WHICH_TTL_S:
+    search_path = _which_search_path()
+    key = (command, search_path)
+    hit = _WHICH_CACHE.get(key)
+    ttl = _WHICH_TTL_S if hit and hit[1] else _MISSING_WHICH_TTL_S
+    if hit is not None and now - hit[0] < ttl:
         return hit[1]
-    found = shutil.which(command, path=_which_search_path()) is not None
-    _WHICH_CACHE[command] = (now, found)
+    try:
+        found = shutil.which(command, path=search_path) is not None
+    except (OSError, ValueError):
+        found = False
+    _WHICH_CACHE[key] = (now, found)
     return found
 
 
@@ -326,9 +359,9 @@ class SkillsLoader:
         from navin import workspace_layout
 
         self.workspace = workspace
-        # Custom skills live in .navin/skills. Leftover .navin/skill is merged
-        # first. A root skills/ folder is still scanned for older workspaces.
-        self.workspace_skills = workspace_layout.coalesce_owned_skills(workspace)
+        # Discovery must also work in read-only projects. Installation and
+        # layout migration own writes; the loader reads both legacy layouts.
+        self.workspace_skills = workspace_layout.skills_dir(workspace)
         candidates = [
             self.workspace_skills,
             workspace_layout.legacy_skills_dir(workspace),
@@ -363,6 +396,20 @@ class SkillsLoader:
             and now - cached[0] < _SCAN_TTL_S
         ):
             return cached[2], cached[3]
+        # A harness folder can be added while the agent is running. Refresh
+        # roots at the bounded scan cadence, not only on process startup.
+        from navin import workspace_layout
+
+        self.workspace_skill_dirs = _dedup_paths([
+            self.workspace_skills,
+            workspace_layout.legacy_skills_dir(self.workspace),
+            self.workspace / "skills",
+            *_harness_skill_dirs(self.workspace, harness_dirs(self.workspace)),
+        ])
+        self.user_skill_dirs = [
+            path for path in _dedup_paths(_home_skill_dirs())
+            if path not in self.workspace_skill_dirs
+        ]
         skills: list[dict[str, str]] = []
         seen_names: set[str] = set()
         for workspace_skills in self.workspace_skill_dirs:
@@ -467,21 +514,33 @@ class SkillsLoader:
         ]
 
     def mentioned_skill_names(self, text: str) -> list[str]:
-        """``$skill-name`` mentions that match an installed skill, in order."""
+        """Explicit $mentions and distinct skill slugs in prose, in order.
+
+        Bare generic names such as git or memory are ordinary task words;
+        only compound slugs or quoted names count without the $ prefix.
+        """
         known = {entry["name"].lower(): entry["name"] for entry in self.list_skills(filter_unavailable=False)}
-        names: list[str] = []
-        seen: set[str] = set()
-        for raw in _SKILL_MENTION_RE.findall(text or ""):
-            key = raw.lower()
-            name = known.get(key)
-            if not name or name in seen:
-                continue
-            names.append(name)
-            seen.add(name)
-        return names
+        matches: dict[str, int] = {}
+        for match in _SKILL_MENTION_RE.finditer(text or ""):
+            name = known.get(match.group(1).lower())
+            if name:
+                matches.setdefault(name, match.start())
+        for key, name in known.items():
+            escaped = re.escape(key)
+            pattern = (
+                rf"(?<![\w$-]){escaped}(?![\w-])"
+                if "-" in key or "_" in key
+                else rf"[`\"]{escaped}[`\"]"
+            )
+            match = re.search(pattern, text or "", re.IGNORECASE)
+            if match:
+                matches[name] = min(matches.get(name, match.start()), match.start())
+        return sorted(matches, key=matches.get)
 
     def _skill_path(self, name: str) -> Path | None:
         """Resolve the SKILL.md that wins for *name*, or None."""
+        if not _valid_skill_name(name):
+            return None
         _, by_name = self._scan()
         known = by_name.get(name)
         if known is not None and known.is_file():
@@ -518,8 +577,8 @@ class SkillsLoader:
         if path is None:
             return None
         try:
-            return path.read_text(encoding="utf-8")
-        except OSError:
+            return path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
             return None
 
     def load_skills_for_context(
@@ -551,6 +610,8 @@ class SkillsLoader:
             )
         parts: list[str] = []
         for name in skill_names:
+            if name in self.disabled_skills:
+                continue
             markdown = self.load_skill(name)
             if not markdown:
                 continue
@@ -613,14 +674,18 @@ class SkillsLoader:
         and bodies on demand. Unavailable skills are listed separately so the
         model does not promise a playbook whose dependencies are missing.
 
-        The result is cached until a skill directory's mtime changes: a fan-out
-        of subagents otherwise rebuilds the same catalog on every thread.
+        Directory changes invalidate immediately. A short TTL also refreshes
+        availability after package installs or environment changes, while a
+        fan-out of subagents still shares one catalog build.
         """
         key = self._index_cache_key(exclude)
         with _INDEX_LOCK:
             hit = _INDEX_CACHE.get(key)
-            if hit is not None:
-                return hit
+            if hit is not None and time.monotonic() - hit[0] < _INDEX_TTL_S:
+                return hit[1]
+            # The directory stamps already proved this catalog changed.
+            # Do not rebuild a fresh index from a still-cached old scan.
+            self.invalidate_scan()
             available: list[str] = []
             unavailable: list[str] = []
             for entry in self.list_skills(filter_unavailable=False):
@@ -640,7 +705,7 @@ class SkillsLoader:
             result = "\n\n".join(lines)
             if key not in _INDEX_CACHE and len(_INDEX_CACHE) >= _INDEX_CACHE_MAX:
                 _INDEX_CACHE.pop(next(iter(_INDEX_CACHE)))
-            _INDEX_CACHE[key] = result
+            _INDEX_CACHE[key] = (time.monotonic(), result)
             return result
 
     def search_skills(
@@ -655,20 +720,27 @@ class SkillsLoader:
         availability - what the `skill` tool shows the model so it can pick
         one and read its SKILL.md.
         """
-        tokens = [t for t in re.split(r"[^a-z0-9]+", (query or "").lower()) if t]
+        normalized = _search_text(query or "").strip()
+        tokens = list(dict.fromkeys(
+            t for t in re.findall(r"[^\W_]+", normalized) if t not in _SEARCH_STOP_WORDS
+        ))
         if not tokens:
             return []
         scored: list[tuple[int, dict[str, str]]] = []
         for entry in self.list_skills(filter_unavailable=False):
             name = entry["name"]
             desc = self._get_skill_description(name)
-            name_l = name.lower()
-            desc_l = desc.lower()
-            score = 0
+            name_l = _search_text(name)
+            desc_l = _search_text(desc)
+            name_tokens = set(re.findall(r"[^\W_]+", name_l))
+            desc_tokens = set(re.findall(r"[^\W_]+", desc_l))
+            score = 100 if normalized.lstrip("$") == name_l else 0
             for token in tokens:
-                if token in name_l:
-                    score += 3
-                if token in desc_l:
+                if token in name_tokens:
+                    score += 6
+                elif len(token) >= 3 and token in name_l:
+                    score += 2
+                if token in desc_tokens:
                     score += 1
             if score <= 0:
                 continue
@@ -683,7 +755,11 @@ class SkillsLoader:
                     "missing": self._get_missing_requirements(meta),
                 },
             ))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]["name"]))
+        scored.sort(key=lambda pair: (
+            -pair[0],
+            0 if is_owned_skill_source(pair[1]["source"]) else 1,
+            pair[1]["name"],
+        ))
         return [row for _score, row in scored[:limit]]
 
     def build_skills_summary(self, exclude: set[str] | None = None) -> str:
@@ -769,7 +845,7 @@ class SkillsLoader:
     def _get_skill_description(self, name: str) -> str:
         """Get the description of a skill from its frontmatter."""
         meta = self.get_skill_metadata(name)
-        if meta and meta.get("description"):
+        if meta and isinstance(meta.get("description"), str) and meta["description"].strip():
             return meta["description"]
         return name  # Fallback to skill name
 
@@ -817,7 +893,22 @@ class SkillsLoader:
         if not isinstance(data, dict):
             return {}
         payload = data.get("navin", data.get("openclaw", {}))
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            return {}
+        payload = dict(payload)
+        requires = payload.get("requires")
+        requires = requires if isinstance(requires, dict) else {}
+        normalized: dict[str, list[str]] = {}
+        for key in ("bins", "env"):
+            values = requires.get(key, [])
+            if isinstance(values, str):
+                values = [values]
+            normalized[key] = [
+                value.strip() for value in values
+                if isinstance(value, str) and value.strip()
+            ] if isinstance(values, (list, tuple)) else []
+        payload["requires"] = {**requires, **normalized}
+        return payload
 
     def _check_requirements(self, skill_meta: dict) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
@@ -835,13 +926,16 @@ class SkillsLoader:
 
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
+        def enabled(value: object) -> bool:
+            return value is True or (isinstance(value, str) and value.strip().lower() == "true")
+
         return [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
             if (meta := self.get_skill_metadata(entry["name"]) or {})
             and (
-                self._parse_navin_metadata(meta.get("metadata")).get("always")
-                or meta.get("always")
+                enabled(self._parse_navin_metadata(meta.get("metadata")).get("always"))
+                or enabled(meta.get("always"))
             )
         ]
 
@@ -873,8 +967,8 @@ class SkillsLoader:
     @staticmethod
     def _parse_skill_frontmatter(path: Path) -> dict | None:
         try:
-            content = path.read_text(encoding="utf-8")
-        except OSError:
+            content = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
             return None
         if not content.startswith("---"):
             return None

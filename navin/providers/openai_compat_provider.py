@@ -72,7 +72,7 @@ _OR_APPLY_PATCH_LOCAL = "apply_patch"
 _OR_APPLY_PATCH_WIRE = "file_patch"
 _STANDARD_FN_KEYS = frozenset({"name", "arguments"})
 _DEFAULT_OPENROUTER_HEADERS = {
-    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "HTTP-Referer": "https://github.com/Navinspire-ia/navin",
     "X-OpenRouter-Title": "Navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }

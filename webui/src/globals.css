@@ -294,35 +294,35 @@
    * scrollbar reads as "this page does not scroll". Keep a thin one on every
    * scroll container under the desk host, the chat column stays bare.
    */
-  html.native-host [data-desk-scroll-host] [class*="overflow-auto"],
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"],
-  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"],
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"] {
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-auto"],
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-auto"],
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-x-auto"],
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-scroll"] {
     scrollbar-width: thin !important;
     scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent !important;
   }
 
-  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar,
-  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar {
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-auto"]::-webkit-scrollbar,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-auto"]::-webkit-scrollbar,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-x-auto"]::-webkit-scrollbar,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-scroll"]::-webkit-scrollbar {
     display: block !important;
     width: 8px !important;
     height: 8px !important;
   }
 
-  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar-thumb,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar-thumb,
-  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar-thumb,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar-thumb {
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-auto"]::-webkit-scrollbar-thumb,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-auto"]::-webkit-scrollbar-thumb,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-x-auto"]::-webkit-scrollbar-thumb,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-scroll"]::-webkit-scrollbar-thumb {
     background-color: hsl(var(--muted-foreground) / 0.4);
     border-radius: 8px;
   }
 
-  html.native-host [data-desk-scroll-host] [class*="overflow-auto"]::-webkit-scrollbar-track,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-auto"]::-webkit-scrollbar-track,
-  html.native-host [data-desk-scroll-host] [class*="overflow-x-auto"]::-webkit-scrollbar-track,
-  html.native-host [data-desk-scroll-host] [class*="overflow-y-scroll"]::-webkit-scrollbar-track {
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-auto"]::-webkit-scrollbar-track,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-auto"]::-webkit-scrollbar-track,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-x-auto"]::-webkit-scrollbar-track,
+  html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-scroll"]::-webkit-scrollbar-track {
     background: transparent;
   }
 

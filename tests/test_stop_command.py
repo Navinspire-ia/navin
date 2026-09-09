@@ -165,7 +165,9 @@ class StaleContinuationAfterStopTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def _loop_stub() -> SimpleNamespace:
-        return SimpleNamespace(_stop_requested_at={})
+        return SimpleNamespace(
+            _stop_requested_at={}, turn_recovery=SimpleNamespace(cancel=lambda key: None),
+        )
 
     @staticmethod
     def _continuation_msg(run_started_at: float | None) -> InboundMessage:
@@ -352,6 +354,9 @@ def _dispatch_stub(bus: _FakeBus, process_message) -> SimpleNamespace:
         _process_message=process_message,
         _restore_runtime_checkpoint=lambda session: False,
         _clear_pending_user_turn=lambda session: None,
+        turn_recovery=SimpleNamespace(
+            matches=lambda msg, key: True, waiting=lambda key: False,
+        ),
     )
     stub._effective_session_key = lambda msg: msg.session_key
     stub._runtime_events = lambda: ensure_runtime_event_publisher(stub)

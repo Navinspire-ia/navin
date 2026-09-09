@@ -65,6 +65,7 @@ same name and are included in the agent skills summary automatically.
 | Skill | Description |
 |-------|-------------|
 | `playwright-browser` | Browser automation with the built-in `browser` tool |
+| `computer-use` | Desktop control (screen, mouse, keyboard) with the built-in `computer` tool |
 | `deep-web-research` | Multi-source research |
 | `web-extractor` | Site → Markdown/JSON |
 | `website-monitor` | Change detection |

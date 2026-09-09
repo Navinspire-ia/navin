@@ -62,7 +62,7 @@ navin status
 
 Providers: **Ctrl+G** in `navin-cli`. This tree is BYOK only (your keys or a local endpoint). There is no Navin managed provider and no Account sign-in.
 
-### From a `navin-agi` clone
+### From a `navin` clone
 
 ```bash
 make install
@@ -72,7 +72,7 @@ make start
 Or `sh scripts/install.sh` then `sh scripts/start.sh`. After that, launch the CLI from the repo root:
 
 ```bash
-cd /path/to/navin-agi
+cd /path/to/navin
 .venv/bin/navin-cli
 ```
 

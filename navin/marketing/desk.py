@@ -60,6 +60,8 @@ def kpis(store: MarketingStore) -> dict[str, Any]:
 
 
 def snapshot(store: MarketingStore | None = None) -> dict[str, Any]:
+    from navin.marketing.oauth import connections_status
+
     desk = store or MarketingStore()
     brand = desk.load_brand()
     product = desk.load_product()
@@ -83,6 +85,7 @@ def snapshot(store: MarketingStore | None = None) -> dict[str, Any]:
         "launch": desk.load_launch(),
         "settings": settings,
         "connectors": channel_state(desk, settings),
+        "oauth_connections": connections_status(desk),
         # Presence only: the values never leave marketing/secrets.json.
         "secrets_set": {name: bool(desk.get_secret(name)) for names in SECRET_NAMES.values() for name in names},
         "queue": publish_queue(desk),

@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { createPortal } from "react-dom";
+import { Dropdown as FluentDropdown } from "@fluentui/react";
 import {
   Activity,
   ArrowUpCircle,
@@ -42,6 +42,7 @@ import {
   Layers,
   Loader2,
   Mic,
+  Monitor,
   Moon,
   PauseCircle,
   PlayCircle,
@@ -69,6 +70,9 @@ import { useTranslation } from "react-i18next";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AccountSettings } from "@/components/settings/AccountSettings";
+import { ComputerSettings } from "@/components/settings/ComputerSettings";
+import { LiveVoiceSettings } from "@/components/settings/LiveVoiceSettings";
+import { MediaModelPicker, MediaSettingsSurface } from "@/components/settings/MediaModelPicker";
 import { AutomationEditDialog } from "@/components/settings/AutomationEditDialog";
 import { AppTemplatesSettings } from "@/components/settings/AppTemplatesSettings";
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
@@ -142,9 +146,8 @@ import {
   updateProviderSettings,
   updateSettings,
   updateMusicGenerationSettings,
-  updateTranscriptionSettings,
+  updateLiveVoiceSettings,
   updateVideoGenerationSettings,
-  updateVoiceSettings,
   updateWebSearchSettings,
   updatePreferences,
   type UpdateInfo,
@@ -178,9 +181,9 @@ import {
   providerDisplayLabel,
 } from "@/lib/provider-brand";
 import { lookupConnectionBase } from "@/lib/provider-connection";
-import { ttsModelSupportsReference } from "@/lib/tts-clone";
 import { cn } from "@/lib/utils";
 import {
+  canBeChatDefault,
   isMediaModality,
   isVisionChatModel,
   modalityBadgeClass,
@@ -220,7 +223,6 @@ import type {
   WebuiDefaultAccessMode,
 } from "@/lib/types";
 import { useAccount } from "@/hooks/useAccount";
-import { liveAccountEnabled } from "@/lib/live-account";
 
 export type SettingsSectionKey =
   | "overview"
@@ -232,6 +234,7 @@ export type SettingsSectionKey =
   | "video"
   | "voice"
   | "browser"
+  | "computer"
   | "tools"
   | "apps"
   | "automations"
@@ -403,8 +406,8 @@ const RETIRED_LLM_PROVIDERS = new Set([
   "aihubmix",
 ]);
 
-function hiddenSettingsProvider(name: string, liveAccount: boolean): boolean {
-  return RETIRED_LLM_PROVIDERS.has(name) || (name === "navin" && !liveAccount);
+function hiddenSettingsProvider(name: string): boolean {
+  return RETIRED_LLM_PROVIDERS.has(name);
 }
 
 const PROVIDER_DISPLAY_ORDER = new Map(
@@ -587,6 +590,12 @@ const MODEL_ROUTE_ROLES: Array<{
       "Screenshots, photos and video clips attached in chat. Defaults to Gemini 3.7 Flash on paid catalogs, not a :free multimodal.",
   },
   {
+    role: "computer",
+    fallbackLabel: "Desktop control",
+    fallbackHelp:
+      "Turns where the agent drives the mouse and keyboard. Needs a model trained to place clicks on a screenshot (Claude Sonnet/Opus 4+, GPT-5 / CUA, Gemini 2.5+, Qwen VL, UI-TARS) - a plain vision model misses buttons.",
+  },
+  {
     role: "search",
     fallbackLabel: "Web search",
     fallbackHelp:
@@ -735,8 +744,8 @@ const DEFAULT_MUSIC_GENERATION_SETTINGS: NonNullable<SettingsPayload["music_gene
 
 const DEFAULT_VOICE_FORM: VoiceSettingsUpdate = {
   ttsProvider: "",
-  ttsModel: "google/gemini-3.1-flash-tts-preview",
-  voice: "eve",
+  ttsModel: "",
+  voice: "auto",
   autoSpeak: false,
   responseFormat: "mp3",
   realtimeEnabled: null,
@@ -745,8 +754,8 @@ const DEFAULT_VOICE_FORM: VoiceSettingsUpdate = {
 const DEFAULT_VOICE_SETTINGS: NonNullable<SettingsPayload["voice"]> = {
   tts_provider: "",
   tts_provider_configured: false,
-  tts_model: "google/gemini-3.1-flash-tts-preview",
-  voice: "eve",
+  tts_model: "",
+  voice: "auto",
   auto_speak: false,
   response_format: "mp3",
   realtime_enabled: null,
@@ -907,7 +916,6 @@ export function SettingsView({
   const { token } = useClient();
   const { account } = useAccount();
   const [settings, setSettings] = useState<SettingsPayload | null>(() => initialSettings);
-  const liveAccount = liveAccountEnabled(settings);
   const [cliApps, setCliApps] = useState<CliAppsPayload | null>(null);
   const [navinFeatures, setNavinFeatures] = useState<NavinFeaturesPayload | null>(null);
   const featureCatalog = navinFeatures?.features ?? [];
@@ -946,7 +954,6 @@ export function SettingsView({
   const [imageGenerationSaving, setImageGenerationSaving] = useState(false);
   const [videoGenerationSaving, setVideoGenerationSaving] = useState(false);
   const [musicGenerationSaving, setMusicGenerationSaving] = useState(false);
-  const [transcriptionSaving, setTranscriptionSaving] = useState(false);
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [networkSafetySaving, setNetworkSafetySaving] = useState(false);
   const [hostEngineApplying, setHostEngineApplying] = useState(false);
@@ -1021,19 +1028,11 @@ export function SettingsView({
 
   const selectSection = useCallback(
     (section: SettingsSectionKey) => {
-      const next =
-        section === "account" && !liveAccountEnabled(settings) ? "providers" : section;
-      setActiveSection(next);
-      onSectionChange?.(next);
+      setActiveSection(section);
+      onSectionChange?.(section);
     },
-    [onSectionChange, settings],
+    [onSectionChange],
   );
-
-  useEffect(() => {
-    if (activeSection === "account" && !liveAccount) {
-      selectSection("providers");
-    }
-  }, [activeSection, liveAccount, selectSection]);
   const [webSearchKeyVisible, setWebSearchKeyVisible] = useState(false);
   const [webSearchKeyEditing, setWebSearchKeyEditing] = useState(false);
   const [form, setForm] = useState<AgentSettingsDraft>(() =>
@@ -1047,8 +1046,9 @@ export function SettingsView({
   );
 
   const modelDirtyRef = useRef(false);
+  const speechDirtyRef = useRef({ transcription: false, voice: false });
 
-  const applyPayload = useCallback((payload: SettingsPayload, options?: { syncForm?: boolean }) => {
+  const applyPayload = useCallback((payload: SettingsPayload, options?: { syncForm?: boolean; speechSaved?: boolean }) => {
     const syncForm = options?.syncForm !== false;
     setSettings(payload);
     if (syncForm) {
@@ -1057,9 +1057,13 @@ export function SettingsView({
     setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
     setImageGenerationForm(imageGenerationFormFromPayload(payload));
     setVideoGenerationForm(videoGenerationFormFromPayload(payload));
-    setTranscriptionForm(transcriptionFormFromPayload(payload));
+    if (options?.speechSaved || !speechDirtyRef.current.transcription) {
+      setTranscriptionForm(transcriptionFormFromPayload(payload));
+    }
     setMusicGenerationForm(musicGenerationFormFromPayload(payload));
-    setVoiceForm(voiceFormFromPayload(payload));
+    if (options?.speechSaved || !speechDirtyRef.current.voice) {
+      setVoiceForm(voiceFormFromPayload(payload));
+    }
     setNetworkSafetyForm(networkSafetyFormFromPayload(payload));
     if (payload.restart_required_sections) {
       setPendingRestartSections(pendingRestartSectionsFromPayload(payload));
@@ -1384,6 +1388,7 @@ export function SettingsView({
       voiceForm.realtimeEnabled !== voice.realtime_enabled
     );
   }, [settings, voiceForm]);
+  speechDirtyRef.current = { transcription: transcriptionDirty, voice: voiceDirty };
 
   const networkSafetyDirty = useMemo(() => {
     if (!settings) return false;
@@ -1755,24 +1760,6 @@ export function SettingsView({
     }
   };
 
-  const saveTranscriptionSettings = async () => {
-    if (!settings || !transcriptionDirty || transcriptionSaving) return;
-    setTranscriptionSaving(true);
-    try {
-      const payload = await updateTranscriptionSettings(token, transcriptionForm);
-      applyPayload(payload);
-      if (payload.requires_restart) {
-        setPendingRestartSections((prev) => ({ ...prev, browser: true }));
-      }
-      await maybeRestartHostEngine(payload);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setTranscriptionSaving(false);
-    }
-  };
-
   const saveMusicGenerationSettings = async () => {
     if (!settings || !musicGenerationDirty || musicGenerationSaving) return;
     setMusicGenerationSaving(true);
@@ -1791,15 +1778,20 @@ export function SettingsView({
     }
   };
 
-  const saveVoiceSettings = async () => {
-    if (!settings || !voiceDirty || voiceSaving) return;
+  const saveLiveSpeechSettings = async (returnToChat = false) => {
+    if (!settings || voiceSaving) return;
+    if (!voiceDirty && !transcriptionDirty) {
+      if (returnToChat) onBackToChat();
+      return;
+    }
     setVoiceSaving(true);
     try {
-      const payload = await updateVoiceSettings(token, voiceForm);
-      applyPayload(payload);
+      const payload = await updateLiveVoiceSettings(token, transcriptionForm, voiceForm);
+      applyPayload(payload, { speechSaved: true });
       setError(null);
-    } catch (err) {
-      setError((err as Error).message);
+      if (returnToChat) onBackToChat();
+    } catch {
+      setError(t("settings.live.saveFailed"));
     } finally {
       setVoiceSaving(false);
     }
@@ -2371,7 +2363,6 @@ export function SettingsView({
           />
         );
       case "account":
-        if (!liveAccount) return null;
         return (
           <AccountSettings
             onOpenProviders={() => selectSection("providers")}
@@ -2437,7 +2428,7 @@ export function SettingsView({
             imageProviderRestartPending={pendingRestartSections.image || pendingRestartSections.runtime}
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
-            onOpenAccount={liveAccount ? () => selectSection("account") : undefined}
+            onOpenAccount={() => selectSection("account")}
           />
         );
       case "models":
@@ -2466,7 +2457,7 @@ export function SettingsView({
             onToggleConfigurationEnabled={handleToggleModelConfigurationEnabled}
             onSetDefaultConfiguration={handleSetDefaultModelConfiguration}
             onOpenProviders={() => selectSection("providers")}
-            onOpenAccount={liveAccount ? () => selectSection("account") : undefined}
+            onOpenAccount={() => selectSection("account")}
             onUpdateModelRoute={handleUpdateModelRoute}
           />
         );
@@ -2508,20 +2499,20 @@ export function SettingsView({
             settings={settings}
             form={transcriptionForm}
             dirty={transcriptionDirty}
-            saving={transcriptionSaving}
+            saving={voiceSaving}
             onChangeForm={setTranscriptionForm}
-            onSave={saveTranscriptionSettings}
+            onSave={() => { void saveLiveSpeechSettings(); }}
+            onSaveAndReturn={() => { void saveLiveSpeechSettings(true); }}
+            onBackToChat={onBackToChat}
+            onOpenAccount={() => selectSection("account")}
             voiceForm={voiceForm}
             voiceDirty={voiceDirty}
-            voiceSaving={voiceSaving}
             onChangeVoiceForm={setVoiceForm}
-            onSaveVoice={saveVoiceSettings}
             musicForm={musicGenerationForm}
             musicDirty={musicGenerationDirty}
             musicSaving={musicGenerationSaving}
             onChangeMusicForm={setMusicGenerationForm}
             onSaveMusic={saveMusicGenerationSettings}
-            accountPlan={account?.plan ?? ""}
             onOpenProviders={() => selectSection("providers")}
             showBrandLogos={localPrefs.brandLogos}
             onRestart={restartViaSettingsSurface}
@@ -2683,6 +2674,9 @@ export function SettingsView({
             requiresRestartPending={pendingRestartSections.runtime}
           />
         );
+      case "computer":
+        return <ComputerSettings settings={settings} onUpdated={setSettings}
+          onRestart={restartViaSettingsSurface} isRestarting={isRestarting || hostEngineApplying} />;
       case "advanced":
         return (
           <AdvancedSettings
@@ -2713,6 +2707,7 @@ export function SettingsView({
           ? "bg-[radial-gradient(circle_at_50%_0%,hsl(var(--muted))_0%,hsl(var(--background))_42%)]"
           : "bg-background",
       )}
+      data-settings-scroll-host=""
     >
       {showSidebar ? (
         <SettingsSidebar
@@ -2720,7 +2715,6 @@ export function SettingsView({
           onSelectSection={selectSection}
           onBackToChat={onBackToChat}
           hostChromeInset={hostChromeInset}
-          liveAccount={liveAccount}
         />
       ) : null}
 
@@ -2835,9 +2829,10 @@ export function SettingsView({
 
       <main
         className={cn(
-          "min-w-0 flex-1 [scrollbar-gutter:stable]",
+          "min-h-0 min-w-0 flex-1 overscroll-contain [scrollbar-gutter:stable]",
           activeSection === "tools" ? "overflow-y-auto xl:overflow-hidden" : "overflow-y-auto",
         )}
+        data-panel-scroll=""
       >
         <div
           className={cn(
@@ -2988,6 +2983,7 @@ const SETTINGS_NAV_ITEMS: Array<{
   { key: "appearance", icon: Palette, fallback: "Appearance" },
   { key: "providers", icon: KeyRound, fallback: "Providers" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
+  { key: "computer", icon: Monitor, fallback: "Computer" },
   { key: "tools", icon: Wrench, fallback: "Tools & Mcp", labelKey: "settings.nav.toolsMcp" },
   { key: "skills", icon: Brain, fallback: "Skills & Loop", labelKey: "settings.nav.skillsLoop" },
   { key: "image", icon: ImageIcon, fallback: "Image" },
@@ -3017,13 +3013,11 @@ function SettingsSidebar({
   onSelectSection,
   onBackToChat,
   hostChromeInset,
-  liveAccount = false,
 }: {
   activeSection: SettingsSectionKey;
   onSelectSection: (section: SettingsSectionKey) => void;
   onBackToChat: () => void;
   hostChromeInset?: boolean;
-  liveAccount?: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -3051,7 +3045,7 @@ function SettingsSidebar({
         aria-label={t("settings.sidebar.ariaLabel")}
         className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:block lg:space-y-1 lg:overflow-visible lg:px-0 lg:pb-0"
       >
-        {SETTINGS_NAV_ITEMS.filter((item) => item.key !== "account" || liveAccount).map(({ key, icon: Icon, fallback, labelKey }) => {
+        {SETTINGS_NAV_ITEMS.map(({ key, icon: Icon, fallback, labelKey }) => {
           const active =
             key === activeSection
             || (key === "tools" && (activeSection === "tools" || activeSection === "apps"))
@@ -3094,7 +3088,7 @@ function OverviewSettings({
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const configuredProviders = settings.providers.filter(
     (provider) =>
-      provider.configured && !hiddenSettingsProvider(provider.name, liveAccountEnabled(settings)),
+      provider.configured && !hiddenSettingsProvider(provider.name),
   );
   const activePreset = settings.agent.model_preset || "default";
   const activeProvider = settings.agent.resolved_provider ?? settings.agent.provider;
@@ -4427,7 +4421,7 @@ function ModelsSettings({
   const showRoutingTab = Boolean(onUpdateModelRoute);
   const configuredProviders = settings.providers.filter(
     (provider) =>
-      provider.configured && !hiddenSettingsProvider(provider.name, liveAccountEnabled(settings)),
+      provider.configured && !hiddenSettingsProvider(provider.name),
   );
   const showAutoProvider = defaultPreset(settings)?.provider === "auto" || form.provider === "auto";
   const selectableProviders = uniqueProviders(configuredProviders);
@@ -5080,7 +5074,11 @@ function ModelsSettings({
                   <option value="">
                     {tx("settings.modelRoutes.unset", "Not routed")}
                   </option>
-                  {settings.model_presets.map((preset) => (
+                  {settings.model_presets.filter((preset) =>
+                    canBeChatDefault(preset.modality, preset.model)
+                    && (role !== "vision" || (preset.vision ?? isVisionChatModel(preset.model)))
+                    && (role !== "computer" || (preset.grounding ?? isVisionChatModel(preset.model))),
+                  ).map((preset) => (
                     <option key={preset.name} value={preset.name}>
                       {preset.label} · {preset.model}
                     </option>
@@ -5162,10 +5160,9 @@ function ProvidersSettings({
     Record<string, ProviderConnectionTestPayload | { status: "testing" }>
   >({});
   const accountConnected = Boolean(account?.connected);
-  const liveAccount = liveAccountEnabled(settings);
   const configuredProviders = orderUnconfiguredProviders(
     settings.providers.filter((provider) => {
-      if (hiddenSettingsProvider(provider.name, liveAccount)) return false;
+      if (hiddenSettingsProvider(provider.name)) return false;
       if (!provider.configured) return false;
       return true;
     }),
@@ -5174,7 +5171,7 @@ function ProvidersSettings({
     () =>
       orderUnconfiguredProviders(
         settings.providers.filter((provider) => {
-          if (provider.configured || hiddenSettingsProvider(provider.name, liveAccountEnabled(settings))) {
+          if (provider.configured || hiddenSettingsProvider(provider.name)) {
             return false;
           }
           return true;
@@ -5886,7 +5883,7 @@ function VideoGenerationSettings({
               value={form.provider}
               emptyLabel={tx("settings.video.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider }))}
+              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider, model: "" }))}
             />
           </SettingsRow>
           <SettingsRow
@@ -5925,38 +5922,9 @@ function VideoGenerationSettings({
             )}
           >
             <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              {(videoGeneration.managed_models?.length ?? 0) > 0 &&
-              (form.provider === "navin" || form.provider === "openrouter") ? (
-                <select
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full border border-border bg-background px-3 text-[13px]"
-                >
-                  {videoGeneration.managed_models!.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.name}
-                      {m.billingUnit === "video_second" && m.billingRate != null
-                        ? ` · ${m.billingRate} $/s`
-                        : m.unitPriceUsd != null
-                          ? ` · ${m.unitPriceUsd} $ / clip`
-                          : ""}
-                    </option>
-                  ))}
-                  {!videoGeneration.managed_models!.some((m) => m.slug === form.model) ? (
-                    <option value={form.model}>{form.model}</option>
-                  ) : null}
-                </select>
-              ) : (
-                <Input
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full text-[13px]"
-                />
-              )}
+              <MediaModelPicker key={`video:${form.provider}`} kind="video" provider={form.provider}
+                configured={providerConfigured} model={form.model}
+                onModelChange={(model) => onChangeForm((prev) => ({ ...prev, model }))} />
             </div>
           </SettingsRow>
           {videoGeneration.budget_caution ? (
@@ -6102,7 +6070,7 @@ function ImageGenerationSettings({
               value={form.provider}
               emptyLabel={tx("settings.image.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider }))}
+              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider, model: "" }))}
             />
           </SettingsRow>
           <SettingsRow
@@ -6141,36 +6109,9 @@ function ImageGenerationSettings({
             )}
           >
             <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              {(settings.image_generation.managed_models?.length ?? 0) > 0 &&
-              (form.provider === "navin" || form.provider === "openrouter") ? (
-                <select
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full border border-border bg-background px-3 text-[13px]"
-                >
-                  {settings.image_generation.managed_models!.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.name}
-                      {m.unitPriceUsd != null ? ` · ${m.unitPriceUsd} $` : ""}
-                    </option>
-                  ))}
-                  {!settings.image_generation.managed_models!.some(
-                    (m) => m.slug === form.model,
-                  ) ? (
-                    <option value={form.model}>{form.model}</option>
-                  ) : null}
-                </select>
-              ) : (
-                <Input
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full text-[13px]"
-                />
-              )}
+              <MediaModelPicker key={`image:${form.provider}`} kind="image" provider={form.provider}
+                configured={providerConfigured} model={form.model}
+                onModelChange={(model) => onChangeForm((prev) => ({ ...prev, model }))} />
               {(() => {
                 const hit = settings.image_generation.managed_models?.find(
                   (m) => m.slug === form.model,
@@ -6258,17 +6199,17 @@ function TranscriptionSettings({
   saving,
   onChangeForm,
   onSave,
+  onSaveAndReturn,
+  onBackToChat,
+  onOpenAccount,
   voiceForm,
   voiceDirty,
-  voiceSaving,
   onChangeVoiceForm,
-  onSaveVoice,
   musicForm,
   musicDirty,
   musicSaving,
   onChangeMusicForm,
   onSaveMusic,
-  accountPlan,
   onOpenProviders,
   showBrandLogos,
   onRestart,
@@ -6281,17 +6222,17 @@ function TranscriptionSettings({
   saving: boolean;
   onChangeForm: Dispatch<SetStateAction<TranscriptionSettingsUpdate>>;
   onSave: () => void;
+  onSaveAndReturn: () => void;
+  onBackToChat: () => void;
+  onOpenAccount: () => void;
   voiceForm: VoiceSettingsUpdate;
   voiceDirty: boolean;
-  voiceSaving: boolean;
   onChangeVoiceForm: Dispatch<SetStateAction<VoiceSettingsUpdate>>;
-  onSaveVoice: () => void;
   musicForm: MusicGenerationSettingsUpdate;
   musicDirty: boolean;
   musicSaving: boolean;
   onChangeMusicForm: Dispatch<SetStateAction<MusicGenerationSettingsUpdate>>;
   onSaveMusic: () => void;
-  accountPlan: string;
   onOpenProviders: () => void;
   showBrandLogos: boolean;
   onRestart?: () => void;
@@ -6300,381 +6241,18 @@ function TranscriptionSettings({
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const transcription = settings.transcription ?? DEFAULT_TRANSCRIPTION_SETTINGS;
-  const voice = settings.voice ?? DEFAULT_VOICE_SETTINGS;
   const music = settings.music_generation ?? DEFAULT_MUSIC_GENERATION_SETTINGS;
-  const selectedProvider = form.provider
-    ? transcription.providers.find((provider) => provider.name === form.provider)
-    : undefined;
-  const providerConfigured = !!selectedProvider?.configured;
-  const selectedTtsProvider = voiceForm.ttsProvider
-    ? voice.providers.find((provider) => provider.name === voiceForm.ttsProvider)
-    : undefined;
-  const ttsConfigured = !!selectedTtsProvider?.configured;
   const selectedMusicProvider = musicForm.provider
     ? music.providers.find((provider) => provider.name === musicForm.provider)
     : undefined;
   const musicConfigured = !!selectedMusicProvider?.configured;
-  const realtimeAllowed = voice.realtime_allowed;
-  const planLabel = accountPlan.trim() || "free";
 
   return (
     <div className="space-y-7">
-      <section>
-        <SettingsSectionTitle>{tx("settings.sections.voiceInput", "Voice input")}</SettingsSectionTitle>
-        <SettingsGroup>
-          <SettingsRow
-            title={tx("settings.rows.transcription", "Transcription")}
-            description={tx("settings.help.transcription", "Transcribe microphone input before sending it. Chat channel voice messages use the same settings.")}
-          >
-            <ToggleButton
-              checked={form.enabled}
-              onChange={(enabled) => onChangeForm((prev) => ({ ...prev, enabled }))}
-              ariaLabel={tx("settings.rows.transcription", "Transcription")}
-              label={form.enabled ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.transcriptionProvider", "Provider")}
-            description={tx("settings.help.transcriptionProvider", "Uses the matching provider credentials from Providers.")}
-          >
-            <ProviderPicker
-              providers={transcription.providers}
-              value={form.provider}
-              emptyLabel={tx("settings.voice.selectProvider", "Select provider")}
-              showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeForm((prev) => ({ ...prev, provider }))}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.transcriptionProviderStatus", "Provider status")}
-            description={tx("settings.help.transcriptionProviderStatus", "API keys stay under providers, not in transcription settings.")}
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <StatusPill tone={providerConfigured ? "success" : "neutral"}>
-                {providerConfigured
-                  ? tx("settings.values.configured", "Configured")
-                  : tx("settings.values.notConfigured", "Not configured")}
-              </StatusPill>
-              {!providerConfigured ? (
-                <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
-                  {tx("settings.voice.configureProvider", "Configure provider")}
-                </Button>
-              ) : null}
-            </div>
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.transcriptionModel", "Model")}
-            description={tx(
-              "settings.help.transcriptionModel",
-              "Choose an OpenRouter STT model. Qwen3 ASR Flash is the default.",
-            )}
-          >
-            <div className="flex w-[min(360px,80vw)] flex-col items-end gap-1.5">
-              {(transcription.managed_models?.length ?? 0) > 0 &&
-              (form.provider === "navin" || form.provider === "openrouter") ? (
-                <select
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full border border-border bg-background px-3 text-[13px]"
-                >
-                  {transcription.managed_models!.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.name}
-                      {m.isDefault
-                        ? ` (${tx("settings.voice.modelDefault", "default")})`
-                        : ""}
-                      {m.unitPriceUsd != null ? ` · ~${m.unitPriceUsd}$/min` : ""}
-                    </option>
-                  ))}
-                  {!transcription.managed_models!.some((m) => m.slug === form.model) ? (
-                    <option value={form.model}>{form.model}</option>
-                  ) : null}
-                </select>
-              ) : (
-                <Input
-                  value={form.model}
-                  onChange={(event) =>
-                    onChangeForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full text-[13px]"
-                />
-              )}
-              {(() => {
-                const hit = transcription.managed_models?.find((m) => m.slug === form.model);
-                const note =
-                  hit?.priceNote
-                  || (hit?.unitPriceUsd != null
-                    ? `~${hit.unitPriceUsd} $ / min`
-                    : null);
-                return note ? (
-                  <p className="text-right text-[11.5px] text-muted-foreground">{note}</p>
-                ) : null;
-              })()}
-            </div>
-          </SettingsRow>
-          {transcription.budget_caution ? (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-950">
-              {transcription.budget_caution}
-            </div>
-          ) : null}
-          <SettingsRow
-            title={tx("settings.rows.transcriptionLanguage", "Language")}
-            description={tx("settings.help.transcriptionLanguage", "Optional ISO-639 hint such as en, zh, ja, or ko.")}
-          >
-            <Input
-              value={form.language}
-              onChange={(event) => onChangeForm((prev) => ({ ...prev, language: event.target.value }))}
-              placeholder={tx("settings.voice.languageAuto", "Auto")}
-              className="h-8 w-[min(180px,60vw)] rounded-full text-[13px]"
-            />
-          </SettingsRow>
-          <SettingsRow title={tx("settings.rows.voiceLimits", "Limits")}>
-            <div className="flex flex-wrap justify-end gap-2">
-              <NumberInput
-                value={form.maxDurationSec}
-                min={1}
-                max={600}
-                suffix="s"
-                onChange={(maxDurationSec) => onChangeForm((prev) => ({ ...prev, maxDurationSec }))}
-              />
-              <NumberInput
-                value={form.maxUploadMb}
-                min={1}
-                max={100}
-                suffix="MB"
-                onChange={(maxUploadMb) => onChangeForm((prev) => ({ ...prev, maxUploadMb }))}
-              />
-            </div>
-          </SettingsRow>
-          <RestartSettingsFooter
-            dirty={dirty}
-            saving={saving}
-            pendingRestart={requiresRestartPending}
-            dirtyMessage={tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")}
-            pendingMessage={tx("settings.status.savedRestartApply", "Saved. Restart when ready.")}
-            onSave={onSave}
-            onRestart={onRestart}
-            isRestarting={isRestarting}
-          />
-        </SettingsGroup>
-      </section>
-
-      <section>
-        <SettingsSectionTitle>{tx("settings.sections.voiceRealtime", "Realtime voice")}</SettingsSectionTitle>
-        <SettingsGroup>
-          <SettingsRow
-            title={tx("settings.rows.realtimeGate", "Plan access")}
-            description={tx(
-              "settings.help.realtimeGate",
-              "Realtime voice (duplex STT + TTS with barge-in) is available on Pro, Ultra, and Team. Free and Plus keep speech-to-text only. You can force-enable below for BYOK / local use.",
-            )}
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <StatusPill tone={realtimeAllowed ? "success" : "neutral"}>
-                {realtimeAllowed
-                  ? tx("settings.voice.realtimeAllowed", "Allowed")
-                  : tx("settings.voice.realtimeLocked", "Pro+ / Team")}
-              </StatusPill>
-              <span className="text-[12px] text-muted-foreground">
-                {t("settings.voice.currentPlan", {
-                  defaultValue: `Plan: ${planLabel}`,
-                  plan: planLabel,
-                })}
-              </span>
-            </div>
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.realtimeOverride", "Force realtime")}
-            description={tx(
-              "settings.help.realtimeOverride",
-              "Auto follows your account plan. On forces realtime regardless of plan; Off blocks it.",
-            )}
-          >
-            <select
-              className="h-8 rounded-full border border-border bg-background px-3 text-[13px]"
-              value={
-                voiceForm.realtimeEnabled === null
-                  ? "auto"
-                  : voiceForm.realtimeEnabled
-                    ? "on"
-                    : "off"
-              }
-              onChange={(event) => {
-                const raw = event.target.value;
-                const realtimeEnabled =
-                  raw === "auto" ? null : raw === "on";
-                onChangeVoiceForm((prev) => ({ ...prev, realtimeEnabled }));
-              }}
-            >
-              <option value="auto">{tx("settings.voice.realtimeAuto", "Auto (plan)")}</option>
-              <option value="on">{tx("settings.values.on", "On")}</option>
-              <option value="off">{tx("settings.values.off", "Off")}</option>
-            </select>
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.ttsProvider", "TTS provider")}
-            description={tx("settings.help.ttsProvider", "OpenAI-compatible speech endpoint. Credentials stay under Providers.")}
-          >
-            <ProviderPicker
-              providers={voice.providers}
-              value={voiceForm.ttsProvider}
-              emptyLabel={tx("settings.voice.selectProvider", "Select provider")}
-              showProviderLogos={showBrandLogos}
-              onChange={(ttsProvider) => onChangeVoiceForm((prev) => ({ ...prev, ttsProvider }))}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.ttsProviderStatus", "TTS status")}
-            description={tx("settings.help.ttsProviderStatus", "Configure the matching provider API key before using auto-speak.")}
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <StatusPill tone={ttsConfigured ? "success" : "neutral"}>
-                {ttsConfigured
-                  ? tx("settings.values.configured", "Configured")
-                  : tx("settings.values.notConfigured", "Not configured")}
-              </StatusPill>
-              {!ttsConfigured ? (
-                <Button size="sm" variant="outline" onClick={onOpenProviders} className="rounded-full">
-                  {tx("settings.voice.configureProvider", "Configure provider")}
-                </Button>
-              ) : null}
-            </div>
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.ttsModel", "TTS model")}
-            description={tx(
-              "settings.help.ttsModel",
-              "Managed list when using Navin, or type any provider model id for BYOK.",
-            )}
-          >
-            <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              {(voice.managed_models?.length ?? 0) > 0 &&
-              (voiceForm.ttsProvider === "navin" || voiceForm.ttsProvider === "openrouter") ? (
-                <select
-                  value={voiceForm.ttsModel}
-                  onChange={(event) =>
-                    onChangeVoiceForm((prev) => ({ ...prev, ttsModel: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full border border-border bg-background px-3 text-[13px]"
-                >
-                  {voice.managed_models!.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.name}
-                      {m.unitPriceUsd != null ? ` · ${m.unitPriceUsd} $` : ""}
-                    </option>
-                  ))}
-                  {!voice.managed_models!.some((m) => m.slug === voiceForm.ttsModel) ? (
-                    <option value={voiceForm.ttsModel}>{voiceForm.ttsModel}</option>
-                  ) : null}
-                </select>
-              ) : (
-                <Input
-                  value={voiceForm.ttsModel}
-                  onChange={(event) =>
-                    onChangeVoiceForm((prev) => ({ ...prev, ttsModel: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full text-[13px]"
-                />
-              )}
-              {(() => {
-                const hit = voice.managed_models?.find((m) => m.slug === voiceForm.ttsModel);
-                const note =
-                  hit?.priceNote
-                  || (hit?.unitPriceUsd != null
-                    ? `~${hit.unitPriceUsd} $ / 1M caractères`
-                    : null);
-                const canClone =
-                  hit?.supportsReference
-                  ?? ttsModelSupportsReference(voiceForm.ttsModel, voiceForm.ttsProvider);
-                return (
-                  <>
-                    {note ? (
-                      <p className="text-right text-[11.5px] text-muted-foreground">{note}</p>
-                    ) : null}
-                    <p className="text-right text-[11.5px] text-muted-foreground">
-                      {canClone
-                        ? tx(
-                            "settings.help.ttsCloneYes",
-                            "This model can clone a timbre from a short clip (Translate & dub, or voicetrack reference=).",
-                          )
-                        : tx(
-                            "settings.help.ttsCloneNo",
-                            "Catalogue voice only. Cloning needs Fish Audio (or ElevenLabs). Local / OpenAI / Groq / Gemini cannot clone.",
-                          )}
-                    </p>
-                  </>
-                );
-              })()}
-            </div>
-          </SettingsRow>
-          {voice.budget_caution ? (
-            <div className="rounded-xl border border-amber-200/80 bg-amber-50 px-3.5 py-2.5 text-[12.5px] text-amber-950">
-              {voice.budget_caution}
-            </div>
-          ) : null}
-          <SettingsRow
-            title={tx("settings.rows.ttsVoice", "Voice")}
-            description={tx(
-              "settings.help.ttsVoice",
-              "Speaker id for the selected TTS model (eve, ara, rex, sal, leo for Grok Voice).",
-            )}
-          >
-            {voiceForm.ttsModel.includes("grok-voice") || voiceForm.ttsProvider === "navin" ? (
-              <select
-                value={voiceForm.voice}
-                onChange={(event) =>
-                  onChangeVoiceForm((prev) => ({ ...prev, voice: event.target.value }))
-                }
-                className="h-8 w-[min(180px,60vw)] rounded-full border border-border bg-background px-3 text-[13px]"
-              >
-                {["eve", "ara", "rex", "sal", "leo"].map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-                {!["eve", "ara", "rex", "sal", "leo"].includes(voiceForm.voice) ? (
-                  <option value={voiceForm.voice}>{voiceForm.voice}</option>
-                ) : null}
-              </select>
-            ) : (
-              <Input
-                value={voiceForm.voice}
-                onChange={(event) =>
-                  onChangeVoiceForm((prev) => ({ ...prev, voice: event.target.value }))
-                }
-                className="h-8 w-[min(180px,60vw)] rounded-full text-[13px]"
-              />
-            )}
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.autoSpeak", "Auto-speak")}
-            description={tx(
-              "settings.help.autoSpeak",
-              "When enabled, the UI can request TTS for assistant replies during a realtime voice session.",
-            )}
-          >
-            <ToggleButton
-              checked={voiceForm.autoSpeak}
-              onChange={(autoSpeak) => onChangeVoiceForm((prev) => ({ ...prev, autoSpeak }))}
-              ariaLabel={tx("settings.rows.autoSpeak", "Auto-speak")}
-              label={voiceForm.autoSpeak ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
-            />
-          </SettingsRow>
-          <RestartSettingsFooter
-            dirty={voiceDirty}
-            saving={voiceSaving}
-            pendingRestart={false}
-            dirtyMessage={tx("settings.status.saveChanges", "Save changes when ready.")}
-            pendingMessage={tx("settings.status.saved", "Saved.")}
-            onSave={onSaveVoice}
-            onRestart={onRestart}
-            isRestarting={isRestarting}
-          />
-        </SettingsGroup>
-      </section>
+      <LiveVoiceSettings settings={settings} transcription={form} voice={voiceForm}
+        dirty={dirty || voiceDirty} saving={saving} onTranscription={onChangeForm}
+        onVoice={onChangeVoiceForm} onSave={onSave} onSaveAndReturn={onSaveAndReturn}
+        onBackToChat={onBackToChat} onOpenProviders={onOpenProviders} onOpenAccount={onOpenAccount} />
 
       <section>
         <SettingsSectionTitle>{tx("settings.sections.music", "Music")}</SettingsSectionTitle>
@@ -6705,7 +6283,7 @@ function TranscriptionSettings({
               value={musicForm.provider}
               emptyLabel={tx("settings.voice.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
-              onChange={(provider) => onChangeMusicForm((prev) => ({ ...prev, provider }))}
+              onChange={(provider) => onChangeMusicForm((prev) => ({ ...prev, provider, model: "" }))}
             />
           </SettingsRow>
           <SettingsRow
@@ -6736,34 +6314,9 @@ function TranscriptionSettings({
             )}
           >
             <div className="flex w-[min(320px,75vw)] flex-col items-end gap-1.5">
-              {(music.managed_models?.length ?? 0) > 0 &&
-              (musicForm.provider === "navin" || musicForm.provider === "openrouter") ? (
-                <select
-                  value={musicForm.model}
-                  onChange={(event) =>
-                    onChangeMusicForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full border border-border bg-background px-3 text-[13px]"
-                >
-                  {music.managed_models!.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.name}
-                      {m.unitPriceUsd != null ? ` · ${m.unitPriceUsd} $` : ""}
-                    </option>
-                  ))}
-                  {!music.managed_models!.some((m) => m.slug === musicForm.model) ? (
-                    <option value={musicForm.model}>{musicForm.model}</option>
-                  ) : null}
-                </select>
-              ) : (
-                <Input
-                  value={musicForm.model}
-                  onChange={(event) =>
-                    onChangeMusicForm((prev) => ({ ...prev, model: event.target.value }))
-                  }
-                  className="h-8 w-full rounded-full text-[13px]"
-                />
-              )}
+              <MediaModelPicker key={`music:${musicForm.provider}`} kind="music" provider={musicForm.provider}
+                configured={musicConfigured} model={musicForm.model}
+                onModelChange={(model) => onChangeMusicForm((prev) => ({ ...prev, model }))} />
               {(() => {
                 const hit = music.managed_models?.find((m) => m.slug === musicForm.model);
                 const note = hit?.priceNote
@@ -10337,86 +9890,6 @@ function ForgeTokensSettings({ settings }: { settings: SettingsPayload }) {
   );
 }
 
-/**
- * How the agent's browser runs.
- *
- * Headless is right nearly always, but a site that refuses automated traffic -
- * a captcha above all - is sometimes only solvable in a window, and that was
- * previously reachable only by hand-editing the config file.
- */
-function BrowserSettings({ settings }: { settings: SettingsPayload }) {
-  const { t } = useTranslation();
-  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const { token } = useClient();
-  const [headless, setHeadless] = useState(settings.browser?.headless ?? true);
-  const [liveView, setLiveView] = useState(settings.browser?.live_view ?? true);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setHeadless(settings.browser?.headless ?? true);
-    setLiveView(settings.browser?.live_view ?? true);
-  }, [settings.browser]);
-
-  const persist = async (update: { browserHeadless?: boolean; browserLiveView?: boolean }) => {
-    if (!token) return;
-    setSaving(true);
-    try {
-      const payload = await updateSettings(token, update);
-      setHeadless(payload.browser?.headless ?? true);
-      setLiveView(payload.browser?.live_view ?? true);
-    } catch {
-      setHeadless(settings.browser?.headless ?? true);
-      setLiveView(settings.browser?.live_view ?? true);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section>
-      <SettingsSectionTitle>
-        {tx("settings.sections.browser", "Agent browser")}
-      </SettingsSectionTitle>
-      <SettingsGroup>
-        <SettingsRow
-          title={tx("settings.rows.browserWindow", "Show a real window")}
-          description={tx(
-            "settings.help.browserWindow",
-            "The browser runs hidden by default. Show it when a site refuses automated traffic and a captcha has to be solved by hand. Applies to the next browser the agent opens: close the current one from the Agent browser panel to switch straight away.",
-          )}
-        >
-          <ToggleButton
-            checked={!headless}
-            disabled={saving}
-            onChange={(next) => {
-              setHeadless(!next);
-              void persist({ browserHeadless: !next });
-            }}
-            label={tx("settings.rows.browserWindow", "Show a real window")}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={tx("settings.rows.browserLiveView", "Mirror it in the editor")}
-          description={tx(
-            "settings.help.browserLiveView",
-            "Stream what the browser is doing into the Agent browser panel, where you can also take control of the page.",
-          )}
-        >
-          <ToggleButton
-            checked={liveView}
-            disabled={saving}
-            onChange={(next) => {
-              setLiveView(next);
-              void persist({ browserLiveView: next });
-            }}
-            label={tx("settings.rows.browserLiveView", "Mirror it in the editor")}
-          />
-        </SettingsRow>
-      </SettingsGroup>
-    </section>
-  );
-}
-
 function AdvancedSettings({
   form,
   settings,
@@ -10511,8 +9984,6 @@ function AdvancedSettings({
       </section>
 
       <BoardGitSettings settings={settings} />
-
-      <BrowserSettings settings={settings} />
 
       <p className="max-w-3xl px-1 text-sm leading-6 text-muted-foreground">
         {tx(
@@ -10679,185 +10150,23 @@ function ProviderPicker({
   disabled?: boolean;
   onChange: (provider: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const [menuBox, setMenuBox] = useState<{ top: number; left: number; width: number }>({
-    top: 0,
-    left: 0,
-    width: 240,
-  });
-  const selectedProvider = providers.find((provider) => provider.name === value) ?? null;
-  const isDisabled = disabled || providers.length === 0;
-
-  const placeMenu = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    const width = 240;
-    const left = Math.min(
-      Math.max(8, rect.right - width),
-      window.innerWidth - width - 8,
-    );
-    setMenuBox({
-      top: Math.min(rect.bottom + 6, window.innerHeight - 16),
-      left,
-      width,
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    placeMenu();
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (triggerRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest("[data-provider-picker-menu]")) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    const onReposition = () => placeMenu();
-    // Capture phase so Dialog dismiss logic cannot close us before we handle the click.
-    window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    };
-  }, [open, placeMenu]);
-
-  const choose = (providerName: string) => {
-    if (providerName !== value) onChange(providerName);
-    setOpen(false);
-  };
-
-  const ignoreDismissRef = useRef(false);
-
-  useEffect(() => {
-    if (!open) return;
-    placeMenu();
-    ignoreDismissRef.current = true;
-    const clearIgnore = window.setTimeout(() => {
-      ignoreDismissRef.current = false;
-    }, 0);
-    const onPointerDown = (event: PointerEvent) => {
-      if (ignoreDismissRef.current) return;
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (triggerRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest("[data-provider-picker-menu]")) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    const onReposition = () => placeMenu();
-    window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    return () => {
-      window.clearTimeout(clearIgnore);
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    };
-  }, [open, placeMenu]);
-
+  const options = providers.map((provider) => ({ key: provider.name, text: provider.label }));
+  const renderProvider = (option?: { key: string | number; text: string }) => option ? (
+    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      {showProviderLogos ? <ProviderPickerIcon provider={String(option.key)} showBrandLogos /> : null}
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{option.text}</span>
+    </span>
+  ) : null;
   return (
-    <>
-      <Button
-        ref={triggerRef}
-        type="button"
-        variant="outline"
-        disabled={isDisabled}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        onClick={() => {
-          if (isDisabled) return;
-          setOpen((prev) => {
-            const next = !prev;
-            if (next) placeMenu();
-            return next;
-          });
-        }}
-        className={cn(
-          "h-8 w-[210px] justify-between rounded-full border-input bg-background px-3 text-[13px] font-normal shadow-none",
-          "hover:bg-accent/55 focus-visible:ring-2 focus-visible:ring-ring",
-          isDisabled && "text-muted-foreground",
-        )}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          {selectedProvider && showProviderLogos ? (
-            <ProviderPickerIcon
-              provider={selectedProvider.name}
-              showBrandLogos={showProviderLogos}
-            />
-          ) : null}
-          <span className="truncate">{selectedProvider?.label ?? emptyLabel}</span>
-        </span>
-        <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      </Button>
-      {open
-        ? createPortal(
-            <div
-              data-provider-picker-menu
-              role="listbox"
-              style={{
-                position: "fixed",
-                top: menuBox.top,
-                left: menuBox.left,
-                width: menuBox.width,
-              }}
-              className={cn(
-                "z-[300] max-h-[18rem] overflow-y-auto overscroll-contain rounded-[18px] border border-border/65 bg-popover p-1.5 text-popover-foreground shadow-[0_18px_55px_rgba(15,23,42,0.18)]",
-                "scrollbar-thin scrollbar-track-transparent dark:border-white/10 dark:shadow-[0_22px_55px_rgba(0,0,0,0.45)]",
-              )}
-              onPointerDown={(event) => {
-                // Keep Radix Dialog from treating menu clicks as outside dismiss.
-                event.stopPropagation();
-              }}
-            >
-              {providers.map((provider) => {
-                const selected = provider.name === value;
-                return (
-                  <button
-                    key={provider.name}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onClick={() => choose(provider.name)}
-                    className={cn(
-                      "flex w-full cursor-default items-center justify-between gap-2 rounded-[12px] px-2.5 py-2 text-left text-[13px] outline-none transition-colors",
-                      "hover:bg-muted/85 focus-visible:bg-muted/85",
-                      selected && "bg-muted/80 text-foreground",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      {showProviderLogos ? (
-                        <ProviderPickerIcon
-                          provider={provider.name}
-                          showBrandLogos={showProviderLogos}
-                        />
-                      ) : null}
-                      <span className="truncate">{provider.label}</span>
-                    </span>
-                    {selected ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
-                  </button>
-                );
-              })}
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
+    <MediaSettingsSurface>
+      <FluentDropdown ariaLabel={emptyLabel} placeholder={emptyLabel}
+        selectedKey={providers.some((provider) => provider.name === value) ? value : null}
+        options={options} disabled={disabled || !providers.length}
+        styles={{ root: { width: 210, maxWidth: "100%" } }}
+        calloutProps={{ calloutMaxHeight: 288 }}
+        onRenderOption={renderProvider} onRenderTitle={(items) => renderProvider(items?.[0])}
+        onChange={(_, option) => { if (option && option.key !== value) onChange(String(option.key)); }} />
+    </MediaSettingsSurface>
   );
 }
 

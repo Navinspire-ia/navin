@@ -5,10 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   Activity,
@@ -51,6 +49,7 @@ import {
   Maximize2,
   MessageSquarePlus,
   Minimize2,
+  Monitor,
   MoreHorizontal,
   PackagePlus,
   PanelLeftClose,
@@ -67,7 +66,6 @@ import {
   TerminalSquare,
   Trash2,
   Waypoints,
-  Minus,
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -107,6 +105,8 @@ import {
 } from "@/components/ui/context-menu";
 import { DevOtherMenu, type DevOtherMenuItem } from "@/components/dev/DevOtherMenu";
 import { DevPreviewBrowser } from "@/components/dev/DevPreviewBrowser";
+import { AgentLiveView } from "@/components/dev/AgentLiveView";
+import { useAgentLiveSessions } from "@/hooks/useAgentLiveSessions";
 import { matchSourceFile, sourceLookup } from "@/components/dev/designMode";
 import { localPreviewPortFromUrl } from "@/components/dev/previewConsole";
 import { RecentEditsTracker } from "@/components/dev/recentEdits";
@@ -291,6 +291,7 @@ const DevBoardPanel = lazyWithRetry(() => import("./DevBoardPanel"));
 const DevGuardrailsPanel = lazyWithRetry(() => import("./DevGuardrailsPanel"));
 // AGI: what the agent may learn on its own (skills evolution, episodic memory).
 const DevAgiPanel = lazyWithRetry(() => import("./DevAgiPanel"));
+const DevComputerPanel = lazyWithRetry(() => import("./DevComputerPanel"));
 
 /** Counter pill on a rail row (names shown). Tones add the colors. */
 const RAIL_BADGE_CLASS =
@@ -571,6 +572,7 @@ export function DevWorkbench({
     | "skills"
     | "guardrails"
     | "agi"
+    | "computer"
     | "extensions"
     | "plan"
   >("code");
@@ -641,20 +643,12 @@ export function DevWorkbench({
   }, [onRevealWorkbench]);
 
   const chatId = treeSessionChatId(sessionKey);
-  // Live mirror of the agent's headless browser (CDP screencast frames).
-  const [agentBrowser, setAgentBrowser] = useState<{
-    id: string;
-    live: boolean;
-    url: string | null;
-    frame: string | null;
-    /** Size of the last frame, needed to map a click back onto the page. */
-    frameWidth: number | null;
-    frameHeight: number | null;
-    actions: string[];
-  } | null>(null);
-  // While on, clicks and keystrokes go to the agent's browser instead of
-  // being ignored. Off by default: the panel is a monitor first.
-  const [agentBrowserTakeover, setAgentBrowserTakeover] = useState(false);
+  const {
+    session: agentBrowser,
+    sessions: agentBrowserSessions,
+    select: selectAgentBrowser,
+    forget: forgetAgentBrowser,
+  } = useAgentLiveSessions(client, chatId, () => setMode("agentBrowser"));
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -1556,124 +1550,6 @@ export function DevWorkbench({
         );
       }),
     [client, pushAgentTermChunk],
-  );
-
-  // Agent browser live view: frames + action feed, Cursor-style tab that
-  // appears when the agent starts driving its headless browser.
-  /**
-   * Where a pointer event landed, in the streamed frame's own pixels.
-   *
-   * The frame is letterboxed by ``object-contain``, so the bars around it are
-   * part of the element but not part of the page: a click there means nothing
-   * and is dropped rather than mapped onto an edge.
-   */
-  const agentBrowserPoint = useCallback(
-    (event: { currentTarget: HTMLImageElement; clientX: number; clientY: number }) => {
-      const image = event.currentTarget;
-      const rect = image.getBoundingClientRect();
-      const width = image.naturalWidth;
-      const height = image.naturalHeight;
-      if (!width || !height || !rect.width || !rect.height) return null;
-      const scale = Math.min(rect.width / width, rect.height / height);
-      const x = (event.clientX - rect.left - (rect.width - width * scale) / 2) / scale;
-      const y = (event.clientY - rect.top - (rect.height - height * scale) / 2) / scale;
-      if (x < 0 || y < 0 || x > width || y > height) return null;
-      return { x, y, width, height };
-    },
-    [],
-  );
-
-  const sendAgentBrowserClick = useCallback(
-    (event: ReactMouseEvent<HTMLImageElement>) => {
-      if (!chatId) return;
-      const point = agentBrowserPoint(event);
-      if (!point) return;
-      event.currentTarget.focus();
-      client.agentBrowserInput(chatId, "click", { ...point, count: event.detail || 1 });
-    },
-    [agentBrowserPoint, chatId, client],
-  );
-
-  const sendAgentBrowserScroll = useCallback(
-    (event: ReactWheelEvent<HTMLImageElement>) => {
-      if (!chatId) return;
-      const point = agentBrowserPoint(event);
-      if (!point) return;
-      client.agentBrowserInput(chatId, "scroll", {
-        ...point,
-        dx: event.deltaX,
-        dy: event.deltaY,
-      });
-    },
-    [agentBrowserPoint, chatId, client],
-  );
-
-  const sendAgentBrowserKey = useCallback(
-    (event: ReactKeyboardEvent<HTMLImageElement>) => {
-      if (!chatId) return;
-      const { key } = event;
-      // A printable character is typed, so a field that watches each keystroke
-      // reacts; anything named is pressed, modifiers included.
-      if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        client.agentBrowserInput(chatId, "text", { text: key });
-        return;
-      }
-      if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta") return;
-      const combo = [
-        event.ctrlKey ? "Control" : null,
-        event.altKey ? "Alt" : null,
-        event.metaKey ? "Meta" : null,
-        event.shiftKey && key.length === 1 ? "Shift" : null,
-        key,
-      ]
-        .filter(Boolean)
-        .join("+");
-      event.preventDefault();
-      client.agentBrowserInput(chatId, "key", { key: combo });
-    },
-    [chatId, client],
-  );
-
-  useEffect(
-    () =>
-      client.onAgentBrowser((update) => {
-        if (update.phase === "exit") {
-          setAgentBrowser((prev) =>
-            prev && prev.id === update.id ? { ...prev, live: false } : prev,
-          );
-          return;
-        }
-        setAgentBrowser((prev) => {
-          const base =
-            prev && prev.id === update.id
-              ? prev
-              : {
-                  id: update.id,
-                  live: true,
-                  url: null,
-                  frame: null,
-                  frameWidth: null,
-                  frameHeight: null,
-                  actions: [],
-                };
-          const next = { ...base, live: true };
-          if (update.url) next.url = update.url;
-          if (update.phase === "frame" && update.data) {
-            next.frame = update.data;
-            if (update.width) next.frameWidth = update.width;
-            if (update.height) next.frameHeight = update.height;
-          }
-          if (update.phase === "action" && update.action) {
-            next.actions = [...base.actions.slice(-49), update.action];
-          }
-          return next;
-        });
-        if (update.phase === "start") {
-          setMode("agentBrowser");
-        }
-      }),
-    [client],
   );
 
   useEffect(() => {
@@ -4786,6 +4662,7 @@ export function DevWorkbench({
     mode === "rules" ||
     mode === "guardrails" ||
     mode === "agi" ||
+    mode === "computer" ||
     mode === "graph" ||
     mode === "board";
   const overflowMenuItems = (
@@ -4826,6 +4703,13 @@ export function DevWorkbench({
       label: tx("dev.agiTab", "AGI"),
       active: mode === "agi",
       onSelect: wrap(() => showMode("agi")),
+    },
+    {
+      key: "computer",
+      icon: <Monitor className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+      label: tx("dev.computerTab", "Computer"),
+      active: mode === "computer",
+      onSelect: wrap(() => showMode("computer")),
     },
     {
       key: "debug",
@@ -4911,7 +4795,9 @@ export function DevWorkbench({
                 aria-hidden
               />
             ),
-            label: tx("dev.agentBrowserTab", "Agent browser"),
+            label: agentBrowser?.id.startsWith("desktop-")
+              ? tx("dev.agentDesktopTab", "Agent desktop")
+              : tx("dev.agentBrowserTab", "Agent browser"),
             active: mode === "agentBrowser",
             onSelect: wrap(() => showMode("agentBrowser")),
           },
@@ -5129,6 +5015,13 @@ export function DevWorkbench({
                 go: () => showMode("agi"),
               },
               {
+                key: "computer",
+                icon: <Monitor className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.computerTab", "Computer"),
+                active: mode === "computer",
+                go: () => showMode("computer"),
+              },
+              {
                 key: "guardrails",
                 icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.guardrailsTab", "Guardrails"),
@@ -5328,6 +5221,7 @@ export function DevWorkbench({
               "rules",
               "guardrails",
               "agi",
+              "computer",
               "graph",
               "board",
             ])}
@@ -5929,6 +5823,17 @@ export function DevWorkbench({
                       <BrainCircuit className="h-4 w-4 shrink-0" aria-hidden />
                       {label(tx("dev.agiTab", "AGI"))}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => showMode("computer")}
+                      className={navBtn(mode === "computer")}
+                      title={tx("dev.computerTab", "Computer")}
+                      aria-label={tx("dev.computerTab", "Computer")}
+                      data-testid="dev-toolbar-computer"
+                    >
+                      <Monitor className="h-4 w-4 shrink-0" aria-hidden />
+                      {label(tx("dev.computerTab", "Computer"))}
+                    </button>
                     {reviewChanges.length > 0 ? (
                       <button
                         type="button"
@@ -6032,7 +5937,7 @@ export function DevWorkbench({
                       onSeed={onSeedChat}
                       onRun={onRunAction}
                       activeFilePath={mode === "code" ? activeTab : null}
-                      items={overflowMenuItems((action) => action, ["agi"])}
+                      items={overflowMenuItems((action) => action, ["agi", "computer"])}
                     />
                     </div>
                     </div>
@@ -6433,6 +6338,14 @@ export function DevWorkbench({
           </Suspense>
           </div>
           </PanelErrorBoundary>
+        ) : mode === "computer" ? (
+          <PanelErrorBoundary>
+            <Suspense fallback={<div className="flex flex-1 items-center justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            </div>}>
+              <DevComputerPanel />
+            </Suspense>
+          </PanelErrorBoundary>
         ) : mode === "tests" ? (
           <PanelErrorBoundary>
           <Suspense
@@ -6553,110 +6466,17 @@ export function DevWorkbench({
             onClose={() => setMode("code")}
           />
         ) : mode === "agentBrowser" && agentBrowser ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
-              <span
-                className={cn(
-                  "h-2 w-2 shrink-0 rounded-full",
-                  agentBrowser.live
-                    ? "animate-pulse bg-emerald-500"
-                    : "bg-muted-foreground/40",
-                )}
-                aria-hidden
-              />
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground">
-                {agentBrowser.live
-                  ? tx("dev.agentBrowserLive", "Live")
-                  : tx("dev.agentBrowserEnded", "Session closed")}
-              </span>
-              <span
-                className="min-w-0 flex-1 truncate rounded-md bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground"
-                title={agentBrowser.url ?? undefined}
-              >
-                {agentBrowser.url ?? ""}
-                  </span>
-                  <button
-                    type="button"
-                onClick={() => setAgentBrowserTakeover((on) => !on)}
-                disabled={!agentBrowser.live || !chatId}
-                    className={cn(
-                  "shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-40",
-                  agentBrowserTakeover
-                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                    : "border-border/60 text-muted-foreground hover:text-foreground",
-                )}
-                title={tx(
-                  "dev.agentBrowserTakeoverHint",
-                  "Cliquez et tapez directement dans la page, par exemple pour resoudre un captcha.",
-                )}
-              >
-                {agentBrowserTakeover
-                  ? tx("dev.agentBrowserTakeoverOn", "Vous avez la main")
-                  : tx("dev.agentBrowserTakeover", "Prendre la main")}
-                  </button>
-                <button
-                  type="button"
-                onClick={() => setMode("code")}
-                className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                title={tx("dev.agentBrowserMinimize", "Reduire")}
-              >
-                <Minus className="h-3.5 w-3.5" aria-hidden />
-                </button>
-                  <button
-                    type="button"
-                onClick={() => {
-                  if (chatId) client.agentBrowserClose(chatId);
-                  setAgentBrowser(null);
-                  setAgentBrowserTakeover(false);
-                  setMode("code");
-                }}
-                className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-red-500"
-                title={tx("dev.agentBrowserClose", "Fermer le navigateur")}
-              >
-                <X className="h-3.5 w-3.5" aria-hidden />
-                  </button>
-              </div>
-            <div className="relative min-h-0 flex-1 bg-neutral-950">
-              {agentBrowser.frame ? (
-                <img
-                  src={`data:image/jpeg;base64,${agentBrowser.frame}`}
-                  alt={tx("dev.agentBrowserTab", "Agent browser")}
-                  className={cn(
-                    "absolute inset-0 h-full w-full object-contain",
-                    agentBrowserTakeover && "cursor-crosshair",
-                  )}
-                  tabIndex={agentBrowserTakeover ? 0 : -1}
-                  onClick={agentBrowserTakeover ? sendAgentBrowserClick : undefined}
-                  onWheel={agentBrowserTakeover ? sendAgentBrowserScroll : undefined}
-                  onKeyDown={agentBrowserTakeover ? sendAgentBrowserKey : undefined}
-                  draggable={false}
-                />
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
-                  <Loader2 className="h-8 w-8 animate-spin opacity-50" aria-hidden />
-                  <p className="max-w-sm text-[13px] leading-6">
-                    {tx(
-                      "dev.agentBrowserWaiting",
-                      "L'agent ouvre son navigateur - le flux demarre dans un instant.",
-                    )}
-                  </p>
-              </div>
-              )}
-                    </div>
-            {agentBrowser.actions.length > 0 ? (
-              <div className="max-h-24 shrink-0 overflow-y-auto border-t border-border/50 bg-muted/20 px-3 py-1.5">
-                {agentBrowser.actions.slice(-8).map((line, index) => (
-                  <p
-                    key={`${index}-${line}`}
-                    className="truncate font-mono text-[10.5px] leading-4 text-muted-foreground"
-                    title={line}
-                  >
-                    {line}
-                  </p>
-                ))}
-              </div>
-                ) : null}
-              </div>
+          <AgentLiveView
+            client={client}
+            session={agentBrowser}
+            sessions={agentBrowserSessions}
+            onSelect={selectAgentBrowser}
+            onMinimize={() => setMode("code")}
+            onClosed={(id) => {
+              forgetAgentBrowser(id);
+              setMode("code");
+            }}
+          />
         ) : mode === "skills" ? (
           <PanelErrorBoundary>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -7093,4 +6913,3 @@ export function DevWorkbench({
     </div>
   );
 }
-

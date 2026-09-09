@@ -91,7 +91,7 @@ def speech_segments(
         step = length / pieces
         for index in range(pieces):
             segments.append((start + index * step, start + (index + 1) * step))
-    return segments[:_MAX_SEGMENTS]
+    return segments
 
 
 def _srt_timestamp(seconds: float) -> str:
@@ -408,6 +408,12 @@ async def transcribe_video(
         segments = speech_segments(parse_silences(silence_log), duration)
         if not segments:
             raise LocalizeError("no speech detected in the source audio")
+        if len(segments) > _MAX_SEGMENTS:
+            raise LocalizeError(
+                f"This video needs {len(segments)} speech segments; one transcription supports "
+                f"{_MAX_SEGMENTS}. Split the video into shorter parts before transcribing. "
+                "No partial subtitles were generated."
+            )
 
         cues: list[tuple[float, float, str]] = []
         for index, (start, end) in enumerate(segments):

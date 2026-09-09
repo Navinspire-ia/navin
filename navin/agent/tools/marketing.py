@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
-from navin.agent.tools.schema import StringSchema, tool_parameters_schema
+from navin.agent.tools.schema import (
+    ArraySchema,
+    BooleanSchema,
+    IntegerSchema,
+    NumberSchema,
+    ObjectSchema,
+    StringSchema,
+    tool_parameters_schema,
+)
+
+_CONTENT_OPTIONS = ObjectSchema(
+    description="Draft changes for content-options. Read its updated_at from snapshot as revision. TikTok choices must come from the user; consent is confirmed in Studio after edits.",
+    required=["revision"], additional_properties=False,
+    revision=NumberSchema(description="Exact updated_at of the current content row."),
+    title=StringSchema("Post title."), body=StringSchema("Complete post text."),
+    creative_id=StringSchema("Existing generated image/video creative ID from the desk."),
+    media_type=StringSchema("Selected attachment type.", enum=["image", "video"]),
+    media_path=StringSchema("Existing studio asset or Montage export path."),
+    media_url=StringSchema("Public HTTPS media URL owned by the user."),
+    duration_s=NumberSchema(description="Verified hosted-video duration, in seconds.", minimum=0),
+    reddit_kind=StringSchema("Reddit submission type.", enum=["self", "link"]),
+    reddit_subreddit=StringSchema("Subreddit selected by the user."),
+    reddit_url=StringSchema("Target HTTPS URL of a Reddit link post."),
+    reddit_flair_id=StringSchema("Optional subreddit flair ID selected by the user."),
+    privacy_level=StringSchema("TikTok privacy explicitly chosen by the user from creator-info."),
+    photo_images=ArraySchema(StringSchema("Public JPEG/WebP URL."), max_items=35),
+    photo_cover_index=IntegerSchema(description="User-selected photo cover index.", minimum=0, maximum=34),
+    **{key: BooleanSchema(description="User-provided choice; editing it requires a fresh TikTok confirmation in Studio.") for key in (
+        "disable_comment", "disable_duet", "disable_stitch", "brand_content_toggle", "brand_organic_toggle", "is_aigc", "auto_add_music",
+    )},
+)
 
 
 @tool_parameters(
@@ -18,7 +49,9 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
             "harvest fetches a live product URL and fills brand, SEO, social and ads. "
             "produce generates brand images, clips or voice when providers are configured. "
             "approve-content / schedule-content / publish move one post to its channel "
-            "(LinkedIn, X, Facebook, Telegram, email, webhook, blog) with a UTM link; "
+            "(LinkedIn, X, Facebook, Instagram, TikTok, Reddit, Telegram, email, webhook, blog) with a UTM link; "
+            "publish-status follows accepted media processing, creator-info gets current TikTok choices, "
+            "and content-capabilities validates the selected media. Never invent TikTok consent or privacy choices. "
             "measure pulls real counters (channel metrics + Plausible/Matomo). "
             "start/stop/schedule/tick drive the growth loop on a wall-clock "
             "calendar (not heartbeat). watch is the silent heartbeat.",
@@ -43,6 +76,10 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
                 "unschedule",
                 "retire",
                 "publish",
+                "publish-status",
+                "creator-info",
+                "content-capabilities",
+                "content-options",
                 "measure",
                 "creative",
                 "harvest",
@@ -71,9 +108,10 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
         id=StringSchema("Campaign, creative or content id (approve, vision, approve-content, schedule-content, publish, retire)."),
         hook=StringSchema("Winning angle to double down on."),
         angle=StringSchema("Editorial angle a routed model must develop for action=content."),
-        channel=StringSchema("Connector to test for action=connection: linkedin, x, facebook, telegram, email, webhook, blog, analytics."),
+        channel=StringSchema("Connector to test for action=connection: linkedin, x, facebook, instagram, tiktok, reddit, telegram, email, webhook, blog, analytics."),
         scheduled_at=StringSchema("When to post for action=schedule-content: ISO date, epoch seconds or +2h / +1d."),
         dry_run=StringSchema("true to render the post and its tracked link without sending (action=publish)."),
+        content_options=_CONTENT_OPTIONS,
         secret_name=StringSchema("Key name for action=secret (linkedin_token, x_api_key, facebook_page_token, telegram_bot_token, webhook_secret, plausible_key, matomo_token...)."),
         secret_value=StringSchema("Key value for action=secret; empty clears it."),
         settings=StringSchema("JSON settings patch for action=settings: execution_mode, auto_publish, ai_assist, publish{channel{...}}, analytics{provider,site_id,base_url,goal}, channels, utm_campaign."),
@@ -127,7 +165,7 @@ class MarketingTool(Tool):
 
     def call_read_only(self, arguments: Any) -> bool:
         action = str((arguments or {}).get("action") or "").strip().lower()
-        return action in {"status", "snapshot", "watch"}
+        return action in {"status", "snapshot", "watch", "content-capabilities"}
 
     async def execute(self, **kwargs: Any) -> Any:
         from navin.marketing.errors import MarketingError
@@ -159,6 +197,16 @@ class MarketingTool(Tool):
             body["signups"] = 1000
         if kwargs.get("id"):
             body["id"] = kwargs.get("id")
+        if action == "content-options":
+            options = kwargs.get("content_options")
+            if not isinstance(options, dict):
+                return ToolResult.error("content_options must be an object with the draft revision")
+            if any(key in options for key in {"publish_consent", "music_usage_confirmed", "branded_content_policy_confirmed"}):
+                return ToolResult.error("TikTok consent must be confirmed by the user in Studio after reviewing the post")
+            errors = _CONTENT_OPTIONS.validate_value(options, "content_options")
+            if errors:
+                return ToolResult.error("; ".join(errors))
+            body.update(options)
         if kwargs.get("hook"):
             body["hook"] = kwargs.get("hook")
         if kwargs.get("angle"):
@@ -242,7 +290,7 @@ class MarketingTool(Tool):
             if isinstance(parsed, dict):
                 body["schedule"] = parsed
         try:
-            payload = handle_marketing_action(action, body)
+            payload = await asyncio.to_thread(handle_marketing_action, action, body)
         except MarketingError as exc:
             return ToolResult.error(exc.message)
         if action in {"status", "snapshot"}:
@@ -258,19 +306,61 @@ class MarketingTool(Tool):
             return ToolResult(text)
         if action in {"publish", "post"}:
             report = payload.get("publish") or {}
-            sent = report.get("sent") or []
+            sent = []
+            manual = []
+            pending = list(report.get("pending") or [])
+            for row in report.get("sent") or []:
+                content = row.get("content") if isinstance(row.get("content"), dict) else row
+                receipt = content.get("receipt") if isinstance(content.get("receipt"), dict) else {}
+                if row.get("pending") or content.get("status") == "publishing":
+                    pending.append(row)
+                elif row.get("manual") or row.get("via") == "manual" or receipt.get("mode") == "manual":
+                    manual.append((row, content))
+                else:
+                    sent.append((row, content))
             failed = report.get("failed") or []
             preview = report.get("preview") or []
-            lines = [f"publish: {len(sent)} sent, {len(failed)} failed, {len(preview)} preview, {len(report.get('skipped') or [])} waiting"]
-            for row in sent:
-                content = row.get("content") if isinstance(row.get("content"), dict) else row
+            processing = f"{len(pending)} publishing, " if pending else ""
+            lines = [f"publish: {len(sent)} sent, {processing}{len(manual)} manual, {len(failed)} failed, {len(preview)} preview, {len(report.get('skipped') or [])} waiting"]
+            for row, content in sent:
                 lines.append(f"- sent {content.get('channel') or row.get('channel')} {content.get('id') or row.get('id')} {content.get('published_url') or row.get('url') or ''}".rstrip())
+            for row, content in manual:
+                channel = content.get("channel") or row.get("channel")
+                content_id = content.get("id") or row.get("id")
+                text = row.get("text") or content.get("publish_text") or content.get("body") or ""
+                lines.append(
+                    f"- manual {channel} {content_id}: marked published in the desk; "
+                    f"copy and paste this text to publish:\n{text}"
+                )
+            for row in pending:
+                content = row.get("content") if isinstance(row.get("content"), dict) else row
+                receipt = content.get("receipt") or {}
+                lines.append(f"- publishing {content.get('channel') or row.get('channel')} {content.get('id') or row.get('id')}: {receipt.get('phase') or 'processing'}; publication is not confirmed")
+                if row.get("error") or receipt.get("error"):
+                    lines.append(str(row.get("error") or receipt["error"]))
             for row in failed:
                 content = row.get("content") if isinstance(row.get("content"), dict) else row
                 lines.append(f"- failed {content.get('channel') or row.get('channel')} {content.get('id') or row.get('id')}: {row.get('error') or ''}")
             for row in preview:
                 lines.append(f"- preview via {row.get('via')}:\n{row.get('text') or ''}")
             return ToolResult("\n".join(lines))
+        if action == "publish-status":
+            result = payload.get("publication_status") or {}
+            row = result.get("content") or {}
+            receipt = row.get("receipt") or {}
+            state = "publishing; publication is not confirmed" if result.get("pending") else "publication confirmed" if result.get("confirmed") else str(row.get("status") or "publication not confirmed")
+            text = f"{row.get('channel') or ''} {row.get('id') or ''}: {state}"
+            if row.get("published_url") and result.get("confirmed"):
+                text += f"\n{row['published_url']}"
+            if result.get("error") or receipt.get("error"):
+                text += f"\n{result.get('error') or receipt['error']}"
+            return ToolResult(text)
+        if action in {"creator-info", "content-capabilities"}:
+            key = "creator_info" if action == "creator-info" else "content_capabilities"
+            return ToolResult(json.dumps(payload.get(key) or {}, ensure_ascii=False))
+        if action == "content-options":
+            content = next((row for row in payload.get("content") or [] if row.get("id") == body.get("id")), {})
+            return ToolResult(f"Updated draft {body.get('id')}. creative_id={content.get('creative_id') or body.get('creative_id') or 'none'}. Review its media and publication choices before approving or publishing.")
         if action in {"measure", "sync-metrics"}:
             report = payload.get("measure") or {}
             return ToolResult(

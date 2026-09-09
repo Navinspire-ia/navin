@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -93,6 +95,39 @@ class LinkAndTextTests(unittest.TestCase):
         self.assertTrue(text.endswith("#invoicing"))
 
 
+class ConcurrentPublishTests(unittest.TestCase):
+    def test_overlapping_requests_cannot_publish_the_same_content_twice(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = _store(tmp)
+            store.save_settings({"publish": {"blog": {"enabled": True}}})
+            row = _post(store, "blog")
+            posting, release = Event(), Event()
+            calls: list[str] = []
+
+            def poster(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                calls.append(kwargs["row"]["id"])
+                posting.set()
+                if not release.wait(5):
+                    raise AssertionError("concurrent request did not finish")
+                return {"id": "fictional-one-post", "url": "https://example.invalid/one"}
+
+            with patch.dict(publish._POSTERS, {"blog": poster}), ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(publish.publish_content, store, row["id"])
+                try:
+                    self.assertTrue(posting.wait(5))
+                    second = pool.submit(publish.publish_content, MarketingStore(Path(tmp)), row["id"])
+                    with self.assertRaises(MarketingError) as error:
+                        second.result(timeout=5)
+                    self.assertEqual(error.exception.status, 409)
+                finally:
+                    release.set()
+                self.assertTrue(first.result(timeout=5)["ok"])
+            self.assertEqual(calls, [row["id"]])
+            self.assertEqual(store.get_content(row["id"])["remote_id"], "fictional-one-post")
+            with self.assertRaises(MarketingError):
+                publish.publish_content(store, row["id"])
+
+
 class OAuthTests(unittest.TestCase):
     def test_oauth1_signature_matches_the_documented_twitter_example(self) -> None:
         header = oauth1_header(
@@ -124,7 +159,9 @@ class ChannelStateTests(unittest.TestCase):
             rows = {row["channel"]: row for row in publish.channel_state(store)}
             self.assertEqual(rows["linkedin"]["missing"], ["linkedin_token"])
             self.assertEqual(rows["facebook"]["missing"], ["facebook_page_token", "page_id"])
-            self.assertEqual(rows["instagram"]["mode"], "manual")
+            self.assertEqual(rows["instagram"]["mode"], "api")
+            self.assertEqual(rows["instagram"]["missing"], ["instagram_access_token", "instagram_user_id"])
+            self.assertEqual(rows["youtube"]["mode"], "manual")
             self.assertFalse(rows["instagram"]["ready"])
             self.assertEqual(rows["blog"]["mode"], "file")
             self.assertTrue(rows["blog"]["configured"])
@@ -261,12 +298,12 @@ class PublishTests(unittest.TestCase):
     def test_webhook_bridges_manual_channels_with_a_signature(self) -> None:
         with TemporaryDirectory() as tmp:
             store = _store(tmp)
-            row = _post(store, "instagram")
+            row = _post(store, "youtube")
             # Without a bridge the post is marked published with copy-ready text.
             plain = publish.publish_content(store, row["id"], http=Wire())
             self.assertTrue(plain["manual"])
             self.assertEqual(store.get_content(row["id"])["receipt"]["mode"], "manual")
-            self.assertIn("utm_source=instagram", store.get_content(row["id"])["publish_text"])
+            self.assertIn("utm_source=youtube", store.get_content(row["id"])["publish_text"])
             store.save_settings({"publish": {"webhook": {"enabled": True, "url": "https://hooks.example/navin"}}})
             store.save_secret("webhook_secret", "shh")
             row2 = _post(store, "tiktok")
@@ -637,6 +674,27 @@ class ContentTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def test_dry_run_without_ids_previews_queue_without_writing_or_posting(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = _store(tmp)
+            store.save_settings({"publish": {"blog": {"enabled": True, "output_dir": "blog"}}})
+            row = _post(store, "blog")
+            before = store.get_content(row["id"])
+            wire = Wire()
+            with (
+                patch("navin.webui.marketing_desk_api._store", return_value=store),
+                patch("navin.marketing.publish.http_request", wire),
+                patch.dict(publish._POSTERS, {"blog": unittest.mock.Mock(side_effect=AssertionError("preview posted"))}),
+            ):
+                result = handle_marketing_action("publish", {"dry_run": True})["publish"]
+            self.assertEqual(result["sent"], [])
+            self.assertEqual(result["failed"], [])
+            self.assertEqual(len(result["preview"]), 1)
+            self.assertEqual(result["preview"][0]["id"], row["id"])
+            self.assertIn(row["body"], result["preview"][0]["text"])
+            self.assertEqual(store.get_content(row["id"]), before)
+            self.assertEqual(wire.calls, [])
+
     def test_settings_secret_connection_publish_schedule_and_measure(self) -> None:
         with TemporaryDirectory() as tmp:
             store = _store(tmp)

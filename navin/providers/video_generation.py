@@ -33,7 +33,7 @@ _DEFAULT_POLL_INTERVAL_S = 5.0
 _DEFAULT_MAX_WAIT_S = 600.0
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
-    "HTTP-Referer": "https://github.com/navinspire-ai/navin-agi",
+    "HTTP-Referer": "https://github.com/Navinspire-ia/navin",
     "X-OpenRouter-Title": "navin",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }

@@ -600,6 +600,8 @@ export interface SendOptions {
   productModule?: string;
   /** Open Code workbench tabs for agent context packing. */
   openFiles?: string[];
+  /** Live voice conversation is on: the agent gets the "colleague on a call" brief. */
+  voiceMode?: boolean;
   sideChannel?: boolean;
   finalizeActiveTurn?: boolean;
 }

@@ -1,0 +1,51 @@
+[
+  {
+    "module": "tenders",
+    "steps": [
+      "Clicked real write action for the second fictitious notice"
+    ],
+    "errors": [],
+    "snapshot": "tenders-flow",
+    "status": "steps_completed"
+  },
+  {
+    "module": "career",
+    "steps": [
+      "Clicked real tailored CV generation for the second fictitious job"
+    ],
+    "errors": [],
+    "snapshot": "career-flow",
+    "status": "steps_completed"
+  },
+  {
+    "module": "marketing",
+    "steps": [
+      "Approved the fictitious campaign with generation and publishing disabled",
+      "Opened real campaign content"
+    ],
+    "errors": [],
+    "snapshot": "marketing-flow",
+    "status": "steps_completed"
+  },
+  {
+    "module": "meeting",
+    "steps": [
+      "Created a meeting and persisted a pasted fictitious transcript",
+      "Downloaded DOCX from the real export action",
+      "Reloaded and restored the saved meeting"
+    ],
+    "errors": [],
+    "docx_bytes": 828658,
+    "snapshot": "meeting-flow",
+    "status": "steps_completed"
+  },
+  {
+    "module": "montage",
+    "steps": [
+      "Opened the real timeline editor"
+    ],
+    "errors": [],
+    "snapshot": "montage-flow",
+    "status": "steps_completed"
+  }
+]

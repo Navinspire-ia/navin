@@ -60,6 +60,12 @@ def main() -> None:
     parser.add_argument("--rollout", type=int, default=100)
     parser.add_argument("--artifact", action="append", default=[])
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument(
+        "--merge-manifest",
+        type=Path,
+        help="Keep artifacts from this manifest when the version matches "
+        "(partial OS publish: linux does not drop windows/macos).",
+    )
     parser.add_argument("--write-public-key", type=Path)
     parser.add_argument("--public-key-only", action="store_true")
     args = parser.parse_args()
@@ -80,7 +86,19 @@ def main() -> None:
         parser.error("--rollout must be between 0 and 100")
 
     prefix = args.url_prefix or f"releases/{args.version}"
-    artifacts = dict(_artifact(value, args.base_url, prefix) for value in args.artifact)
+    artifacts: dict[str, object] = {}
+    if args.merge_manifest and args.merge_manifest.is_file():
+        try:
+            previous = json.loads(args.merge_manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            previous = {}
+        if (
+            isinstance(previous, dict)
+            and previous.get("version") == args.version
+            and isinstance(previous.get("artifacts"), dict)
+        ):
+            artifacts.update(previous["artifacts"])
+    artifacts.update(dict(_artifact(value, args.base_url, prefix) for value in args.artifact))
     manifest = {
         "schemaVersion": 1,
         "channel": args.channel,

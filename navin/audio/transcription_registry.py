@@ -12,6 +12,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol
 
+from navin.audio.models import NAVIN_STT_MODEL
+
 
 class TranscriptionProviderAdapter(Protocol):
     """Runtime protocol implemented by provider-specific transcription adapters."""
@@ -45,12 +47,12 @@ class TranscriptionProviderSpec:
 TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
     TranscriptionProviderSpec(
         name="navin",
-        default_model="nvidia/parakeet-tdt-0.6b-v3",
+        default_model=NAVIN_STT_MODEL,
         adapter="navin.providers.transcription:NavinTranscriptionProvider",
     ),
     TranscriptionProviderSpec(
         name="openrouter",
-        default_model="nvidia/parakeet-tdt-0.6b-v3",
+        default_model=NAVIN_STT_MODEL,
         adapter="navin.providers.transcription:OpenRouterTranscriptionProvider",
     ),
     TranscriptionProviderSpec(

@@ -18,7 +18,7 @@ export const CONTENT_CHANNELS = [
 export type ContentChannel = (typeof CONTENT_CHANNELS)[number];
 
 /** Channels with a posting connector (API or local sink); the rest are copy-and-paste or webhook bridged. */
-export const API_CHANNELS = ["linkedin", "x", "facebook", "telegram", "email", "webhook", "blog"] as const;
+export const API_CHANNELS = ["linkedin", "x", "facebook", "instagram", "tiktok", "reddit", "telegram", "email", "webhook", "blog"] as const;
 
 export const CHANNEL_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
@@ -55,6 +55,19 @@ export const CONNECTOR_FIELDS: Record<string, { key: string; placeholder: string
   facebook: [
     { key: "facebook_page_token", placeholder: "EAAB...", secret: true },
     { key: "page_id", placeholder: "1234567890" },
+  ],
+  instagram: [
+    { key: "instagram_access_token", placeholder: "Instagram access token", secret: true },
+    { key: "instagram_user_id", placeholder: "Instagram professional account ID" },
+  ],
+  tiktok: [
+    { key: "tiktok_access_token", placeholder: "TikTok access token", secret: true },
+  ],
+  reddit: [
+    { key: "reddit_access_token", placeholder: "Reddit access token", secret: true },
+    { key: "subreddit", placeholder: "Community name without r/" },
+    { key: "user_agent", placeholder: "web:your-app:1.0 (by /u/your-account)" },
+    { key: "flair_id", placeholder: "Optional flair ID required by the community" },
   ],
   telegram: [
     { key: "telegram_bot_token", placeholder: "123456:ABC... (empty = Navin bot)", secret: true },
@@ -121,7 +134,7 @@ export function contentActions(row: MarketingContent): {
   preview: boolean;
 } {
   const status = String(row.status || "draft");
-  const live = status === "published" || status === "winner";
+  const live = status === "published" || status === "winner" || status === "publishing";
   return {
     approve: status === "draft" || status === "ready" || status === "failed",
     schedule: !live && status !== "retired",
@@ -164,6 +177,7 @@ export function statusTone(status?: string | null): StatusTone {
       return "success";
     case "scheduled":
     case "approved":
+    case "publishing":
       return "info";
     case "failed":
       return "danger";

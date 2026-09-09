@@ -30,7 +30,7 @@ In `navin-cli`, **Ctrl+G → Providers**: pick a provider, paste the API key (an
 
 Or an environment variable (`OPENROUTER_API_KEY`, …). Env keys are not written to `config.json`.
 
-From a `navin-agi` source checkout:
+From a `navin` source checkout:
 
 ```bash
 .venv/bin/navin-cli

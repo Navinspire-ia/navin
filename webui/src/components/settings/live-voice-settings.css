@@ -1,0 +1,73 @@
+.live-voice-settings {
+  color: hsl(var(--foreground));
+  max-width: 880px;
+  margin-inline: auto;
+}
+
+.live-voice-settings h2,
+.live-voice-settings h3 {
+  margin: 0;
+}
+
+.live-voice-settings .ms-Button {
+  min-height: 40px;
+}
+
+.live-voice-settings__fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.live-voice-settings__legend {
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.live-voice-settings__services {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.live-voice-settings__service {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+}
+
+.live-voice-settings__advanced {
+  margin-top: 22px;
+  max-width: 440px;
+}
+
+.live-voice-settings__advanced summary {
+  padding-block: 12px;
+  margin-bottom: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.live-voice-settings__advanced summary:focus-visible {
+  outline: 2px solid #0078d4;
+  outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .live-voice-settings__services {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .live-voice-settings__service {
+    padding: 16px;
+  }
+}

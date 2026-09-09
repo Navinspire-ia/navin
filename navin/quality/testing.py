@@ -667,6 +667,21 @@ def run_tests(
     """Run the project's test suites and return structured outcomes."""
     table = runner_table()
     selected = runners if runners is not None else _primary_runners(root)
+    if runners is None and target:
+        # A Python test in a mixed backend/frontend project must not also be
+        # sent to Vitest: its empty collection would turn a pass into a failure.
+        suffix = Path(target.split("::", 1)[0].replace("\\", "/")).suffix.lower()
+        languages = {
+            ".py": {"python"}, ".pyi": {"python"},
+            ".js": {"javascript", "typescript"}, ".jsx": {"javascript", "typescript"},
+            ".ts": {"javascript", "typescript"}, ".tsx": {"javascript", "typescript"},
+            ".mjs": {"javascript", "typescript"}, ".cjs": {"javascript", "typescript"},
+            ".mts": {"javascript", "typescript"}, ".cts": {"javascript", "typescript"},
+            ".go": {"go"}, ".rs": {"rust"},
+        }.get(suffix, set())
+        matching = [name for name in selected if table.get(name, {}).get("language") in languages]
+        if matching:
+            selected = matching
     outcomes: list[TestOutcome] = []
     for name in selected:
         spec = table.get(name)

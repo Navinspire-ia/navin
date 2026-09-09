@@ -413,6 +413,28 @@ class WhatsAppChannel(BaseChannel):
 
         connect_task.add_done_callback(_on_done)
 
+    async def send_alert(self, msg: OutboundMessage) -> dict[str, Any]:
+        """Keep the server response ID returned by the connected WhatsApp client."""
+        from navin.bus.alerts import AlertTransportError
+        from navin.utils.helpers import split_message
+
+        if self._client is None or not self._connected:
+            raise AlertTransportError("channel_not_connected")
+        to = self._build_jid(msg.chat_id)
+        ids: list[str] = []
+        for chunk in split_message(msg.content, 4000):
+            try:
+                response = await self._client.send_message(to, chunk)
+                message_id = str(getattr(response, "ID", "") or "")
+                if not message_id:
+                    raise AlertTransportError("provider_confirmation_missing", uncertain=True, message_ids=ids)
+                ids.append(message_id)
+            except AlertTransportError:
+                raise
+            except Exception:
+                raise AlertTransportError("transport_outcome_unknown", uncertain=True, message_ids=ids) from None
+        return {"message_ids": ids, "provider": "whatsapp"}
+
     async def send(self, msg: OutboundMessage) -> None:
         client = self._client
         if client is None or not self._connected:

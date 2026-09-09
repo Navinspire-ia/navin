@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 from typing import Any
 
 from loguru import logger
@@ -107,9 +109,11 @@ def mark_sent(store: CareerStore, events: list[dict[str, Any]]) -> None:
 
 
 def digest_was_delivered(sent: dict[str, Any] | None) -> bool:
-    """True when at least one company channel accepted the digest."""
+    """New receipts require every enabled channel; preserve old mock contracts."""
     if not isinstance(sent, dict):
         return False
+    if "complete" in sent:
+        return sent["complete"] is True
     return any(
         bool(sent.get(name))
         for name in ("webui", "telegram", "whatsapp", "email", "teams", "slack")
@@ -143,8 +147,22 @@ def _watch_pass(store: CareerStore) -> dict[str, Any]:
     from navin.career.notify import deliver_alert
 
     title = f"{len(events)} career alert{'s' if len(events) != 1 else ''}"
+    # Keep each pending batch stable while asynchronous channels acknowledge it.
+    pending_path = store.root / "watch-pending.json"
+    from navin.career.store import _atomic_write, _read_json
+
+    pending = _read_json(pending_path, {})
+    if isinstance(pending, dict) and pending.get("events"):
+        wanted = {(row["id"], row["key"]) for row in pending["events"]}
+        current = [row for row in events if (row["id"], row["key"]) in wanted]
+        if current:
+            events = current
+            payload.update({"events": events, "count": len(events), "digest": digest_text(events)})
+    event_id = "career_watch:" + hashlib.sha256(json.dumps(sorted((row["id"], row["key"]) for row in events)).encode()).hexdigest()[:24]
+    _atomic_write(pending_path, {"event_id": event_id, "events": events})
+    title = f"{len(events)} career alert{'s' if len(events) != 1 else ''}"
     try:
-        payload["sent"] = deliver_alert(store, title=title, detail=payload["digest"])
+        payload["sent"] = deliver_alert(store, title=title, detail=payload["digest"], event_id=event_id, event_type="career_watch")
     except Exception:
         logger.exception("career watch notify failed")
         payload["sent"] = {}
@@ -153,5 +171,6 @@ def _watch_pass(store: CareerStore) -> dict[str, Any]:
         return payload
     payload["delivered"] = True
     mark_sent(store, events)
+    _atomic_write(pending_path, {})
     store.append_journal({"kind": "watch", "text": f"{len(events)} career alerts"})
     return payload

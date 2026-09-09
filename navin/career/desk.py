@@ -108,6 +108,7 @@ def employers_payload(store: CareerStore, profile: dict[str, Any]) -> dict[str, 
 
 
 def snapshot(store: CareerStore) -> dict[str, Any]:
+    from navin.career.mail import load_mail_state, mailbox_status, public_receipt
     from navin.career.retention import apply_retention, retention_days
 
     apply_retention(store)
@@ -119,11 +120,23 @@ def snapshot(store: CareerStore) -> dict[str, Any]:
     rows = store.load_opportunities()
     live = [row for row in rows if not row.get("archived")]
     apps = store.load_applications()
+    # The durable SMTP receipt survives a later preparation or stale scrape write.
+    receipts = load_mail_state(store)["outbox"]
+    for collection, id_key in ((rows, "id"), (apps, "opportunity_id")):
+        for row in collection:
+            receipt = receipts.get(str(row.get(id_key) or ""))
+            if receipt:
+                row["mail_receipt"] = public_receipt(receipt)
+                if receipt.get("status") == "accepted":
+                    row["applied_at"] = receipt.get("accepted_at")
+                    if row.get("stage") in {"discovered", "matched", "ready"}:
+                        row["stage"] = "applied"
     inbox = store.load_inbox()
     archive_after, delete_after = retention_days(profile)
     kpis = _kpis(live, apps, inbox)
     return {
         "profile": public_profile,
+        "mailbox_status": mailbox_status(store),
         "opportunities": rows,
         "applications": apps,
         "inbox": inbox,
@@ -246,6 +259,8 @@ def _normalize_ingest_row(row: dict[str, Any], body: dict[str, Any], profile: di
         "compensation": row.get("compensation"),
         "currency": str(row.get("currency") or ""),
         "ingest": ingest,
+        "application_email": _first_text(row, "application_email", "recruiter_email"),
+        "application_email_source": "provided" if _first_text(row, "application_email", "recruiter_email") else "",
     }
 
 
@@ -311,6 +326,8 @@ def import_offer(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
         "stage": "discovered",
         "remote": "remote" if "remote" in f"{title} {description}".lower() else "",
         "ingest": "open_manual" if is_closed_job_url(url) else "paste",
+        "application_email": str(body.get("application_email") or "").strip(),
+        "application_email_source": "provided" if body.get("application_email") else "",
     }
     scored = score_opportunity(row, profile)
     store.upsert_opportunities([scored])
@@ -410,41 +427,37 @@ def prepare_application(store: CareerStore, oid: str) -> dict[str, Any]:
     profile = store.load_profile()
     job = store.get_opportunity(oid)
     pack = attach_exports(store, job, profile, polish_pack(job, profile, build_pack(job, profile)))
+    # Both views persist the same canonical document and its generation outcome.
+    document = {key: pack.get(key) for key in (
+        "cv_name", "cv_text", "cover", "summary", "ats_notes", "ats_score",
+        "ats_requirements", "keywords_matched", "keywords_missing", "cv",
+        "exports", "language", "generation",
+    )}
+    document.update({
+        "pack_ready": bool(pack.get("pack_ready")),
+        "model": pack.get("model") or "",
+        "route": pack.get("route") or "",
+        "stage": "ready" if pack.get("pack_ready") else "matched",
+        "next_action": (
+            "Review the tailored CV, then open the original URL to submit."
+            if pack.get("pack_ready") else
+            "Add your master CV or career facts in Profile, then prepare the CV."
+        ),
+    })
+    if job.get("stage") in {"applied", "replied", "interview", "offer", "won", "rejected"}:
+        document["stage"] = job["stage"]
+        document["next_action"] = job.get("next_action") or "Follow the existing application."
     app = store.upsert_application(
         {
+            **document,
             "opportunity_id": oid,
             "title": job.get("title") or "",
             "company": job.get("company") or "",
             "source": job.get("source") or "",
-            "cv_name": pack.get("cv_name"),
-            "cv_text": pack.get("cv_text"),
-            "cover": pack.get("cover"),
-            "summary": pack.get("summary"),
-            "ats_notes": pack.get("ats_notes"),
-            "keywords_matched": pack.get("keywords_matched"),
-            "keywords_missing": pack.get("keywords_missing"),
-            "cv": pack.get("cv"),
-            "exports": pack.get("exports"),
-            "pack_ready": bool(pack.get("pack_ready")),
-            "model": pack.get("model") or "",
-            "stage": "ready",
             "apply_mode": profile.get("apply_mode") or "manual",
-            "next_action": "Review the tailored CV, then open the original URL to submit.",
         }
     )
-    store.update_opportunity(
-        oid,
-        {
-            "stage": "ready",
-            "cv_name": pack.get("cv_name"),
-            "cv_text": pack.get("cv_text"),
-            "cover": pack.get("cover"),
-            "cv": pack.get("cv"),
-            "ats_notes": pack.get("ats_notes"),
-            "pack_ready": bool(pack.get("pack_ready")),
-            "next_action": "Review the tailored CV, then open the original URL to submit.",
-        },
-    )
+    store.update_opportunity(oid, document)
     store.append_journal({"kind": "prepare", "text": pack.get("cv_name")})
     snap = snapshot(store)
     snap["prepared"] = app
@@ -455,25 +468,18 @@ def apply_one(store: CareerStore, oid: str) -> dict[str, Any]:
     profile = store.load_profile()
     job = store.get_opportunity(oid)
     mode = str(profile.get("apply_mode") or "manual")
-    source = str(job.get("source") or "")
-    if mode == "autopilot" and source == "linkedin":
-        raise CareerError("LinkedIn auto-apply is not allowed. Open the offer and apply manually.")
     if not job.get("pack_ready") or not job.get("cv_text"):
         prepare_application(store, oid)
         job = store.get_opportunity(oid)
-    if not job.get("cv_text"):
+    if not job.get("cv_text") or not job.get("pack_ready"):
         raise CareerError("Paste a master CV in Profile, then prepare the pack for this mission.")
-    next_action = "Open the original URL and submit the tailored CV."
-    if mode == "review":
-        next_action = "Review the tailored CV, then confirm send."
-    next_stage = "applied" if mode == "autopilot" and source != "linkedin" else "ready"
+    next_action = "Open the original URL and submit the tailored CV manually. Mark applied after submission."
+    next_stage = job["stage"] if job.get("stage") in {"applied", "replied", "interview", "offer", "won", "rejected"} else "ready"
     patch: dict[str, Any] = {
         "stage": next_stage,
         "next_action": next_action,
         "employer_opened": True,
     }
-    if next_stage == "applied":
-        patch["applied_at"] = time.time()
     job = store.update_opportunity(oid, patch)
     store.upsert_application(
         {
@@ -489,7 +495,6 @@ def apply_one(store: CareerStore, oid: str) -> dict[str, Any]:
             "pack_ready": True,
             "apply_mode": mode,
             "employer_opened": True,
-            "applied_at": job.get("applied_at"),
             "next_action": next_action,
         }
     )
@@ -498,11 +503,14 @@ def apply_one(store: CareerStore, oid: str) -> dict[str, Any]:
 
 
 def download_pack(store: CareerStore, oid: str, kind: str = "docx") -> dict[str, Any]:
+    kind = str(kind or "docx")
+    if kind not in {"docx", "cv_docx", "cover_docx"}:
+        raise CareerError("Unknown Career document kind")
     job = store.get_opportunity(oid)
     apps = [row for row in store.load_applications() if row.get("opportunity_id") == oid]
     pack = apps[0] if apps else {}
     exports = pack.get("exports") if isinstance(pack.get("exports"), dict) else {}
-    record = exports.get("docx") if isinstance(exports.get("docx"), dict) else None
+    record = exports.get(kind) if isinstance(exports.get(kind), dict) else None
     if not record:
         profile = store.load_profile()
         if not pack.get("cv_text"):
@@ -513,13 +521,17 @@ def download_pack(store: CareerStore, oid: str, kind: str = "docx") -> dict[str,
         else:
             filled = attach_exports(store, job, profile, pack)
             store.upsert_application({**pack, **filled, "opportunity_id": oid})
+            store.update_opportunity(oid, {key: filled.get(key) for key in (
+                "cv_name", "cv_text", "cv", "summary", "exports", "generation",
+                "language", "pack_ready", "model", "route",
+            )})
             pack = filled
         exports = pack.get("exports") if isinstance(pack.get("exports"), dict) else {}
-        record = exports.get("docx") if isinstance(exports.get("docx"), dict) else None
+        record = exports.get(kind) if isinstance(exports.get(kind), dict) else None
     if not record or not record.get("file_id"):
         raise CareerError("prepare the tailored CV first")
     payload = store.read_bytes(str(record.get("file_id")))
-    payload["kind"] = str(kind or "docx")
+    payload["kind"] = kind
     payload["mime"] = str(
         record.get("mime")
         or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

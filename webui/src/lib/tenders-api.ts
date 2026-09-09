@@ -1,5 +1,9 @@
 import { apiBodyHeaders, apiRequest } from "@/lib/api";
 import { externalHttpUrl } from "@/lib/external-url";
+import { studioSessionQuery } from "@/lib/studio-request";
+import type { DocumentGeneration } from "@/lib/document-generation";
+
+export type TenderExportKind = "docx" | "pptx" | "diagram_html";
 
 /** In-IDE desk. Desktop shells must keep this hash inside the WebView. */
 export const TENDERS_DESK_HASH = "#/tenders";
@@ -105,9 +109,14 @@ export interface TenderNotice {
     used_files?: string[];
     from_file?: boolean;
     pack_ready?: boolean;
+    generation?: DocumentGeneration;
+    review_needed?: boolean;
+    submission_ready?: boolean;
     exports?: {
       docx?: { file_id?: string; name?: string; mime?: string };
       pptx?: { file_id?: string; name?: string; mime?: string };
+      diagram_html?: { file_id?: string; name?: string; mime?: string };
+      diagram_svg?: { file_id?: string; name?: string; mime?: string };
     };
   };
   response_reviews?: { t?: number; remarks?: string; model?: string }[];
@@ -280,6 +289,34 @@ export interface TenderZoneGroup {
   sources: TenderSource[];
 }
 
+export interface AlertReceipt {
+  channel: string;
+  destination?: string;
+  status: "new" | "pending" | "sending" | "accepted" | "failed" | "uncertain" | "cancelled";
+  message_id?: string;
+  message_ids?: string[];
+  acknowledged_at?: number;
+  error?: string;
+}
+
+export interface AlertDeliveryResult {
+  event_id?: string;
+  event_type?: string;
+  complete?: boolean;
+  confirmed?: boolean;
+  receipts?: Record<string, AlertReceipt>;
+  error?: string;
+}
+
+export interface AlertDeliverySnapshot {
+  events: (AlertDeliveryResult & { title: string; created_at: number })[];
+  pending: number;
+  failed: number;
+  uncertain: number;
+  accepted: number;
+  error?: string;
+}
+
 export interface TenderDesk {
   profile: TenderProfile;
   wizard_ready?: boolean;
@@ -314,6 +351,7 @@ export interface TenderDesk {
   stages: string[];
   send_modes: string[];
   channels?: Record<string, { ready?: boolean; enabled?: boolean; hint?: string; channel?: string }>;
+  alert_deliveries?: AlertDeliverySnapshot;
   files?: Record<string, string>;
   book?: string;
   models?: { enabled?: boolean; routed?: number; tasks?: TenderModelRoute[] };
@@ -321,8 +359,8 @@ export interface TenderDesk {
   loop?: TenderLoop;
   loop_tick?: { reason?: string; did_work?: boolean; phase?: string };
   collect?: { source_id: string; ok: boolean; detail?: string; count?: number; kind?: string }[];
-  notify?: Record<string, boolean>;
-  watch?: { count?: number; sent?: Record<string, boolean>; digest?: string };
+  notify?: AlertDeliveryResult;
+  watch?: { count?: number; sent?: AlertDeliveryResult; digest?: string; delivered?: boolean };
   crm?: { created?: number; updated?: number; total?: number };
   send?: { to?: string; subject?: string; via?: string };
   retention?: {
@@ -360,7 +398,7 @@ export interface TenderDesk {
 }
 
 function tendersUrl(action: string): string {
-  return `/api/tenders?action=${encodeURIComponent(action)}`;
+  return `/api/tenders?action=${encodeURIComponent(action)}${studioSessionQuery()}`;
 }
 
 export async function fetchTendersDesk(token: string): Promise<TenderDesk> {

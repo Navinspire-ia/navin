@@ -59,6 +59,7 @@ from navin.agent.tools.registry import ToolRegistry
 from navin.agent.tools.self import MyTool
 from navin.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from navin.agent.vision_guard import guard_vision_media
+from navin.agent.voice_mode import voice_mode_context_provider
 from navin.board.context import board_context_provider
 from navin.bus.events import INBOUND_META_MODEL_PRESET, InboundMessage, OutboundMessage
 from navin.bus.outbound_events import (
@@ -122,6 +123,7 @@ from navin.session.manager import (
     SessionManager,
     replay_max_messages_for_context,
 )
+from navin.session.turn_recovery import RECOVERY_ID_META, TurnRecovery
 from navin.triggers.local_turns import LocalTriggerTurnCoordinator
 from navin.utils.audio_transcripts import (
     append_video_soundtracks,
@@ -384,9 +386,11 @@ class AgentLoop:
 
         Resolution order:
         1. Explicit ``model_preset`` in message metadata (Cursor-style pin).
-        2. Vision route - image / video attachments → multimodal analysis model
+        2. Computer route - the user asks to drive the desktop and the
+           ``computer`` tool is on → grounding model mapped to ``computer``.
+        3. Vision route - image / video attachments → multimodal analysis model
            (typically Nemotron Nano Omni free) when Settings maps ``vision``.
-        3. Workflow auto-route - a leading ``/forge``, ``/blueprint``, studio
+        4. Workflow auto-route - a leading ``/forge``, ``/blueprint``, studio
            command, etc. mapped via Settings → Models → Task routing.
         4. Composer-mode route - ``composer_mode`` metadata alone
            (plan/review/security/debug from non-WebUI channels) mapped onto
@@ -396,10 +400,17 @@ class AgentLoop:
 
         Unknown presets fall back to the default rather than failing the turn.
         """
+        computer_config_loader = getattr(self, "_computer_config_loader", None)
+        if computer_config_loader is not None:
+            from navin.agent.tools.computer import refresh_computer_registration
+
+            refresh_computer_registration(self.tools, computer_config_loader, bus=self.bus)
+
         from navin.agent.model_routes import (
             composer_mode_role,
             infer_task_role,
             product_module_role,
+            resolve_computer_route,
             resolve_model_route,
             resolve_route_for_message,
             resolve_vision_route,
@@ -425,6 +436,20 @@ class AgentLoop:
             else:
                 requested = meta.strip()
                 user_pinned = True
+        # Desktop control needs a model that can place a click on a screenshot;
+        # Settings → Task routing → "computer" names it. Checked before the
+        # vision route (a grounding model reads images too, the reverse is not
+        # true) and only when the tool is available in this session.
+        tools = getattr(self, "tools", None)
+        if not requested and tools is not None and "computer" in tools:
+            from navin.agent.tools.computer import computer_session_active
+
+            requested = resolve_computer_route(
+                msg.content, known_presets=known,
+                active_session=computer_session_active(msg.session_key),
+            )
+            if requested:
+                route_role = "computer"
         if not requested:
             media = [
                 p for p in (msg.media or []) if isinstance(p, str) and p.strip()
@@ -525,8 +550,8 @@ class AgentLoop:
             )
 
             try:
-                from navin.optional_live import live_modules_available
                 from navin.license_client import uses_managed_key
+                from navin.optional_live import live_modules_available
 
                 if not live_modules_available():
                     def uses_managed_key(_cfg: object) -> bool:
@@ -776,6 +801,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
+        self.turn_recovery = TurnRecovery(self.sessions)
         self.tools = ToolRegistry()
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
@@ -816,6 +842,7 @@ class AgentLoop:
             agent_context_pack_provider,
             board_context_provider,
             continuity_context_provider,
+            voice_mode_context_provider,
         ]
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         # /stop wall-clock per session: internal continuation slices belonging
@@ -1164,6 +1191,13 @@ class AgentLoop:
         )
         loader = ToolLoader()
         registered = loader.load(ctx, self.tools)
+        from navin.config.loader import get_config_path, load_config
+
+        computer_config_path = get_config_path()
+        self._computer_config_loader = lambda: (
+            load_config(computer_config_path).tools.computer
+            if computer_config_path.is_file() else self.tools_config.computer
+        )
 
         # MyTool needs runtime state reference - manual registration
         if self.tools_config.my.enable:
@@ -1285,6 +1319,7 @@ class AgentLoop:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
             session.add_message("user", text, **extra)
             self._mark_pending_user_turn(session)
+            self.turn_recovery.user_persisted(session, msg)
             self.sessions.save(session)
             return True
         return False
@@ -1327,6 +1362,8 @@ class AgentLoop:
             if name not in seen:
                 names.append(name)
                 seen.add(name)
+        if "computer" in getattr(self, "tools", ()) and "computer-use" not in seen:
+            names.append("computer-use")
         return names or None
 
     @staticmethod
@@ -1498,6 +1535,8 @@ class AgentLoop:
             denied.add("visual_qa")
         if turn_module != "seo":
             denied.add("seo")
+        if turn_module != "ads":
+            denied.add("ads")
         heartbeat = AgentLoop._is_heartbeat_metadata(msg, metadata)
         if heartbeat:
             denied.update(HEARTBEAT_DENIED_TOOLS)
@@ -1588,6 +1627,8 @@ class AgentLoop:
             denied.add("visual_qa")
         if turn_module != "seo":
             denied.add("seo")
+        if turn_module != "ads":
+            denied.add("ads")
         heartbeat = AgentLoop._is_heartbeat_metadata(msg, metadata)
         if heartbeat:
             denied.update(HEARTBEAT_DENIED_TOOLS)
@@ -1607,6 +1648,16 @@ class AgentLoop:
                     workspace, exec_sessions_open=exec_sessions_are_open()
                 )
             )
+        if "browser" in liftable:
+            from navin.agent.tools.browser import browser_session_active
+
+            session_key = getattr(msg, "session_key", None)
+            if not session_key and isinstance(metadata, dict):
+                session_key = metadata.get("session_key")
+            if browser_session_active(session_key):
+                # "Continue" after a live handoff must keep the browser even
+                # in a backend-only repository or after context compaction.
+                liftable.discard("browser")
         if isinstance(session_metadata, dict):
             open_desks = session_metadata.get(ACTIVE_DESKS_METADATA_KEY)
             if isinstance(open_desks, (list, tuple, set, frozenset)):
@@ -1634,6 +1685,7 @@ class AgentLoop:
         do not come back the moment the user says "continue".
         """
         from navin.agent.media_intent import media_tools_for_text
+        from navin.agent.tool_surface import CODE_BUILD_ALLOWED_TOOLS, CODE_INTERACTION_TOOLS
         from navin.command.modules import ALLOWED_TOOLS_METADATA_KEY
 
         allowed: set[str] | None = None
@@ -1657,6 +1709,11 @@ class AgentLoop:
                 extra = session_metadata.get(ALLOWED_TOOLS_METADATA_KEY)
                 if isinstance(extra, (list, tuple, set, frozenset)):
                     allowed = {str(item) for item in extra if item}
+                    # Migrate the exact former built-in surface on a resumed
+                    # Build session. Explicit per-turn/custom lists stay as
+                    # supplied; a saved old default must not hide new tools.
+                    if allowed == CODE_BUILD_ALLOWED_TOOLS - CODE_INTERACTION_TOOLS:
+                        allowed.update(CODE_INTERACTION_TOOLS)
         if allowed is None:
             return None
         text = user_text or (msg.content if msg is not None else None)
@@ -1778,6 +1835,7 @@ class AgentLoop:
         it restarts the very plan the user just stopped.
         """
         self._stop_requested_at[key] = time.time()
+        self.turn_recovery.cancel(key)
 
     def _is_stale_continuation(self, msg: InboundMessage, key: str) -> bool:
         """True when *msg* is an internal continuation of a run stopped by /stop."""
@@ -2282,13 +2340,21 @@ class AgentLoop:
                 await on_stream_end(resuming=False)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
+            if session is not None and not ephemeral and getattr(result, "retryable_error", False):
+                delay = self.turn_recovery.schedule(session, retry_after=getattr(result, "retry_after_s", None))
+                if delay is not None and on_retry_wait is not None:
+                    await on_retry_wait(
+                        f"Connection interrupted. Progress saved; resuming automatically in {delay:.0f}s."
+                    )
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
 
     def _publish_model_failover(self, chosen_model: str, served_model: str) -> None:
         """Relay a provider-level model substitution so channel UIs can report it."""
         self._runtime_events().model_failed_over(chosen_model, served_model)
 
-    async def run(self) -> None:
+    async def run(
+        self, *, recovery_channel: str = "websocket", recovery_session_key: str | None = None,
+    ) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
         # The provider layer builds the failover wrapper without a bus, so it needs
@@ -2303,9 +2369,26 @@ class AgentLoop:
                 self._connect_mcp_safe(),
                 name="mcp-startup-connect",
             )
+            recovered = await asyncio.to_thread(
+                self.turn_recovery.discover,
+                channel=recovery_channel, session_key=recovery_session_key,
+            )
+            for key in recovered:
+                session = self.sessions.get_or_create(key)
+                checkpoint = session.metadata.get(self._RUNTIME_CHECKPOINT_KEY)
+                if isinstance(checkpoint, dict) and checkpoint.get("phase") == "final_response":
+                    self._restore_runtime_checkpoint(session)
+                    self.turn_recovery.finish(session)
+                    self.sessions.save(session)
             logger.info("Agent loop started")
 
             while self._running:
+                active_keys = {
+                    key for key, tasks in self._active_tasks.items()
+                    if any(not task.done() for task in tasks)
+                } | set(self._pending_queues)
+                for recovered_msg in self.turn_recovery.take_due(active_keys=active_keys):
+                    await self.bus.publish_inbound(recovered_msg)
                 try:
                     msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -2328,6 +2411,8 @@ class AgentLoop:
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
                 if await agent_context.handle_runtime_control(self, msg, self.tools):
+                    continue
+                if not self.turn_recovery.matches(msg, effective_key):
                     continue
                 # A goal-continuation slice may still be in flight on the bus
                 # when /stop deactivates the goal; running it would resume the
@@ -2435,8 +2520,12 @@ class AgentLoop:
 
         pending: asyncio.Queue | None = None
         turn_cancelled = False
+        dispatch_skipped = False
         try:
             async with lock, gate:
+                if not self.turn_recovery.matches(msg, session_key):
+                    dispatch_skipped = True
+                    return
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 # One full subagent wave (AgentDefaults.max_concurrent_subagents,
@@ -2523,7 +2612,10 @@ class AgentLoop:
                             channel=msg.channel, chat_id=msg.chat_id,
                             content="", metadata=msg.metadata or {},
                         ))
-                    continuing = turn_continuation.internal_continuation_pending(msg.metadata)
+                    continuing = (
+                        turn_continuation.internal_continuation_pending(msg.metadata)
+                        or self.turn_recovery.waiting(session_key)
+                    )
                     if not continuing:
                         await self._runtime_events().turn_completed(
                             channel=completed_channel,
@@ -2564,6 +2656,16 @@ class AgentLoop:
                     raise
                 except Exception as exc:
                     logger.exception("Error processing message for session {}", session_key)
+                    session = self.sessions.get_or_create(session_key)
+                    transient = LLMProvider._is_transient_response(
+                        LLMProvider._unexpected_error_response(exc)
+                    )
+                    if transient and self.turn_recovery.schedule(session) is not None:
+                        callback = await self._build_retry_wait_callback(msg)
+                        await callback("Connection interrupted. Progress saved; automatic retry pending.")
+                        return
+                    self.turn_recovery.finish(session)
+                    self.sessions.save(session)
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
                         content="Sorry, I encountered an error.",
@@ -2585,6 +2687,9 @@ class AgentLoop:
                     logger.exception(
                         "Fatal error processing message for session {}", session_key
                     )
+                    session = self.sessions.get_or_create(session_key)
+                    self.turn_recovery.finish(session)
+                    self.sessions.save(session)
                     try:
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=msg.channel, chat_id=msg.chat_id,
@@ -2644,14 +2749,17 @@ class AgentLoop:
                                 "Dropped {} queued message(s) after cancelled turn for session {}",
                                 dropped, session_key,
                             )
-                    if not turn_continuation.internal_continuation_pending(msg.metadata):
+                    if (
+                        not turn_continuation.internal_continuation_pending(msg.metadata)
+                        and not self.turn_recovery.waiting(session_key)
+                    ):
                         await self._runtime_events().run_status_changed(
                             msg, session_key, "idle"
                         )
                         self._runtime_events().clear_turn(session_key)
                     await self._publish_next_deferred_automation_turn(session_key)
         finally:
-            if pending is None:
+            if pending is None and not dispatch_skipped:
                 await self._runtime_events().run_status_changed(
                     msg, session_key, "idle"
                 )
@@ -2829,6 +2937,8 @@ class AgentLoop:
             )
 
         key = session_key or msg.session_key
+        if not ephemeral and should_inject_into_active_turn(self.commands, msg.content.strip()):
+            self.turn_recovery.begin(self.sessions.get_or_create(key), msg, persisted=False)
         t0 = time.time()
         ctx = TurnContext(
             msg=msg,
@@ -3024,7 +3134,9 @@ class AgentLoop:
 
         if self._restore_runtime_checkpoint(ctx.session):
             self.sessions.save(ctx.session)
-        if self._restore_pending_user_turn(ctx.session):
+        if ctx.msg.metadata.get(RECOVERY_ID_META):
+            self._clear_pending_user_turn(ctx.session)
+        elif self._restore_pending_user_turn(ctx.session):
             self.sessions.save(ctx.session)
 
         return "ok"
@@ -3102,8 +3214,9 @@ class AgentLoop:
                 ctx.session.add_message(
                     "assistant", result.content, _command=True
                 )
-                self.sessions.save(ctx.session)
                 self._clear_pending_user_turn(ctx.session)
+                self.turn_recovery.finish(ctx.session)
+                self.sessions.save(ctx.session)
             return "shortcut"
         return "dispatch"
 
@@ -3156,6 +3269,8 @@ class AgentLoop:
             ctx.session,
             runtime_context_blocks=ctx.runtime_context_blocks,
         )
+        if not ctx.ephemeral:
+            self.turn_recovery.begin(ctx.session, ctx.msg)
 
         if ctx.on_progress is None:
             ctx.on_progress = await self._build_bus_progress_callback(ctx.msg)
@@ -3202,6 +3317,9 @@ class AgentLoop:
         ctx.all_messages = all_msgs
         ctx.stop_reason = stop_reason
         ctx.had_injections = had_injections
+        if self.turn_recovery.waiting(ctx.session_key):
+            ctx.suppress_response = True
+            return "ok"
         await turn_continuation.maybe_continue_turn(ctx)
         return "ok"
 
@@ -3244,6 +3362,11 @@ class AgentLoop:
             )
         self._clear_pending_user_turn(ctx.session)
         self._clear_runtime_checkpoint(ctx.session)
+        if (
+            not self.turn_recovery.waiting(ctx.session_key)
+            and not turn_continuation.internal_continuation_pending(ctx.msg.metadata)
+        ):
+            self.turn_recovery.finish(ctx.session)
         self.sessions.save(ctx.session)
         return "ok"
 
@@ -3505,7 +3628,11 @@ class AgentLoop:
                     "role": "tool",
                     "tool_call_id": tool_id,
                     "name": name,
-                    "content": "Error: Task interrupted before this tool finished.",
+                    "content": (
+                        "Error: Task interrupted before this tool returned a confirmed result. "
+                        "Its outcome is unknown. Inspect the current state before retrying "
+                        "a mutation; the action may already have succeeded."
+                    ),
                     "timestamp": datetime.now().isoformat(),
                 }
             )
@@ -3602,10 +3729,40 @@ class AgentLoop:
                     kwargs["tools"] = tools
                 if runtime is not None:
                     kwargs["runtime"] = runtime
-                return await self._process_message(
-                    msg,
-                    **kwargs,
-                )
+                while True:
+                    try:
+                        response = await self._process_message(msg, **kwargs)
+                    except Exception as exc:
+                        session = self.sessions.get_or_create(session_key)
+                        transient = LLMProvider._is_transient_response(
+                            LLMProvider._unexpected_error_response(exc)
+                        )
+                        if ephemeral or not transient or self.turn_recovery.schedule(session) is None:
+                            self.turn_recovery.finish(session)
+                            self.sessions.save(session)
+                            raise
+                        response = None
+                    if ephemeral or not self.turn_recovery.waiting(session_key):
+                        return response
+                    # The one-shot CLI has no inbound worker. Keep the same
+                    # accepted request alive here until its transport recovers.
+                    while self.turn_recovery.waiting(session_key):
+                        due = self.turn_recovery.due.get(session_key, time.time())
+                        remaining = max(0.0, due - time.time())
+                        if remaining:
+                            if on_progress is not None:
+                                await on_progress(
+                                    f"Connection interrupted. Resuming automatically in {remaining:.0f}s."
+                                )
+                            await asyncio.sleep(min(remaining, 30.0))
+                            continue
+                        resumed = self.turn_recovery.take_due(active_keys=set(), only_key=session_key)
+                        if resumed:
+                            msg = resumed[0]
+                            break
+                        return response
+                    else:
+                        return response
         finally:
             await self._runtime_events().run_status_changed(msg, session_key, "idle")
             self._runtime_events().clear_turn(session_key)

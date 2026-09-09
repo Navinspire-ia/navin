@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 import uuid
 from collections import deque
@@ -204,6 +205,8 @@ class _BrowserSession:
     def __init__(self, config: BrowserToolConfig) -> None:
         self.config = config
         self.lock = asyncio.Lock()
+        self.user_control = False
+        self.closed = False
         self._pw: Any = None
         self._browser: Any = None
         self._context: Any = None
@@ -225,6 +228,8 @@ class _BrowserSession:
         self._live_page: Any = None
         self._live_cdp: Any = None
         self._live_last_frame = 0.0
+        self._live_pending_frame: tuple[Any, dict[str, Any]] | None = None
+        self._live_frame_timer: asyncio.TimerHandle | None = None
         self._live_tasks: set[asyncio.Task] = set()
         # Playwright session recording (WebM) for Montage demos.
         self._video_dir: Path | None = None
@@ -249,15 +254,18 @@ class _BrowserSession:
                 self._browser = await self._pw.chromium.launch(**launch_kwargs)
             except Exception as exc:
                 message = str(exc)
-                if "Executable doesn't exist" not in message and "playwright install" not in message:
+                if self.config.executable_path or (
+                    "Executable doesn't exist" not in message and "playwright install" not in message
+                ):
                     raise
-                # Playwright downloads its own Chromium, which a packaged build
-                # cannot do for the user. The browser already on the machine is
-                # good enough for automation, and document conversion has been
-                # locating it on all three systems for a while.
-                fallback = _installed_chromium()
+                fallback = await asyncio.to_thread(_installed_chromium)
                 if fallback is None:
-                    raise RuntimeError(_no_chromium_hint()) from exc
+                    from navin.browser_runtime import ensure_chromium
+
+                    try:
+                        fallback = await ensure_chromium()
+                    except Exception as preparation_error:
+                        raise RuntimeError(f"{preparation_error}\n{_no_chromium_hint()}") from preparation_error
                 logger.info("Playwright has no browser of its own; using {}", fallback)
                 launch_kwargs["executable_path"] = fallback
                 self._browser = await self._pw.chromium.launch(**launch_kwargs)
@@ -531,6 +539,12 @@ class _BrowserSession:
         the page the agent is actually looking at. A page that is gone simply
         leaves the last frame on screen until the next one arrives.
         """
+        if not self.config.live_view:
+            await self._stop_screencast()
+            self._emit_live("closed")
+            self._live_bus = None
+            self._live_chat_id = ""
+            return
         if self._live_bus is None or not self._live_chat_id:
             return
         page = self.page
@@ -588,20 +602,37 @@ class _BrowserSession:
             self._spawn_live_task(
                 cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
             )
-        now = time.monotonic()
-        if now - self._live_last_frame < self.config.live_view_min_frame_ms / 1000:
+        if self.closed or cdp is not self._live_cdp:
             return
         data = params.get("data")
         if not isinstance(data, str) or not data:
             return
-        self._live_last_frame = now
+        self._live_pending_frame = (cdp, params)
+        delay = self._live_last_frame + self.config.live_view_min_frame_ms / 1000 - time.monotonic()
+        if delay <= 0:
+            self._flush_live_frame()
+        elif self._live_frame_timer is None:
+            # Keep the latest frame in a burst. Dropping it would leave the
+            # mirror stale forever when the page stops producing new frames.
+            self._live_frame_timer = asyncio.get_running_loop().call_later(delay, self._flush_live_frame)
+
+    def _flush_live_frame(self) -> None:
+        if self._live_frame_timer is not None:
+            self._live_frame_timer.cancel()
+            self._live_frame_timer = None
+        pending = self._live_pending_frame
+        self._live_pending_frame = None
+        if pending is None or self.closed or pending[0] is not self._live_cdp:
+            return
+        _, params = pending
+        self._live_last_frame = time.monotonic()
         meta = params.get("metadata") or {}
         try:
             width = int(meta.get("deviceWidth") or 0) or None
             height = int(meta.get("deviceHeight") or 0) or None
         except (TypeError, ValueError):
             width = height = None
-        self._emit_live("frame", data=data, url=self._page_url(), width=width, height=height)
+        self._emit_live("frame", data=params["data"], url=self._page_url(), width=width, height=height)
 
     def _spawn_live_task(self, coro: Any) -> None:
         try:
@@ -612,6 +643,11 @@ class _BrowserSession:
         task.add_done_callback(self._live_tasks.discard)
 
     async def _stop_screencast(self) -> None:
+        if self._live_frame_timer is not None:
+            self._live_frame_timer.cancel()
+            self._live_frame_timer = None
+        self._live_pending_frame = None
+        self._live_last_frame = 0.0
         cdp = self._live_cdp
         self._live_cdp = None
         self._live_page = None
@@ -657,6 +693,7 @@ class _BrowserSession:
                         data=data,
                         width=width,
                         height=height,
+                        user_control=self.user_control,
                     ),
                 )
             )
@@ -775,6 +812,11 @@ _SESSIONS: dict[str, _BrowserSession] = {}
 _SESSIONS_LOCK = asyncio.Lock()
 
 
+def browser_session_active(session_key: str | None) -> bool:
+    session = _SESSIONS.get(session_key) if session_key else None
+    return bool(session is not None and not session.closed and session.page is not None)
+
+
 async def shutdown_browser_sessions() -> int:
     """Close every open browser session. Returns how many were still open.
 
@@ -791,7 +833,7 @@ async def shutdown_browser_sessions() -> int:
     return len(sessions)
 
 
-async def close_browser_session(session_key: str) -> bool:
+async def close_browser_session(session_key: str, *, live_id: str | None = None) -> bool:
     """Close the browser a chat opened. False when there was none.
 
     The agent closes its browser when it is done, but a run that ended badly,
@@ -800,16 +842,22 @@ async def close_browser_session(session_key: str) -> bool:
     is how a changed headless setting takes effect.
     """
     async with _SESSIONS_LOCK:
-        session = _SESSIONS.pop(session_key, None)
+        session = _SESSIONS.get(session_key)
+        if session is not None and live_id is not None and session.live_id != live_id:
+            raise ValueError("the browser session changed; refresh the live view")
+        if session is not None:
+            _SESSIONS.pop(session_key, None)
     if session is None:
         return False
-    with suppress(Exception):
-        await session.close()
+    session.closed = True
+    async with session.lock:
+        with suppress(Exception):
+            await session.close()
     return True
 
 
 async def dispatch_live_input(
-    session_key: str, action: str, payload: dict[str, Any]
+    session_key: str, action: str, payload: dict[str, Any], *, live_id: str | None = None
 ) -> dict[str, Any]:
     """Replay a click or a keystroke the user made on the live view.
 
@@ -826,8 +874,20 @@ async def dispatch_live_input(
         session = _SESSIONS.get(session_key)
     if session is None:
         raise ValueError("no browser is open in this chat")
+    if live_id is not None and live_id != session.live_id:
+        raise ValueError("the browser session changed; refresh the live view")
+    if session.closed:
+        raise ValueError("the browser session was closed")
+    if action not in {"takeover", "release", "click", "move", "scroll", "text", "key"}:
+        raise ValueError(f"unsupported live input: {action}")
+    if action != "release":
+        session.user_control = True
 
     async with session.lock:
+        # Close/replacement may have happened while this input waited behind
+        # a navigation. Never send a queued key or click to that stale page.
+        if session.closed or _SESSIONS.get(session_key) is not session:
+            raise ValueError("the browser session was closed or replaced")
         page = session.page
         if page is None:
             raise ValueError("no browser is open in this chat")
@@ -839,18 +899,24 @@ async def dispatch_live_input(
         except Exception as exc:
             raise ValueError("the page is not reachable") from exc
 
-        if action == "click":
+        if action in {"takeover", "release"}:
+            session.user_control = action == "takeover"
+        elif action == "click":
             x, y = _live_point(session, page, payload)
-            await page.mouse.click(x, y, click_count=int(payload.get("count") or 1))
+            button = str(payload.get("button") or "left")
+            if button not in {"left", "right", "middle"}:
+                raise ValueError("invalid mouse button")
+            await page.mouse.click(x, y, button=button, click_count=max(1, min(3, int(payload.get("count") or 1))))
         elif action == "move":
             x, y = _live_point(session, page, payload)
             await page.mouse.move(x, y)
         elif action == "scroll":
             x, y = _live_point(session, page, payload)
+            dx, dy = float(payload.get("dx") or 0.0), float(payload.get("dy") or 0.0)
+            if not math.isfinite(dx) or not math.isfinite(dy):
+                raise ValueError("scroll deltas must be finite")
             await page.mouse.move(x, y)
-            await page.mouse.wheel(
-                float(payload.get("dx") or 0.0), float(payload.get("dy") or 0.0)
-            )
+            await page.mouse.wheel(dx, dy)
         elif action == "text":
             text = str(payload.get("text") or "")
             if not text:
@@ -867,13 +933,14 @@ async def dispatch_live_input(
             raise ValueError(f"unsupported live input: {action}")
 
         session.emit_live_action(f"user {action}")
-        with suppress(Exception):
-            await page.wait_for_timeout(120)
+        if action not in {"takeover", "release"}:
+            with suppress(Exception):
+                await page.wait_for_timeout(120)
         await session.sync_live_view()
         url = ""
         with suppress(Exception):
             url = str(page.url or "")
-        return {"url": url}
+        return {"url": url, "id": session.live_id, "user_control": session.user_control}
 
 
 def _live_point(session: _BrowserSession, page: Any, payload: dict[str, Any]) -> tuple[float, float]:
@@ -894,6 +961,10 @@ def _live_point(session: _BrowserSession, page: Any, payload: dict[str, Any]) ->
     viewport = getattr(page, "viewport_size", None) or {}
     page_width = float(viewport.get("width") or session.config.viewport_width)
     page_height = float(viewport.get("height") or session.config.viewport_height)
+    if not all(math.isfinite(value) for value in (x, y, frame_width, frame_height, page_width, page_height)):
+        raise ValueError("input needs finite coordinates and frame dimensions")
+    if frame_width < 0 or frame_height < 0 or page_width <= 0 or page_height <= 0:
+        raise ValueError("input needs positive frame dimensions")
     if frame_width > 0 and frame_height > 0:
         x = x * page_width / frame_width
         y = y * page_height / frame_height
@@ -1085,11 +1156,15 @@ class BrowserTool(Tool):
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
+        from navin.config.loader import get_config_path, load_config
+
+        config_path = get_config_path()
         return cls(
             config=ctx.config.browser,
             workspace=ctx.workspace,
             restrict_to_workspace=getattr(ctx.config, "restrict_to_workspace", False),
             bus=getattr(ctx, "bus", None),
+            config_loader=lambda: load_config(config_path).tools.browser if config_path.is_file() else ctx.config.browser,
         )
 
     def __init__(
@@ -1099,11 +1174,13 @@ class BrowserTool(Tool):
         workspace: str | Path | None = None,
         restrict_to_workspace: bool = False,
         bus: Any = None,
+        config_loader: Any = None,
     ) -> None:
         self.config = config or BrowserToolConfig()
         self._workspace = Path(workspace).expanduser().resolve() if workspace else None
         self._restrict_to_workspace = restrict_to_workspace
         self._bus = bus
+        self._config_loader = config_loader
 
     def _cdp_refusal(self, method: str, params: Mapping[str, Any]) -> str | None:
         """Return why a raw CDP command must be refused, or None to allow it.
@@ -1186,8 +1263,22 @@ class BrowserTool(Tool):
     async def execute(self, **kwargs: Any) -> Any:
         action = kwargs.get("action", "")
         try:
+            if self._config_loader is not None:
+                self.config = await asyncio.to_thread(self._config_loader)
+            if not self.config.enabled:
+                return ToolResult.error("Error: browser control is disabled in Settings.")
             session = await _get_session(self.config)
             async with session.lock:
+                session.config = self.config
+                if not self.config.live_view:
+                    await session.sync_live_view()
+                if session.closed:
+                    return ToolResult.error("Error: this browser session was closed.")
+                if session.user_control:
+                    return ToolResult.error(
+                        "Error: the user has control of the live browser. Wait until they "
+                        "return control using the live view before continuing."
+                    )
                 session.set_live_target(self._bus)
                 session.emit_live_action(_live_action_line(action, kwargs))
                 try:

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from navin.career.errors import CareerError
+from navin.career.mail_settings import default_mailbox, normalize_mailbox
 from navin.career.sources import APPLY_MODES, STAGES, TRACKS, html_to_text, normalize_job_url
 from navin.config.paths import get_runtime_subdir
 
@@ -25,6 +26,8 @@ CAREER_SECRET_NAMES = frozenset(
         "JOOBLE_API_KEY",
         "USAJOBS_API_KEY",
         "USAJOBS_USER_AGENT",
+        "CAREER_SMTP_PASSWORD",
+        "CAREER_IMAP_PASSWORD",
     }
 )
 
@@ -201,6 +204,7 @@ def default_profile() -> dict[str, Any]:
         "apply_mode": "manual",
         "ai_assist": False,
         "mail": {"gmail": False, "outlook": False},
+        "mailbox": default_mailbox(),
         "channels": _empty_channels(),
         "company": _empty_company(),
         "talents": [],
@@ -221,6 +225,8 @@ def normalize_profile(raw: dict[str, Any] | None) -> dict[str, Any]:
     base = default_profile()
     incoming = dict(raw) if isinstance(raw, dict) else {}
     incoming.pop("api_keys", None)
+    for secret_field in ("smtp_password", "imap_password", "mailbox_status"):
+        incoming.pop(secret_field, None)
     base.update(incoming)
     base.pop("api_keys", None)
     track = str(base.get("track") or "freelance").strip().lower()
@@ -317,6 +323,7 @@ def normalize_profile(raw: dict[str, Any] | None) -> dict[str, Any]:
             base[day_key] = 0
     mail = base.get("mail") if isinstance(base.get("mail"), dict) else {}
     base["mail"] = {"gmail": bool(mail.get("gmail")), "outlook": bool(mail.get("outlook"))}
+    base["mailbox"] = normalize_mailbox(base.get("mailbox"))
     channels = base.get("channels") if isinstance(base.get("channels"), dict) else {}
     empty_channels = _empty_channels()
     empty_channels.update({key: channels.get(key, empty_channels[key]) for key in empty_channels})

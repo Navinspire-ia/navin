@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 from typing import Any
+
+from filelock import FileLock
 
 from navin.tenders.desk import in_play
 from navin.tenders.normalize import looks_like_notice
 from navin.tenders.notify import deliver_alert
 from navin.tenders.store import TenderStore
+from navin.utils.atomic_io import atomic_write_text
 
 # Tightest first: a notice due in 2 days must fire the 3-day mark, not the 7-day one.
 DEADLINE_MARKS = (1, 3, 7)
@@ -20,16 +25,12 @@ PRE_SUBMIT_STAGES = frozenset(
 
 
 def _days_left(row: dict[str, Any]) -> int | None:
-    raw = (row.get("score_breakdown") or {}).get("days_left")
-    if isinstance(raw, (int, float)):
-        return int(raw)
     deadline = str(row.get("deadline") or "").strip()
-    if not deadline:
-        return None
     try:
         due = dt.date.fromisoformat(deadline[:10])
     except ValueError:
-        return None
+        raw = (row.get("score_breakdown") or {}).get("days_left")
+        return int(raw) if isinstance(raw, (int, float)) else None
     return (due - dt.date.today()).days
 
 
@@ -106,7 +107,8 @@ def _line(event: dict[str, Any], fr: bool) -> str:
         head = f"J-{days}" if fr else f"D-{days}"
     else:
         head = "Relance" if fr else "Follow up"
-    return f"{head}: {title}{tail}"
+    link = str(row.get("source_url") or "")
+    return f"{head}: {title}{tail}" + (f"\n{link}" if link.startswith(("https://", "http://")) else "")
 
 
 def digest_text(events: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[str, str]:
@@ -160,25 +162,74 @@ def run_watch(store: TenderStore, *, send: bool = True) -> dict[str, Any]:
         "count": len(events),
         "sent": {},
     }
-    if not events or not send:
+    if not send:
+        return payload
+    from navin.bus.alerts import resume_alerts
+
+    resume_alerts(store, module="tenders")
+    if not events:
+        path = store.root / "watch-pending.json"
+        if path.exists():
+            from navin.bus.alerts import cancel_alert
+
+            with FileLock(str(path) + ".lock", timeout=5):
+                batches = json.loads(path.read_text(encoding="utf-8"))
+                for batch in batches:
+                    cancel_alert(store, module="tenders", event_id=batch["event_id"])
+                atomic_write_text(path, "[]", mode=0o600)
         return payload
     profile = store.load_profile()
-    title, detail = digest_text(events, profile)
-    payload["sent"] = deliver_alert(store, title=title, detail=detail, level="warn")
-    payload["digest"] = f"{title}\n\n{detail}"
-    if not digest_was_delivered(payload["sent"]):
-        payload["delivered"] = False
-        return payload
-    payload["delivered"] = True
-    mark_sent(store, events)
-    store.append_journal({"kind": "watch", "text": f"{len(events)} alerts pushed as one digest"})
+    path = store.root / "watch-pending.json"
+    current_keys = {f"{event['id']}:{event['key']}" for event in events}
+    with FileLock(str(path) + ".lock", timeout=5):
+        batches = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        if not isinstance(batches, list):
+            raise ValueError("invalid pending watch batches")
+        relevant = []
+        for batch in batches:
+            if any(f"{event['id']}:{event['key']}" in current_keys for event in batch["events"]):
+                relevant.append(batch)
+            else:
+                from navin.bus.alerts import cancel_alert
+
+                cancel_alert(store, module="tenders", event_id=batch["event_id"])
+        batches = relevant
+        covered = {f"{event['id']}:{event['key']}" for batch in batches for event in batch["events"]}
+        fresh = [event for event in events if f"{event['id']}:{event['key']}" not in covered]
+        if fresh:
+            title, detail = digest_text(fresh, profile)
+            identifiers = sorted(f"{event['id']}:{event['key']}" for event in fresh)
+            event_id = "watch:" + hashlib.sha256("\n".join(identifiers).encode()).hexdigest()[:24]
+            batches.append({"event_id": event_id, "title": title, "detail": detail,
+                            "events": [{key: value for key, value in event.items() if key != "row"} for event in fresh]})
+        # Persist before queueing so a crash cannot reshuffle a partially sent digest.
+        atomic_write_text(path, json.dumps(batches, ensure_ascii=False, indent=2), mode=0o600)
+        waiting, deliveries, digests = [], [], []
+        for batch in batches:
+            result = deliver_alert(store, title=batch["title"], detail=batch["detail"], level="warn",
+                                   event_id=batch["event_id"], event_type="watch_digest")
+            deliveries.append(result)
+            digests.append(f"{batch['title']}\n\n{batch['detail']}")
+            if digest_was_delivered(result):
+                mark_sent(store, [event for event in batch["events"] if f"{event['id']}:{event['key']}" in current_keys])
+                store.append_journal({"kind": "watch", "event_id": batch["event_id"],
+                                      "text": f"{len(batch['events'])} alertes confirmees par les transports actives"})
+            else:
+                waiting.append(batch)
+        atomic_write_text(path, json.dumps(waiting, ensure_ascii=False, indent=2), mode=0o600)
+    payload["deliveries"] = deliveries
+    payload["sent"] = deliveries[0] if len(deliveries) == 1 else {"complete": not waiting, "batches": deliveries}
+    payload["delivered"] = not waiting
+    payload["digest"] = "\n\n".join(digests)
     return payload
 
 
 def digest_was_delivered(sent: dict[str, Any] | None) -> bool:
-    """True when at least one company channel accepted the digest."""
+    """A real receipt must confirm every enabled target before forgetting the event."""
     if not isinstance(sent, dict):
         return False
+    if "complete" in sent:
+        return sent["complete"] is True
     return any(
         bool(sent.get(name))
         for name in ("webui", "telegram", "whatsapp", "email", "teams", "slack")

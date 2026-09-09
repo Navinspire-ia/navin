@@ -126,6 +126,23 @@ class EnvAliasTest(unittest.TestCase):
                         os.environ.pop(env_name, None)
 
 
+class LiveModulesGateTest(unittest.TestCase):
+    def test_prod_tree_follows_license_client_unless_forced_off(self) -> None:
+        import importlib.util
+
+        previous = os.environ.pop("NAVIN_LIVE_ACCOUNT", None)
+        try:
+            has_client = importlib.util.find_spec("navin.license_client") is not None
+            self.assertEqual(live_modules_available(), has_client)
+            os.environ["NAVIN_LIVE_ACCOUNT"] = "0"
+            self.assertFalse(live_modules_available())
+        finally:
+            if previous is None:
+                os.environ.pop("NAVIN_LIVE_ACCOUNT", None)
+            else:
+                os.environ["NAVIN_LIVE_ACCOUNT"] = previous
+
+
 class HiddenNavinBootTest(unittest.TestCase):
     def test_leftover_navin_preset_uses_openrouter_on_public_tree(self) -> None:
         if live_modules_available():

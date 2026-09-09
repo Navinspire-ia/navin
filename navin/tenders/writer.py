@@ -5,11 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from navin.tenders.enrich import fetch_text_is_noise
 from navin.tenders.bid_pack import (
     _DURATION_FACT,
     _is_blank,
-    _price_book_lines,
+    build_evidence_register,
+    build_requirement_responses,
     crafts_cover_notice,
     detect_notice_language,
     draft_approach,
@@ -27,13 +27,23 @@ from navin.tenders.bid_pack import (
     draft_summary,
     draft_toc,
     draft_vision,
+    missing_certifications,
     need_is_thin,
     notice_blobs,
     pick_notice_fact,
+    render_requirement_sections,
+    required_certifications,
 )
-from navin.tenders.profile import NOT_ON_FILE, filed_documents, normalize_references, stated, template_excerpts
+from navin.tenders.enrich import fetch_text_is_noise
+from navin.tenders.profile import (
+    NOT_ON_FILE,
+    filed_documents,
+    normalize_references,
+    stated,
+    template_excerpts,
+)
 
-_REQ_SPLIT = re.compile(r"[\n;•●▪‣]|(?:\s+\d+[.)]\s+)|(?:\s+[-*]\s+)")
+_REQ_SPLIT = re.compile(r"\n+|[•●▪‣]")
 _REQ_FORCE = re.compile(
     r"\b(shall|must|doit|doivent|obligatoire|mandatory|required|exigence|"
     r"fournir|joindre|produire|justifier|justificatif|cdc|cahier)\b",
@@ -104,8 +114,10 @@ def analyse_tender(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         missing.append("budget not published")
     if not tender.get("deadline"):
         missing.append("deadline missing")
-    if "certif" in hay and not (profile.get("certifications") or []):
-        missing.append("certifications required - none on file")
+    certs_missing = missing_certifications(tender, profile)
+    missing.extend(f"required certification absent from company file: {cert}" for cert in certs_missing)
+    if "certif" in hay and not required_certifications(tender) and not (profile.get("certifications") or []):
+        missing.append("certification requirement needs clarification - none on file")
     if ("kbis" in hay or "rne" in hay) and not any(
         "kbis" in str(x).lower() or "rne" in str(x).lower()
         for x in (profile.get("documents") or [])
@@ -126,26 +138,13 @@ def analyse_tender(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         or "",
         "eligibility": tender.get("eligibility")
         or ("Voir l'avis source." if response_language(tender, profile) == "fr" else "See source notice."),
-        "mandatory_docs": [
-            item
-            for item in (
-                (
-                    "lettre de candidature",
-                    "offre technique",
-                    "offre financiere",
-                    "references",
-                    "CV de l'equipe",
-                )
-                if response_language(tender, profile) == "fr"
-                else (
-                    "submission letter",
-                    "technical offer",
-                    "financial offer",
-                    "references",
-                    "staff CVs",
-                )
-            )
-        ],
+        "mandatory_docs": [label for pattern, label in (
+            (r"lettre de candidature|submission letter", "lettre de candidature"),
+            (r"memoire technique|offre technique|technical (?:offer|memorandum)", "offre technique"),
+            (r"offre financi|bordereau|price schedule|financial offer", "offre financiere"),
+            (r"r[eé]f[eé]rences|references", "references"),
+            (r"\bcv\b|staff cvs|resumes", "CV de l'equipe"),
+        ) if re.search(pattern, hay, re.I)],
         "deadline": tender.get("deadline") or "",
         "guarantees": "bid bond likely" if "caution" in hay or "bond" in hay else "not stated",
         "certifications": ", ".join(profile.get("certifications") or []) or "none on file",
@@ -154,6 +153,7 @@ def analyse_tender(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         "risks": missing
         + (["short deadline"] if (tender.get("score_breakdown") or {}).get("days_left") is not None and int((tender.get("score_breakdown") or {}).get("days_left") or 99) < 10 else []),
         "gaps": missing,
+        "eligibility_blockers": [f"required certification absent from company file: {cert}" for cert in certs_missing],
         "source_url": tender.get("source_url"),
     }
     analysis["requirements"] = extract_requirements(tender, profile, analysis)
@@ -191,6 +191,9 @@ def go_nogo(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     if max_budget > 0 and isinstance(budget, (int, float)) and budget > max_budget:
         go = False
         reasons.append(f"budget {budget:,.0f} is above the {max_budget:,.0f} ceiling")
+    for certification in missing_certifications(tender, profile):
+        go = False
+        reasons.append(f"required certification absent from company file: {certification}")
     effort = 8 if go else 2
     if breakdown.get("days_left") is not None and int(breakdown["days_left"]) < 14:
         effort = max(effort, 12)
@@ -203,9 +206,9 @@ def go_nogo(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _clip_req(text: str, limit: int = 220) -> str:
+def _clip_req(text: str, limit: int | None = None) -> str:
     body = " ".join(str(text or "").split())
-    return body[:limit].rstrip(" .,:;") if body else ""
+    return body[:limit] if limit else body
 
 
 def _push_req(rows: list[dict[str, str]], seen: set[str], text: str, source: str) -> None:
@@ -218,20 +221,26 @@ def _push_req(rows: list[dict[str, str]], seen: set[str], text: str, source: str
     if key in seen:
         return
     seen.add(key)
-    rows.append({"id": str(len(rows) + 1), "text": item, "source": source})
+    buyer = re.match(r"^((?:EXG|REQ|R|CCTP)[- .]?\d+(?:[.-]\d+)*|\d+(?:\.\d+)*[.)])\s*", item, re.I)
+    rows.append({
+        "id": f"R{len(rows) + 1:03d}", "text": item, "source": source,
+        "buyer_id": buyer.group(1).rstrip(".)") if buyer else "",
+        "kind": "context" if source in {"notice", "award", "document"} else "requirement",
+    })
 
 
 def _split_requirements(blob: str, source: str, rows: list[dict[str, str]], seen: set[str]) -> None:
     text = str(blob or "").strip()
     if not text:
         return
-    chunks = [part.strip(" \t-*.") for part in _REQ_SPLIT.split(text) if part and part.strip()]
+    chunks = [part.strip(" \t-*") for part in _REQ_SPLIT.split(text) if part and part.strip()]
+    if source == "eligibility":
+        chunks = [part.strip() for chunk in chunks for part in re.split(r"[;,]|\b(?:et|and)\s+(?=(?:(?:les|des|the)\s+)?(?:CV|curriculum))", chunk, flags=re.I) if part.strip()]
+        chunks = [part.strip() for chunk in chunks for part in _SENTENCE.split(chunk) if part.strip()]
     if len(chunks) <= 1:
         chunks = [part.strip() for part in _SENTENCE.split(text) if part.strip()]
     for chunk in chunks:
         if len(chunk) < 8:
-            continue
-        if len(chunks) == 1 and len(chunk) > 80 and not _REQ_FORCE.search(chunk):
             continue
         _push_req(rows, seen, chunk, source)
 
@@ -245,45 +254,37 @@ def extract_requirements(
     analysis = analysis or {}
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
-    title = str(tender.get("title") or "").strip()
-    if title:
-        _push_req(rows, seen, title, "notice")
     _split_requirements(str(tender.get("eligibility") or ""), "eligibility", rows, seen)
     desc = str(tender.get("description") or "")
     cdc = str(tender.get("cdc_text") or "")
-    if not fetch_text_is_noise(desc):
-        _split_requirements(desc, "description", rows, seen)
     if not fetch_text_is_noise(cdc):
         _split_requirements(cdc, "cdc", rows, seen)
+    if not fetch_text_is_noise(desc):
+        description_rows: list[dict[str, str]] = []
+        _split_requirements(desc, "description", description_rows, set())
+        numbered_cdc = sum(bool(row.get("buyer_id")) for row in rows if row.get("source") == "cdc") >= 2
+        cdc_words = {word.lower() for word in re.findall(r"\w{4,}", cdc)}
+        cdc_numbers = set(re.findall(r"\d+", cdc))
+        for row in description_rows:
+            text = row["text"]
+            words = {word.lower() for word in re.findall(r"\w{4,}", text)} - {"doit", "titulaire", "prestataire", "assurer", "marche", "fictif", "contractuelle"}
+            numbers = set(re.findall(r"\d+", text))
+            # Detailed numbered CDC takes precedence over its executive synopsis.
+            # An additional obligation or quantity absent from the CDC remains a source row.
+            covered = bool(words) and len(words & cdc_words) / len(words) >= 0.45
+            if numbered_cdc and not (numbers - cdc_numbers) and (covered or not _REQ_FORCE.search(text)):
+                continue
+            _push_req(rows, seen, text, "description")
     _split_requirements(str(tender.get("submission_method") or ""), "submission", rows, seen)
     raw_docs = tender.get("documents") or []
     if isinstance(raw_docs, list):
-        for item in raw_docs[:20]:
+        for item in raw_docs:
             if isinstance(item, dict):
-                _push_req(rows, seen, str(item.get("title") or item.get("name") or item.get("url") or ""), "document")
+                if item.get("text") or item.get("excerpt"):
+                    _split_requirements(str(item.get("text") or item.get("excerpt")), "document", rows, seen)
             else:
-                _push_req(rows, seen, str(item), "document")
-    for item in analysis.get("mandatory_docs") or []:
-        _push_req(rows, seen, str(item), "mandatory")
-    for item in analysis.get("award_criteria") or []:
-        token = str(item)
-        if token.startswith("not extracted"):
-            continue
-        _push_req(rows, seen, token, "award")
-    if normalize_references(profile.get("references")) or any(
-        row.get("bucket") == "reference" for row in filed_documents(profile)
-    ):
-        _push_req(
-            rows,
-            seen,
-            (
-                "Les references au dossier doivent etre mappees a cet avis"
-                if response_language(tender, profile) == "fr"
-                else "References on file must be mapped to this notice"
-            ),
-            "profile",
-        )
-    return rows[:40]
+                continue
+    return rows
 
 
 def _excerpt_hits(texts: list[str], hint: re.Pattern[str]) -> list[str]:
@@ -524,39 +525,10 @@ def build_compliance_matrix(
     project_types: str,
     methodology: str,
 ) -> str:
-    analysis = tender.get("analysis") if isinstance(tender.get("analysis"), dict) else {}
-    reqs = analysis.get("requirements") if isinstance(analysis.get("requirements"), list) else None
-    if not reqs:
-        reqs = extract_requirements(tender, profile, analysis)
-    refs_ok = bool(normalize_references(profile.get("references"))) or any(
-        row.get("bucket") == "reference" for row in filed_documents(profile)
-    )
-    deadline = stated(tender.get("deadline"), missing)
-    price_on_file = bool(_price_book_lines(profile, missing))
-    header = (
-        ["| # | Exigence | Reponse | Preuve |", "| --- | --- | --- | --- |"]
-        if fr
-        else ["| # | Requirement | Answer | Evidence |", "| --- | --- | --- | --- |"]
-    )
-    lines = list(header)
-    for index, item in enumerate(reqs[:40], start=1):
-        if not isinstance(item, dict):
-            item = {"text": str(item), "source": "notice"}
-        answer, proof = _answer_for_requirement(
-            item,
-            crafts=crafts,
-            tender_types=tender_types,
-            project_types=project_types,
-            refs_ok=refs_ok,
-            missing=missing,
-            deadline=deadline,
-            methodology=methodology,
-            price_on_file=price_on_file,
-            fr=fr,
-        )
-        req = str(item.get("text") or "").replace("|", "/")
-        lines.append(f"| {index} | {req} | {answer.replace('|', '/')} | {proof.replace('|', '/')} |")
-    return "\n".join(lines)
+    lang = "fr" if fr else "en"
+    evidence = build_evidence_register(profile)
+    rows = build_requirement_responses(extract_requirements(tender, profile), profile, evidence, lang=lang)
+    return render_requirement_sections(tender, profile, rows, evidence, lang=lang)["compliance_matrix"]
 
 
 def build_response(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
@@ -583,7 +555,9 @@ def build_response(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
     excerpts = template_excerpts(profile)
     style_quote = next((row.get("excerpt") or "" for row in style_docs), "")
     style_names = ", ".join(row.get("name") or row.get("title") or row.get("label") for row in style_docs)
-    analysis = tender.get("analysis") or analyse_tender(tender, profile)
+    analysis = analyse_tender(tender, profile)
+    # Stored analyses may predate source enrichment or the extraction contract.
+    # Rebuild from the current notice so late CDC clauses cannot disappear.
     title = tender.get("title") or ("l'avis" if fr else "the notice")
     buyer = stated(tender.get("buyer"), "l'acheteur public" if fr else "the contracting authority")
     deadline = stated(tender.get("deadline"), "voir l'avis" if fr else "see notice")
@@ -693,7 +667,7 @@ def build_response(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         buyer=buyer,
         criteria=criteria,
     )
-    return {
+    response = {
         "cover": draft_cover(tender, profile, lang=lang, missing=missing, company=company),
         "toc": draft_toc(lang),
         "letter": letter,
@@ -740,6 +714,112 @@ def build_response(tender: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         "ready": True,
         "requirements_count": len(analysis.get("requirements") or extract_requirements(tender, profile, analysis)),
     }
+    evidence = build_evidence_register(profile)
+    requirements = build_requirement_responses(analysis["requirements"], profile, evidence, lang=lang)
+    response.update({"requirement_responses": requirements, "evidence_register": evidence})
+    response = assemble_requirement_response(tender, profile, response)
+    warning_labels = {
+        "budget not published": "Budget de l'acheteur non publie.",
+        "deadline missing": "Date limite de depot absente.",
+        "company registry extract (Kbis/RNE) not in the knowledge base": "Extrait Kbis/RNE demande mais absent du dossier societe.",
+        "certification requirement needs clarification - none on file": "Certification demandee a preciser; aucune certification declaree.",
+    }
+    warnings = [
+        warning_labels.get(warning, warning.replace("required certification absent from company file: ", "Certification demandee absente du dossier societe: ")) if fr else warning
+        for warning in analysis.get("gaps") or []
+    ]
+    if need_is_thin(tender, analysis, missing):
+        warnings.append("Cahier des charges incomplet: faire preciser le perimetre, les livrables, les volumes et la recette." if fr else "Specification incomplete: validate scope, deliverables, volumes and acceptance with the buyer.")
+    if not evidence:
+        warnings.append("Aucune preuve justificative disponible dans le profil societe." if fr else "No supporting evidence available in the company file.")
+    warnings.extend(f"{row['id']}: justificatif manquant ou insuffisant." if fr else f"{row['id']}: missing or insufficient supporting evidence." for row in requirements if row["status"] in {"missing_evidence", "insufficient_evidence"})
+    from navin.agent.skill_routing import build_action_skill_context
+
+    skills = build_action_skill_context("tenders", "write")
+    response.update({
+        "generation": {"mode": "deterministic", "status": "needs_review", "warnings": list(dict.fromkeys(warnings)), "skills": skills.metadata},
+        "review_needed": True,
+        "submission_ready": False,
+        "requirements_count": len(requirements),
+        "coverage": {"extracted": len(requirements), "drafted": len(requirements), "omitted": 0,
+                     "source_fields": [key for key in ("title", "description", "eligibility", "cdc_text", "submission_method", "documents") if tender.get(key)]},
+        "template_material": [{"name": row.get("name") or row.get("title"), "bucket": row.get("bucket"), "excerpt": row.get("excerpt") or ""} for row in style_docs],
+    })
+    return response
+
+
+def assemble_requirement_response(tender: dict[str, Any], profile: dict[str, Any], response: dict[str, Any]) -> dict[str, Any]:
+    """Keep facts and source constraints canonical while rendering proposed methods."""
+    out = dict(response)
+    lang = str(out.get("language") or response_language(tender, profile))
+    fr = lang == "fr"
+    rows = list(out.get("requirement_responses") or [])
+    evidence = list(out.get("evidence_register") or [])
+    sections = render_requirement_sections(tender, profile, rows, evidence, lang=lang)
+    risk_register = sections.pop("risk_register")
+    out.update(sections)
+    company = str(profile.get("name") or ("Le candidat" if fr else "The bidder"))
+    title = str(tender.get("title") or ("l'avis" if fr else "the notice"))
+    buyer = str(tender.get("buyer") or ("l'acheteur" if fr else "the buyer"))
+    specialty = str(profile.get("specialty") or "").strip()
+    declared_crafts = ", ".join(str(item) for item in profile.get("crafts") or [])
+    cdc = str(tender.get("cdc_text") or "")
+    context = str(tender.get("description") or "")
+    if fetch_text_is_noise(context):
+        context = ""
+    if fetch_text_is_noise(cdc):
+        cdc = ""
+    # A submission letter states the bid's intent, not the generator's internal workflow.
+    if fr:
+        out["letter"] = (
+            f"Objet : Candidature - {title}\n\nMadame, Monsieur,\n\n"
+            f"{company} vous presente sa proposition pour {title}. "
+            + (f"Notre domaine declare est {specialty}. " if specialty else "")
+            + (f"Competences declarees: {declared_crafts}. " if declared_crafts else "")
+            + "Le memoire joint expose notre comprehension du besoin, la mise en oeuvre proposee et les conditions de verification des livrables.\n\n"
+            "La reponse suit les exigences de l'avis et du cahier des charges disponibles. La matrice associe chaque point a sa fiche de reponse et aux pieces justificatives identifiees. "
+            "Les choix soumis a votre validation et les reserves sont regroupes dans le registre correspondant.\n\n"
+            "Nous restons a votre disposition pour preciser cette proposition et convenir des conditions de sa mise en oeuvre.\n\n"
+            f"Veuillez agreer, Madame, Monsieur, nos salutations distinguees.\n{company}"
+        )
+    else:
+        out["letter"] = (
+            f"Subject: Submission - {title}\n\nDear {buyer},\n\n"
+            f"{company} presents its proposal for {title}. "
+            + (f"Our declared specialty is {specialty}. " if specialty else "")
+            + (f"Declared competencies: {declared_crafts}. " if declared_crafts else "")
+            + "The enclosed memorandum sets out our understanding, proposed implementation and deliverable verification conditions.\n\n"
+            "The response follows the available notice and specification. The matrix links each item to its response and identified supporting evidence. "
+            "Choices requiring your approval and qualifications are collected in the validation register.\n\n"
+            f"We remain available to clarify the proposal and agree its implementation conditions.\n\nYours faithfully,\n{company}"
+        )
+    missing = "non renseigne" if fr else NOT_ON_FILE
+    analysis = analyse_tender(tender, profile)
+    thin = need_is_thin(tender, analysis, missing)
+    constraints = []
+    for label, key in (("Acheteur" if fr else "Buyer", "buyer"), ("Date limite de depot" if fr else "Submission deadline", "deadline"), ("Budget publie, distinct du prix propose" if fr else "Published budget, separate from the proposed price", "budget")):
+        if tender.get(key):
+            constraints.append(f"- {label}: {tender[key]}" + (f" {tender.get('currency') or profile.get('currency') or ''}" if key == "budget" else ""))
+    opening = (f"{company} propose de traiter {title}." if fr else f"{company} proposes to deliver {title}.")
+    if thin:
+        opening += " Le CDC n'est pas lisible: les livrables, volumes et conditions de recette doivent etre precises avant engagement." if fr else " The specification is unreadable: deliverables, volumes and acceptance conditions need clarification before commitment."
+    else:
+        opening += " " + context
+    out["executive_summary"] = "\n\n".join([opening, (f"La matrice couvre {len(rows)} points source, sans conclure automatiquement a la conformite. Les fiches precisent la mise en oeuvre, les livrables, les tests et les dependances; les references et certifications restent soumises au controle des pieces." if fr else f"The matrix covers {len(rows)} source items without automatically establishing compliance. Responses define implementation, deliverables, tests and dependencies; references and certifications still require evidence checks."), "\n".join(constraints), ("Points d'admissibilite a lever: " if fr else "Eligibility issues to resolve: ") + ("; ".join(missing_certifications(tender, profile)) if missing_certifications(tender, profile) else ("verifier les justificatifs et les conditions completes de la consultation." if fr else "verify supporting evidence and the complete tender rules."))])
+    out["need"] = "\n\n".join([opening, ("Contraintes publiees" if fr else "Published constraints") + ":\n" + "\n".join(constraints), ("Les fiches de reponse conservent le texte integral de chaque point extrait et sa source. Les titres et pieces documentaires donnent le contexte; ils ne suffisent pas a prouver une exigence satisfaite." if fr else "Response sheets preserve each extracted source item in full. Titles and document names provide context; they do not prove that a requirement is met.")])
+    out["approach"] = ("Demarche de realisation: faire approuver les donnees d'entree et les criteres de recette, concevoir les contrats et les flux, produire les livrables verifies, puis organiser la recette et le transfert. Chaque passage de phase utilise les preuves definies dans les fiches de reponse; les decisions bloquantes sont tracees dans le registre de risques." if fr else "Delivery approach: approve input data and acceptance criteria, design contracts and flows, produce verified deliverables, then arrange acceptance and handover. Each phase gate uses evidence defined in the response sheets; blocking decisions are tracked in the risk register.")
+    out["vision"] = ("Vision cible: un resultat exploitable et verifiable pour " + buyer + ". Les priorites techniques proviennent des exigences citees, et les choix absents du cahier restent des propositions. Le transfert s'appuie sur la documentation de la solution effectivement livree et sur une mise en situation des destinataires." if fr else "Target outcome: an operable, verifiable result for " + buyer + ". Technical priorities follow the cited requirements; choices absent from the specification remain proposals. Handover uses documentation of the delivered solution and practical exercises by its recipients.")
+    # Keep role assignments separate from names declared in the company file.
+    out["raci_risks"] = ("Roles proposes, affectation et disponibilite a faire confirmer.\n| Activite | Responsable | Approbateur | Consultes |\n| --- | --- | --- | --- |\n| Perimetre et recette | Chef de projet | Referent acheteur habilite | Equipe metier et technique |\n| Conception et realisation | Responsable technique a designer | Chef de projet | Exploitation et securite |\n| Mise en service | Responsable exploitation a designer | Referent acheteur habilite | Chef de projet |\n\n" if fr else "Proposed roles; assignments and availability require confirmation.\n| Activity | Responsible | Accountable | Consulted |\n| --- | --- | --- | --- |\n| Scope and acceptance | Project manager | Authorised buyer owner | Business and technical team |\n| Design and implementation | Technical lead to appoint | Project manager | Operations and security |\n| Release | Operations owner to appoint | Authorised buyer owner | Project manager |\n\n") + risk_register
+    out["raci_risks"] = "RACI\n" + out["raci_risks"]
+    out["architecture"] = title + "\n\n" + out["architecture"]
+    if thin:
+        out["architecture"] += ("\n\nLe CDC n'est pas lisible. Chaque metier du profil n'est pas un lot de ce marche; aucun metier ne cree un engagement technique absent de l'avis." if fr else "\n\nThe specification is unreadable. A company craft is not a contract work package and does not create a technical commitment absent from the notice.")
+    source_terms = list(dict.fromkeys(re.findall(r"\b(?:PostgreSQL|API REST|SQL|Kubernetes|Python|Oracle|SAP|RPO[^.;\n]{0,60}|RTO[^.;\n]{0,60}|\d+\s+(?:sources?|mois|jours-homme|heures?|months?|hours?))\b", context + "\n" + cdc, re.I)))
+    if source_terms:
+        out["architecture"] += ("\n\nContraintes et technologies citees par l'acheteur: " if fr else "\n\nBuyer-stated constraints and technologies: ") + "; ".join(source_terms) + "."
+    out["planning"] = draft_planning(tender, profile, fr=fr, missing=missing, excerpts=[], methodology=str(profile.get("methodology") or ""), staffing=str(out.get("staffing") or "")) + ("\n\nLes jalons de realisation sont soumis aux conditions de passage de la methodologie: cadrage approuve, conception validee, preuves de tests, decision de recette, transfert. Les dates intermediaires et la charge sont a estimer apres validation des acces et des ressources; aucune repartition de la duree totale n'est supposee." if fr else "\n\nDelivery milestones follow the methodology gates: approved scope, approved design, test evidence, acceptance decision and handover. Intermediate dates and effort must be estimated after access and staffing approval; no allocation of the overall duration is assumed.")
+    return out
 
 
 def commercial_draft(

@@ -53,7 +53,7 @@ export type RestoredReadyImage = RestoredReadyAttachment;
 export type AttachmentError =
   | "unsupported_type"   // server whitelist excludes this MIME
   | "empty_file"         // backend data-URL decoder rejects empty payloads
-  | "too_many_attachments" // per-message cap (4) reached before enqueue
+  | "too_many_attachments" // per-message cap (20) reached before enqueue
   | "total_too_large"    // decoded attachments exceed the business-policy total
   | "transport_too_large" // projected JSON frame exceeds the transport guard
   | "magic_mismatch"     // extension lies about the real content
@@ -61,7 +61,7 @@ export type AttachmentError =
   | "too_large"          // even after normalization we exceed the budget
   | "io";                // file read failed at the browser layer
 
-export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 20;
 export const MAX_IMAGES_PER_MESSAGE = MAX_ATTACHMENTS_PER_MESSAGE;
 export const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 export const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024;

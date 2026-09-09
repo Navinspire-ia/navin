@@ -55,9 +55,12 @@ PLAN_SAFE_WRITE_TOOLS: frozenset[str] = frozenset(
 )
 
 # Code-build workflows (/forge, /cruise). Everything else (studio desks,
-# scrape, browser, MCP, generators other than images) stays out of the
+# scrape, MCP, generators other than images) stays out of the
 # schema and is refused at execution. An explicit media request unions
 # those generators back in (see AgentLoop._allowed_tools).
+CODE_INTERACTION_TOOLS: frozenset[str] = frozenset(
+    {"preview_server", "browser", "computer", "mobile", "notebook_edit"}
+)
 CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
     {
         "read_file",
@@ -97,7 +100,7 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "generate_image",
         "my",
     }
-)
+) | CODE_INTERACTION_TOOLS
 
 # Nested JSON-schema "description" fields on board/git/code_index are essays.
 # Truncating them on allowlisted turns is free accuracy: the enum still names

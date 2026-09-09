@@ -45,6 +45,32 @@ def handle_career_action(action: str, body: dict[str, Any] | None = None) -> dic
         )
     if act in {"snapshot", "status"}:
         return snapshot(store)
+    if act in {"mail_config", "mail_test", "mail_draft", "send_email", "sync_mail"}:
+        from navin.career.mail import configure_mailbox, mail_draft, send_application, test_mailbox
+        from navin.career.mailbox import sync_mailbox
+
+        if act == "mail_config":
+            result = configure_mailbox(store, body)
+            key = "mailbox_status"
+        elif act == "mail_test":
+            result, key = test_mailbox(store), "mail_checks"
+        elif act == "sync_mail":
+            result, key = sync_mailbox(store), "mail_sync"
+        else:
+            oid = str(body.get("id") or "").strip()
+            if not oid:
+                raise CareerError("id is required")
+            if act == "mail_draft":
+                result = mail_draft(store, oid, recipient=str(body.get("recipient") or ""))
+                key = "mail_draft"
+            else:
+                result = send_application(
+                    store, oid, recipient=str(body.get("recipient") or ""),
+                    revision=str(body.get("revision") or ""), reviewed=body.get("reviewed") is True,
+                    retry=body.get("retry") is True,
+                )
+                key = "mail_receipt"
+        return {**snapshot(store), key: result}
     if act in {"read", "book"}:
         return read_local(store, str(body.get("file") or body.get("id") or "book"))
     if act == "profile":
