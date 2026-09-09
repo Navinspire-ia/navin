@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real desk entry points must remain usable from an asynchronous chat turn."""
 
 from __future__ import annotations

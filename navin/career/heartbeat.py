@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Gateway heartbeat policy for the Career desk.
 
 The LLM turn may still call watch (idempotent). Search, collect and apply never

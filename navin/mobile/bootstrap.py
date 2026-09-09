@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Full Android toolchain bootstrap under ``~/.navin`` (multi-OS).
 
 Idempotent cycle: adb → JDK → cmdline-tools → SDK packages → AVD → emulator

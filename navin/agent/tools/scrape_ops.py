@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Scrape HTTP helpers: retry, robots, sitemap, enrich, tables.
 
 Used by the Python scrape fallback and shared with agent-facing actions.

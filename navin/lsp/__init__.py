@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Language Server Protocol integration.
 
 Provides the semantic layer the code index cannot give on its own: types on

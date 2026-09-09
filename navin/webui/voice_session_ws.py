@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI realtime voice session envelope handling.
 
 Transport and subscription fan-out stay on the WebSocket channel. This module

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Acceptance tests for S3 - the world model (tool outcome prediction).
 
 The contract under test, in the order of the spec:

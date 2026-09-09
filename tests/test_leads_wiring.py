@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads start/stop/heartbeat: one store for Tauri, terminal, and the agent."""
 
 from __future__ import annotations

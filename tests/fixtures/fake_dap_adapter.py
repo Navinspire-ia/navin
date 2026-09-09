@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Minimal DAP adapter used by Phase 5 unit tests (stdio, Content-Length)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Structured progress-event helpers shared by agent runtimes."""
 
 from __future__ import annotations

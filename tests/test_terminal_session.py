@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Lifecycle of the integrated terminal's shell processes.
 
 Unix sessions are covered by the live PTY path. The ConPTY half is exercised

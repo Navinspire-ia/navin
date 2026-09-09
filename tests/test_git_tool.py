@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The agent could see the repository but not act on it.
 
 ``navin.utils.git_state`` already reports the branch and the dirty tree every

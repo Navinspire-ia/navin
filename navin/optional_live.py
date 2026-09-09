@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Whether this checkout exposes navin.live account + the managed Navin provider.
 
 prod-v2 / Forgejo (this tree): ``navin.license_client`` is present, so Account,

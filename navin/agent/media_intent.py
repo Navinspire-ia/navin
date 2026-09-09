@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deterministic media intent routing for chat turns.
 
 A request like "genere un chat qui mange une banane" must reach the image model.

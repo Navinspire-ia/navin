@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OpenAI-compatible provider for all non-Anthropic LLM APIs."""
 
 from __future__ import annotations

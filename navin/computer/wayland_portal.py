@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """xdg-desktop-portal RemoteDesktop + ScreenCast session, kept alive in a helper.
 
 Wayland compositors do not let an arbitrary client inject input or read the

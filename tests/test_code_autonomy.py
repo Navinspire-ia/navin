@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real regressions in skill routing, instruction scope and tool recovery."""
 
 from __future__ import annotations

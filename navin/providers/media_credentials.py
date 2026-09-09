@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Credential readiness for the media generation tools.
 
 Image and video generation reuse the chat provider credentials, so a media tool

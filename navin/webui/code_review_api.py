@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Automated pre-commit review of pending changes ("Review my changes").
 
 Builds a structured review prompt from the working-tree diff (staged +

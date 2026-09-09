@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Settings choices must change the next desktop turn and respect provider catalogs."""
 
 from __future__ import annotations

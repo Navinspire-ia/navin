@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Which tool results may be blanked when a request overflows the window.
 
 The mechanism is ``ContextGovernor.compact_inflight_overflow``: when the assembled

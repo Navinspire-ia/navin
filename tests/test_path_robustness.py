@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tools must work in whatever directory the user actually has.
 
 A project is not always a tidy `~/src/app`. It sits under "My Documents", it is

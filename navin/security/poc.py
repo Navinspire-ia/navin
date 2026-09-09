@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """PoC / payload sketches for structured AppSec findings.
 
 Produces non-destructive illustration payloads for reports. These are

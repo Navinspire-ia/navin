@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The /api/notes/* HTTP layer: auth, transport quirks, error mapping."""
 
 from __future__ import annotations

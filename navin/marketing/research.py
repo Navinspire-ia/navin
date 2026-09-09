@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Competitive map built from real web search results.
 
 Sources, in order: hits the caller injects (agent, API), the brand's own

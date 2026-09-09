@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Post-conversion checks that catch what looks bad in a finished deck.
 
 A converter can be perfectly faithful and still hand over a poor deck, because

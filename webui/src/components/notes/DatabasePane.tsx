@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Notion-style database views over notes: saved views (Table / Board) whose
  * rows are ordinary notes and whose cells are frontmatter properties.

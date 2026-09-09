@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Propose and generate brand / post images, clips and voice from the desk."""
 
 from __future__ import annotations

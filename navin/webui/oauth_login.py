@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Non-blocking OAuth sign-in for the WebUI.
 
 ``oauth_cli_kit`` runs the whole browser round-trip inline: it prints the

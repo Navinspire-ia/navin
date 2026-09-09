@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Exam runner: the same frozen battery, a score out of 20, a verdict (S2.2).
 
 An exam grades a *skill set* (the project's ``.navin/skills`` layer, with or

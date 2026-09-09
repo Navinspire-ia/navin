@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Media sections must not advertise Navin to people who never subscribed.
 
 Image / video / music / voice used to default to the ``navin`` provider in the

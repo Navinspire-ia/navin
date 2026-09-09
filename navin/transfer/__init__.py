@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5 - the transfer protocol: a hidden exam plus a shutdown dossier, not a mode.
 
 S5 is not a feature to ship. It is the threshold before anyone may discuss

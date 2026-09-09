@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Trading desk CLI: same store as Studio #/trading, Tauri, and the trading tool.
 
 `navin trading ...` and `python -m navin.trading.desk_cli ...` are the same

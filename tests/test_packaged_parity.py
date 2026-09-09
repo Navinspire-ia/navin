@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What a packaged build must do exactly like a source install.
 
 PyInstaller changes two things that quietly remove features: ``sys.executable``

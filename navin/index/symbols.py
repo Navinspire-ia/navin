@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Symbol and import extraction for the code index.
 
 Three layers, tried in order so a missing native wheel never makes indexing

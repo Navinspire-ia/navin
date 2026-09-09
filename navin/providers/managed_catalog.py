@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Sync the managed model catalog into presets and task routes.
 
 The Navin site publishes its managed models at ``/api/models``: one slug per

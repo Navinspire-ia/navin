@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Local injection proxy for the instrumented Dev preview.
 
 Sits between the preview iframe and the user's dev server

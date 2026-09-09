@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fail-closed security posture: token issuance and strict sandbox wiring.
 
 Two audit findings shared the same shape - a guard that warned and then

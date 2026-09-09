@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live tool-output streaming for long-running tools (builds, installs...).
 
 The progress hook binds, per turn, an async *emitter* and, per tool call, the

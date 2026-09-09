@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Provider behavior ported from upstream nanobot.
 
 Four fixes travelled together: multimodal tool outputs on the Responses API,

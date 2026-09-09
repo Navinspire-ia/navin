@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the default write path: apply_patch, review, checkpoints.
 
 These three carry every edit the agent makes and every way a user takes one

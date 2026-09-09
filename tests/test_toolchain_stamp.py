@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """On-demand toolchains have to follow the build that is installed.
 
 Installing Navin replaces every file the installer owns, on all three desktop

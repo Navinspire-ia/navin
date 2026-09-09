@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """/stop must terminate the whole run: task, queued slices, and sustained goal.
 
 Regression tests for the "stop pretends to stop, then the work resumes" bug:

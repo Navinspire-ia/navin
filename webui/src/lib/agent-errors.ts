@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * The backend persists its error bubbles in English (they are stored in
  * session history, where no UI language exists yet). The set is small and

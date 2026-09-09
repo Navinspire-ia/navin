@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the agent is allowed to put in front of the user.
 
 The panel this tool drives only renders files inside the project, so a tool

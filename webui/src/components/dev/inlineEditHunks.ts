@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { diffLines } from "diff";
 
 /** One contiguous equal or changed region inside a Cmd+K rewrite. */

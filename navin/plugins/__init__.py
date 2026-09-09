@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Navin plugin packs: self-contained bundles of skills, MCP servers, and commands.
 
 A plugin is a directory under ``~/.navin/plugins/<name>/`` containing any of:

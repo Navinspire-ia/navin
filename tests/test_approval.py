@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The approval gate: what happens when a tool stops to ask.
 
 The interesting cases are the ones where nobody answers. A missing answer must

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Versioned Montage timeline storage, conversion, preview, and render jobs."""
 
 from __future__ import annotations

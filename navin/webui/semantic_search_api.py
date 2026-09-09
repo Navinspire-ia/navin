@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """WebUI payload for semantic codebase search (DevSearchPanel).
 
 Wraps :class:`navin.index.semantic.SemanticIndex` into the same grouped shape

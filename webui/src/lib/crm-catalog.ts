@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { data as currencyData } from "currency-codes";
 import countries from "world-countries";
 

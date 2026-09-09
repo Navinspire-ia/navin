@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Skills evolution (S2): Navin drafts, examines and corrects skills alone.
 
 A skill only steers the project once a frozen battery says "better than

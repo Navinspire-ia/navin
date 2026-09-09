@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What a model actually writes must not vanish from the document.
 
 Layout names it invents, section keys it prefers, a callout as an object, a

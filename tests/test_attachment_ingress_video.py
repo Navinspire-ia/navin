@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """End-to-end shape of an inbound video attachment.
 
 Frame extraction recognizes a video by file extension, so the whole feature

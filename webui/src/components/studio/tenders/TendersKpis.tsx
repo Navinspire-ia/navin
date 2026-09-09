@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { DASH_TILE_CLASS, DASH_TILE_GRID_CLASS } from "@/components/studio/tenders/tenders-ui";
 
 export const KPI_GRID_CLASS = DASH_TILE_GRID_CLASS;

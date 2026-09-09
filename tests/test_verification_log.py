@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The verification log is the proof behind "the tests passed".
 
 Only the quality tools write it, the board's done-gate reads it. If recording

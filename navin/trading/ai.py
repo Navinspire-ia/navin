@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Optional model layer for the Trading desk.
 
 Rules decide, risk blocks; the model only reads. It scores headlines the

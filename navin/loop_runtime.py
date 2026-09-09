@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Wall-clock guards shared by Career, Trading and Marketing loops / heartbeat."""
 
 from __future__ import annotations

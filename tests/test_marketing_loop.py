@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marketing desk loop: start, stop, schedule, lock, heal, heartbeat stay isolated."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Route reasoning effort by what the turn is, not a static setting.
 
 The provider layer already normalizes, remaps or strips ``reasoning_effort``

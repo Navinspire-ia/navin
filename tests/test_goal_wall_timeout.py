@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Sustained goals get a long finite LLM wall clock, never an infinite one.
 
 With the wall clock disabled (the old 0.0), one hung request held the session

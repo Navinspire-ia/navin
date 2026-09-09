@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A gateway crash mid-turn becomes a visible "interrupted" state.
 
 The in-memory wall clock (_WEBSOCKET_TURN_WALL_STARTED_AT) dies with the

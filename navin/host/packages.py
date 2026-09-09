@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """One host adapter for OS package installs (pacman, Omarchy, apt, dnf).
 
 Montage, skills setup, doctor hints, and GitHub CLI install all go through

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Transcript widgets: user/assistant messages, tool calls, cards, composer."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Autonomous meeting bot: joins Zoom / Google Meet / Teams as a browser guest.
 
 The bot drives a headless Chromium (Playwright) to the meeting's web client,

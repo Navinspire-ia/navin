@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """An MCP server's diagnostics must arrive under that server's name.
 
 The MCP SDK hands the child navin's own stderr descriptor, so a stale AWS token

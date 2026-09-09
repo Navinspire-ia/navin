@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """JSON store for Navin Tenders under the instance data dir."""
 
 from __future__ import annotations

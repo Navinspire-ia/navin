@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Local career dossier: files on disk + full text for the agent."""
 
 from __future__ import annotations

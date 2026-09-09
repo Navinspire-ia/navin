@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Desktop ownership, live controls and interruption at native input boundaries."""
 
 from __future__ import annotations

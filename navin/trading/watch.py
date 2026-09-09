@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Silent Trading watch for heartbeat. No scan, no quote fetch, no tick."""
 
 from __future__ import annotations

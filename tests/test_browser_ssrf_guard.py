@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The browser honours tools.ssrf_protection like web/scrape already did.
 
 Before this guard the browser was the bypass: with SSRF protection turned on,

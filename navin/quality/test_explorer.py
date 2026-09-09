@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Test collection for the IDE Test Explorer.
 
 ``navin.quality.testing`` already knows how to detect suites and run them

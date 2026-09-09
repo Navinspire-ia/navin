@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Windows backend: ``SendInput`` for the pointer and keyboard, GDI for pixels.
 
 Pure ``ctypes`` so it ships inside the PyInstaller build with nothing to

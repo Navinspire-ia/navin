@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Evolve workbench for the terminal: the desktop "Evolve" tab.
 
 Reads the same artefacts (``<project>/.navin/{proofs,diagnoses,optimize,

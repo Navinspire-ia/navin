@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """HTTP payload builders for the project task board (Dev workbench).
 
 Human edits arrive through these payloads; agents mutate the same store via

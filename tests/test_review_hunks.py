@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-hunk accept and reject.
 
 The whole design rests on one identity: the pending change is exactly

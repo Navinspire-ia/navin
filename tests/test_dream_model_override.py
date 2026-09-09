@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """P3-2: Dream consolidation runs on its dedicated preset when configured.
 
 ``agents.defaults.dream.model_override`` was documented as pending; it now

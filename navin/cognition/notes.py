@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Lexical lookup inside the durable memory note (``MEMORY.md``).
 
 Recall spans two layers: what happened (episodes) and what Navin decided to

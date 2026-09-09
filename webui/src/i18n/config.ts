@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export const LOCALE_STORAGE_KEY = "navin.locale";
 // Present only when the user picked the language by hand. Without it a stored
 // locale cannot be told apart from the old code's habit of writing the

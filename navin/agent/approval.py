@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Let a tool stop mid-turn, ask the user, and continue with the answer.
 
 Every guard in navin used to be decided in advance: a regex deny-list, a

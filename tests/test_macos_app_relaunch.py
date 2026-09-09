@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Relaunching Navin.app on macOS must reopen the app window, not a blank tab.
 
 macOS keeps Chrome alive after its last window closes, and Chromium's process

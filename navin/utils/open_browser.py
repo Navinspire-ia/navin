@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open an https URL in the user's real system browser.
 
 The desktop shell is a WebView: ``window.open`` from the WebUI often does

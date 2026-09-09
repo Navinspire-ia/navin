@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Strip internal subagent inject scaffolding for human-facing channel surfaces.
 
 Persisted subagent announcements mirror ``agent/subagent_announce.md``: header,

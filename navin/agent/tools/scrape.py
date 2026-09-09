@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Scrape tool: fetch, crawl, clean, enrich and export web data at scale.
 
 Prefers the Rust ``navin_core`` scrape hot path when available; falls back to a

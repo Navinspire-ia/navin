@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Deterministic, dependency-free field normalizers for leads.
 
 Kept stdlib-only on purpose: a leads pipeline runs across Windows / WSL / Linux /

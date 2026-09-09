@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { type IButtonStyles, type IContextualMenuProps } from "@fluentui/react";
 
 import { openInOsBrowser } from "@/lib/api";

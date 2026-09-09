@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Read text files as the repository actually stores them.
 
 Decoding every file as strict UTF-8 fails two ordinary cases: a Windows editor

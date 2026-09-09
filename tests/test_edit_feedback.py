@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """An edit that breaks the file should say so in the same breath.
 
 The verification tooling was already good; nothing triggered it. A model that

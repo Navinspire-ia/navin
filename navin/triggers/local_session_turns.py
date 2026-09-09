@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared metadata helpers for local trigger session turns."""
 
 from __future__ import annotations

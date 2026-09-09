@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { TenderNotice } from "@/lib/tenders-api";
 
 export type PipelineFilter = "play" | "go" | "urgent" | "draft" | "nogo" | "all";

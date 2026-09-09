@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Per-chat composer draft text - survives reload / gateway restart. */
 
 export const COMPOSER_DRAFT_STORAGE_PREFIX = "navin.webui.composerDraft.v1:";

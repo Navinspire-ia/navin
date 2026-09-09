@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """World model (S3): Navin learns to anticipate what a tool will answer.
 
 S1 remembers. S2 lets a skill in only when the exam score goes up. S3 learns

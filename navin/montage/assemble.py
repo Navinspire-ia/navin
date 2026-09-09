@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Assemble a finished video from generated parts.
 
 Navin could already generate footage, stills, music and (now) narration, but it

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Local GDPR-oriented audit trail for Meeting desk actions. */
 
 import { saveTextFile } from "@/lib/save-blob";

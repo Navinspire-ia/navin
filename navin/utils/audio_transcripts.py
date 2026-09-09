@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Turn audio attachments, and the soundtrack of video attachments, into text.
 
 No chat provider takes an mp3 on the content format used everywhere here, so

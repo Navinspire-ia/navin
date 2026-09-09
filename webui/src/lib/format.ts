@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import i18n, { currentLocale } from "@/i18n";
 
 const LOW_INFORMATION_TITLE_PREVIEWS = new Set([

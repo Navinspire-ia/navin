@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """manage_files: the destructive operations, on the record.
 
 The point of this tool is not that it can delete a file - exec could already do

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The verification loop: lint, test, auto-fix, and roll back.
 
 This is what turns "the agent edited files" into "the agent knows whether the

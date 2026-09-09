@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Language server tool: types, type-resolved navigation, and safe renames.
 
 Complements ``code_index``. The index is instant and always available but works

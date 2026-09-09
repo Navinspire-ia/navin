@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Work from the user's own PowerPoint or Word template.
 
 A company deck or a letterhead arrives as a ``.pptx`` or a ``.docx`` the user

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The frozen exam set of the policy (S4.3).
 
 The battery already says which cases are held out; this module freezes the

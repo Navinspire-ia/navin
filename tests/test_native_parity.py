@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Phase 0 safety net: native (Rust) backends must match Python fallbacks.
 
 These tests never change tool schemas or production behaviour. They only

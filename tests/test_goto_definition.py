@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Go-to-definition payload for editor F12 / Ctrl-click."""
 
 from __future__ import annotations

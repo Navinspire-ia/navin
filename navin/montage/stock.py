@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Builtin stock media clients (Pexels / Unsplash / Pixabay).
 
 No third-party SDKs - stdlib + httpx already used by Navin. Keys come from

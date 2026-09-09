@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Bootstrap writes env and starts only when the app source is present."""
 
 from __future__ import annotations

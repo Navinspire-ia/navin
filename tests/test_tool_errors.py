@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Failures the agent has to be able to act on, and the one boundary it must not cross.
 
 An error that names only its exception class, or a "not found" that lists no

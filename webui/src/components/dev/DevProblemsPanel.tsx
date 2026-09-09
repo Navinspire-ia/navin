@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { AlertCircle, AlertTriangle, X } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";

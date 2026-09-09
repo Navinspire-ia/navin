@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """PR merge -> board suggestions (no auto-close), on every forge.
 
 The forge layer is always neutralized or mocked here: no test may reach a

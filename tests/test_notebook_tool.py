@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Jupyter notebooks are read as cells and edited as cells."""
 
 from __future__ import annotations

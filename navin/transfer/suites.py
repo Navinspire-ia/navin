@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.1 / S5.2 - the secret suites: loaded from outside the repository, frozen
 by hash, checked for leaks before every campaign.
 

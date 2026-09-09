@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Say so when a turn carries images the selected model cannot read.
 
 Sending an image to a text-only model has two failure shapes, and the quiet one

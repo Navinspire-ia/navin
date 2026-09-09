@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Official and authorized career sources. No LinkedIn scrape or auto-apply."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Platform backends that can be exercised without their desktop: macOS key
 mapping, the Wayland portal protocol (fake helper) and the Wayland backend's
 coordinate / keysym translation against a fake portal session."""

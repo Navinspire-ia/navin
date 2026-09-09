@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """OpenRouter requests must ask for the fastest upstream provider.
 
 OpenRouter's default routing balances on price and regularly lands on hosts

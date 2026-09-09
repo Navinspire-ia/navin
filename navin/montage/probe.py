@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Measure media files (duration, dimensions, fps, streams) for the editor.
 
 The timeline UI and the agent both need the real length of a clip before

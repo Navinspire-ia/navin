@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { DefaultButton, Icon, MessageBar, MessageBarType, PrimaryButton, TextField, Toggle } from "@fluentui/react";

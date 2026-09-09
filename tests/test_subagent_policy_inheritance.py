@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Parent turn policy must follow delegated work into subagents.
 
 Delegation was the policy escape hatch: a Build parent with a verify gate

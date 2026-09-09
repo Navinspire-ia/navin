@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The config file must record choices, not freeze navin's defaults.
 
 Every default used to be written to disk, so an installation kept the defaults

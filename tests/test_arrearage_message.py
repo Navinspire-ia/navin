@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A 402 is labelled by the key that paid for the call, and quotes the provider.
 
 Plan quota only when the Navin managed key ran the turn; a refusal on the

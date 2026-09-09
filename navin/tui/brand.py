@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Navin visual signature for the terminal UI.
 
 The identity is a gray plate with the product name, then a hairline that

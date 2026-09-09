@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Leads tool: turn raw prospect rows into CRM-ready, deduped, exportable data.
 
 Prospecting breadth stays with the agent (search / scrape / directories); this

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Test suite detection and structured execution.
 
 The point of this module is that the agent stops reading raw test logs. Runs

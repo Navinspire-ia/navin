@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Load HTML into a hidden iframe and open the browser print dialog, where the
  * user can pick "Save as PDF". An iframe (not window.open) avoids popup

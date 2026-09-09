@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-project opt-in flag for the cognition sidecar.
 
 The flag is a small JSON file, ``<project>/.navin/cognition.json``::

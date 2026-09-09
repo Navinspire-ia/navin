@@ -4,7 +4,7 @@ version = "2.0.2"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = {text = "AGPL-3.0-only"}
 authors = [
     {name = "Navinspire IA"},
     {name = "the Navin contributors"},
@@ -13,12 +13,13 @@ keywords = ["ai", "agent", "chatbot"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 license-files = [
     "LICENSE",
+    "COMMERCIAL_LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
 ]
 
@@ -273,6 +274,7 @@ include = [
     "hatch_build.py",
     "README.md",
     "LICENSE",
+    "COMMERCIAL_LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
 ]

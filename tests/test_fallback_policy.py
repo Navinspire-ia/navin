@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Model switching policy: a blocked model never ends the turn.
 
 The rule: a model that blocks, for whatever reason, is asked again at most

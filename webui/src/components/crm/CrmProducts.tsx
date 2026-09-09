@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { CrmAddCard } from "@/components/crm/CrmAddCard";
 import { CrmFicheFact, CrmFichePane } from "@/components/crm/CrmFichePane";
 import { CrmListToolbar } from "@/components/crm/CrmListToolbar";

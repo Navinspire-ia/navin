@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marks the suite as a package so ``from tests...`` imports resolve here.
 
 Without this file, ``tests`` is a namespace package and loses to an installed

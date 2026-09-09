@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Fuzzy file, folder, and symbol lookup backing @-mentions in the composer.
 
 Serves the code index rather than walking the tree, so results honor

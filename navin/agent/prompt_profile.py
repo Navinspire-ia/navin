@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Per-section accounting of what a request actually sends.
 
 A total says a request was 64K. It does not say whether that was tool

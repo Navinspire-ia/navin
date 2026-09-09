@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Native (Rust) index accelerators: tree-sitter symbols and tantivy search.
 
 Both features are optional accelerators with Python fallbacks, so every test

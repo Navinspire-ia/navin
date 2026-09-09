@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Give a background subagent a tree of its own.
 
 Subagents run concurrently by default, and until now they all wrote into the

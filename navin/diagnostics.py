@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What this installation can and cannot do, on any of the three systems.
 
 A shell script used to answer this for a source checkout on Linux, which is the

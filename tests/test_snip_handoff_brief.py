@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The mid-turn snip must leave a usable brief, not a vague notice.
 
 When the context window fills mid-Build the runner cannot call the LLM

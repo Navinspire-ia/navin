@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Convert an HTML spreadsheet master into a live, editable XLSX workbook.
 
 The template library mocks spreadsheets as HTML: a ``.sheet`` section holding a

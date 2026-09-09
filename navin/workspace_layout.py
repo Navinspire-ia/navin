@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Canonical locations of Navin-managed files inside a workspace / project.
 
 Everything Navin creates for its own operation lives under ``.navin/`` so the

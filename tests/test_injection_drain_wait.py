@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Mid-turn injection drains must not block on running subagents.
 
 The pending-queue drain used to wait up to 300s after every tool batch when a

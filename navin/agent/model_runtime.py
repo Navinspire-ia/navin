@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Public resolution boundary for default and overridden LLM runtimes."""
 
 from __future__ import annotations

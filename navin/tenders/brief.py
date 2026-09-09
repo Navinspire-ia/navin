@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What the company is hunting: the brief every official fetcher targets.
 
 Before this, each API returned "the latest 25 notices" of a whole country or

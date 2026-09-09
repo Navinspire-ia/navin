@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Carry a model substitution from the provider layer up to the UI.
 
 ``make_provider`` builds the failover wrapper with no access to the runtime event

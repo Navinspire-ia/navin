@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Browser automation tool.
 
 Gives the agent a real (headless) Chromium browser it can drive like a human:

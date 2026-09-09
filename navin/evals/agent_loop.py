@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live agent-loop evals: run the real AgentRunner with real tools.
 
 The keyword eval (``navin.evals.runner``) scores canned text from a mock

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 import type { NavinClient } from "@/lib/navin-client";

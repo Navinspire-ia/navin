@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """File-tree listing must stay cheap on the expand hot path."""
 
 from __future__ import annotations

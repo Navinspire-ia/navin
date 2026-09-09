@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Marketing publish connectors, measured analytics, model layer and the loop: real calls, scripted wire."""
 
 from __future__ import annotations

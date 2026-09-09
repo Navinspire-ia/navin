@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Short-lived in-process cache for web_search / web_fetch.
 
 Identical queries inside one agent turn (and across nearby turns) used to

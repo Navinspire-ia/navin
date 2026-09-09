@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Git-backed version control for memory files, using dulwich."""
 
 from __future__ import annotations

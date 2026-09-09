@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { apiBodyHeaders, apiRequest } from "@/lib/api";
 import { officialSearchPack, type OfficialPortal } from "@/lib/career-portals";
 import { externalHttpUrl } from "@/lib/external-url";

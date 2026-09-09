@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The concurrency limit has to follow the machine, not a constant.
 
 The same number used to apply to a laptop, to a 64-core server and to a

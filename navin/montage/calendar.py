@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Structured content calendar for Montage (propose-only, no publish)."""
 
 from __future__ import annotations

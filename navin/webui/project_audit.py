@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project 360 audit for the Dev workbench.
 
 Builds, per project folder, a complete "vision 360" report computed live from

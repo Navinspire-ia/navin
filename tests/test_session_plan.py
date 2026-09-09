@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the plan the chat shows while a run is in flight.
 
 The board already held the plan and re-injected it into the prompt every turn,

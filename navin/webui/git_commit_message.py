@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """AI commit message for the source-control panel.
 
 Same idea as VS Code Copilot on the SCM input: conventional commits, one

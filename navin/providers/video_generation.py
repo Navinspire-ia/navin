@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Video generation provider helpers.
 
 Mirrors the image generation provider architecture: a small registry of

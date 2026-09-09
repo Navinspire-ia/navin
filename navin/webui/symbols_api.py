@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Symbol lookup endpoint backing editor autocompletion and quick-open.
 
 Serves the code index to the Dev workbench: the editor asks for symbols

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Raise a notification the user will see even when Navin is not the focused
  * window, and always leave a trace inside the app.

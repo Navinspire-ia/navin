@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Live context usage for one chat session, for the Dev status bar.
 
 The gauge and the legend come from the same Navin prompt profile: the

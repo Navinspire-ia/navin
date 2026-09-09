@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project brain: SOUL.md / USER.md / MEMORY.md for the active workspace.
 
 One project path = one shared brain for Code and every studio (Marketing, SEO,

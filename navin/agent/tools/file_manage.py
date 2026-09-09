@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Delete, move and copy files the way the editing tools write them: on the record.
 
 Three tools call ``record_file_before`` before touching a file - ``write_file``,

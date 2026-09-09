@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Route reasoning effort per request instead of forwarding config verbatim.
 
 Speed is the product. GLM / Grok / Z.AI thinking is on/off, not a ladder:

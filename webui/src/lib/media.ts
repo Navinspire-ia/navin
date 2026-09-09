@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import i18n from "@/i18n";
 import { publishNotification } from "@/lib/notification-bus";
 import { fileNameFromUrl, isDesktopShell, saveDownload, startHttpAttachmentDownload } from "@/lib/save-blob";

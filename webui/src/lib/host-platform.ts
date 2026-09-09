@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export type HostPlatform = "macos" | "windows" | "linux";
 
 type NavigatorWithUserAgentData = Navigator & {

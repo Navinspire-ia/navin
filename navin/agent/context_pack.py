@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Compact Agent Code context pack: open files, symbols, errors.
 
 Injected as a runtime-context block so every Build/Ask turn sees the same

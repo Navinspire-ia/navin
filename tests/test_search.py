@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the agent search tools (navin.agent.tools.search).
 
 Two things matter here and both are easy to regress: the ripgrep and Python

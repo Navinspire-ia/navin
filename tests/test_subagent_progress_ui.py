@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Parallel subagent progress events for the WebUI card panel.
 
 Covers publish, throttle, done/error, 3-way fan-out over websocket, and the

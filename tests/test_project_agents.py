@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Project config discovery: subagents, skills mirrors, env vars, @imports.
 
 Covers the real-world layout repos use to configure several coding tools at

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Organization-level tool policy (optional allowlist).
 
 When ``config["tool_allowlist"]`` is absent or empty, every tool is allowed.

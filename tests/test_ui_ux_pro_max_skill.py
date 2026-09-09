@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """ui-ux-pro-max is the default web design skill; briefs preload it + framer-motion policy."""
 
 from __future__ import annotations

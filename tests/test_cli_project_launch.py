@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """`navin .` must open the editor like `cursor .` - the desktop window when
 the app is installed, the browser WebUI otherwise - and never break plain CLI
 commands. This is the launch path users hit first; a regression here reads as

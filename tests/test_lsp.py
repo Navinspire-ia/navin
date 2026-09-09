@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the LSP client and manager.
 
 Protocol-level behaviour is tested against a fake server implemented inline, so

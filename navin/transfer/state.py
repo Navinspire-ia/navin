@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.4 / S5.5 - what the AGI panel and ``navin agi transfer`` read and press.
 
 ``transfer_state`` is the whole picture: the flag, the prerequisites, the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Execution adapters: paper (default), Alpaca (stocks + crypto), Binance (crypto).
 
 The risk engine has already said yes when an order reaches this module. An

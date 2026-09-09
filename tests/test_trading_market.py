@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Market data on the real response shapes: sessions, currencies, FX, NFT floors."""
 
 from __future__ import annotations

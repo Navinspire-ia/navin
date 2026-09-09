@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Light-mode terminal chrome must not keep xterm's hardcoded black viewport.
 
 xterm.css sets .xterm-viewport { background-color: #000 } on macOS so the

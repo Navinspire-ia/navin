@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The cognition sidecar is invisible until a project opts in.
 
 Two guarantees are pinned here. Off (the default): no tool is registered, the

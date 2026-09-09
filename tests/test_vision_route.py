@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Vision task route: image/video attachments → multimodal analysis model."""
 
 from __future__ import annotations

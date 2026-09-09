@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The local policy head: state -> distribution over actions (S4.2).
 
 A small count model, deliberately not the chat LLM and not its weights:

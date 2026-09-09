@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Archive after 45 days, delete after 60. Same clock on every OS."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Full video assembly: clips plus stills plus music plus narration into one MP4.
 
 The filter graph is the part that breaks in practice, so it is asserted directly

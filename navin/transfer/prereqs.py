@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """S5.0 - the hard prerequisites. Without them S5 is a marketing demo.
 
 * S2 finished: the skills battery loads unchanged and at least one draft was

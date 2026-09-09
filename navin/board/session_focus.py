@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Which board tasks the current run is working on.
 
 The board is project-scoped and long-lived: after a few sessions it holds work

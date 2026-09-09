@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Navin app-template catalog (first-party, versioned in git)."""
 
 from navin.templates.apps.catalog import (

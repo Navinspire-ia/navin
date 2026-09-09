@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Versioned heads under ``.navin/world/checkpoints`` and the active pointer.
 
 A checkpoint is one JSON file, ``ckpt-0007.json``: the counts plus the

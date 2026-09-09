@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """A one-line "a newer navin exists" hint for the terminal entry points.
 
 ``navin-cli`` and ``navin gateway`` are the places a CLI user actually looks.

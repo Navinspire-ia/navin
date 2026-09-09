@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """xAI Grok subscription via SpaceXAI OAuth (device code).
 
 Official CLI (`grok login --device-auth`) talks to ``auth.x.ai`` with the

@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Named security postures for tools, without changing factory autonomy defaults.
 
 ``autonomous`` is what ``Config()`` ships with: no approvals gate, no builtin

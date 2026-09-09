@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Progress callback helpers for user-visible output.
 
 These helpers convert agent progress callbacks into outbound chat messages.

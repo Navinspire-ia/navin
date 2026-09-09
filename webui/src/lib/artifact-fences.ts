@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Pure helper: extract ```html / ```mermaid fenced blocks from markdown text.
  * Mirrors ``navin.artifacts.detect.extract_fenced_artifacts`` for client tests

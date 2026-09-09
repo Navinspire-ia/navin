@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """What a long-running exec session does with its output and its children.
 
 Three regressions are pinned here. Output arriving from a pipe is sliced at

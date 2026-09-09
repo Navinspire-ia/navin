@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The ladder: what each switch of the AGI panel waits for, in plain words.
 
 Four stages earn each other. Skills evolution and the world model can be

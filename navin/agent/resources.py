@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """How many agents this machine can actually hold at once.
 
 The concurrency limit used to be a fixed number: the same 200 on a laptop and

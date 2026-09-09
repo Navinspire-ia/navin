@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pairing store for DM sender approval.
 
 Persistent storage at ``~/.navin/pairing.json`` keeps approved senders

@@ -1,3 +1,6 @@
+// Copyright (c) 2026-present Navinspire IA
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import type { ReactNode } from "react";
 import { DefaultButton, PrimaryButton } from "@fluentui/react";
 import type { MarketingCreative, MarketingDesk } from "@/lib/marketing-api";

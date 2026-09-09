@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Employer watch: ESN, consulting houses and agencies read from their own feeds.
 
 A freelancer or candidate in FR / BE / CH wants every posting from the houses

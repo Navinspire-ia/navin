@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Host OS package-manager adapters (pacman / Omarchy / apt / dnf)."""
 
 from .packages import (

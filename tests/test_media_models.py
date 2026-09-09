@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """The same mixed catalog must stay correctly separated in every media picker."""
 
 from __future__ import annotations

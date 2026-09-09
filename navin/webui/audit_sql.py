@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """SQL catalog + security/performance findings for Vision 360.
 
 Scans every code and ``.sql`` file in the project (not a single blob), splits

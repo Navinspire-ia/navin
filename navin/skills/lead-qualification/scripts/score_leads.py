@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Validate and score lead CSVs for the Leads studio.
 
 Canonical columns (subset required for validate):

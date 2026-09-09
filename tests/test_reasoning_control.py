@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Every provider says "no thinking" in words its endpoint understands.
 
 The rule under test: when the agent loop routes a step to

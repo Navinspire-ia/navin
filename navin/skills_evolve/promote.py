@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Navinspire IA
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Promotion, rollback, retirement, publication (S2.4, S2.5).
 
 * ``promote_draft``: copy the draft into ``.navin/skills/<name>`` when the
