@@ -1,7 +1,7 @@
 {
   "name": "navin-webui",
   "private": true,
-  "version": "2.0.2",
+  "version": "2.0.1",
   "type": "module",
   "scripts": {
     "dev": "NODE_OPTIONS=--max-http-header-size=4194304 vite",
