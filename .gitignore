@@ -183,6 +183,9 @@ meetily/
 # Etat local de l'agent Navin (memoire/persona), jamais versionne.
 .navin/
 
+# Transcripts de sessions du CLI lance a la racine du depot (runtime).
+sessions/
+
 # Design systems generes par le skill ui-ux-pro-max quand un agent tourne
 # a la racine du depot : artefacts de session, jamais versionnes.
 design-system/
