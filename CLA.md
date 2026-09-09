@@ -83,3 +83,4 @@ Navinspire IA
 60 Rue François 1er
 75008 Paris
 France
+[contact@navinspire.com](mailto:contact@navinspire.com)
