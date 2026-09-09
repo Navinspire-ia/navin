@@ -45,4 +45,5 @@ Navinspire IA
 75008 Paris
 France
 
-For commercial licensing inquiries, please contact Navinspire IA.
+For commercial licensing inquiries, please contact Navinspire IA at
+[contact@navinspire.com](mailto:contact@navinspire.com).
