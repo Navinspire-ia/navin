@@ -376,7 +376,7 @@ Built by [Navinspire IA](https://navinspire.ai) and the Navin community.
 Navin is dual-licensed.
 
 - Open Source: [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE).
-- Commercial: a commercial license is available from Navinspire IA for organizations that want to integrate, modify, redistribute, embed, or commercialize Navin without the obligations of the AGPL-3.0.
+- Commercial: a commercial license is available from Navinspire IA for organizations that want to integrate, modify, redistribute, embed, or commercialize Navin without the obligations of the AGPL-3.0. Contact [contact@navinspire.com](mailto:contact@navinspire.com).
 
 See [LICENSE](./LICENSE) and [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for details. Contributions are accepted under the [Contributor License Agreement](./CLA.md).
 
