@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import os
@@ -11,6 +12,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from navin.agent.skill_routing import build_action_skill_context
 from navin.webui.meeting_api import MeetingError, _ask, strip_report_fences
 
 _TRANSLATE_SYSTEM = (
@@ -23,6 +25,16 @@ _CLEANUP_SYSTEM = (
     "recognition errors only. Preserve every fact, speaker label, timecode and uncertainty. "
     "Do not summarize, translate or claim acoustic speaker identification. Output only text."
 )
+_MAX_TEXT_TRANSFORM_CHARS = 12000
+
+
+def _check_transform_length(text: str) -> None:
+    if len(text) > _MAX_TEXT_TRANSFORM_CHARS:
+        raise MeetingError(
+            f"translation and cleanup accept at most {_MAX_TEXT_TRANSFORM_CHARS} characters per call; "
+            "split the text into smaller sections. No transformed text was generated.",
+            status=413,
+        )
 
 
 async def translate_payload(
@@ -32,25 +44,29 @@ async def translate_payload(
         raise MeetingError("text is required")
     if not target_language.strip():
         raise MeetingError("target language is required")
+    _check_transform_length(text)
     prompt = (
         f"Content kind: {kind}\nSource language: {source_language or 'auto'}\n"
         f"Target language: {target_language}\n\n{text}"
     )
+    skills = await asyncio.to_thread(build_action_skill_context, "meeting", "translate")
     translated, model, route = await _ask(
-        _TRANSLATE_SYSTEM, prompt, max_tokens=5000, timeout_s=150.0
+        skills.augment_system(_TRANSLATE_SYSTEM), prompt, max_tokens=5000, timeout_s=150.0
     )
     value = strip_report_fences(translated)
     if not value:
         raise MeetingError("the model returned an empty translation", status=502)
-    return {"text": value, "model": model, "route": route, "kind": kind}
+    return {"text": value, "model": model, "route": route, "kind": kind, "skill_context": skills.metadata}
 
 
 async def cleanup_payload(*, transcript: str, language: str = "") -> dict[str, Any]:
     if not transcript.strip():
         raise MeetingError("transcript is required")
+    _check_transform_length(transcript)
     prompt = f"Language: {language or 'auto'}\n\n{transcript}"
+    skills = await asyncio.to_thread(build_action_skill_context, "meeting", "cleanup")
     cleaned, model, route = await _ask(
-        _CLEANUP_SYSTEM, prompt, max_tokens=5000, timeout_s=150.0
+        skills.augment_system(_CLEANUP_SYSTEM), prompt, max_tokens=5000, timeout_s=150.0
     )
     value = strip_report_fences(cleaned)
     if not value:
@@ -59,6 +75,7 @@ async def cleanup_payload(*, transcript: str, language: str = "") -> dict[str, A
         "text": value,
         "model": model,
         "route": route,
+        "skill_context": skills.metadata,
         "accuracy": "llm_text_cleanup",
         "acoustic_diarization": False,
     }

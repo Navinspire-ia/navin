@@ -70,7 +70,7 @@ navin-cli ~/code/app
 navin-cli -s review
 ```
 
-From a `navin-agi` clone: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
+From a `navin` clone: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
 
 | Flag | Meaning |
 |---|---|

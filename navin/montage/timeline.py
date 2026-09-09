@@ -521,11 +521,14 @@ def import_media(
     folder = root / WORKSPACE_MONTAGE_DIR / bucket
     folder.mkdir(parents=True, exist_ok=True)
     destination = folder / origin.name
-    if destination.is_file() and destination.stat().st_size == resolved.stat().st_size:
-        return destination.relative_to(root).as_posix()
     if destination.exists():
-        digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:8]
-        destination = folder / f"{origin.stem}-{digest}{origin.suffix}"
+        with resolved.open("rb") as source_file:
+            digest = hashlib.file_digest(source_file, "sha256").hexdigest()
+        if destination.is_file() and destination.stat().st_size == resolved.stat().st_size:
+            with destination.open("rb") as imported_file:
+                if hashlib.file_digest(imported_file, "sha256").hexdigest() == digest:
+                    return destination.relative_to(root).as_posix()
+        destination = folder / f"{origin.stem}-{digest[:16]}{origin.suffix}"
     temporary = destination.with_name(f".{destination.name}.part")
     shutil.copy2(resolved, temporary)
     os.replace(temporary, destination)

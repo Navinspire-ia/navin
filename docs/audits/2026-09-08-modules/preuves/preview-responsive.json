@@ -1,0 +1,172 @@
+[
+  {
+    "module": "tenders",
+    "measurements": [
+      {
+        "width": 375,
+        "scrollWidth": 375,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 2950
+      },
+      {
+        "width": 768,
+        "scrollWidth": 768,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 2950
+      },
+      {
+        "width": 1024,
+        "scrollWidth": 1024,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3185
+      },
+      {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3185
+      }
+    ],
+    "errors": []
+  },
+  {
+    "module": "career",
+    "measurements": [
+      {
+        "width": 375,
+        "scrollWidth": 375,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3536
+      },
+      {
+        "width": 768,
+        "scrollWidth": 768,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3536
+      },
+      {
+        "width": 1024,
+        "scrollWidth": 1024,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3771
+      },
+      {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 3771
+      }
+    ],
+    "errors": []
+  },
+  {
+    "module": "montage",
+    "measurements": [
+      {
+        "width": 375,
+        "scrollWidth": 375,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 738
+      },
+      {
+        "width": 768,
+        "scrollWidth": 768,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 738
+      },
+      {
+        "width": 1024,
+        "scrollWidth": 1024,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 976
+      },
+      {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 976
+      }
+    ],
+    "errors": []
+  },
+  {
+    "module": "marketing",
+    "measurements": [
+      {
+        "width": 375,
+        "scrollWidth": 375,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1365
+      },
+      {
+        "width": 768,
+        "scrollWidth": 768,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1365
+      },
+      {
+        "width": 1024,
+        "scrollWidth": 1024,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1601
+      },
+      {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1601
+      }
+    ],
+    "errors": []
+  },
+  {
+    "module": "meeting",
+    "measurements": [
+      {
+        "width": 375,
+        "scrollWidth": 375,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1016
+      },
+      {
+        "width": 768,
+        "scrollWidth": 768,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1093
+      },
+      {
+        "width": 1024,
+        "scrollWidth": 1024,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1350
+      },
+      {
+        "width": 1440,
+        "scrollWidth": 1440,
+        "height": 900,
+        "scrollHeight": 900,
+        "bodyCharacters": 1350
+      }
+    ],
+    "errors": []
+  }
+]

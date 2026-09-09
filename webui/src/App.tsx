@@ -36,7 +36,6 @@ import { ZoomIndicator } from "@/components/ZoomIndicator";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { needsFirstRunWizard, hydrateOnboardingFromServer, markOnboardingComplete } from "@/lib/onboarding";
 import { useAccount } from "@/hooks/useAccount";
-import { liveAccountEnabled } from "@/lib/live-account";
 import { useExternalLinkOpener } from "@/hooks/useExternalLinkOpener";
 
 import { useSessions } from "@/hooks/useSessions";
@@ -410,6 +409,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "video",
   "voice",
   "browser",
+  "computer",
   "tools",
   "apps",
   "automations",
@@ -1646,7 +1646,6 @@ function Shell({
   // Free plan setup reopened after onboarding (from the provider banner).
   const [freeSetupOpen, setFreeSetupOpen] = useState(false);
   const { account, reload: reloadAccount } = useAccount();
-  const liveAccount = liveAccountEnabled(settingsSnapshot);
   useExternalLinkOpener(token);
   // Fingerprint of account fields that should refresh models/providers when
   // they change (connect, logout, upgrade, downgrade, expire) - not on every poll.
@@ -3614,8 +3613,8 @@ function Shell({
   }, [activeKey, navigate]);
 
   const onOpenAccountSettings = useCallback(() => {
-    onOpenSettings(liveAccount ? "account" : "providers");
-  }, [liveAccount, onOpenSettings]);
+    onOpenSettings("account");
+  }, [onOpenSettings]);
 
   const onOpenProviderSettings = useCallback(() => {
     onOpenSettings("providers");
@@ -3652,12 +3651,12 @@ function Shell({
   // Déconnecté / sans clé : le chemin principal mène au compte (offres +
   // connexion). Un provider BYOK reste accessible via le bandeau secondaire.
   const onOpenModelSettings = useCallback(() => {
-    if (liveAccount && !account?.connected) {
+    if (!account?.connected) {
       onOpenAccountSettings();
       return;
     }
     onOpenSettings("models");
-  }, [account?.connected, liveAccount, onOpenAccountSettings, onOpenSettings]);
+  }, [account?.connected, onOpenAccountSettings, onOpenSettings]);
 
   const onOpenTools = useCallback(() => {
     onOpenSettings("tools");
@@ -4245,8 +4244,7 @@ function Shell({
     onOpenProject,
     onCreateProjectFolder: () => setNewProjectFolderOpen(true),
     onOpenSettings,
-    onOpenAccount: () => onOpenSettings(liveAccount ? "account" : "providers"),
-    liveAccount,
+    onOpenAccount: () => onOpenSettings("account"),
     onOpenSearch: onOpenSessionSearch,
     onOpenRisklensStudio,
     onOpenDev,
@@ -4451,35 +4449,30 @@ function Shell({
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-foreground" aria-hidden />
                     <p className="min-w-0 flex-1 text-[13px] leading-snug text-pretty text-foreground">
                       {t("providerSetup.message", {
-                        defaultValue: liveAccount
-                          ? "No model is ready yet. Start free with your own OpenRouter account, subscribe for managed models, or configure your own providers."
-                          : "No model is ready yet. Add an API key or a local endpoint under Providers.",
+                        defaultValue:
+                          "No model is ready yet. Start free with your own OpenRouter account, subscribe for managed models, or configure your own providers.",
                       })}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 pl-7">
-                    {liveAccount ? (
-                      <button
-                        type="button"
-                        onClick={() => setFreeSetupOpen(true)}
-                        className="rounded-lg border border-border bg-foreground px-3 py-1.5 text-[12px] font-medium text-background transition-opacity hover:opacity-85 active:scale-[0.96]"
-                      >
-                        {t("providerSetup.freeAction", {
-                          defaultValue: "Start free (OpenRouter)",
-                        })}
-                      </button>
-                    ) : null}
-                    {liveAccount ? (
-                      <button
-                        type="button"
-                        onClick={onOpenAccountSettings}
-                        className="rounded-lg border border-border bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.96]"
-                      >
-                        {t("providerSetup.subscribeAction", {
-                          defaultValue: "Subscribe or sign in",
-                        })}
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setFreeSetupOpen(true)}
+                      className="rounded-lg border border-border bg-foreground px-3 py-1.5 text-[12px] font-medium text-background transition-opacity hover:opacity-85 active:scale-[0.96]"
+                    >
+                      {t("providerSetup.freeAction", {
+                        defaultValue: "Start free (OpenRouter)",
+                      })}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onOpenAccountSettings}
+                      className="rounded-lg border border-border bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:bg-muted active:scale-[0.96]"
+                    >
+                      {t("providerSetup.subscribeAction", {
+                        defaultValue: "Subscribe or sign in",
+                      })}
+                    </button>
                     <button
                       type="button"
                       onClick={onOpenProviderSettings}
@@ -4859,6 +4852,7 @@ function Shell({
                 settingsSnapshot={settingsSnapshot}
                 onSettingsChange={setSettingsSnapshot}
                 onOpenModelSettings={onOpenModelSettings}
+                onOpenVoiceSettings={onOpenVoiceSettings}
                 skills={skills}
                 onOpenFileInEditor={onOpenFileInDevEditor}
                 workbenchVisible={isWorkbenchView(deskView)}
@@ -4869,7 +4863,7 @@ function Shell({
                 onComposerSeedConsumed={onDevComposerSeedConsumed}
                 productModule={productModule}
                 headerLeadingActions={
-                  view === "chat" && !activeKey && liveAccount ? (
+                  view === "chat" && !activeKey ? (
                     <HeaderUsageIndicator onClick={onOpenAccountSettings} />
                   ) : undefined
                 }
@@ -4877,7 +4871,7 @@ function Shell({
               </div>
             </div>
             {view !== "chat" && !isWorkbenchView(view) && (
-              <div className="absolute inset-0 z-30 flex flex-col">
+              <div className="absolute inset-0 z-30 flex min-h-0 flex-col overflow-hidden">
                 {view !== "settings" &&
                   view !== "tools" &&
                   view !== "apps" &&
@@ -4998,8 +4992,7 @@ function Shell({
           }}
           onFreeStageChange={setWizardFreeStage}
           onWorkspaceSynced={refreshWorkspaceState}
-          liveAccount={liveAccount}
-          onOpenAccount={() => onOpenSettings(liveAccount ? "account" : "providers")}
+          onOpenAccount={() => onOpenSettings("account")}
           onOpenProviders={() => onOpenSettings("providers")}
           onOpenDemo={() => {
             onSeedDevComposer(
@@ -5008,7 +5001,7 @@ function Shell({
           }}
         />
         <FreeSetupDialog
-          open={liveAccount && freeSetupOpen}
+          open={freeSetupOpen}
           token={token}
           onSynced={refreshWorkspaceState}
           onClose={() => {

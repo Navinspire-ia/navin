@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
   CircleUserRound,
+  Copy,
   ExternalLink,
   Gauge,
   Loader2,
@@ -56,6 +57,7 @@ export function AccountSettings({
   const [error, setError] = useState<string | null>(null);
   const [waitingForBrowser, setWaitingForBrowser] = useState(false);
   const [manualConnectUrl, setManualConnectUrl] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [manualSiteUrl, setManualSiteUrl] = useState<string | null>(null);
   const pollStop = useRef<(() => void) | null>(null);
 
@@ -104,14 +106,13 @@ export function AccountSettings({
     setManualConnectUrl(null);
     try {
       const { url } = await connectUrl({ locale });
-      // WebView: window.open is a no-op. Prefer the desktop opener, then the
-      // gateway (xdg-open / open / start), then a manual copy link.
+      // Always keep the URL visible: WebView / WSL / blocked popups often
+      // report success then never show a window.
+      setManualConnectUrl(url);
+      setLinkCopied(false);
       const native = (await openExternalUrl(token, url)).opened;
       if (!native) {
-        const popup = window.open(url, "_blank", "noopener");
-        if (!popup) {
-          setManualConnectUrl(url);
-        }
+        window.open(url, "_blank", "noopener");
       }
       setWaitingForBrowser(true);
       // Activation runs in the gateway (poll navin.live) - no localhost tab.
@@ -302,20 +303,43 @@ export function AccountSettings({
           </div>
 
           {manualConnectUrl ? (
-            <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
-              {tx(
-                "settings.account.openManually",
-                "Browser did not open automatically. Open this link:",
-              )}{" "}
-              <a
-                href={manualConnectUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="break-all font-medium text-foreground underline underline-offset-4"
-              >
-                {manualConnectUrl}
-              </a>
-            </p>
+            <div className="mt-3 space-y-2">
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                {tx(
+                  "settings.account.openManually",
+                  "If the browser did not open, copy this link:",
+                )}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={manualConnectUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="min-w-0 break-all text-[12.5px] font-medium text-foreground underline underline-offset-4"
+                >
+                  {manualConnectUrl}
+                </a>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(manualConnectUrl).then(
+                      () => {
+                        setLinkCopied(true);
+                        window.setTimeout(() => setLinkCopied(false), 2000);
+                      },
+                      () => setLinkCopied(false),
+                    );
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" aria-hidden />
+                  {linkCopied
+                    ? tx("settings.account.linkCopied", "Link copied")
+                    : tx("settings.account.copyLink", "Copy link")}
+                </Button>
+              </div>
+            </div>
           ) : null}
         </section>
       ) : (

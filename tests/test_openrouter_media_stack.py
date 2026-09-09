@@ -11,6 +11,7 @@ from navin.agent.tools.context import ToolContext
 from navin.agent.tools.loader import ToolLoader
 from navin.agent.tools.music_generation import MusicGenerationTool
 from navin.agent.tools.registry import ToolRegistry
+from navin.audio.models import NAVIN_STT_MODEL
 from navin.audio.transcription import resolve_transcription_config
 from navin.audio.transcription_registry import (
     get_transcription_provider,
@@ -51,7 +52,7 @@ class FallbackCatalogPricingTest(unittest.TestCase):
         self.assertEqual(catalog.media["video"].default_model, "minimax/hailuo-3")
         self.assertEqual(catalog.media["music"].default_model, "google/lyria-3-clip-preview")
         self.assertEqual(
-            catalog.media["stt"].default_model, "nvidia/parakeet-tdt-0.6b-v3"
+            catalog.media["stt"].default_model, NAVIN_STT_MODEL
         )
         stt_slugs = {m.slug for m in catalog.media["stt"].models}
         self.assertEqual(
@@ -128,26 +129,27 @@ class MediaUsagePricingTest(unittest.TestCase):
         self.assertAlmostEqual(cost / 1_000_000, 0.50, places=2)
 
 
+@mock.patch.dict(os.environ, {}, clear=True)
 class TranscriptionNavinTest(unittest.TestCase):
-    def test_navin_is_registered_with_gpt_transcribe_default(self) -> None:
+    def test_navin_is_registered_with_the_managed_stt_default(self) -> None:
         self.assertIn("navin", transcription_provider_names())
         spec = get_transcription_provider("navin")
         assert spec is not None
-        self.assertEqual(spec.default_model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(spec.default_model, NAVIN_STT_MODEL)
 
     def test_no_mistral_stt_in_catalog(self) -> None:
         catalog = parse_catalog(FALLBACK_CATALOG_PAYLOAD)
         slugs = {m.slug for m in catalog.media["stt"].models}
         self.assertFalse(any(slug.startswith("mistralai/") for slug in slugs))
 
-    def test_runtime_falls_back_from_unconfigured_groq_to_navin(self) -> None:
+    def test_runtime_resolves_legacy_channel_groq_to_managed_defaults(self) -> None:
         cfg = Config()
-        cfg.transcription.provider = "groq"
+        cfg.transcription.provider = ""
         cfg.transcription.model = "whisper-large-v3"
         cfg.providers.navin = ProviderConfig(api_key="sk-managed")
         eff = resolve_transcription_config(cfg)
         self.assertEqual(eff.provider, "navin")
-        self.assertEqual(eff.model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(eff.model, NAVIN_STT_MODEL)
         self.assertTrue(eff.configured)
 
     def test_runtime_uses_managed_license_key_when_navin_slot_is_empty(self) -> None:
@@ -161,7 +163,7 @@ class TranscriptionNavinTest(unittest.TestCase):
 
     def test_runtime_falls_back_to_openrouter_byok(self) -> None:
         cfg = Config()
-        cfg.transcription.provider = "navin"
+        cfg.transcription.provider = ""
         cfg.providers.openrouter = ProviderConfig(api_key="sk-byok")
         eff = resolve_transcription_config(cfg)
         self.assertEqual(eff.provider, "openrouter")
@@ -177,7 +179,7 @@ class TranscriptionNavinTest(unittest.TestCase):
         catalog = parse_catalog(FALLBACK_CATALOG_PAYLOAD)
         apply_catalog(cfg, catalog, force_managed=True, steer_tools=True)
         self.assertEqual(cfg.transcription.provider, "navin")
-        self.assertEqual(cfg.transcription.model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(cfg.transcription.model, NAVIN_STT_MODEL)
         self.assertEqual(cfg.tools.music_generation.provider, "navin")
         self.assertEqual(
             cfg.tools.music_generation.model, "google/lyria-3-clip-preview"
@@ -195,7 +197,7 @@ class TranscriptionNavinTest(unittest.TestCase):
         self.assertTrue(heal_managed_voice_settings(cfg))
         self.assertTrue(cfg.transcription.enabled)
         self.assertEqual(cfg.transcription.provider, "navin")
-        self.assertEqual(cfg.transcription.model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(cfg.transcription.model, NAVIN_STT_MODEL)
         # Idempotent on a second pass.
         self.assertFalse(heal_managed_voice_settings(cfg))
 

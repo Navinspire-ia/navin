@@ -16,6 +16,15 @@ def is_tool_error_result(name: str, result: Any) -> bool:
     return isinstance(result, ToolResult) and result.is_error
 
 
+def tool_error_hint(result: ToolResult) -> str:
+    """Setup blockers need user guidance instead of an alternate-method retry."""
+    hint = result.recovery_hint
+    if hint is None:
+        hint = "Analyze the error above and try a different approach."
+    suffix = f"\n\n[{hint}]" if hint else ""
+    return "" if suffix and str(result).endswith(suffix) else suffix
+
+
 class ToolRegistry:
     """
     Registry for agent tools.
@@ -266,7 +275,7 @@ class ToolRegistry:
             assert tool is not None  # guarded by prepare_call()
             result = await tool.execute(**params)
             if is_tool_error_result(name, result):
-                return ToolResult.error(str(result) + hint)
+                return ToolResult.error(str(result) + tool_error_hint(result), recovery_hint=result.recovery_hint)
             return result
         except Exception as e:
             return ToolResult.error(f"Error executing {name}: {str(e)}" + hint)

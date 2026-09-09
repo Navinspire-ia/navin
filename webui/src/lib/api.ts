@@ -7,6 +7,8 @@ import type {
   ChannelValidationPayload,
   ChatSummary,
   CliAppsPayload,
+  ComputerDiagnostics,
+  ComputerModelsPayload,
   ContextUsagePayload,
   FileDiagnosticsPayload,
   FilePreviewPayload,
@@ -3400,9 +3402,11 @@ export async function fetchProviderModels(
   token: string,
   provider: string,
   base: string = "",
+  options?: { modality?: import("./types").MediaModelKind },
 ): Promise<ProviderModelsPayload> {
   const query = new URLSearchParams();
   query.set("provider", provider);
+  if (options?.modality) query.set("modality", options.modality);
   return request<ProviderModelsPayload>(
     `${base}/api/settings/provider-models?${query}`,
     token,
@@ -6470,6 +6474,41 @@ export async function updateSettings(
   if (update.browserLiveView !== undefined) {
     query.set("browser_live_view", String(update.browserLiveView));
   }
+  if (update.computerEnabled !== undefined) {
+    query.set("computer_enabled", String(update.computerEnabled));
+  }
+  if (update.computerAsk !== undefined) query.set("computer_ask", update.computerAsk);
+  if (update.computerSessionMode !== undefined) {
+    query.set("computer_session_mode", update.computerSessionMode);
+  }
+  if (update.computerLiveView !== undefined) {
+    query.set("computer_live_view", String(update.computerLiveView));
+  }
+  if (update.computerAuditLog !== undefined) {
+    query.set("computer_audit_log", String(update.computerAuditLog));
+  }
+  if (update.computerAnthropicNative !== undefined) {
+    query.set("computer_anthropic_native", String(update.computerAnthropicNative));
+  }
+  for (const [key, parameter] of [
+    ["computerBackend", "computer_backend"],
+    ["computerDisplay", "computer_display"],
+    ["computerAuditScreenshots", "computer_audit_screenshots"],
+    ["computerSettleMs", "computer_settle_ms"],
+    ["computerTypeDelayMs", "computer_type_delay_ms"],
+    ["computerMaxActionsPerTurn", "computer_max_actions_per_turn"],
+    ["computerScreenshotMaxWidth", "computer_screenshot_max_width"],
+    ["computerScreenshotMaxHeight", "computer_screenshot_max_height"],
+    ["computerUserTakeoverPx", "computer_user_takeover_px"],
+    ["computerFailsafeCorner", "computer_failsafe_corner"],
+    ["computerProtectedApps", "computer_protected_apps"],
+    ["computerAllowedApps", "computer_allowed_apps"],
+    ["computerBlockedApps", "computer_blocked_apps"],
+    ["computerAskApps", "computer_ask_apps"],
+  ] as const) {
+    const value = update[key];
+    if (value !== undefined) query.set(parameter, Array.isArray(value) ? JSON.stringify(value) : String(value));
+  }
   if (update.boardAutoBranch !== undefined) {
     query.set("board_auto_branch", String(update.boardAutoBranch));
   }
@@ -6590,6 +6629,30 @@ export async function deleteModelConfiguration(
     `${base}/api/settings/model-configurations/delete?${query}`,
     token,
   );
+}
+
+export function fetchComputerModels(token: string, provider: string): Promise<ComputerModelsPayload> {
+  const query = new URLSearchParams({ provider });
+  return request<ComputerModelsPayload>(`/api/settings/computer/models?${query}`, token, undefined, 90_000);
+}
+
+export function updateComputerModel(token: string, provider: string, model: string): Promise<SettingsPayload> {
+  const query = new URLSearchParams({ provider, model });
+  return request<SettingsPayload>(`/api/settings/computer/model?${query}`, token, undefined, 90_000);
+}
+
+export function fetchComputerDiagnostics(token: string, passive = false): Promise<ComputerDiagnostics> {
+  return request<ComputerDiagnostics>(`/api/settings/computer/doctor${passive ? "?passive=true" : ""}`, token, undefined, 90_000);
+}
+
+export function requestComputerPermission(
+  token: string, kind: "all" | "screen_recording" | "accessibility" | "automation",
+): Promise<ComputerDiagnostics> {
+  return request<ComputerDiagnostics>(`/api/settings/computer/permissions?kind=${kind}`, token, undefined, 90_000);
+}
+
+export function setComputerStopped(token: string, stopped: boolean): Promise<{ stopped: string | null }> {
+  return request<{ stopped: string | null }>(`/api/settings/computer/${stopped ? "stop" : "go"}`, token);
 }
 
 export async function updateModelRoute(
@@ -6816,6 +6879,38 @@ export async function updateVoiceSettings(
     `${base}/api/settings/voice/update?${query}`,
     token,
   );
+}
+
+export async function previewVoice(
+  token: string,
+  value: { provider: string; model: string; voice: string; text: string },
+  base = "",
+): Promise<{ audio_base64: string; mime: string; provider: string; model: string; voice: string }> {
+  const query = new URLSearchParams(value);
+  return request(`${base}/api/settings/voice/preview?${query}`, token, undefined, 75_000);
+}
+
+export async function updateLiveVoiceSettings(
+  token: string,
+  transcription: TranscriptionSettingsUpdate,
+  voice: VoiceSettingsUpdate,
+  base = "",
+): Promise<SettingsPayload> {
+  const query = new URLSearchParams({
+    enabled: String(transcription.enabled),
+    provider: transcription.provider,
+    model: transcription.model,
+    language: transcription.language,
+    max_duration_sec: String(transcription.maxDurationSec),
+    max_upload_mb: String(transcription.maxUploadMb),
+    tts_provider: voice.ttsProvider,
+    tts_model: voice.ttsModel,
+    voice: voice.voice,
+    auto_speak: String(voice.autoSpeak),
+    response_format: voice.responseFormat,
+    realtime_enabled: voice.realtimeEnabled === null ? "auto" : String(voice.realtimeEnabled),
+  });
+  return request<SettingsPayload>(`${base}/api/settings/voice/live/update?${query}`, token);
 }
 
 export type CrmKind =

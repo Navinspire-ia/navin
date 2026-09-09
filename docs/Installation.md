@@ -24,11 +24,20 @@ Download from [navin.live/download](https://navin.live/download).
 
 | Platform | Files | Notes |
 | --- | --- | --- |
-| Windows | `.exe` setup or `.msi` | If SmartScreen appears: More info → Run anyway |
+| Windows | `.exe` setup or `.msi` | Signed by Navinspire. SmartScreen may still show: More info → Run anyway |
 | macOS | `.dmg` (arm64 or x64) | Drag Navin into Applications. If Gatekeeper blocks: right-click → Open |
 | Linux | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | AppImage may need `libfuse2` on older distros |
 
 User data stays in `~/.navin` (or `%USERPROFILE%\.navin` on Windows) across upgrades: config, workspaces, memory, projects.
+
+Windows SmartScreen ("Windows protected your PC") can appear on a correctly signed setup. Microsoft checks the publisher **and** the reputation of that exact file hash. Navinspire as signer does not clear it on the first downloads. An EV certificate no longer bypasses it. Keep More info → Run anyway until reputation builds, or install from the Microsoft Store when that listing exists. To check the file you actually downloaded:
+
+```powershell
+Get-AuthenticodeSignature ".\Navin-Desktop-2.0.1-windows-x64-setup.exe" |
+  Format-List Status, StatusMessage, SignerCertificate
+```
+
+`Status` should be `Valid`. That confirms the signature, not SmartScreen. The same check, including `navin.exe` / `Navin.exe` / `NavinUpdater.exe` inside the installer, is `packaging/windows/verify-windows-signatures.ps1`.
 
 If `navin` or `navin-cli` is missing from PATH after a DMG or portable install:
 
@@ -127,8 +136,8 @@ If you skip system install (`NAVIN_SKIP_SYSTEM=1` or `--no-system`):
 ### Two commands
 
 ```bash
-git clone https://github.com/navinspire-ai/navin-agi.git
-cd navin-agi
+git clone https://github.com/Navinspire-ia/navin.git
+cd navin
 make install
 make start
 ```
@@ -197,7 +206,7 @@ NAVIN_API_URL=http://127.0.0.1:8766 npm run dev
 
 ### Docker (this repo)
 
-No third-party Navin image. Build from `https://github.com/navinspire-ai/navin-agi` (this tree):
+No third-party Navin image. Build from `https://github.com/Navinspire-ia/navin` (this tree):
 
 ```bash
 docker compose up navin-gateway
@@ -207,17 +216,17 @@ The image installs the `navin` CLI and serves the bundled WebUI. Gateway health 
 
 ### Use the source CLI
 
-From the `navin-agi` clone, after install, you can launch the CLI with the venv binary. No need to activate the venv:
+From the `navin` clone, after install, you can launch the CLI with the venv binary. No need to activate the venv:
 
 ```bash
-cd /path/to/navin-agi
+cd /path/to/navin
 .venv/bin/navin-cli
 ```
 
 Windows:
 
 ```powershell
-cd \path\to\navin-agi
+cd \path\to\navin
 .venv\Scripts\navin-cli
 ```
 

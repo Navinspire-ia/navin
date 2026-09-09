@@ -57,8 +57,11 @@ async def create_browser_use_session(
         "viewport": {"width": viewport_width, "height": viewport_height},
         "keep_alive": True,
     }
-    if executable_path:
-        profile_kwargs["executable_path"] = executable_path
+    if not executable_path:
+        from navin.browser_runtime import ensure_chromium
+
+        executable_path = await ensure_chromium()
+    profile_kwargs["executable_path"] = executable_path
     profile = BrowserProfile(**profile_kwargs)
     session = BrowserSession(browser_profile=profile)
     await session.start()

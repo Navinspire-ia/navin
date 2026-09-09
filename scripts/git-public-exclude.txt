@@ -1,4 +1,4 @@
-# Chemins jamais poussés vers GitHub (https://github.com/navinspire-ai/navin-agi).
+# Chemins jamais poussés vers GitHub (https://github.com/Navinspire-ia/navin).
 # Une ligne = préfixe. `site/` exclut tout le dossier. Commentaires : # ...
 #
 # Arbre public = CLI + WebUI + récupération publique des templates.
@@ -37,6 +37,13 @@ templates/
 navin/license_client.py
 navin/license_sync.py
 navin/webui/account_api.py
+
+# Tests qui importent ces modules au niveau module : sans eux la collecte
+# pytest de l'arbre public s'interrompt (ImportError).
+tests/test_license_client.py
+tests/test_license_sync.py
+tests/test_live_secrets_roundtrip.py
+tests/test_webui_account_api.py
 
 # Interne, logs, exports locaux, fixtures de preview
 .navin/

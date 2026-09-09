@@ -124,9 +124,10 @@ class ToolColorTests(unittest.TestCase):
         from navin.tui.widgets import tool_args_markup
 
         markup = tool_args_markup({"path": "navin/webui/project_insights.py", "limit": 20})
-        self.assertIn("[b #0369FF]navin/webui/project_insights.py[/]", markup)
+        self.assertIn("[b #8FBC8F]navin/webui/project_insights.py[/]", markup)
         self.assertIn("[b #FF8F1C]20[/]", markup)
         self.assertNotIn("[/b]", markup)
+        self.assertNotIn("#0369FF", markup)
 
     def test_commands_and_patterns_use_punchy_colors(self) -> None:
         from navin.tui.widgets import tool_args_markup, tool_color
@@ -134,6 +135,9 @@ class ToolColorTests(unittest.TestCase):
         markup = tool_args_markup({"command": "ls -la", "pattern": "TODO"})
         self.assertIn("[b #FFB000]ls -la[/]", markup)
         self.assertIn("[b #FF2E93]TODO[/]", markup)
+        command = tool_args_markup({"command": "cd /tmp/unified_deploy && python3 setup.py"})
+        self.assertIn("[b #FFB000]", command)
+        self.assertNotIn("#8FBC8F", command)
         washed = {"#54D4CD", "#9A9A9A", "#A3A3A3", "#B0B0B0", "#E6E6E6", "#F2F2F2", "#86EFAC", "#67E8F9"}
         for name in ("read_file", "grep", "exec", "apply_patch", "board", "git", "ask_user"):
             self.assertNotIn(tool_color(name), washed)

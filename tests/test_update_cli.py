@@ -428,6 +428,12 @@ class PublisherSignsTheCliArchivesTest(unittest.TestCase):
                 f'"{key}|', script, f"{key} missing from UPDATABLE in publish-os-to-s3.sh"
             )
 
+    def test_publisher_accepts_a_single_platform(self):
+        script = PUBLISHER.read_text(encoding="utf-8")
+        self.assertIn('PLATFORM=linux|windows|macos', script)
+        self.assertIn("want_src", script)
+        self.assertIn("--merge-manifest", script)
+
 
 if __name__ == "__main__":
     unittest.main()

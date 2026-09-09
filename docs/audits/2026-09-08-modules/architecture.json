@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Les cinq modules Navin audités",
+    "quality_profile": "showcase",
+    "viewBox": [1200, 740]
+  },
+  "components": [
+    {"id": "studio-interface", "type": "frontend", "label": "Interface Studio", "sublabel": "Écrans et contrôles", "pos": [170, 48], "size": [260, 76]},
+    {"id": "conversation-agent", "type": "backend", "label": "Agent conversationnel", "sublabel": "Instructions et outils", "pos": [770, 48], "size": [260, 76]},
+    {"id": "module-entrypoints", "type": "backend", "label": "Entrées métier", "sublabel": "API HTTP et outils Python", "pos": [450, 220], "size": [300, 76]},
+    {"id": "tender-engine", "type": "backend", "label": "Tender", "sublabel": "Appels d'offres", "pos": [30, 405], "size": [200, 90]},
+    {"id": "career-engine", "type": "backend", "label": "Carrière", "sublabel": "Emplois et missions", "pos": [265, 405], "size": [200, 90]},
+    {"id": "montage-engine", "type": "backend", "label": "Montage", "sublabel": "Vidéo et localisation", "pos": [500, 405], "size": [200, 90]},
+    {"id": "marketing-engine", "type": "backend", "label": "Marketing", "sublabel": "Campagnes et contenus", "pos": [735, 405], "size": [200, 90]},
+    {"id": "meeting-engine", "type": "backend", "label": "Meeting", "sublabel": "Réunions et synthèses", "pos": [970, 405], "size": [200, 90]},
+    {"id": "module-files", "type": "database", "label": "Fichiers de chaque module", "sublabel": "États, documents et médias locaux", "pos": [410, 620], "size": [380, 80]}
+  ],
+  "connections": [
+    {"id": "studio-http", "from": "studio-interface", "to": "module-entrypoints", "label": "HTTP"},
+    {"id": "agent-tools", "from": "conversation-agent", "to": "module-entrypoints", "label": "Appels d'outils"},
+    {"id": "dispatch-tender", "from": "module-entrypoints", "to": "tender-engine"},
+    {"id": "dispatch-career", "from": "module-entrypoints", "to": "career-engine", "fromSide": "bottom", "toSide": "top"},
+    {"id": "dispatch-montage", "from": "module-entrypoints", "to": "montage-engine", "variant": "emphasis"},
+    {"id": "dispatch-marketing", "from": "module-entrypoints", "to": "marketing-engine", "fromSide": "bottom", "toSide": "top"},
+    {"id": "dispatch-meeting", "from": "module-entrypoints", "to": "meeting-engine"},
+    {"id": "tender-files", "from": "tender-engine", "to": "module-files"},
+    {"id": "career-files", "from": "career-engine", "to": "module-files", "fromSide": "bottom", "toSide": "top"},
+    {"id": "montage-files", "from": "montage-engine", "to": "module-files", "variant": "emphasis"},
+    {"id": "marketing-files", "from": "marketing-engine", "to": "module-files", "fromSide": "bottom", "toSide": "top"},
+    {"id": "meeting-files", "from": "meeting-engine", "to": "module-files"}
+  ]
+}

@@ -112,6 +112,8 @@ export function CvPreview({
   summary,
   skills,
   strengths,
+  highlights,
+  sections,
   experiences,
   education,
   languages,
@@ -125,6 +127,8 @@ export function CvPreview({
   summary?: string;
   skills?: string;
   strengths?: string[];
+  highlights?: string[];
+  sections?: { kind?: string; heading: string; paragraphs: string[] }[];
   experiences?: { title?: string; company?: string; period?: string; bullets?: string[] }[];
   education?: { diploma?: string; school?: string; year?: string }[];
   languages?: string[];
@@ -133,6 +137,7 @@ export function CvPreview({
     profile: string;
     skills: string;
     strengths: string;
+    highlights: string;
     experience: string;
     education: string;
     languages: string;
@@ -191,6 +196,14 @@ export function CvPreview({
           </div>
         </section>
       ) : null}
+      {highlights?.length ? (
+        <section className="mt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{labels.highlights}</p>
+          <ul className="mt-1 list-disc pl-5 text-[13px] leading-relaxed">
+            {highlights.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+          </ul>
+        </section>
+      ) : null}
       {education?.length ? (
         <section className="mt-4">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{labels.education}</p>
@@ -207,6 +220,14 @@ export function CvPreview({
           <p className="mt-1 text-[13px]">{languages.join("  ·  ")}</p>
         </section>
       ) : null}
+      {sections?.map((section, index) => section.paragraphs?.length ? (
+        <section className="mt-4" key={`${section.kind}-${index}`}>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{section.heading}</p>
+          {section.paragraphs.map((paragraph, paragraphIndex) => (
+            <p className="mt-1 whitespace-pre-line text-[13px] leading-relaxed" key={paragraphIndex}>{paragraph}</p>
+          ))}
+        </section>
+      ) : null)}
       {cover ? (
         <section className="mt-5 border-t border-[#1B365D]/20 pt-4">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#1B365D] dark:text-[#9DB4D0]">{labels.letter}</p>

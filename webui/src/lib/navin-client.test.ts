@@ -34,6 +34,51 @@ class FakeSocket {
   }
 }
 
+describe("live desktop control acknowledgements", () => {
+  function setup() {
+    const socket = new FakeSocket();
+    const client = new NavinClient({ url: "ws://host/ws", socketFactory: () => socket as unknown as WebSocket, reconnect: false });
+    client.connect();
+    socket.open();
+    const reply = (event: object) => socket.onmessage?.({ data: JSON.stringify(event) } as MessageEvent);
+    return { socket, client, reply };
+  }
+
+  it("waits for the acknowledgement for the exact chat and live session", async () => {
+    const { socket, client, reply } = setup();
+    const pending = client.agentBrowserInput("chat-1", "takeover", {}, "desktop-1");
+    const sent = JSON.parse(socket.sent.at(-1)!);
+    expect(sent).toMatchObject({ type: "agent_browser_input", chat_id: "chat-1", id: "desktop-1", action: "takeover" });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    reply({ event: "agent_browser_input_done", request_id: sent.request_id, chat_id: "chat-2", id: "desktop-1", user_control: true });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    reply({ event: "agent_browser_input_done", request_id: sent.request_id, chat_id: "chat-1", id: "desktop-1", user_control: true });
+    await expect(pending).resolves.toEqual({ userControl: true, closed: false });
+  });
+
+  it("surfaces server refusals and disconnects instead of showing success", async () => {
+    const { socket, client, reply } = setup();
+    const denied = client.agentBrowserInput("chat-1", "takeover", {}, "desktop-1");
+    const first = JSON.parse(socket.sent.at(-1)!);
+    reply({ event: "agent_browser_error", request_id: first.request_id, chat_id: "chat-1", id: "desktop-1", detail: "forbidden_role" });
+    await expect(denied).rejects.toThrow("forbidden_role");
+    const pending = client.agentBrowserClose("chat-1", "desktop-1");
+    socket.serverClose(1000);
+    await expect(pending).rejects.toThrow("disconnected");
+  });
+
+  it("never queues physical input to replay on reconnection", async () => {
+    const { socket, client } = setup();
+    socket.serverClose(1000);
+    await expect(client.agentBrowserInput("chat-1", "click", { x: 10, y: 10 }, "desktop-1")).rejects.toThrow("disconnected");
+    client.connect();
+    socket.open();
+    expect(socket.sent.some((line) => JSON.parse(line).type === "agent_browser_input")).toBe(false);
+  });
+});
+
 describe("WebSocket reconnect policy", () => {
   afterEach(() => {
     vi.useRealTimers();

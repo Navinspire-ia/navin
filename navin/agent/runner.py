@@ -28,7 +28,7 @@ from navin.agent.scope_anchor import (
     is_orientation_batch,
     scope_drift_message,
 )
-from navin.agent.tools.registry import ToolRegistry, is_tool_error_result
+from navin.agent.tools.registry import ToolRegistry, is_tool_error_result, tool_error_hint
 from navin.agent.turn_timing import (
     PHASE_CONTEXT,
     PHASE_MODEL,
@@ -69,6 +69,7 @@ from navin.utils.runtime import (
     repeated_tool_failure_is_hard_stop,
     repeated_workspace_violation_error,
     reset_readonly_spin_counts,
+    reset_tool_failure_count,
 )
 
 _VERIFY_TOOL_NAMES = frozenset({"verify", "lint", "test_run"})
@@ -472,6 +473,8 @@ class AgentRunResult:
     tool_events: list[dict[str, str]] = field(default_factory=list)
     had_injections: bool = False
     prompt_profile: dict[str, Any] | None = None
+    retryable_error: bool = False
+    retry_after_s: float | None = None
 
 
 class AgentRunner:
@@ -1340,6 +1343,15 @@ class AgentRunner:
             tool_events=tool_events,
             had_injections=had_injections,
             prompt_profile=prompt_profile,
+            retryable_error=(
+                stop_reason == "error"
+                and not LLMProvider.is_arrearage_response(response)
+                and LLMProvider._is_transient_response(response)
+            ),
+            retry_after_s=(
+                LLMProvider._extract_retry_after_from_response(response)
+                if stop_reason == "error" else None
+            ),
         )
 
     @staticmethod
@@ -2027,7 +2039,10 @@ class AgentRunner:
             )
             if handled is not None:
                 return handled
-            return prep_error + hint, event, (
+            escalation = repeated_tool_failure_hint(
+                tool_call.name, tool_call.arguments, tool_failure_counts
+            )
+            return prep_error + hint + (escalation or ""), event, (
                 RuntimeError(prep_error) if spec.fail_on_tool_error else None
             )
         if spec.read_only_tools or spec.plan_read_only:
@@ -2150,7 +2165,10 @@ class AgentRunner:
                 "status": "error",
                 "detail": f"timed out after {tool_wall_s:.0f}s",
             }
-            return payload + hint, event, (
+            escalation = repeated_tool_failure_hint(
+                tool_call.name, tool_call.arguments, tool_failure_counts
+            )
+            return payload + hint + (escalation or ""), event, (
                 RuntimeError(payload) if spec.fail_on_tool_error else None
             )
         except asyncio.CancelledError:
@@ -2184,6 +2202,7 @@ class AgentRunner:
             return payload + (escalation or ""), event, None
 
         if is_tool_error_result(tool_call.name, result):
+            hint = tool_error_hint(result)
             await hook.on_execute_tool_error(context, tool_call, tool, params, result)
             event = {
                 "name": tool_call.name,
@@ -2208,6 +2227,7 @@ class AgentRunner:
 
         await hook.after_execute_tool(context, tool_call, tool, params, result)
 
+        reset_tool_failure_count(tool_call.name, tool_call.arguments, tool_failure_counts)
         if tool_call.name in _EDIT_TOOL_NAMES:
             reset_readonly_spin_counts(readonly_call_counts)
 

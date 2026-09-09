@@ -712,6 +712,34 @@ class TelegramChannel(BaseChannel):
             self.logger.debug("sendRichMessage failed: {}", exc)
             return False
 
+    async def send_alert(self, msg: OutboundMessage) -> dict[str, Any]:
+        """Send plain alert text and retain every Telegram message receipt."""
+        from telegram.error import Forbidden, RetryAfter
+
+        from navin.bus.alerts import AlertTransportError
+
+        if not self._app:
+            raise AlertTransportError("channel_not_connected")
+        try:
+            chat_id = int(msg.chat_id)
+        except ValueError:
+            raise AlertTransportError("invalid_recipient") from None
+        ids: list[str] = []
+        for chunk in split_message(msg.content, TELEGRAM_MAX_MESSAGE_LEN):
+            try:
+                sent = await self._app.bot.send_message(chat_id=chat_id, text=chunk)
+                message_id = str(getattr(sent, "message_id", "") or "")
+                if not message_id:
+                    raise AlertTransportError("provider_confirmation_missing", uncertain=True, message_ids=ids)
+                ids.append(message_id)
+            except (BadRequest, Forbidden, RetryAfter):
+                raise AlertTransportError("telegram_rejected", message_ids=ids) from None
+            except AlertTransportError:
+                raise
+            except Exception:
+                raise AlertTransportError("transport_outcome_unknown", uncertain=True, message_ids=ids) from None
+        return {"message_ids": ids, "provider": "telegram"}
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
         if not self._app:

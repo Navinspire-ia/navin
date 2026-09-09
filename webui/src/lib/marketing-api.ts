@@ -1,4 +1,5 @@
 import { apiBodyHeaders, apiRequest } from "@/lib/api";
+import { studioSessionQuery } from "@/lib/studio-request";
 import type { TradingLoopSchedule } from "@/lib/trading-api";
 
 export type MarketingLoopSchedule = TradingLoopSchedule;
@@ -61,6 +62,7 @@ export type MarketingContentStatus =
   | "ready"
   | "approved"
   | "scheduled"
+  | "publishing"
   | "published"
   | "failed"
   | "winner"
@@ -68,6 +70,7 @@ export type MarketingContentStatus =
 
 export interface MarketingContent {
   id: string;
+  updated_at?: number;
   channel?: string;
   title?: string;
   body?: string;
@@ -81,6 +84,28 @@ export interface MarketingContent {
   source?: string;
   model?: string;
   creative_id?: string;
+  media_type?: "image" | "video";
+  media_url?: string;
+  media_path?: string;
+  mime_type?: string;
+  duration_s?: number;
+  photo_images?: string[];
+  photo_cover_index?: number;
+  reddit_kind?: "self" | "link";
+  reddit_subreddit?: string;
+  reddit_url?: string;
+  reddit_flair_id?: string;
+  privacy_level?: string;
+  disable_comment?: boolean;
+  disable_duet?: boolean;
+  disable_stitch?: boolean;
+  brand_content_toggle?: boolean;
+  brand_organic_toggle?: boolean;
+  is_aigc?: boolean;
+  auto_add_music?: boolean;
+  publish_consent?: boolean;
+  music_usage_confirmed?: boolean;
+  branded_content_policy_confirmed?: boolean;
   scheduled_at?: number;
   approved_at?: number;
   published_at?: number;
@@ -90,7 +115,7 @@ export interface MarketingContent {
   utm_url?: string;
   publish_text?: string;
   error?: string;
-  receipt?: { channel?: string; via?: string; mode?: string; origin?: string; url?: string; id?: string; photo?: boolean } | null;
+  receipt?: { channel?: string; via?: string; mode?: string; origin?: string; url?: string; id?: string; photo?: boolean; phase?: string; operation_id?: string; pending?: boolean; published?: boolean; poll_after_s?: number } | null;
 }
 
 export type MarketingConnectorMode = "api" | "manual" | "file";
@@ -132,6 +157,12 @@ export interface MarketingPublishChannelSettings {
   enabled?: boolean;
   author?: string;
   page_id?: string;
+  instagram_user_id?: string;
+  auth_mode?: string;
+  api_version?: string;
+  subreddit?: string;
+  user_agent?: string;
+  flair_id?: string;
   chat_id?: string;
   to?: string;
   url?: string;
@@ -157,6 +188,7 @@ export interface MarketingSettings {
   ai_assist?: boolean;
   winner_multiple?: number;
   utm_campaign?: string;
+  media_base_url?: string;
   publish?: Record<string, MarketingPublishChannelSettings | number | undefined> & { per_cycle?: number };
   analytics?: MarketingAnalyticsSource;
   channels?: Record<string, boolean | string>;
@@ -171,6 +203,8 @@ export interface MarketingPublishReceipt {
   ok?: boolean;
   dry_run?: boolean;
   manual?: boolean;
+  pending?: boolean;
+  status?: string;
   text?: string;
   link?: string;
   content?: MarketingContent;
@@ -180,8 +214,32 @@ export interface MarketingPublishReport {
   sent?: MarketingPublishReceipt[];
   failed?: MarketingPublishReceipt[];
   preview?: MarketingPublishReceipt[];
+  pending?: MarketingPublishReceipt[];
   skipped?: string[];
   ready_channels?: string[];
+}
+
+export interface SocialConnection {
+  provider: string;
+  status: string;
+  client_id: string;
+  client_secret_set: boolean;
+  redirect_uri: string;
+  account: string;
+  account_id: string;
+  accounts: { id: string; name: string }[];
+  expires_at: number;
+  refreshable: boolean;
+  requested_scopes: string[];
+  granted_scopes: string[];
+  scope_status: string;
+  last_error: string;
+  docs_url: string;
+}
+
+export interface SocialAuthorization extends Partial<SocialConnection> {
+  authorization_url?: string;
+  detail?: string;
 }
 
 export interface MarketingMeasureReport {
@@ -204,6 +262,7 @@ export interface MarketingConnectionResult {
 
 export interface MarketingCreative {
   id: string;
+  path?: string;
   kind?: string;
   placement?: string;
   prompt?: string;
@@ -345,6 +404,28 @@ export interface MarketingDesk {
   launch: { status?: string; product?: string; folder?: string; items?: { id: string; label?: string; body?: string; file?: string }[] };
   settings: MarketingSettings;
   connectors?: MarketingConnector[];
+  oauth_connections?: SocialConnection[];
+  oauth?: SocialAuthorization;
+  creator_info?: {
+    creator_username?: string;
+    creator_nickname?: string;
+    creator_avatar_url?: string;
+    privacy_level_options?: string[];
+    comment_disabled?: boolean;
+    duet_disabled?: boolean;
+    stitch_disabled?: boolean;
+    max_video_post_duration_sec?: number;
+  };
+  content_capabilities?: {
+    channel: string;
+    supported_types: string[];
+    media_type: string;
+    can_publish: boolean;
+    errors: string[];
+    requires_public_media_url: boolean;
+    requires_creator_info: boolean;
+    asynchronous: boolean;
+  };
   secrets_set?: Record<string, boolean>;
   queue?: MarketingQueue;
   ai?: MarketingAiRouting;
@@ -366,7 +447,7 @@ export interface MarketingDesk {
 }
 
 function marketingUrl(action: string): string {
-  return `/api/marketing?action=${encodeURIComponent(action)}`;
+  return `/api/marketing?action=${encodeURIComponent(action)}${studioSessionQuery()}`;
 }
 
 export async function fetchMarketingDesk(token: string): Promise<MarketingDesk> {

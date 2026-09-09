@@ -8,6 +8,7 @@ subtree) so no hub can write an invalid ``config.json``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import webbrowser
 from dataclasses import dataclass
@@ -162,6 +163,14 @@ DOMAINS: tuple[Domain, ...] = (
         (("tools", "browser"),),
         (),
         "◎",
+    ),
+    Domain(
+        "computer",
+        "Computer",
+        "Desktop control: screen, mouse and keyboard in any app.",
+        (("tools", "computer"),),
+        (),
+        "▣",
     ),
     Domain(
         "rules",
@@ -779,13 +788,17 @@ class AccountScreen(ModalScreen[str | None]):
     AccountScreen #account-status { color: $text-muted; height: auto; }
     """
 
-    BINDINGS = [Binding("escape", "close", "Close")]
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("c", "copy_link", "Copy link"),
+    ]
 
     def __init__(self, service: Any = None, on_applied: Any = None) -> None:
         super().__init__()
         self._service: Any = service
         self._on_applied = on_applied
         self._state: str = ""
+        self._connect_url: str = ""
         self._applied_key: tuple[Any, ...] | None = None
 
     def compose(self) -> ComposeResult:
@@ -794,6 +807,7 @@ class AccountScreen(ModalScreen[str | None]):
             yield Static("Loading…", id="account-body", markup=True)
             with Horizontal():
                 yield Button("Sign in with navin.live", variant="primary", id="signin")
+                yield Button("Copy link", id="copylink")
                 yield Button("Refresh", id="refresh")
                 yield Button("Disconnect", variant="error", id="disconnect")
                 yield Button("Close", id="close")
@@ -838,11 +852,7 @@ class AccountScreen(ModalScreen[str | None]):
                 pct = int(usage.get("used_percent") or 0)
                 filled = int(pct / 5)
                 bar = "█" * filled + "░" * (20 - filled)
-                spent = int(usage.get("spent_micro_usd") or 0) / 1_000_000
-                budget = int(usage.get("budget_micro_usd") or 0) / 1_000_000
-                lines.append(
-                    f"usage {bar} {pct}%  [dim]${spent:.2f} / ${budget:.2f}  mode {escape(str(usage.get('mode') or 'normal'))}[/dim]"
-                )
+                lines.append(f"usage {bar} {pct}%")
             if payload.get("org_id"):
                 lines.append(
                     f"[dim]org {escape(str(payload['org_id']))}  role {escape(str(payload.get('org_role') or ''))}  seats {payload.get('seat_count') or '-'}[/dim]"
@@ -866,27 +876,66 @@ class AccountScreen(ModalScreen[str | None]):
             if callable(self._on_applied):
                 self._on_applied(payload)
 
+    def _ensure_connect_url(self) -> str:
+        if self._service is None:
+            raise RuntimeError("account service unavailable")
+        if self._connect_url:
+            return self._connect_url
+        url = self._service.connect_url(locale="en")
+        self._connect_url = url
+        self._state = self._service.connect_state_from_url(url)
+        self._service.start_background_claim(self._state)
+        self.set_interval(3.0, self._poll_connected, name="account-poll")
+        return url
+
+    def _copy_connect_url(self, url: str) -> bool:
+        copied = False
+        with contextlib.suppress(Exception):
+            self.app.copy_to_clipboard(url)
+            copied = True
+        from navin.tui.clipboard import write_clipboard
+
+        if write_clipboard(url):
+            copied = True
+        return copied
+
     @on(Button.Pressed, "#signin")
     def _signin(self) -> None:
-        if self._service is None:
-            return
         try:
-            url = self._service.connect_url(locale="en")
+            url = self._ensure_connect_url()
         except Exception as exc:  # noqa: BLE001
             self._status(f"[$error]{escape(str(exc))}[/]")
             return
-        self._state = self._service.connect_state_from_url(url)
-        self._service.start_background_claim(self._state)
         opened = False
         try:
             opened = bool(webbrowser.open(url))
         except Exception:  # noqa: BLE001
             opened = False
-        hint = "Browser opened." if opened else "Open this URL in a browser:"
+        hint = "Browser opened." if opened else "Could not open the browser."
         self._status(
-            f"{hint}\n[b]{escape(url)}[/b]\nWaiting for confirmation… this screen refreshes automatically."
+            f"{hint}\n[b]{escape(url)}[/b]\n"
+            "If the browser did not open: press C or Copy link.\n"
+            "Waiting for confirmation... this screen refreshes automatically."
         )
-        self.set_interval(3.0, self._poll_connected, name="account-poll")
+
+    @on(Button.Pressed, "#copylink")
+    def action_copy_link(self) -> None:
+        try:
+            url = self._ensure_connect_url()
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"[$error]{escape(str(exc))}[/]")
+            return
+        if self._copy_connect_url(url):
+            self._status(
+                f"Link copied.\n[b]{escape(url)}[/b]\n"
+                "Paste it in a browser if it did not open.\n"
+                "Waiting for confirmation... this screen refreshes automatically."
+            )
+        else:
+            self._status(
+                f"Could not copy automatically. Select this URL:\n[b]{escape(url)}[/b]\n"
+                "Waiting for confirmation... this screen refreshes automatically."
+            )
 
     def _poll_connected(self) -> None:
         if self._service is None:

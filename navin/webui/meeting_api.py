@@ -2,9 +2,9 @@
 
 The Meeting desk used to seed a prompt into the agent composer for every
 summary. That routes a document task through a coding agent with tools, which
-is slow, expensive, and free to wander off. These are single, tool-less model
-calls that return Markdown straight to the desk, so the report renders and
-exports locally.
+is slow, expensive, and free to wander off. These are bounded, tool-less model
+calls that return Markdown straight to the desk. Long reports extract source
+evidence from every segment before synthesis; rendering and export stay local.
 
 Route preference follows the ``/meeting`` command role (``docs``), then
 ``dev``, then the default agent model.
@@ -13,17 +13,24 @@ Route preference follows the ``/meeting`` command role (``docs``), then
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-# A one-hour meeting is roughly 55k chars; clipping at 24k silently dropped
-# half of it from the minutes. Modern default models take 20k+ tokens easily.
+from navin.agent.skill_routing import ActionSkillContext, build_action_skill_context
+
+# Reports above the single-call input budget use bounded evidence extraction.
 _MAX_TRANSCRIPT_CHARS = 80000
 _MAX_NOTES_CHARS = 6000
 _MAX_QUESTION_CHARS = 1000
 _MAX_REPORT_TOKENS = 4000
+_REPORT_SEGMENT_CHARS = 40000
+_MAX_REPORT_SEGMENTS = 8
+_REPORT_EXTRACT_TOKENS = 2200
+_MAX_REPORT_EXTRACT_CHARS = 8000
+_REPORT_SYNTHESIS_RESERVE_S = 45.0
 _MAX_ANSWER_TOKENS = 900
 # Diarization rewrites the text, so the answer is as long as the excerpt.
 _SPEAKER_CHUNK_CHARS = 6000
@@ -65,6 +72,19 @@ _REPORT_SYSTEM = (
     "- Use plain hyphens '-' for dashes; never the en dash or em dash "
     "characters.\n"
     "- Keep it dense: no filler, no restating the instructions."
+)
+
+_REPORT_EXTRACT_SYSTEM = (
+    "Extract evidence from this one transcript segment for a later meeting report. "
+    "Do not write the final report. Preserve every decision, action, owner, deadline, "
+    "proposal, disagreement and open question stated in the segment. Keep enough topic "
+    "excerpts to explain the discussion. Do not infer a decision from a proposal. "
+    "Return JSON only: {\"complete\": true, \"items\": [{\"kind\": "
+    "\"decision|action|proposal|opinion|question|topic\", \"quote\": \"exact transcript excerpt\"}]}. "
+    "Every quote must occur verbatim in this segment, including stated labels and timecodes "
+    "when relevant. Each quote must be at most 1000 characters. Do not paraphrase quotes or "
+    "invent labels. Mark complete false if you cannot capture all consequential facts within "
+    "the output budget. An empty items list is valid only when there is nothing substantive."
 )
 
 _SPEAKER_SYSTEM = (
@@ -147,6 +167,14 @@ async def _ask(
             ),
             timeout=timeout_s,
         )
+        finish_reason = str(getattr(response, "finish_reason", "") or "").lower()
+        if finish_reason in {"length", "max_tokens"}:
+            raise MeetingError(
+                "the model output was truncated; reduce the input or use smaller sections",
+                status=502,
+            )
+        if finish_reason in {"error", "content_filter"}:
+            raise MeetingError("the model did not produce a complete usable answer", status=502)
         return response.content or ""
 
     try:
@@ -158,6 +186,8 @@ async def _ask(
             text = await _once()
     except TimeoutError as exc:
         raise MeetingError("the model did not answer in time", status=504) from exc
+    except MeetingError:
+        raise
     except Exception as exc:
         raise MeetingError(f"model call failed: {exc}", status=502) from exc
 
@@ -375,12 +405,196 @@ def _report_prompt(
             f"Write in {language.strip()} unless the transcript is clearly in "
             "another language, in which case use the transcript language."
         )
-    clean_notes = _clip(notes, _MAX_NOTES_CHARS)
+    clean_notes = notes.strip()
+    if len(clean_notes) > _MAX_NOTES_CHARS:
+        raise MeetingError(f"meeting notes exceed {_MAX_NOTES_CHARS} characters; split the notes first", status=413)
     if clean_notes:
         parts += ["", "## Notes taken during the meeting", clean_notes]
-    clean_transcript = _clip(transcript, _MAX_TRANSCRIPT_CHARS)
+    clean_transcript = transcript.strip()
+    if len(clean_transcript) > _MAX_TRANSCRIPT_CHARS:
+        raise MeetingError("the report input requires segmented analysis", status=413)
     parts += ["", "## Transcript", clean_transcript or "(no transcript)"]
     return "\n".join(parts)
+
+
+def _report_segments(transcript: str) -> list[dict[str, Any]]:
+    """Partition all characters, preferring speaker/sentence boundaries."""
+    if len(transcript) > _REPORT_SEGMENT_CHARS * _MAX_REPORT_SEGMENTS:
+        raise MeetingError(
+            f"transcript exceeds the report limit of {_REPORT_SEGMENT_CHARS * _MAX_REPORT_SEGMENTS} "
+            "characters; split the meeting into shorter reports. No report was generated.",
+            status=413,
+        )
+    segments = []
+    start = 0
+    while start < len(transcript):
+        end = min(start + _REPORT_SEGMENT_CHARS, len(transcript))
+        if end < len(transcript):
+            # Leave enough capacity for the rest even near the total limit.
+            remaining_slots = _MAX_REPORT_SEGMENTS - len(segments) - 1
+            boundary_start = max(
+                start + _REPORT_SEGMENT_CHARS * 3 // 4,
+                len(transcript) - remaining_slots * _REPORT_SEGMENT_CHARS - 1,
+            )
+            boundary = transcript.rfind("\n", boundary_start, end)
+            if boundary < 0:
+                boundary = transcript.rfind(". ", boundary_start, end)
+            if boundary >= 0:
+                end = boundary + 1
+        segments.append({"start_char": start, "end_char": end, "text": transcript[start:end]})
+        start = end
+    if len(segments) > _MAX_REPORT_SEGMENTS:
+        raise MeetingError(
+            f"transcript requires more than {_MAX_REPORT_SEGMENTS} report segments; "
+            "split the meeting into shorter reports. No report was generated.", status=413,
+        )
+    return segments
+
+
+def _report_evidence(text: str, segment: str) -> tuple[list[dict[str, str]], bool]:
+    """Only literal source excerpts can reach the final synthesis."""
+    if len(text) > _MAX_REPORT_EXTRACT_CHARS:
+        raise MeetingError("segment evidence exceeds the synthesis budget", status=502)
+    try:
+        data = json.loads(strip_report_fences(text))
+    except (TypeError, ValueError) as exc:
+        raise MeetingError("segment evidence was not valid JSON", status=502) from exc
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        raise MeetingError("segment evidence has no valid items list", status=502)
+    source = " ".join(segment.split())
+    complete = data.get("complete") is True
+    items = []
+    for row in data["items"]:
+        if not isinstance(row, dict):
+            complete = False
+            continue
+        quote = row.get("quote")
+        kind = row.get("kind")
+        if (
+            not isinstance(kind, str)
+            or kind not in {"decision", "action", "proposal", "opinion", "question", "topic"}
+            or not isinstance(quote, str) or not quote.strip() or len(quote) > 1000
+            or " ".join(quote.split()) not in source
+        ):
+            complete = False
+            continue
+        items.append({"kind": kind, "quote": quote.strip()})
+    return items, complete
+
+
+async def _segmented_report(
+    transcript: str,
+    prompt_options: dict[str, Any],
+    skills: ActionSkillContext,
+) -> dict[str, Any]:
+    segments = _report_segments(transcript)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _REPORT_TIMEOUT_S
+    extraction_deadline = deadline - _REPORT_SYNTHESIS_RESERVE_S
+    semaphore = asyncio.Semaphore(2)
+
+    async def extract(index: int, segment: dict[str, Any]) -> dict[str, Any]:
+        result = {key: value for key, value in segment.items() if key != "text"}
+        result.update({"index": index + 1, "status": "failed", "items": []})
+        async with semaphore:
+            remaining = extraction_deadline - loop.time()
+            if remaining <= 0:
+                result["error"] = "segment analysis time budget exhausted"
+                return result
+            user = (
+                f"Segment {index + 1}/{len(segments)}; original character interval "
+                f"[{segment['start_char']}, {segment['end_char']}).\n"
+                f"Requested report outline: {prompt_options['template_instructions']}\n"
+                f"<transcript_segment>\n{segment['text']}\n</transcript_segment>"
+            )
+            try:
+                text, model, route = await asyncio.wait_for(
+                    _ask(
+                        skills.augment_system(_REPORT_EXTRACT_SYSTEM), user,
+                        max_tokens=_REPORT_EXTRACT_TOKENS, timeout_s=min(45.0, remaining),
+                    ), timeout=remaining,
+                )
+                items, complete = _report_evidence(text, segment["text"])
+                result.update({"status": "complete" if complete else "partial", "items": items, "model": model, "route": route})
+                if not complete:
+                    result["error"] = "segment coverage unconfirmed or unsupported excerpts rejected"
+            except (MeetingError, TimeoutError) as exc:
+                result["error"] = str(exc) or "segment analysis timed out"
+        return result
+
+    results = await asyncio.gather(*(extract(index, segment) for index, segment in enumerate(segments)))
+    processed = [row for row in results if row["status"] != "failed"]
+    if not processed:
+        raise MeetingError(
+            "no transcript segment could be analyzed; no report was generated. " + str(results[0].get("error") or ""),
+            status=502,
+        )
+    evidence = []
+    for row in processed:
+        label = f"Segment {row['index']}/{len(segments)} [{row['start_char']}, {row['end_char']})"
+        excerpts = "\n".join(f"- {item['kind']}: {json.dumps(item['quote'], ensure_ascii=False)}" for item in row["items"])
+        evidence.append(f"{label}\n{excerpts or '(no substantive evidence extracted)'}")
+    material = "\n\n".join(evidence)
+    models = list(dict.fromkeys(row["model"] for row in processed if row.get("model")))
+    routes = list(dict.fromkeys(row["route"] for row in processed if row.get("route")))
+    missing = [row["index"] for row in results if row["status"] != "complete"]
+    synthesis_error = ""
+    markdown = ""
+    try:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise MeetingError("final synthesis time budget exhausted", status=504)
+        user = _report_prompt(transcript=material, **prompt_options)
+        user += (
+            "\n\nThe transcript block contains source-validated excerpts from the original segments. "
+            "Every quoted decision and action must be represented in the final report. "
+            "Use the supplied timecodes, never character offsets as timecodes. "
+            f"Segments without confirmed full coverage: {missing or 'none'}. "
+            "Do not infer anything about unavailable content or claim full coverage when a segment is incomplete."
+        )
+        text, model, route = await asyncio.wait_for(
+            _ask(
+                skills.augment_system(_REPORT_SYSTEM), user,
+                max_tokens=_MAX_REPORT_TOKENS, timeout_s=remaining,
+            ), timeout=remaining,
+        )
+        markdown = strip_report_fences(text)
+        if not markdown:
+            raise MeetingError("the model returned an empty synthesis", status=502)
+        if model and model not in models:
+            models.append(model)
+        if route and route not in routes:
+            routes.append(route)
+    except (MeetingError, TimeoutError) as exc:
+        synthesis_error = str(exc) or "final synthesis timed out"
+    complete = not missing and not synthesis_error
+    fr = str(prompt_options.get("language") or "").lower().startswith("fr")
+    if not markdown:
+        heading = "## Extraits sources disponibles" if fr else "## Available source excerpts"
+        markdown = heading + "\n\n" + "\n".join("    " + line for line in material.splitlines())
+    if not complete:
+        warning = (
+            f"Compte rendu partiel: {len(processed)}/{len(segments)} segments analysés. "
+            f"Couverture incomplète des segments: {', '.join(map(str, missing)) or 'aucun'}. "
+            "Relancer le traitement avant de considérer ce compte rendu comme complet."
+            if fr else
+            f"Partial meeting report: {len(processed)}/{len(segments)} segments analyzed. "
+            f"Incomplete segment coverage: {', '.join(map(str, missing)) or 'none'}. "
+            "Rerun processing before treating this report as complete."
+        )
+        if synthesis_error:
+            warning += " Synthèse finale indisponible; extraits conservés." if fr else " Final synthesis unavailable; source excerpts retained."
+        markdown = f"> **{warning}**\n\n{markdown}"
+    return {
+        "markdown": markdown, "model": ", ".join(models), "route": ", ".join(routes),
+        "coverage": {
+            "mode": "segmented", "complete": complete, "input_chars": len(transcript),
+            "processed_chars": sum(row["end_char"] - row["start_char"] for row in processed),
+            "segment_count": len(segments), "processed_segments": len(processed),
+            "segments": [{key: value for key, value in row.items() if key not in {"items", "model", "route"}} for row in results],
+            "synthesis_complete": not synthesis_error, "synthesis_error": synthesis_error,
+        },
+    }
 
 
 async def report_payload(
@@ -399,11 +613,10 @@ async def report_payload(
     if not transcript.strip() and not notes.strip():
         raise MeetingError("add a transcript or notes first")
 
-    user = _report_prompt(
+    prompt_options = dict(
         title=title,
         template_name=template_name,
         template_instructions=template_instructions,
-        transcript=transcript,
         notes=notes,
         speakers=speakers,
         language=language,
@@ -411,8 +624,17 @@ async def report_payload(
         duration_min=duration_min,
     )
     started = time.perf_counter()
+    skills = await asyncio.to_thread(build_action_skill_context, "meeting", "report")
+    clean_transcript = transcript.strip()
+    if len(clean_transcript) > _MAX_TRANSCRIPT_CHARS:
+        # Validate ancillary input before spending any provider calls.
+        _report_prompt(transcript="", **prompt_options)
+        result = await _segmented_report(clean_transcript, prompt_options, skills)
+        result.update({"skill_context": skills.metadata, "latency_ms": int((time.perf_counter() - started) * 1000)})
+        return result
+    user = _report_prompt(transcript=clean_transcript, **prompt_options)
     text, model, route = await _ask(
-        _REPORT_SYSTEM,
+        skills.augment_system(_REPORT_SYSTEM),
         user,
         max_tokens=_MAX_REPORT_TOKENS,
         timeout_s=_REPORT_TIMEOUT_S,
@@ -424,6 +646,8 @@ async def report_payload(
         "markdown": markdown,
         "model": model,
         "route": route,
+        "skill_context": skills.metadata,
+        "coverage": {"mode": "single", "complete": True, "input_chars": len(clean_transcript), "processed_chars": len(clean_transcript)},
         "latency_ms": int((time.perf_counter() - started) * 1000),
     }
 
@@ -508,6 +732,7 @@ async def speakers_payload(
     model = ""
     route = ""
     started = time.perf_counter()
+    skills = await asyncio.to_thread(build_action_skill_context, "meeting", "speakers")
 
     for index, chunk in enumerate(chunks):
         parts = []
@@ -525,7 +750,7 @@ async def speakers_payload(
             parts.append("This is a continuation: the first line may finish a turn.")
         parts += ["", "Transcript excerpt:", chunk]
         text, model, route = await _ask(
-            _SPEAKER_SYSTEM,
+            skills.augment_system(_SPEAKER_SYSTEM),
             "\n".join(parts),
             max_tokens=_MAX_SPEAKER_TOKENS,
             timeout_s=_SPEAKER_TIMEOUT_S,
@@ -549,6 +774,7 @@ async def speakers_payload(
         "truncated": truncated,
         "model": model,
         "route": route,
+        "skill_context": skills.metadata,
         "latency_ms": int((time.perf_counter() - started) * 1000),
     }
 
@@ -588,8 +814,9 @@ async def answer_payload(
     parts += ["", f"Question: {clean_question}"]
 
     started = time.perf_counter()
+    skills = await asyncio.to_thread(build_action_skill_context, "meeting", "answer")
     text, model, route = await _ask(
-        _ANSWER_SYSTEM,
+        skills.augment_system(_ANSWER_SYSTEM),
         "\n".join(parts),
         max_tokens=_MAX_ANSWER_TOKENS,
         timeout_s=_ANSWER_TIMEOUT_S,
@@ -601,5 +828,6 @@ async def answer_payload(
         "markdown": answer,
         "model": model,
         "route": route,
+        "skill_context": skills.metadata,
         "latency_ms": int((time.perf_counter() - started) * 1000),
     }

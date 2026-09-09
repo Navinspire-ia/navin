@@ -24,6 +24,8 @@ import {
   type StatusTone,
 } from "@/lib/marketing-publish";
 import { cn } from "@/lib/utils";
+import { SocialConnections } from "./SocialConnections";
+import { PublicationOptions } from "./PublicationOptions";
 
 export type Tx = (key: string, fallback: string, values?: Record<string, string | number>) => string;
 export type RunAction = (
@@ -62,6 +64,7 @@ function statusLabel(tx: Tx, status?: string | null): string {
     ready: "Ready",
     approved: "Approved",
     scheduled: "Scheduled",
+    publishing: "Processing on the network",
     published: "Published",
     failed: "Failed",
     winner: "Winner",
@@ -124,6 +127,7 @@ export function ContentQueue({
   const [filter, setFilter] = useState<string>("all");
   const [showHistory, setShowHistory] = useState(false);
   const [scheduling, setScheduling] = useState<string>("");
+  const [editing, setEditing] = useState<string>("");
   const [preview, setPreview] = useState<{ id: string; receipt: MarketingPublishReceipt } | null>(null);
   const summary = summarizeQueue(desk.queue);
   const connectors = useMemo(() => new Map((desk.connectors || []).map((row) => [row.channel, row])), [desk.connectors]);
@@ -144,7 +148,9 @@ export function ContentQueue({
       const report = next.publish || {};
       const sent = report.sent?.[0];
       const failed = report.failed?.[0];
-      if (sent) {
+      if (report.pending?.length) {
+        onNotice(tx("publication.pending", "The network is processing the media. Publication is not confirmed yet."));
+      } else if (sent) {
         const url = sent.content?.published_url || sent.url || "";
         onNotice(
           sent.manual
@@ -298,6 +304,10 @@ export function ContentQueue({
                     ) : null}
                   </div>
                   <div className="flex flex-wrap gap-1.5">
+                    {!["publishing", "published", "winner", "retired"].includes(String(row.status)) ? (
+                      <DefaultButton text={tx("publication.edit", "Prepare this publication")} iconProps={{ iconName: "Edit" }} disabled={isBusy} onClick={() => setEditing((current) => current === row.id ? "" : row.id)} styles={SMALL_BUTTON} data-testid={`marketing-edit-${row.id}`} />
+                    ) : null}
+                    {row.status === "publishing" ? <DefaultButton text={tx("publication.refresh", "Check publication status")} disabled={isBusy} onClick={() => void run("publish-status", { id: row.id })} styles={SMALL_BUTTON} data-testid={`marketing-poll-${row.id}`} /> : null}
                     {actions.approve ? (
                       <DefaultButton
                         text={tx("approveContent", "Approve")}
@@ -368,6 +378,7 @@ export function ContentQueue({
                 </div>
                 {row.hook && !String(row.body || "").includes(row.hook) ? <p className="mt-2 text-sm font-medium">{row.hook}</p> : null}
                 <p className="mt-1 whitespace-pre-wrap text-pretty text-sm">{row.body}</p>
+                {editing === row.id ? <PublicationOptions row={row} desk={desk} busy={isBusy} tx={tx} run={run} onClose={() => setEditing("")} /> : null}
                 {row.published_url ? (
                   <a
                     className="mt-1 inline-block break-all text-xs text-violet-700 underline-offset-2 hover:underline dark:text-violet-300"
@@ -604,6 +615,7 @@ export function ConnectorsPane({
   const publish = (settings.publish || {}) as Record<string, MarketingPublishChannelSettings | number | undefined>;
   const analytics = settings.analytics || {};
   const [utm, setUtm] = useState<string | null>(null);
+  const [mediaBase, setMediaBase] = useState<string | null>(null);
   const [perCycle, setPerCycle] = useState<string | null>(null);
   const [analyticsDraft, setAnalyticsDraft] = useState<Record<string, string>>({});
   const [analyticsKey, setAnalyticsKey] = useState("");
@@ -679,6 +691,15 @@ export function ConnectorsPane({
         <p className="mt-2 text-pretty text-xs text-muted-foreground">
           {tx("executionHint", "Every post carries a tracked link (utm_source = channel, utm_content = post id) so analytics can attribute visits and signups per post.")}
         </p>
+      </section>
+
+      {desk.oauth_connections?.length ? <SocialConnections connections={desk.oauth_connections} busy={isBusy} locale={locale} tx={tx} run={run} /> : null}
+
+      <section className="rounded-2xl border border-border/70 bg-background/80 p-4" data-testid="marketing-media-hosting">
+        <h3 className="mb-2 text-sm font-semibold">{tx("publication.hosting", "Media hosting for social networks")}</h3>
+        <TextField label={tx("publication.hostUrl", "Public HTTPS URL of this Navin installation")} placeholder="https://navin.example.com" value={mediaBase ?? settings.media_base_url ?? ""} onChange={(_, value) => setMediaBase(value || "")} data-testid="marketing-media-base-url" />
+        <p className="my-2 text-xs text-muted-foreground">{tx("publication.hostHelp", "Selected media will be accessible at this address when published. Instagram fetches public JPEG images or videos. Verify this domain in your TikTok application before using URL uploads.")}</p>
+        <DefaultButton text={tx("publication.saveHosting", "Save media hosting")} disabled={isBusy || mediaBase === null} onClick={() => void run("settings", { media_base_url: mediaBase || "" }, () => setMediaBase(null))} styles={BUTTON_STYLES} />
       </section>
 
       <section className="rounded-2xl border border-border/70 bg-background/80 p-4 shadow-[0_10px_28px_rgba(15,23,42,0.06)]" data-testid="marketing-connectors-card">

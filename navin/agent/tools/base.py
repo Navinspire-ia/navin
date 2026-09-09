@@ -135,15 +135,17 @@ class ToolResult(str):
     """String-compatible tool output with structured status."""
 
     is_error: bool
+    recovery_hint: str | None
 
-    def __new__(cls, content: str, *, is_error: bool = False) -> ToolResult:
+    def __new__(cls, content: str, *, is_error: bool = False, recovery_hint: str | None = None) -> ToolResult:
         obj = str.__new__(cls, content)
         obj.is_error = is_error
+        obj.recovery_hint = recovery_hint
         return obj
 
     @classmethod
-    def error(cls, content: str) -> ToolResult:
-        return cls(content, is_error=True)
+    def error(cls, content: str, *, recovery_hint: str | None = None) -> ToolResult:
+        return cls(content, is_error=True, recovery_hint=recovery_hint)
 
 
 class Tool(ABC):

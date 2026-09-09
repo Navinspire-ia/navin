@@ -243,6 +243,37 @@ class MSTeamsChannel(BaseChannel):
             await self._http.aclose()
             self._http = None
 
+    async def send_alert(self, msg: OutboundMessage) -> dict[str, Any]:
+        """Send into a trusted conversation and preserve Bot Framework's activity ID."""
+        from navin.bus.alerts import AlertTransportError
+
+        if not self._http:
+            raise AlertTransportError("channel_not_connected")
+        ref = self._conversation_refs.get(str(msg.chat_id))
+        if not ref:
+            raise AlertTransportError("teams_conversation_unknown")
+        if not self._is_trusted_service_url(ref.service_url):
+            raise AlertTransportError("teams_service_url_untrusted")
+        try:
+            token = await self._get_access_token()
+        except Exception:
+            raise AlertTransportError("teams_authentication_failed") from None
+        url = f"{ref.service_url.rstrip('/')}/v3/conversations/{ref.conversation_id}/activities"
+        try:
+            response = await self._http.post(url, headers={"Authorization": f"Bearer {token}"},
+                                             json={"type": "message", "text": msg.content})
+            response.raise_for_status()
+            message_id = str(response.json().get("id") or "")
+        except httpx.HTTPStatusError as exc:
+            raise AlertTransportError("teams_rejected", uncertain=exc.response.status_code >= 500 or exc.response.status_code == 408) from None
+        except Exception:
+            raise AlertTransportError("transport_outcome_unknown", uncertain=True) from None
+        if not message_id:
+            raise AlertTransportError("provider_confirmation_missing", uncertain=True)
+        with suppress(Exception):
+            self._touch_conversation_ref(str(msg.chat_id), persist=True)
+        return {"message_ids": [message_id], "provider": "msteams"}
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a plain text reply into an existing Teams conversation."""
         if not self._http:

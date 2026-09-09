@@ -12,6 +12,7 @@ import {
   PrimaryButton,
   ProgressIndicator,
   TextField,
+  Toggle,
   createTheme,
   type IContextualMenuItem,
 } from "@fluentui/react";
@@ -20,12 +21,16 @@ import { useTranslation } from "react-i18next";
 
 import { CareerDashboard, type OfferDeskOpen } from "@/components/studio/career/CareerDashboard";
 import { CvPreview, DossierPreview } from "@/components/studio/DossierPreview";
+import { DocumentGenerationNotice } from "@/components/studio/DocumentGenerationNotice";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import type { CareerLoopSchedule } from "@/lib/career-api";
 import { browserTimeZone } from "@/lib/trading-loop-schedule";
 import { CareerFilters } from "@/components/studio/career/CareerFilters";
 import { type CareerMoneyBarProps } from "@/components/studio/career/CareerKpis";
 import { CareerWizard } from "@/components/studio/career/CareerWizard";
+import {
+  CareerMailAccountSummary, CareerMailCompose, CareerMailReceiptView, CareerMailSettings, careerMailError,
+} from "@/components/studio/career/CareerMailPanel";
 import {
   DEFAULT_SEARCH_COUNTRIES,
   ICON_BUTTON_STYLES,
@@ -58,6 +63,7 @@ import {
   type CareerEmployers as CareerEmployersPayload,
   type CareerMcpHint,
   type CareerInboxItem,
+  type CareerMailDraft,
   type CareerOpportunity,
   type CareerProfile,
   type CareerSource,
@@ -239,28 +245,9 @@ function nextStage(stage: string): string | null {
   return STAGE_FLOW[index + 1];
 }
 
-function localPack(job: CareerOpportunity, masterCv: string): CareerApplication {
+function applicationFromOffer(job: CareerOpportunity): CareerApplication {
   const title = job.title || "Role";
   const company = job.company || "Company";
-  const hay = `${title} ${job.description || ""} ${(job.stack || []).join(" ")}`.toLowerCase();
-  const tokens = hay.split(/[^a-z0-9+.#/-]+/).filter((item) => item.length > 2);
-  const blocks = masterCv
-    .split(/\n{2,}/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .sort((a, b) => {
-      const score = (text: string) => tokens.filter((token) => text.toLowerCase().includes(token)).length;
-      return score(b) - score(a);
-    });
-  const matched = (job.stack || []).filter((item) => masterCv.toLowerCase().includes(item.toLowerCase()));
-  const cvText = [
-    `Application: ${title} at ${company}`,
-    matched.length ? `Aligned skills: ${matched.join(", ")}` : "",
-    "",
-    ...(blocks.length ? blocks : masterCv.trim() ? [masterCv.trim()] : ["Master CV is not on file."]),
-  ]
-    .filter((line, index, rows) => line || rows[index - 1])
-    .join("\n");
   const now = Date.now() / 1000;
   return {
     id: `local-${job.id}`,
@@ -268,16 +255,17 @@ function localPack(job: CareerOpportunity, masterCv: string): CareerApplication 
     title,
     company,
     source: job.source || "",
-    cv_name: `CV_${title.replace(/\W+/g, "_")}_${company.replace(/\W+/g, "_")}.docx`,
-    cv_text: cvText,
-    cover: `Hello,\n\nI am writing about the ${title} role at ${company}. My background matches ${matched.join(", ") || "experience already on my CV"}.\n\nBest regards`,
-    summary:
-      "Reorder real experience only. Do not invent employers, dates or tools that are not in the master CV.",
-    ats_notes: matched.length ? `Matched: ${matched.join(", ")}` : "",
-    pack_ready: Boolean(masterCv.trim()),
-    stage: "ready",
+    cv_name: job.cv_name,
+    cv_text: job.cv_text,
+    cv: job.cv,
+    cover: job.cover,
+    generation: job.generation,
+    summary: job.cv?.summary,
+    ats_notes: job.ats_notes,
+    pack_ready: Boolean(job.pack_ready),
+    stage: job.stage,
     apply_mode: "manual",
-    next_action: "Review the tailored CV, then open the original URL to submit.",
+    next_action: job.next_action,
     created_at: now,
     updated_at: now,
   };
@@ -340,7 +328,6 @@ export function CareerWorkspace({
   const [minSalary, setMinSalary] = useState("");
   const [available, setAvailable] = useState("");
   const [languages, setLanguages] = useState("fr, en");
-  const [masterCv, setMasterCv] = useState("");
   const [workMode, setWorkMode] = useState("remote");
   const [brief, setBrief] = useState("");
   const [inboxText, setInboxText] = useState("");
@@ -356,6 +343,9 @@ export function CareerWorkspace({
   const stayOnSetup = useRef(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
+  const [mailSettingsOpen, setMailSettingsOpen] = useState(false);
+  const [mailOfferId, setMailOfferId] = useState("");
+  const [mailPreview, setMailPreview] = useState<CareerMailDraft | null>(null);
 
   const tx = useCallback(
     (key: string, fallback: string, values?: Record<string, string | number>) =>
@@ -452,7 +442,6 @@ export function CareerWorkspace({
     setMinSalary((current) => (p.min_salary ? String(p.min_salary) : current));
     setAvailable(String(p.available_from || ""));
     setLanguages(joinList(p.languages));
-    setMasterCv(String(p.master_cv || ""));
     setWorkMode(String(p.work_mode || "remote"));
     setAtsBoards((current) => joinList(p.ats_boards) || current);
     if (p.track === "jobs" || p.track === "freelance") setTrack(p.track);
@@ -472,14 +461,21 @@ export function CareerWorkspace({
         if (isAbortError(err) || signal?.aborted) return null;
         const status = err instanceof ApiError ? err.status : 0;
         if (!status || status >= 500) setApiOffline(true);
-        setError((err as Error).message || tx("actionFailed", "Career action failed."));
+        setError(careerMailError((err as Error).message || tx("actionFailed", "Career action failed."), i18n.language.startsWith("fr")));
         return null;
       } finally {
         if (!signal?.aborted) setBusy("");
       }
     },
-    [token, tx],
+    [token, tx, i18n.language],
   );
+
+  const openMail = async (id: string, recipient = "") => {
+    setMailOfferId(id);
+    setMailPreview(null);
+    const result = await run("mail_draft", { id, recipient });
+    if (result?.mail_draft) setMailPreview(result.mail_draft);
+  };
 
   const stopSearch = useCallback(() => {
     searchAbortRef.current?.abort();
@@ -878,7 +874,7 @@ export function CareerWorkspace({
     (job: CareerOpportunity, extra: Partial<CareerApplication> = {}) => {
       const now = Date.now() / 1000;
       setLocalApps((current) => {
-        const pack = current.find((item) => item.opportunity_id === job.id) || localPack(job, masterCv);
+        const pack = current.find((item) => item.opportunity_id === job.id) || applicationFromOffer(job);
         return dedupeApplications([
           {
             ...pack,
@@ -893,28 +889,16 @@ export function CareerWorkspace({
         ]);
       });
     },
-    [masterCv],
+    [],
   );
 
   const prepareOffer = async (id?: string) => {
     const job = (id && jobById(id)) || selected;
     if (!job) return;
     const result = await run("prepare", { id: job.id });
-    const pack = localPack(job, masterCv);
-    rememberApp(job, {
-      ...pack,
-      stage: "ready",
-      pack_ready: pack.pack_ready,
-    });
-    if (!result) {
-      patchOfferLocal(job.id, {
-        stage: "ready",
-        cv_name: pack.cv_name,
-        cv_text: pack.cv_text,
-        cover: pack.cover,
-        pack_ready: pack.pack_ready,
-        next_action: pack.next_action,
-      });
+    if (result?.prepared) {
+      rememberApp(job, result.prepared);
+      return result.prepared;
     }
   };
 
@@ -965,47 +949,24 @@ export function CareerWorkspace({
   const prepareSelected = () => prepareOffer();
   const applySelected = () => applyOffer();
 
-  const saveLocalCvText = (name: string, text: string) => {
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const href = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = name.replace(/\.\w+$/, "") + ".txt";
-    link.click();
-    URL.revokeObjectURL(href);
-  };
-
-  const downloadSelected = async (id: string) => {
+  const downloadSelected = async (id: string, kind: "cv_docx" | "cover_docx" = "cv_docx") => {
     const row = rows.find((item) => item.id === id) || selected;
     if (row && !row.pack_ready && !row.cv_text) {
-      await run("prepare", { id });
+      if (!await prepareOffer(id)) return;
     }
     setBusy("download");
     setError("");
-    const localText =
-      row?.cv_text ||
-      apps.find((item) => item.opportunity_id === id)?.cv_text ||
-      (row ? localPack(row, masterCv).cv_text : "") ||
-      "";
     try {
       if (token) {
-        const result = await postCareer(token, "download", { id, kind: "docx" });
+        const result = await postCareer(token, "download", { id, kind });
         if (result.download?.data) {
           triggerCareerDownload(result.download);
           setLive(result);
           return;
         }
       }
-      if (localText.trim()) {
-        saveLocalCvText(row?.cv_name || "CV.txt", localText);
-        return;
-      }
       setError(tx("downloadCvFailed", "Download failed. Tailor the CV to this mission first."));
     } catch (err) {
-      if (localText.trim()) {
-        saveLocalCvText(row?.cv_name || "CV.txt", localText);
-        return;
-      }
       setError((err as Error).message || tx("downloadCvFailed", "Download failed. Tailor the CV to this mission first."));
     } finally {
       setBusy("");
@@ -1463,8 +1424,9 @@ export function CareerWorkspace({
                   }}
                   onPrepare={() => void prepareSelected()}
                   onApply={() => void applySelected()}
+                  onEmail={() => selected && void openMail(selected.id)}
                   onMarkApplied={() => selected && void markApplied(selected.id)}
-                  onDownload={(id) => void downloadSelected(id)}
+                  onDownload={(id, kind) => void downloadSelected(id, kind)}
                   onCopy={copyText}
                   copied={copied}
                   locale={i18n.language}
@@ -1483,14 +1445,24 @@ export function CareerWorkspace({
                   locale={i18n.language}
                   onPrepare={(id) => void prepareOffer(id)}
                   token={token || ""}
-                  onDownload={(id) => void downloadSelected(id)}
+                  onDownload={(id, kind) => void downloadSelected(id, kind)}
                   onApply={(id) => void applyOffer(id)}
+                  onEmail={(id) => void openMail(id)}
                   onMarkApplied={(id) => void markApplied(id)}
                   onOpenDiscover={() => openOffers({ view: "inbox", bucket: "all" })}
                   onCopy={copyText}
                 />
               ) : null}
               {showDesk && pane === "inbox" ? (
+                <>
+                <CareerMailAccountSummary
+                  profile={desk.profile}
+                  status={desk.mailbox_status}
+                  french={lang === "fr"}
+                  busy={Boolean(busy)}
+                  onSettings={() => { setError(""); setMailSettingsOpen(true); }}
+                  onSync={() => void run("sync_mail")}
+                />
                 <InboxPane
                   tx={tx}
                   items={inbox}
@@ -1508,6 +1480,7 @@ export function CareerWorkspace({
                   onFollowup={followLocal}
                   onCopy={copyText}
                 />
+                </>
               ) : null}
               {showDesk && (pane === "pipeline" || pane === "interviews") ? (
                 <PipelinePane
@@ -1527,13 +1500,25 @@ export function CareerWorkspace({
                 />
               ) : null}
               {showDesk && pane === "profile" ? (
+                <>
+                <CareerMailAccountSummary
+                  profile={desk.profile}
+                  status={desk.mailbox_status}
+                  french={lang === "fr"}
+                  busy={Boolean(busy)}
+                  onSettings={() => { setError(""); setMailSettingsOpen(true); }}
+                  onSync={() => void run("sync_mail")}
+                />
                 <ProfilePane
                   tx={tx}
                   track={track}
                   profile={desk.profile}
                   files={desk.files}
                   onReopen={openSetup}
+                  busy={Boolean(busy)}
+                  onAiAssist={(enabled) => void run("profile", { ai_assist: enabled })}
                 />
+                </>
               ) : null}
             </motion.div>
           </AnimatePresence>
@@ -1550,6 +1535,35 @@ export function CareerWorkspace({
           tx={tx}
           onDismiss={() => setScheduleOpen(false)}
           onSubmit={(schedule, runNow) => void submitSchedule(schedule, runNow)}
+        />
+        <CareerMailSettings
+          key={mailSettingsOpen ? "mail-settings-open" : "mail-settings-closed"}
+          open={mailSettingsOpen}
+          profile={desk.profile}
+          status={desk.mailbox_status}
+          french={lang === "fr"}
+          busy={Boolean(busy)}
+          error={error}
+          loopEnabled={Boolean(desk.loop?.enabled)}
+          onDismiss={() => setMailSettingsOpen(false)}
+          onSchedule={() => { setMailSettingsOpen(false); setScheduleMode("start"); setScheduleOpen(true); }}
+          run={run}
+        />
+        <CareerMailCompose
+          open={Boolean(mailOfferId)}
+          draft={mailPreview}
+          receipt={desk.mailbox_status?.receipts?.find((row) => row.opportunity_id === mailOfferId)}
+          french={lang === "fr"}
+          busy={Boolean(busy)}
+          error={error}
+          accountEnabled={desk.profile.mailbox?.enabled === true}
+          onDismiss={() => { setMailOfferId(""); setMailPreview(null); }}
+          onSettings={() => { setMailOfferId(""); setMailSettingsOpen(true); setError(""); }}
+          onRefresh={(recipient) => void openMail(mailOfferId, recipient)}
+          onSend={(reviewed, retry) => mailPreview && void run("send_email", {
+            id: mailOfferId, recipient: mailPreview.recipient, revision: mailPreview.revision, reviewed, retry,
+          })}
+          onDownload={(kind) => void downloadSelected(mailOfferId, kind)}
         />
       </div>
     </Customizer>
@@ -1587,6 +1601,7 @@ function OfferDetail({
   displayName,
   onPrepare,
   onApply,
+  onEmail,
   onMarkApplied,
   onDownload,
   onCopy,
@@ -1602,8 +1617,9 @@ function OfferDetail({
   displayName?: string;
   onPrepare: () => void;
   onApply: () => void;
+  onEmail: () => void;
   onMarkApplied: () => void;
-  onDownload: (id: string) => void;
+  onDownload: (id: string, kind?: "cv_docx" | "cover_docx") => void;
   onCopy: (text: string) => void;
 }) {
   const description = stripHtml(row.description || "");
@@ -1627,6 +1643,7 @@ function OfferDetail({
           styles={BUTTON_STYLES}
           text={tx("prepare", "Tailor CV to this mission")}
           data-testid="career-prepare-pack"
+          disabled={busy}
           onClick={onPrepare}
         />
         <DefaultButton
@@ -1635,6 +1652,14 @@ function OfferDetail({
           disabled={Boolean(busy)}
           data-testid="career-apply-offer"
           onClick={onApply}
+        />
+        <DefaultButton
+          styles={BUTTON_STYLES}
+          text={locale.startsWith("fr") ? "Candidature par email" : "Apply by email"}
+          iconProps={{ iconName: "Mail" }}
+          disabled={busy || !row.pack_ready}
+          onClick={onEmail}
+          data-testid="career-offer-email"
         />
         <DefaultButton
           styles={BUTTON_STYLES}
@@ -1647,6 +1672,7 @@ function OfferDetail({
           styles={BUTTON_STYLES}
           text={tx("downloadCv", "Download tailored CV")}
           data-testid="career-download-cv"
+          disabled={busy}
           onClick={() => onDownload(row.id)}
         />
         {row.url ? (
@@ -1657,11 +1683,19 @@ function OfferDetail({
           />
         ) : null}
         {row.cover ? (
-          <DefaultButton
-            styles={BUTTON_STYLES}
-            text={copied ? tx("copied", "Copied") : tx("copyCover", "Copy message")}
-            onClick={() => onCopy(row.cover || "")}
-          />
+          <>
+            <DefaultButton
+              styles={BUTTON_STYLES}
+              text={tx("downloadCover", "Download cover letter")}
+              disabled={busy}
+              onClick={() => onDownload(row.id, "cover_docx")}
+            />
+            <DefaultButton
+              styles={BUTTON_STYLES}
+              text={copied ? tx("copied", "Copied") : tx("copyCover", "Copy message")}
+              onClick={() => onCopy(row.cover || "")}
+            />
+          </>
         ) : null}
       </div>
       {row.cv_name ? (
@@ -1672,21 +1706,24 @@ function OfferDetail({
       {row.ats_notes ? (
         <p className="text-pretty text-sm text-muted-foreground">{row.ats_notes}</p>
       ) : null}
+      <DocumentGenerationNotice generation={row.generation} />
       {row.cv ? (
         <div data-testid="career-cv-text">
           <CvPreview
-            name={displayName}
+            name={row.cv.name || displayName}
             headline={row.cv.headline}
             target={row.cv.target}
             contacts={row.cv.contacts}
             summary={row.cv.summary}
             skills={row.cv.skills}
             strengths={row.cv.strengths}
+            highlights={row.cv.highlights}
+            sections={row.cv.sections}
             experiences={row.cv.experiences}
             education={row.cv.education}
             languages={row.cv.languages}
             cover={row.cover}
-            labels={cvLabels(tx)}
+            labels={cvLabels(tx, row.cv.language)}
           />
         </div>
       ) : row.cv_text ? (
@@ -1933,6 +1970,7 @@ function OffersPane({
   onMatch,
   onPrepare,
   onApply,
+  onEmail,
   onMarkApplied,
   onDownload,
   onCopy,
@@ -1963,8 +2001,9 @@ function OffersPane({
   onMatch: () => void;
   onPrepare: () => void;
   onApply: () => void;
+  onEmail: () => void;
   onMarkApplied: () => void;
-  onDownload: (id: string) => void;
+  onDownload: (id: string, kind?: "cv_docx" | "cover_docx") => void;
   onCopy: (text: string) => void;
   copied: string;
   bucket: "all" | "perfect" | "good" | "skip";
@@ -2268,6 +2307,7 @@ function OffersPane({
                 displayName={displayName}
                 onPrepare={onPrepare}
                 onApply={onApply}
+                onEmail={onEmail}
                 onMarkApplied={onMarkApplied}
                 onDownload={onDownload}
                 onCopy={onCopy}
@@ -2475,15 +2515,17 @@ function OfferPager({
   );
 }
 
-function cvLabels(tx: Tx) {
+function cvLabels(tx: Tx, language?: string) {
+  const options = language ? { lng: language } : undefined;
   return {
-    profile: tx("cvProfile", "Profile"),
-    skills: tx("cvSkills", "Skills"),
-    strengths: tx("cvStrengths", "Strengths"),
-    experience: tx("cvExperience", "Experience"),
-    education: tx("cvEducation", "Education"),
-    languages: tx("cvLanguages", "Languages"),
-    letter: tx("coverLetter", "Cover letter"),
+    profile: tx("cvProfile", "Profile", options),
+    skills: tx("cvSkills", "Skills", options),
+    strengths: tx("cvStrengths", "Strengths", options),
+    highlights: tx("cvHighlights", "Selected achievements", options),
+    experience: tx("cvExperience", "Experience", options),
+    education: tx("cvEducation", "Education", options),
+    languages: tx("cvLanguages", "Languages", options),
+    letter: tx("coverLetter", "Cover letter", options),
   };
 }
 
@@ -2498,6 +2540,7 @@ function ApplicationsPane({
   token,
   onPrepare,
   onApply,
+  onEmail,
   onMarkApplied,
   onDownload,
   onOpenDiscover,
@@ -2513,8 +2556,9 @@ function ApplicationsPane({
   token: string;
   onPrepare: (id: string) => void;
   onApply: (id: string) => void;
+  onEmail: (id: string) => void;
   onMarkApplied: (id: string) => void;
-  onDownload: (id: string) => void;
+  onDownload: (id: string, kind?: "cv_docx" | "cover_docx") => void;
   onOpenDiscover: () => void;
   onCopy: (text: string) => void;
 }) {
@@ -2618,6 +2662,14 @@ function ApplicationsPane({
             <div className="mt-4 flex flex-wrap gap-2">
               <DefaultButton
                 styles={BUTTON_STYLES}
+                text={locale.startsWith("fr") ? "Courrier de candidature" : "Application email"}
+                iconProps={{ iconName: "Mail" }}
+                disabled={!view.app.pack_ready}
+                onClick={() => onEmail(view.app.opportunity_id)}
+                data-testid="career-application-email"
+              />
+              <DefaultButton
+                styles={BUTTON_STYLES}
                 text={tx("appsOpenDetail", "Open details")}
                 onClick={() => setOpenId(view.app.opportunity_id)}
               />
@@ -2652,6 +2704,7 @@ function ApplicationsPane({
             unknown={unknown}
             onPrepare={onPrepare}
             onApply={onApply}
+            onEmail={onEmail}
             onMarkApplied={onMarkApplied}
             onDownload={onDownload}
             onCopy={onCopy}
@@ -2672,6 +2725,7 @@ function ApplicationDetail({
   unknown,
   onPrepare,
   onApply,
+  onEmail,
   onMarkApplied,
   onDownload,
   onCopy,
@@ -2685,8 +2739,9 @@ function ApplicationDetail({
   unknown: string;
   onPrepare: (id: string) => void;
   onApply: (id: string) => void;
+  onEmail: (id: string) => void;
   onMarkApplied: (id: string) => void;
-  onDownload: (id: string) => void;
+  onDownload: (id: string, kind?: "cv_docx" | "cover_docx") => void;
   onCopy: (text: string) => void;
 }) {
   const job = view.job;
@@ -2722,25 +2777,36 @@ function ApplicationDetail({
         {description || tx("noDescription", "No description stored. Open the original URL.")}
       </p>
       {app.ats_notes ? <p className="text-pretty text-sm text-muted-foreground">{app.ats_notes}</p> : null}
+      <DocumentGenerationNotice generation={app.generation} />
+      {app.mail_receipt ? <CareerMailReceiptView receipt={app.mail_receipt} french={locale.startsWith("fr")} /> : null}
       {app.cv ? (
         <CvPreview
-          name={view.title}
+          name={app.cv.name}
           headline={app.cv.headline}
           target={app.cv.target}
           contacts={app.cv.contacts}
           summary={app.cv.summary}
           skills={app.cv.skills}
           strengths={app.cv.strengths}
+          highlights={app.cv.highlights}
+          sections={app.cv.sections}
           experiences={app.cv.experiences}
           education={app.cv.education}
           languages={app.cv.languages}
           cover={app.cover}
-          labels={cvLabels(tx)}
+          labels={cvLabels(tx, app.cv.language)}
         />
       ) : app.cv_text ? (
         <DossierPreview title={tx("cvReady", "Tailored CV")} body={app.cv_text} />
       ) : null}
       <div className="flex flex-wrap gap-2">
+        <DefaultButton
+          styles={BUTTON_STYLES}
+          text={locale.startsWith("fr") ? "Courrier de candidature" : "Application email"}
+          iconProps={{ iconName: "Mail" }}
+          disabled={!app.pack_ready}
+          onClick={() => onEmail(app.opportunity_id)}
+        />
         <PrimaryButton
           styles={BUTTON_STYLES}
           text={tx("apply", "Apply on the site")}
@@ -2763,6 +2829,13 @@ function ApplicationDetail({
           text={tx("downloadCv", "Download tailored CV")}
           onClick={() => onDownload(app.opportunity_id)}
         />
+        {app.cover ? (
+          <DefaultButton
+            styles={BUTTON_STYLES}
+            text={tx("downloadCover", "Download cover letter")}
+            onClick={() => onDownload(app.opportunity_id, "cover_docx")}
+          />
+        ) : null}
         {app.cover ? (
           <DefaultButton styles={BUTTON_STYLES} text={tx("copyCover", "Copy message")} onClick={() => onCopy(app.cover || "")} />
         ) : null}
@@ -2988,12 +3061,16 @@ function ProfilePane({
   profile,
   files,
   onReopen,
+  busy,
+  onAiAssist,
 }: {
   tx: Tx;
   track: CareerTrack;
   profile: CareerProfile;
   files?: Record<string, string>;
   onReopen: () => void;
+  busy: boolean;
+  onAiAssist: (enabled: boolean) => void;
 }) {
   const pay =
     track === "freelance"
@@ -3078,6 +3155,19 @@ function ProfilePane({
             </p>
           </div>
         ) : null}
+        <div>
+          <Toggle
+            label={tx("draftingAssist", "Assisted CV and cover letter drafting")}
+            checked={profile.ai_assist === true}
+            disabled={busy}
+            onText={tx("draftingAssistOn", "Enabled")}
+            offText={tx("draftingAssistOff", "Disabled")}
+            onChange={(_, checked) => onAiAssist(Boolean(checked))}
+          />
+          <p className="text-pretty text-sm text-muted-foreground">
+            {tx("draftingAssistHint", "Use the configured writing model to tailor your recorded experience to each offer. Changes apply to the next CV you generate.")}
+          </p>
+        </div>
         {files?.root ? (
           <div className="grid gap-2">
             <p className="text-[12px] font-medium text-muted-foreground">{tx("localBook", "Local book")}</p>

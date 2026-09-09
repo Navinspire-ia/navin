@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { CircleUserRound } from "lucide-react";
 
 import { useAccount } from "@/hooks/useAccount";
-import { localizedPlanLine, localizedPlanName } from "@/lib/accountPlan";
+import { compactAccountLine, localizedPlanLine, localizedPlanName } from "@/lib/accountPlan";
 
 /**
  * Cursor-style account chip: initial, name, plan line. Settings and the
@@ -21,7 +21,10 @@ export function SidebarAccountCard({
   const connected = account?.connected ?? false;
   const displayName = account?.name || account?.email || "";
   const initial = displayName.trim().charAt(0).toUpperCase();
-  const planLine = localizedPlanLine(t, account) || localizedPlanName(t, account);
+  const planLine =
+    compactAccountLine(t, account)
+    || localizedPlanLine(t, account)
+    || localizedPlanName(t, account);
 
   const label = connected
     ? displayName

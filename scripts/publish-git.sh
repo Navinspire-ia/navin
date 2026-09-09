@@ -6,8 +6,9 @@
 #            https://forgejo.navinspire.ai/Navinspire/navin-claw
 #
 #   GitHub   origin  branche main  = CLI public (sans site / desktop / AWS publish)
-#            https://github.com/navinspire-ai/navin-agi
-#   GitHub   github  branche main  = ancien dépôt public filtré
+#            https://github.com/Navinspire-ia/navin
+#   GitHub   github  branche main  = ancien hub public (compte navinspire-ai
+#            suspendu, conservé en lecture locale seulement)
 #            https://github.com/navinspire-ai/navin
 #
 # Usage :
@@ -17,8 +18,10 @@
 #   scripts/publish-git.sh github --from=prod   # overlay depuis une autre ref
 #   scripts/publish-git.sh remotes              # ajoute / affiche les remotes
 #
-# Le push GitHub ne réécrit pas l'historique Forgejo. Il part de origin/main
-# (navin-agi), y dépose l'arbre filtré, et ajoute un commit.
+# Le push GitHub ne réécrit pas l'historique Forgejo. Il part de origin/main,
+# y dépose l'arbre filtré, et ajoute un commit. Si le dépôt GitHub est neuf
+# (pas encore de branche main), on repart de la copie locale origin/main
+# quand elle existe, sinon d'un commit racine vide.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -26,7 +29,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 FORGEJO_URL="https://forgejo.navinspire.ai/Navinspire/navin-claw.git"
-GITHUB_AGI_URL="https://github.com/navinspire-ai/navin-agi.git"
+GITHUB_PUBLIC_URL="https://github.com/Navinspire-ia/navin.git"
 GITHUB_URL="https://github.com/navinspire-ai/navin.git"
 EXCLUDE_FILE="$ROOT/scripts/git-public-exclude.txt"
 PRESERVE_FILE="$ROOT/scripts/git-public-preserve.txt"
@@ -80,15 +83,15 @@ ensure_remote() {
 ensure_remotes() {
   git config core.hooksPath .githooks
   ensure_remote forgejo "$FORGEJO_URL"
-  ensure_remote origin "$GITHUB_AGI_URL"
+  ensure_remote origin "$GITHUB_PUBLIC_URL"
   ensure_remote github "$GITHUB_URL"
 }
 
 show_remotes() {
   ensure_remotes
-  echo "forgejo (Forgejo / prod-v2) : $(git remote get-url forgejo 2>/dev/null || remote_for_url "$FORGEJO_URL")"
-  echo "origin  (GitHub / main AGI) : $(git remote get-url origin 2>/dev/null || true)"
-  echo "github  (GitHub / ancien)   : $(git remote get-url github 2>/dev/null || true)"
+  echo "forgejo (Forgejo / prod-v2)    : $(git remote get-url forgejo 2>/dev/null || remote_for_url "$FORGEJO_URL")"
+  echo "origin  (GitHub / main public) : $(git remote get-url origin 2>/dev/null || true)"
+  echo "github  (GitHub / ancien hub)  : $(git remote get-url github 2>/dev/null || true)"
   echo
   echo "Pousser le privé :  make publish-forgejo"
   echo "Pousser le public : make publish-github-dry   puis   make publish-github"
@@ -217,6 +220,10 @@ assert_no_private_leak() {
   [ -e "$dest/navin/license_client.py" ] && leaked="${leaked}license_client "
   [ -e "$dest/navin/license_sync.py" ] && leaked="${leaked}license_sync "
   [ -e "$dest/navin/webui/account_api.py" ] && leaked="${leaked}account_api "
+  [ -e "$dest/tests/test_license_client.py" ] && leaked="${leaked}test_license_client "
+  [ -e "$dest/tests/test_license_sync.py" ] && leaked="${leaked}test_license_sync "
+  [ -e "$dest/tests/test_live_secrets_roundtrip.py" ] && leaked="${leaked}test_live_secrets_roundtrip "
+  [ -e "$dest/tests/test_webui_account_api.py" ] && leaked="${leaked}test_webui_account_api "
   [ -e "$dest/scripts/publish-os-to-s3.sh" ] && leaked="${leaked}publish-os-to-s3.sh "
   [ -e "$dest/scripts/publish-templates-to-s3.sh" ] && leaked="${leaked}publish-templates-to-s3.sh "
   [ -e "$dest/scripts/publish-media-templates-to-s3.sh" ] && leaked="${leaked}publish-media-templates-to-s3.sh "
@@ -225,19 +232,35 @@ assert_no_private_leak() {
   fi
 }
 
+# Commit de départ de l'arbre public. Normalement <remote>/main fraîchement
+# fetché. Dépôt GitHub neuf (pas encore de branche main) : on repart de la
+# copie locale refs/remotes/<remote>/main si elle existe (historique public
+# conservé), sinon d'un commit racine vide.
+public_base_ref() {
+  local remote="$1"
+  if GIT_TERMINAL_PROMPT=0 git fetch "$remote" main 2>/dev/null; then
+    printf 'refs/remotes/%s/main' "$remote"
+    return 0
+  fi
+  if git rev-parse --verify -q "refs/remotes/$remote/main" >/dev/null; then
+    echo "publish-git: pas de branche main sur $(git remote get-url "$remote") (dépôt neuf ?), on repart de la copie locale $remote/main." >&2
+    printf 'refs/remotes/%s/main' "$remote"
+    return 0
+  fi
+  echo "publish-git: aucun $remote/main (ni distant ni local) : premier push, commit racine vide." >&2
+  git commit-tree "$(git hash-object -t tree /dev/null)" -m "Init public tree"
+}
+
 ensure_github_worktree() {
-  local remote
-  remote="$(remote_for_url "$GITHUB_AGI_URL")" || die "aucun remote navin-agi ($GITHUB_AGI_URL)"
+  local base="$1"
   mkdir -p "$(dirname "$WORKTREE")"
   if git worktree list --porcelain | grep -q "^worktree ${WORKTREE}$"; then
-    git -C "$WORKTREE" fetch "$remote" main
-    git -C "$WORKTREE" checkout --detach "$remote/main"
-    git -C "$WORKTREE" reset --hard "$remote/main"
+    git -C "$WORKTREE" checkout --detach "$base"
+    git -C "$WORKTREE" reset --hard "$base"
   elif [ -d "$WORKTREE" ]; then
     die "dossier $WORKTREE présent mais pas un worktree. Supprime-le puis relance."
   else
-    git fetch "$remote" main
-    git worktree add --detach "$WORKTREE" "$remote/main"
+    git worktree add --detach "$WORKTREE" "$base"
   fi
 }
 
@@ -266,10 +289,14 @@ publish_github() {
   src_sha="$(git rev-parse "$src_ref")"
 
   echo "publish-git: source $src_ref ($src_sha)"
-  echo "publish-git: fetch origin/main (navin-agi)..."
-  git fetch origin main
+  local remote
+  remote="$(remote_for_url "$GITHUB_PUBLIC_URL")" || die "aucun remote pour $GITHUB_PUBLIC_URL (lance : scripts/publish-git.sh remotes)"
+  echo "publish-git: fetch $remote/main ($GITHUB_PUBLIC_URL)..."
+  local base
+  base="$(public_base_ref "$remote")"
+  echo "publish-git: base publique $(git rev-parse --short "$base")"
 
-  ensure_github_worktree
+  ensure_github_worktree "$base"
 
   local snapshot
   snapshot="$(mktemp -d "${TMPDIR:-/tmp}/navin-github-preserve.XXXXXX")"
@@ -303,7 +330,7 @@ publish_github() {
     git -C "$WORKTREE" diff --cached --stat | tail -n 50
     echo
     echo "Fichiers privés absents de l'index (contrôle) :"
-    git -C "$WORKTREE" ls-files | grep -E '^(site/|src/|desktop/|desktop-electron/|os/|templates/|tmp-preview-fixture/|packaging/aws/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|scripts/publish-.*-s3\.sh)' && die "fuite" || echo "  aucun (site / desktop / os / AWS / navin.live)"
+    git -C "$WORKTREE" ls-files | grep -E '^(site/|src/|desktop/|desktop-electron/|os/|templates/|tmp-preview-fixture/|packaging/aws/|navin/license_client\.py|navin/license_sync\.py|navin/webui/account_api\.py|tests/test_license_client\.py|tests/test_license_sync\.py|tests/test_live_secrets_roundtrip\.py|tests/test_webui_account_api\.py|scripts/publish-.*-s3\.sh)' && die "fuite" || echo "  aucun (site / desktop / os / AWS / navin.live)"
     git -C "$WORKTREE" reset --hard HEAD >/dev/null
     return 0
   fi
@@ -314,10 +341,10 @@ Sync public CLI tree from ${src_ref} ${src_sha:0:10}
 Site, desktop, os, navin.live and AWS publish stay on Forgejo only.
 EOF
 )"
-  local remote
-  remote="$(remote_for_url "$GITHUB_AGI_URL")" || die "aucun remote navin-agi"
-  echo "publish-git: push $remote HEAD:main"
-  NAVIN_PUBLIC_PUSH=1 git -C "$WORKTREE" push "$remote" HEAD:main
+  # refspec complet : sur un dépôt neuf, main n'existe pas encore côté distant
+  # et HEAD est détaché, git refuse alors de deviner "main".
+  echo "publish-git: push $remote HEAD:refs/heads/main"
+  NAVIN_PUBLIC_PUSH=1 git -C "$WORKTREE" push "$remote" HEAD:refs/heads/main
 }
 
 cmd="${1:-}"

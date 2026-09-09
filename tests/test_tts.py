@@ -16,7 +16,7 @@ from navin.audio.tts import (
     voice_realtime_allowed,
 )
 from navin.audio.tts_registry import resolve_tts_provider, tts_provider_names
-from navin.config.schema import Config, LicenseConfig, VoiceConfig
+from navin.config.schema import Config, LicenseConfig, TranscriptionConfig, VoiceConfig
 from navin.providers import tts as tts_providers
 from navin.webui.voice_session_ws import (
     clear_voice_sessions_for_tests,
@@ -114,7 +114,7 @@ async def test_synthesize_speech_rejects_empty_and_missing_key():
 
 
 @pytest.mark.asyncio
-async def test_voice_session_start_plan_required():
+async def test_voice_session_start_explains_missing_speech_setup():
     clear_voice_sessions_for_tests()
     config = Config(
         license=LicenseConfig(plan="free"),
@@ -127,7 +127,9 @@ async def test_voice_session_start_plan_required():
     assert len(events) == 1
     event, payload = events[0]
     assert event == "voice_session_error"
-    assert payload["detail"] == "plan_required"
+    assert payload["detail"] == "stt_not_configured"
+    assert payload["setup"]["missing"] == ["stt_not_configured", "tts_not_configured"]
+    assert payload["settings_section"] == "voice"
 
 
 @pytest.mark.asyncio
@@ -135,6 +137,7 @@ async def test_voice_session_start_and_tts_chunk():
     clear_voice_sessions_for_tests()
     config = Config(
         license=LicenseConfig(plan="pro"),
+        transcription=TranscriptionConfig(provider="groq"),
         voice=VoiceConfig(
             realtime_enabled=True,
             tts_provider="openai",
@@ -201,7 +204,9 @@ async def test_voice_session_start_and_tts_chunk():
 @pytest.mark.asyncio
 async def test_voice_session_barge_in_cancels_tts():
     clear_voice_sessions_for_tests()
-    config = Config(license=LicenseConfig(plan="pro"), voice=VoiceConfig(realtime_enabled=True))
+    config = Config(license=LicenseConfig(plan="pro"),
+                    transcription=TranscriptionConfig(provider="groq"),
+                    voice=VoiceConfig(tts_provider="openai", realtime_enabled=True))
     stt_cfg = SimpleNamespace(enabled=True, configured=True, provider="groq")
     tts_cfg = SimpleNamespace(
         provider="openai",
@@ -266,7 +271,113 @@ async def test_openrouter_tts_sends_extra_headers():
             "openrouter",
             "alloy",
             "or-key",
+            model="openai/gpt-4o-mini-tts",
         )
     assert audio == b"mp3"
     assert seen.get("authorization") == "Bearer or-key"
     assert seen.get("x-title") == "Navin"
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("google/gemini-3.1-flash-tts-preview", True),
+        ("gemini-2.5-pro-tts", True),
+        ("openai/gpt-4o-mini-tts", False),
+        ("google/gemini-2.5-flash", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_gemini_tts_model(model: str | None, expected: bool):
+    assert tts_providers.is_gemini_tts_model(model) is expected
+
+
+def test_pcm16_to_wav_writes_canonical_header():
+    wav = tts_providers.pcm16_to_wav(b"\x00\x01" * 4)
+    assert wav[:4] == b"RIFF"
+    assert wav[8:12] == b"WAVE"
+    assert wav[12:16] == b"fmt "
+    assert wav[36:40] == b"data"
+    assert len(wav) == 44 + 8
+    # mono, 24 kHz, 16-bit
+    assert int.from_bytes(wav[22:24], "little") == 1
+    assert int.from_bytes(wav[24:28], "little") == 24_000
+    assert int.from_bytes(wav[34:36], "little") == 16
+
+
+@pytest.mark.asyncio
+async def test_gemini_tts_requests_pcm_and_delivers_wav():
+    """Gemini TTS rejects mp3 (400); the adapter asks for pcm and wraps it as WAV."""
+    import json
+
+    seen: dict[str, object] = {}
+    pcm = b"\x10\x00\x20\x00\x30\x00"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.read()))
+        return httpx.Response(200, content=pcm)
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_async_client(*args, **kwargs)
+
+    with patch.object(tts_providers.httpx, "AsyncClient", side_effect=client_factory):
+        audio = await synthesize_speech(
+            "Bonjour",
+            "navin",
+            "eve",
+            "managed-key",
+            model="google/gemini-3.1-flash-tts-preview",
+            response_format="mp3",
+        )
+    assert seen.get("response_format") == "pcm"
+    # "eve" is a Grok voice: Gemini rejects it, so the adapter sends its twin.
+    assert seen.get("voice") == "Kore"
+    assert audio[:4] == b"RIFF"
+    assert audio.endswith(pcm)
+
+
+@pytest.mark.parametrize(
+    ("voice", "expected"),
+    [
+        ("Kore", "Kore"),
+        ("puck", "Puck"),
+        ("eve", "Kore"),
+        ("ara", "Aoede"),
+        ("rex", "Charon"),
+        ("sal", "Puck"),
+        ("leo", "Fenrir"),
+        ("alloy", "Kore"),
+        ("", "Kore"),
+        ("not-a-voice", "Kore"),
+    ],
+)
+def test_gemini_voice_mapping(voice: str, expected: str):
+    assert tts_providers.gemini_voice_for(voice) == expected
+
+
+def test_wire_voice_leaves_other_models_alone():
+    assert tts_providers.wire_voice("openai/gpt-4o-mini-tts", "eve") == "eve"
+    assert tts_providers.wire_voice("google/gemini-3.1-flash-tts-preview", "eve") == "Kore"
+
+
+def test_resolve_tts_config_announces_wav_for_gemini_models():
+    from navin.audio.tts import resolve_tts_config
+
+    config = Config(
+        license=LicenseConfig(plan="pro", managed_api_key="managed-key"),
+        voice=VoiceConfig(
+            tts_provider="navin",
+            tts_model="google/gemini-3.1-flash-tts-preview",
+            response_format="mp3",
+        ),
+    )
+    effective = resolve_tts_config(config)
+    assert effective.response_format == "wav"
+
+    config.voice.tts_model = "openai/gpt-4o-mini-tts"
+    assert resolve_tts_config(config).response_format == "mp3"

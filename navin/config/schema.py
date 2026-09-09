@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from navin.config_base import Base
@@ -12,9 +12,11 @@ from navin.cron.types import CronSchedule
 
 if TYPE_CHECKING:
     from navin.agent.approval import ApprovalConfig
+    from navin.agent.tools.ads import AdsToolConfig
     from navin.agent.tools.browser import BrowserToolConfig
     from navin.agent.tools.cli_apps import CliAppsToolConfig
     from navin.agent.tools.code_index import SemanticSearchConfig
+    from navin.agent.tools.computer import ComputerToolConfig
     from navin.agent.tools.database import DatabaseToolConfig
     from navin.agent.tools.filesystem import FileToolsConfig
     from navin.agent.tools.image_generation import ImageGenerationToolConfig
@@ -57,7 +59,8 @@ class TranscriptionConfig(Base):
     # la synchro du catalogue ; sans abonnement, ne rien présélectionner plutôt
     # que d'afficher une offre à laquelle l'utilisateur n'a pas souscrit.
     provider: str | None = ""  # Validated by navin.audio.transcription_registry.
-    model: str | None = "nvidia/parakeet-tdt-0.6b-v3"
+    model: str | None = ""
+    selection_explicit: bool = False  # A saved speech choice survives managed defaults/migrations.
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
     max_duration_sec: int = Field(default=120, ge=1, le=600)
     max_upload_mb: int = Field(default=25, ge=1, le=100)
@@ -79,18 +82,23 @@ class VoiceConfig(Base):
     """Realtime voice session + TTS settings.
 
     STT uses top-level ``transcription``. TTS / auto-speak / plan gate live here.
-    Realtime duplex voice is gated to Pro+ / Team unless ``realtime_enabled``
-    is set explicitly (BYOK / local override).
+    Realtime duplex voice uses Navin Pro+ / Team or explicitly configured BYOK
+    speech engines. ``realtime_enabled`` can also enable or disable it.
     """
 
     # Vide = aucun choix, comme ``TranscriptionConfig.provider``.
     tts_provider: str | None = ""  # Validated by navin.audio.tts_registry.
-    tts_model: str | None = "x-ai/grok-voice-tts-1.0"
-    voice: str = "eve"
+    tts_model: str | None = ""
+    selection_explicit: bool = False  # Includes BYOK choices whose key is not configured yet.
+    voice: str = "auto"
     auto_speak: bool = False
     response_format: str = "mp3"  # mp3 or wav
-    # None = follow license plan (Pro+/Team). True/False force enable/disable.
+    # None = Navin Pro+/Team or configured BYOK. True/False force enable/disable.
     realtime_enabled: bool | None = None
+    # Live conversation: model that turns the spoken transcript into the chat
+    # prompt. Empty = fast non-reasoning model for the active provider, then the
+    # default model (navin.audio.voice_prompt).
+    prompt_model: str | None = ""
 
 
 class RecurrenceConfig(Base):
@@ -255,6 +263,8 @@ class ModelPresetConfig(Base):
     enabled: bool = True
     # text = chat ; image/video/audio/music/stt = outils média (Settings).
     modality: Literal["text", "image", "video", "audio", "music", "stt"] = "text"
+    # Provider-declared inputs, retained when selecting a model from its catalog.
+    input_modalities: list[str] | None = None
     unit_price_usd: float | None = None
     price_note: str | None = None
     billing_unit: str | None = None
@@ -894,11 +904,18 @@ class ToolsConfig(Base):
     seo: SeoToolConfig = Field(
         default_factory=lambda: _lazy_default("navin.agent.tools.seo", "SeoToolConfig"),
     )
+    ads: AdsToolConfig = Field(
+        default_factory=lambda: _lazy_default("navin.agent.tools.ads", "AdsToolConfig"),
+    )
     leads: LeadsToolConfig = Field(
         default_factory=lambda: _lazy_default("navin.agent.tools.leads", "LeadsToolConfig"),
     )
     browser: BrowserToolConfig = Field(
         default_factory=lambda: _lazy_default("navin.agent.tools.browser", "BrowserToolConfig"),
+    )
+    # Desktop control (screen + mouse + keyboard on the real OS).
+    computer: ComputerToolConfig = Field(
+        default_factory=lambda: _lazy_default("navin.agent.tools.computer", "ComputerToolConfig"),
     )
     semantic_search: SemanticSearchConfig = Field(
         default_factory=lambda: _lazy_default(
@@ -1156,6 +1173,10 @@ class ResourcesConfig(Base):
 
 class Config(BaseSettings):
     """Root configuration for navin."""
+
+    # Used only to merge edits when a background request holds an older config.
+    _loaded_path: str | None = PrivateAttr(default=None)
+    _loaded_values: dict[str, Any] | None = PrivateAttr(default=None)
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig)
@@ -1496,9 +1517,11 @@ def _resolve_tool_config_refs() -> None:
     import sys
 
     from navin.agent.approval import ApprovalConfig
+    from navin.agent.tools.ads import AdsToolConfig
     from navin.agent.tools.browser import BrowserToolConfig
     from navin.agent.tools.cli_apps import CliAppsToolConfig
     from navin.agent.tools.code_index import SemanticSearchConfig
+    from navin.agent.tools.computer import ComputerToolConfig
     from navin.agent.tools.database import DatabaseToolConfig
     from navin.agent.tools.filesystem import FileToolsConfig
     from navin.agent.tools.image_generation import ImageGenerationToolConfig
@@ -1515,6 +1538,7 @@ def _resolve_tool_config_refs() -> None:
 
     # Re-export into this module's namespace
     mod = sys.modules[__name__]
+    mod.ComputerToolConfig = ComputerToolConfig  # type: ignore[attr-defined]
     mod.ExecToolConfig = ExecToolConfig  # type: ignore[attr-defined]
     mod.FileToolsConfig = FileToolsConfig  # type: ignore[attr-defined]
     mod.CliAppsToolConfig = CliAppsToolConfig  # type: ignore[attr-defined]
@@ -1530,6 +1554,7 @@ def _resolve_tool_config_refs() -> None:
     mod.DatabaseToolConfig = DatabaseToolConfig  # type: ignore[attr-defined]
     mod.ScrapeToolConfig = ScrapeToolConfig  # type: ignore[attr-defined]
     mod.SeoToolConfig = SeoToolConfig  # type: ignore[attr-defined]
+    mod.AdsToolConfig = AdsToolConfig  # type: ignore[attr-defined]
     mod.LeadsToolConfig = LeadsToolConfig  # type: ignore[attr-defined]
     mod.BrowserToolConfig = BrowserToolConfig  # type: ignore[attr-defined]
     mod.SemanticSearchConfig = SemanticSearchConfig  # type: ignore[attr-defined]

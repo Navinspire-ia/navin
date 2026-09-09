@@ -149,6 +149,29 @@ class SlackChannel(BaseChannel):
                 self.logger.warning("socket close failed: {}", e)
             self._socket_client = None
 
+    async def send_alert(self, msg: OutboundMessage) -> dict[str, Any]:
+        """Send an alert and keep Slack's accepted message timestamp."""
+        from slack_sdk.errors import SlackApiError
+
+        from navin.bus.alerts import AlertTransportError
+
+        if not self._web_client:
+            raise AlertTransportError("channel_not_connected")
+        try:
+            target = await self._resolve_target_chat_id(msg.chat_id)
+        except Exception:
+            raise AlertTransportError("invalid_recipient") from None
+        try:
+            response = await self._web_client.chat_postMessage(channel=target, text=msg.content, mrkdwn=False)
+        except SlackApiError:
+            raise AlertTransportError("slack_rejected") from None
+        except Exception:
+            raise AlertTransportError("transport_outcome_unknown", uncertain=True) from None
+        message_id = str(response.get("ts") or "")
+        if not response.get("ok") or not message_id:
+            raise AlertTransportError("provider_confirmation_missing", uncertain=True)
+        return {"message_ids": [message_id], "provider": "slack"}
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Slack."""
         if not self._web_client:

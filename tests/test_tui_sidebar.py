@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from navin.optional_live import live_modules_available
 from navin.tui.hubs import provider_panel_label
 from navin.tui.widgets import (
     account_side_text,
@@ -102,7 +103,7 @@ class ProviderPanelLabelTests(unittest.TestCase):
 
 
 class AccountTextTests(unittest.TestCase):
-    def test_keeps_plan_price_and_spend(self) -> None:
+    def test_keeps_plan_price_without_spend(self) -> None:
         payload = {
             "connected": True,
             "plan": "pro",
@@ -115,10 +116,10 @@ class AccountTextTests(unittest.TestCase):
             },
         }
         side = account_side_text(payload)
-        self.assertIn("Pro", side)
-        self.assertIn("1%", side)
-        self.assertIn("$69/month", side)
-        self.assertIn("$0.71 / $64.00", side)
+        self.assertEqual(side, "• Pro  1%  $69/month")
+        self.assertNotIn("$0.71", side)
+        self.assertNotIn("$64.00", side)
+        self.assertNotIn(" / $", side)
 
     def test_disconnected_is_empty_in_the_panel(self) -> None:
         self.assertEqual(account_side_text({"connected": False}), "")
@@ -176,7 +177,18 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(side.query_one("#side-workspace").has_class("-boxed"))
             self.assertNotIn("Workspace", head.content)
             self.assertNotIn("ctrl+w", head.content)
-            self.assertEqual(list(side.query("#side-account")), [])
+            if live_modules_available():
+                account = side.query_one("#side-account")
+                self.assertTrue(account.has_class("-accent"))
+                account_head = account.query_one(".card-head", Static)
+                account_body = account.query_one(".card-body", Static)
+                self.assertIn("Account", account_head.content)
+                self.assertIn("$primary", account_head.content)
+                self.assertIn("ctrl+d", account_head.content)
+                self.assertIn("• Pro", account_body.content)
+                self.assertIn("$primary", account_body.content)
+            else:
+                self.assertEqual(list(side.query("#side-account")), [])
             self.assertGreaterEqual(side.query_one("#side-mode").size.height, 1)
             side.set_version("2.0.1")
             await pilot.pause()
@@ -203,7 +215,7 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
         app = Host()
         async with app.run_test(size=(80, 24)) as pilot:
             side = app.query_one(Sidebar)
-            side.set_account("• Pro  1%  $69/month\n$0.71 / $64.00")
+            side.set_account("• Pro  1%  $69/month")
             side.set_version("2.0.1")
             side.set_workspace("/home/aymen/projects/deploy7/navin-ai-v2")
             await pilot.pause()
@@ -211,7 +223,10 @@ class SidebarRenderTests(unittest.IsolatedAsyncioTestCase):
             version = side.query_one("#side-version", Static)
             self.assertGreaterEqual(foot.size.height, 4)
             self.assertGreaterEqual(version.size.height, 1)
-            self.assertEqual(list(side.query("#side-account")), [])
+            if live_modules_available():
+                self.assertEqual(len(list(side.query("#side-account"))), 1)
+            else:
+                self.assertEqual(list(side.query("#side-account")), [])
             self.assertIn("navin", version.content)
             self.assertIn("v2.0.1", version.content)
 

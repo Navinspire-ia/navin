@@ -100,6 +100,7 @@ ROUTE_ROLES: tuple[tuple[str, str], ...] = (
     ("fast", "Fast answers"),
     ("code", "Code edits"),
     ("vision", "Vision"),
+    ("computer", "Desktop control"),
     ("search", "Search"),
     ("plan", "Planning"),
     ("review", "Review"),
@@ -690,6 +691,60 @@ def build_sections(
                     ("tools", "browser", "liveView"),
                     "toggle",
                     "Live view of what the agent does.",
+                ),
+            ),
+        ),
+        Section(
+            "computer",
+            "Computer",
+            "Desktop control: the agent sees the screen and drives the mouse and keyboard "
+            "in any app. Off by default. `navin computer doctor` checks permissions.",
+            fields=(
+                Field(
+                    "Let the agent use the desktop",
+                    ("tools", "computer", "enabled"),
+                    "toggle",
+                    "Registers the `computer` tool at the next start.",
+                    restart=True,
+                ),
+                Field(
+                    "Ask before acting",
+                    ("tools", "computer", "ask"),
+                    "select",
+                    "destructive: dangerous shortcuts and typed commands only.",
+                    options=(
+                        ("destructive", "destructive actions"),
+                        ("always", "every action"),
+                        ("never", "never (dedicated display only)"),
+                    ),
+                ),
+                Field(
+                    "Which screen",
+                    ("tools", "computer", "sessionMode"),
+                    "select",
+                    "dedicated refuses to run on your own desktop.",
+                    options=(
+                        ("shared", "my desktop"),
+                        ("dedicated", "a display reserved for the agent"),
+                    ),
+                ),
+                Field(
+                    "Mirror it in the editor",
+                    ("tools", "computer", "liveView"),
+                    "toggle",
+                    "Agent desktop panel with user takeover.",
+                ),
+                Field(
+                    "Keep an audit trail",
+                    ("tools", "computer", "auditLog"),
+                    "toggle",
+                    "Replay with `navin computer audit`.",
+                ),
+                Field(
+                    "Claude native computer tool",
+                    ("tools", "computer", "anthropicNative"),
+                    "toggle",
+                    "Direct Anthropic provider only; better aim.",
                 ),
             ),
         ),

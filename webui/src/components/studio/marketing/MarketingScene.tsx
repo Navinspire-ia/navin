@@ -1,7 +1,8 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { Group, Mesh } from "three";
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
 
 function Orbit({
   heat,
@@ -88,7 +89,7 @@ export function MarketingScene({
         aria-label={label}
         shadows
         frameloop={playing ? "always" : "demand"}
-        camera={{ position: [0, 0.68, 2.5], fov: 42 }}
+        camera={{ position: [0, 0.68, 2.5], fov: 45 }}
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
@@ -97,7 +98,7 @@ export function MarketingScene({
         <directionalLight position={[2.1, 3.2, 2.2]} intensity={1.25} castShadow />
         <Suspense fallback={null}>
           <Orbit heat={clamped} reduced={!playing} />
-          <Environment preset="city" />
+          <StudioEnvironment />
           <ContactShadows position={[0, -0.7, 0]} opacity={0.42} scale={5.2} blur={2.2} />
         </Suspense>
         <OrbitControls enablePan={false} enableZoom={false} enableDamping dampingFactor={0.12} />

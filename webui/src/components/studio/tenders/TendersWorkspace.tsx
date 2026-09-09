@@ -8,6 +8,7 @@ import { DeskSkeleton, DossierPane, HomePane, NoticesPane } from "@/components/s
 import { buildTenderKpis } from "@/components/studio/tenders/TendersKpis";
 import type { NoticeListView, PipelineFilter } from "@/components/studio/tenders/pipeline";
 import { TendersWizard } from "@/components/studio/tenders/TendersWizard";
+import { TenderAlertDeliveries } from "@/components/studio/tenders/TenderAlertDeliveries";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import {
   BUTTON_STYLES,
@@ -79,6 +80,7 @@ export function TendersWorkspace({
   const [desk, setDesk] = useState<TenderDesk | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [savedType, setSavedType] = useState(MessageBarType.success);
   const [busy, setBusy] = useState("");
   const [view, setView] = useState<View>("work");
   const [deskPane, setDeskPane] = useState<DeskPane>(
@@ -140,12 +142,13 @@ export function TendersWorkspace({
 
   useEffect(() => {
     const hunting = desk?.loop?.phase === "hunt" || desk?.loop?.phase === "busy";
-    if (!token || !hunting) return undefined;
+    const awaitingReceipts = Boolean(desk?.alert_deliveries?.pending);
+    if (!token || (!hunting && !awaitingReceipts)) return undefined;
     const id = window.setInterval(() => {
       void load();
-    }, 8_000);
+    }, awaitingReceipts ? 3_000 : 8_000);
     return () => window.clearInterval(id);
-  }, [token, desk?.loop?.phase, load]);
+  }, [token, desk?.loop?.phase, desk?.alert_deliveries?.pending, load]);
 
   useEffect(() => {
     const next = (noticeId || "").trim();
@@ -183,6 +186,7 @@ export function TendersWorkspace({
       setBusy(action);
       setError("");
       setSaved("");
+      setSavedType(MessageBarType.success);
       try {
         const result = await postTenders(token, action, body);
         setDesk(result);
@@ -196,11 +200,18 @@ export function TendersWorkspace({
         ) {
           setSaved(tx("saved", "Saved."));
         } else if (action === "follow") {
+          const confirmed = result.watch?.delivered === true;
+          if (result.watch?.count && !confirmed) setSavedType(MessageBarType.info);
           setSaved(
             result.watch?.count
-              ? tx("followSent", "Digest sent for {{count}} notice(s).", { count: result.watch.count })
+              ? confirmed
+                ? (i18n.language.startsWith("fr") ? "Les canaux activés ont confirmé le récapitulatif." : "Enabled channels confirmed the digest.")
+                : (i18n.language.startsWith("fr") ? "Les alertes restent en attente de confirmation. Consultez le suivi par canal." : "Alerts are awaiting confirmation. Check delivery tracking by channel.")
               : tx("followNothing", "Nothing new to report."),
           );
+        } else if (action === "notify" || action === "retry-alerts") {
+          setSavedType(MessageBarType.info);
+          setSaved(i18n.language.startsWith("fr") ? "Demande enregistrée. Les confirmations apparaissent dans le suivi des alertes." : "Request recorded. Confirmations appear in alert delivery tracking.");
         } else if (action === "crm-sync") {
           setSaved(
             tx("crmDone", "CRM updated: {{created}} created, {{updated}} updated.", {
@@ -245,7 +256,7 @@ export function TendersWorkspace({
         setBusy("");
       }
     },
-    [token, tx],
+    [token, tx, i18n.language],
   );
 
   const live = desk || emptyDesk();
@@ -432,7 +443,7 @@ export function TendersWorkspace({
             </MessageBar>
           ) : null}
           {saved ? (
-            <MessageBar messageBarType={MessageBarType.success} className="mb-4" onDismiss={() => setSaved("")}>
+            <MessageBar messageBarType={savedType} className="mb-4" onDismiss={() => setSaved("")}>
               {saved}
             </MessageBar>
           ) : null}
@@ -486,6 +497,11 @@ export function TendersWorkspace({
                 transition={SPRING}
                 className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-8"
               >
+                {showDesk && !openId ? (
+                  <TenderAlertDeliveries desk={live} busy={Boolean(busy)}
+                    onRetry={() => void run("retry-alerts")}
+                    onConfigure={() => { stayOnSetup.current = true; setView("setup"); }} />
+                ) : null}
                 {showWizard ? (
                   <TendersWizard
                     desk={live}
@@ -513,8 +529,8 @@ export function TendersWorkspace({
                     }}
                     onTest={() =>
                       run("notify", {
-                        title: "Tenders",
-                        detail: "Test from Settings. Channels that are on will receive this.",
+                        title: "Navin Tenders",
+                        detail: i18n.language.startsWith("fr") ? "Test des canaux activés depuis la configuration Tenders." : "Test of enabled channels from Tenders configuration.",
                       })
                     }
                   />

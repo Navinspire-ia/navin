@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -23,7 +24,10 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
             "(reorder, keywords, cover, Word pack). download returns the .docx. "
             "watch reports new Perfect/Good matches and due follow-ups (heartbeat). "
             "start/stop/schedule/tick run the desk hunt loop on a wall-clock "
-            "calendar (not heartbeat). apply never automates LinkedIn.",
+            "calendar (not heartbeat). apply opens a manual submission flow. "
+            "mail_config saves SMTP/IMAP settings and separate explicit opt-ins; mail_test only checks the account. "
+            "mail_draft previews the existing CV and cover; send_email sends that revision once, with a real SMTP receipt. "
+            "sync_mail reads only replies threaded to these applications. Never automate LinkedIn.",
             enum=[
                 "status",
                 "dossier",
@@ -47,6 +51,11 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
                 "download",
                 "export",
                 "apply",
+                "mail_config",
+                "mail_test",
+                "mail_draft",
+                "send_email",
+                "sync_mail",
                 "stage",
                 "inbox",
                 "classify",
@@ -93,6 +102,12 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
         display_name=StringSchema("Candidate or talent name."),
         headline=StringSchema("Headline."),
         email=StringSchema("Contact email."),
+        application_email=StringSchema("Explicit recruiter application address published in the offer or provided by the user. Never guess it."),
+        recipient=StringSchema("One explicit recruiter email for mail_draft/send_email."),
+        revision=StringSchema("Exact revision returned by mail_draft; required by send_email."),
+        reviewed=StringSchema("true only when the user has reviewed documents marked needs_review."),
+        retry=StringSchema("true for an explicitly requested retry after a confirmed failure; uncertain sends are never retried."),
+        kind=StringSchema("download/export: cv_docx (CV), cover_docx (letter) or docx (combined pack)."),
         phone=StringSchema("Phone, international format."),
         master_cv=StringSchema("Full master CV text. Facts only. Never invent."),
         strengths=StringSchema("Comma strengths to highlight."),
@@ -105,7 +120,13 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
         visa=StringSchema("Visa / sponsorship note."),
         available_from=StringSchema("Availability date."),
         languages=StringSchema("Comma languages, e.g. fr, en."),
-        payload=StringSchema("JSON object merged into the career profile (full write access)."),
+        payload=StringSchema(
+            "JSON profile fields for action=profile. For mail_config: {mailbox:{enabled,sender_email,sender_name,"
+            "smtp_host,smtp_port,smtp_security,smtp_username,imap_host,imap_port,imap_security,imap_username,"
+            "imap_folder,read_replies,auto_send,min_match_score,max_per_day,poll_interval_minutes,allowed_recipient_domains},"
+            "smtp_password,imap_password}. Read/auto-send opt-ins require explicit user authorization. "
+            "Use the secure UI to enter passwords where possible."
+        ),
         hits=StringSchema("JSON array of offers already listed (action=ingest). Never fetched."),
         via=StringSchema(
             "Ingest source. Use linkedin-mcp after mcp_linkedin_search_jobs / "
@@ -125,7 +146,7 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
         force=StringSchema("true to hunt now on action=tick, even if the next slot is later."),
         name=StringSchema(
             "Secret name for action=secret: ADZUNA_APP_ID, ADZUNA_APP_KEY, "
-            "JOOBLE_API_KEY, USAJOBS_API_KEY, USAJOBS_USER_AGENT."
+            "JOOBLE_API_KEY, USAJOBS_API_KEY, USAJOBS_USER_AGENT, CAREER_SMTP_PASSWORD, CAREER_IMAP_PASSWORD."
         ),
         value=StringSchema("Secret value for action=secret. Empty deletes it."),
     )
@@ -161,7 +182,10 @@ class CareerTool(Tool):
             "Autonomous hunt is start/stop/schedule/tick (desk loop: same store "
             "as Studio #/career, Tauri, navin career, and "
             "python -m navin.career.desk_cli). "
-            "watch is the silent heartbeat. Never scrape or auto-apply on LinkedIn."
+            "watch is the silent heartbeat. Professional mail uses mail_config/mail_test, then mail_draft and "
+            "send_email for an explicitly authorized reviewed application; sync_mail retrieves threaded responses. "
+            "Report accepted only from mail_receipt.status=accepted, preserving Message-ID. An enabled account "
+            "or legacy autopilot mode does not authorize auto_send. Never scrape or auto-apply on LinkedIn."
         )
 
     @property
@@ -236,6 +260,14 @@ class CareerTool(Tool):
             body["file"] = kwargs.get("file") or kwargs.get("id") or "book"
         elif action == "secret":
             body = {"name": kwargs.get("name") or "", "value": kwargs.get("value") or ""}
+        elif action == "mail_config":
+            try:
+                parsed = json.loads(str(kwargs.get("payload") or "{}"))
+            except json.JSONDecodeError:
+                return ToolResult.error("payload must be JSON")
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("mailbox"), dict):
+                return ToolResult.error("payload.mailbox must be an object")
+            body = parsed
         elif action in {"ingest", "hits"}:
             raw_hits = str(kwargs.get("hits") or kwargs.get("payload") or "").strip()
             if raw_hits:
@@ -262,6 +294,12 @@ class CareerTool(Tool):
                 "url": kwargs.get("url") or "",
                 "title": kwargs.get("title") or "",
                 "company": kwargs.get("company") or "",
+                "application_email": kwargs.get("application_email") or "",
+                "recipient": kwargs.get("recipient") or "",
+                "revision": kwargs.get("revision") or "",
+                "reviewed": str(kwargs.get("reviewed") or "").strip().lower() == "true",
+                "retry": str(kwargs.get("retry") or "").strip().lower() == "true",
+                "kind": kwargs.get("kind") or "docx",
                 "wave": kwargs.get("wave") or "j3",
                 "run_now": str(kwargs.get("run_now") or "").strip().lower() in {"1", "true", "yes"},
                 "tz": str(kwargs.get("tz") or "").strip() or None,
@@ -288,7 +326,7 @@ class CareerTool(Tool):
                 "cv": "prepare",
                 "classify": "inbox",
             }.get(action, action)
-            payload = handle_career_action(mapped, body)
+            payload = await asyncio.to_thread(handle_career_action, mapped, body)
         except CareerError as exc:
             return ToolResult.error(exc.message)
         if action in {"status", "dossier"}:

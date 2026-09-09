@@ -871,6 +871,71 @@ MCP_PRESETS: tuple[McpPreset, ...] = (
         modules=("ads",),
     ),
     McpPreset(
+        name="microsoft-ads",
+        display_name="Microsoft Ads",
+        category="ads",
+        description=(
+            "Read and manage Microsoft Advertising (Bing) accounts, campaigns, keywords, "
+            "negatives and reports through the Microsoft Advertising API v13 (stdio via npx)."
+        ),
+        docs_url="https://www.npmjs.com/package/@cesteral/msads-mcp",
+        transport="stdio",
+        install_supported=True,
+        brand_domain="ads.microsoft.com",
+        brand_color="#0078D4",
+        requires=(
+            "Node.js, npx, a Microsoft Advertising developer token, an OAuth2 access token "
+            "with the msads.manage scope, plus the manager (customer) id and account id"
+        ),
+        server=MCPServerConfig(
+            type="stdio",
+            command="npx",
+            args=["-y", "@cesteral/msads-mcp"],
+            tool_timeout=120,
+        ),
+        fields=(
+            McpPresetField(
+                name="msads_access_token",
+                label="Microsoft Advertising OAuth2 access token",
+                target=("env", "MSADS_ACCESS_TOKEN"),
+                env_var="MSADS_ACCESS_TOKEN",
+                placeholder="EwB...",
+            ),
+            McpPresetField(
+                name="msads_developer_token",
+                label="Developer token",
+                target=("env", "MSADS_DEVELOPER_TOKEN"),
+                env_var="MSADS_DEVELOPER_TOKEN",
+                placeholder="your-developer-token",
+            ),
+            McpPresetField(
+                name="msads_customer_id",
+                label="Manager account (customer) id",
+                target=("env", "MSADS_CUSTOMER_ID"),
+                env_var="MSADS_CUSTOMER_ID",
+                secret=False,
+                placeholder="123456789",
+            ),
+            McpPresetField(
+                name="msads_account_id",
+                label="Ad account id",
+                target=("env", "MSADS_ACCOUNT_ID"),
+                env_var="MSADS_ACCOUNT_ID",
+                secret=False,
+                placeholder="987654321",
+            ),
+        ),
+        note=(
+            "Register an app in Azure (redirect http://localhost), request a developer "
+            "token in the Microsoft Advertising developer portal, then mint an access "
+            "token with scope https://ads.microsoft.com/msads.manage offline_access. "
+            "Tokens expire; refresh them when the Test connection fails. Prefer reports "
+            "and reads first: bulk / status tools change spend. Used by the Ads studio "
+            "(Settings → MCP, Other modules → Ads); feed report rows to the `ads` engine."
+        ),
+        modules=("ads",),
+    ),
+    McpPreset(
         name="search-console",
         display_name="Google Search Console",
         category="seo",

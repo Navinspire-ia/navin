@@ -50,6 +50,12 @@ _VISION_FAMILY_MARKERS: tuple[str, ...] = (
     "qwen2-vl",
     "qwen2.5-vl",
     "qwen3-vl",
+    "qwen3.8-max",
+    "qwen3.8-flash",
+    "qwen3.8-27b",
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+    "qwen3.5-plus",
     "qvq",
     # Mistral
     "pixtral",
@@ -76,6 +82,20 @@ _VISION_FAMILY_MARKERS: tuple[str, ...] = (
     "ernie-4.5-vl",
     "kimi-vl",
     "dots.vlm",
+    # GUI agents: trained on screenshots, so vision by construction.
+    "computer-use",
+    "ui-tars",
+    "showui",
+    "os-atlas",
+    "seeclick",
+    "aguvis",
+    "cogagent",
+    "opencua",
+    "ferret-ui",
+    "holo1",
+    "holo-1",
+    "gui-actor",
+    "uground",
     # Generic markers used across vendors.
     "-vl-",
     "-vl:",
@@ -162,3 +182,72 @@ def supports_vision(
 def vision_flag_for_row(model_id: str | None, row: Mapping[str, Any] | None) -> bool:
     """Vision capability for a provider catalog row, declaration first."""
     return supports_vision(model_id, input_modalities=input_modalities_from_row(row))
+
+
+# Families trained to answer with *pixel coordinates* on a screenshot (GUI
+# grounding), which is what desktop / browser control needs on top of plain
+# image understanding. A vision model outside this list still works, but it
+# should lean on accessibility refs and shortcuts rather than guessed pixels.
+_GROUNDING_FAMILY_MARKERS: tuple[str, ...] = (
+    # Anthropic: computer use since Claude 3.5 Sonnet (new) / 3.7 / 4.x.
+    "claude-3-5",
+    "claude-3.5",
+    "claude-3-7",
+    "claude-3.7",
+    "claude-4",
+    "claude-5",
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+    "claude-sonnet",
+    "claude-opus",
+    # OpenAI: CUA / Operator lineage and the 4o / 4.1 / 5 generations.
+    "computer-use",
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-5",
+    "o3",
+    "o4-mini",
+    # Google: Gemini 2.x+ (and the dedicated computer-use variants).
+    "gemini-2",
+    "gemini-3",
+    "gemini-computer-use",
+    # Open GUI agents and VLMs with explicit grounding training.
+    "qwen2.5-vl",
+    "qwen3-vl",
+    "ui-tars",
+    "showui",
+    "os-atlas",
+    "seeclick",
+    "aguvis",
+    "cogagent",
+    "opencua",
+    "ferret-ui",
+    "holo1",
+    "holo-1",
+    "glm-4.1v",
+    "glm-4.5v",
+    "kimi-vl",
+    "molmo",
+    "gui-actor",
+    "uground",
+)
+
+
+def supports_grounding(
+    slug: str | None,
+    *,
+    input_modalities: Iterable[Any] | None = None,
+) -> bool:
+    """True when *slug* is known to output screen coordinates reliably.
+
+    Grounding implies vision, so the family list is the answer unless the
+    provider declared ``input_modalities`` without images: a model that cannot
+    read a screenshot cannot aim at it, whatever its name says.
+    """
+    if _modalities_say_vision(input_modalities) is False:
+        return False
+    base = _normalize(slug).split(":", 1)[0]
+    if not base or any(marker in base for marker in _TEXT_ONLY_OVERRIDES):
+        return False
+    return any(marker in base for marker in _GROUNDING_FAMILY_MARKERS)

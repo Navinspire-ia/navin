@@ -134,6 +134,7 @@ Important files:
 | Cron | `navin/agent/tools/cron.py`, `navin/cron/` |
 | Image generation | `navin/agent/tools/image_generation.py` |
 | Browser automation | `navin/agent/tools/browser.py` |
+| Desktop control (screen, mouse, keyboard; Windows / macOS / X11 / Wayland) | `navin/agent/tools/computer.py`, `navin/computer/`, `navin/cli/computer.py`, `navin/providers/native_tools.py` |
 | Mobile (Expo/RN/Flutter + Android preview) | `navin/agent/tools/mobile.py`, `navin/mobile/`, `navin-core/src/mobile.rs` |
 | Runtime self-inspection | `navin/agent/tools/self.py` |
 

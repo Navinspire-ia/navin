@@ -406,7 +406,7 @@ class SettingsScreen(ModalScreen[bool]):
     SettingsScreen Horizontal { height: 1fr; }
     SettingsScreen Tree { width: 1fr; height: 1fr; }
     SettingsScreen #editor { width: 48; height: 1fr; border-left: tall $panel; padding: 0 1; }
-    SettingsScreen #editor .field-path { color: $accent; text-style: bold; }
+    SettingsScreen #editor .field-path { color: #8FBC8F; text-style: bold; }
     SettingsScreen #editor .field-help { color: $text-muted; margin: 0 0 1 0; height: auto; }
     SettingsScreen #editor Input { margin: 1 0; }
     SettingsScreen #editor Button { margin: 0 1 0 0; }
@@ -682,8 +682,8 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+L` | Clear transcript (keeps session) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
-| `Ctrl+C` | Copy the selection (does not quit) |
-| `Ctrl+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (OS clipboard) |
+| `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit). Selecting text or right-click also copies it. |
+| `Ctrl+V` / `Cmd+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (OS clipboard via pbcopy / clip / wl-copy) |
 | `Ctrl+A` | Select all in the prompt |
 | `Ctrl+F` | Find in the conversation (Enter next, Esc close) |
 | `PageUp` / `PageDown` | Scroll the conversation |

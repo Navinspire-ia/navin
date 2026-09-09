@@ -156,8 +156,8 @@ def _parse_agent_file(path: Path) -> ProjectAgent | None:
     try:
         if path.stat().st_size > _MAX_AGENT_FILE_BYTES:
             return None
-        content = path.read_text(encoding="utf-8")
-    except OSError:
+        content = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
         return None
 
     name = path.stem
@@ -187,8 +187,8 @@ def _parse_agent_toml(path: Path) -> ProjectAgent | None:
     try:
         if path.stat().st_size > _MAX_AGENT_FILE_BYTES:
             return None
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
     if not isinstance(data, dict):
         return None

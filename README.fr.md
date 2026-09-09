@@ -14,7 +14,7 @@
 [English](./README.md) - [Français](./README.fr.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/navinspire-ai/navin-agi?style=flat)](https://github.com/navinspire-ai/navin-agi)
+[![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat)](https://github.com/Navinspire-ia/navin)
 
 Navin combine **Persistent Memory**, **Auto-Skills**, **Self-Evolve**, **World Models**, **Policy Learning**, les systèmes **Multi-Agent**, les **Loops** et **Heartbeat** pour aller au-delà des assistants statiques, vers des agents qui s'améliorent avec l'expérience.
 
@@ -220,8 +220,8 @@ Téléchargez depuis [navin.live/download](https://navin.live/download).
 ### Depuis les sources
 
 ```bash
-git clone https://github.com/navinspire-ai/navin-agi.git
-cd navin-agi
+git clone https://github.com/Navinspire-ia/navin.git
+cd navin
 make install
 make start
 ```

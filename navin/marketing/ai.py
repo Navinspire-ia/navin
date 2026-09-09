@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from navin.agent.skill_routing import build_action_skill_context
 from navin.desk_ai import ai_enabled, ask, ask_json, routing_snapshot
 
 ENV_FLAG = "NAVIN_MARKETING_AI"
@@ -178,9 +179,10 @@ def write_product_brief(
             pages.append(f"{str(item.get('title') or item.get('path') or '').strip()}: {str(item.get('description') or '').strip()[:160]}")
     if pages:
         user += "\nSite pages: " + " | ".join(pages[:6])
+    skills = build_action_skill_context("marketing", "understand", workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["understand"],
-        _fill(_PRODUCT_SYSTEM, brand),
+        skills.augment_system(_fill(_PRODUCT_SYSTEM, brand)),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -199,6 +201,7 @@ def write_product_brief(
         "value_prop": clean_copy(data.get("value_prop")),
         "search_terms": _strings(data.get("search_terms"), 6),
         "model": model,
+        "skill_context": skills.metadata,
     }
 
 
@@ -217,9 +220,10 @@ def write_positioning(
         user += "\nKnown competitors: " + ", ".join(item for item in names if item)
     if research and research.get("trends"):
         user += "\nMarket trends: " + "; ".join(str(item) for item in research.get("trends") or [])
+    skills = build_action_skill_context("marketing", "positioning", workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["positioning"],
-        _fill(_POSITIONING_SYSTEM, brand),
+        skills.augment_system(_fill(_POSITIONING_SYSTEM, brand)),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -239,6 +243,7 @@ def write_positioning(
         "differentiation": _strings(data.get("differentiation"), 5),
         "statement": statement,
         "model": model,
+        "skill_context": skills.metadata,
     }
 
 
@@ -280,9 +285,11 @@ def write_posts(
     user = _facts(product, brand, positioning)
     if angle:
         user += f"\nAngle to develop: {angle}"
+    action = channel.strip().lower() if channel.strip().lower() in {"email", "blog"} else "copy"
+    skills = build_action_skill_context("marketing", action, workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["copy"],
-        _fill(_COPY_SYSTEM, brand, n=max(1, n), channel=channel),
+        skills.augment_system(_fill(_COPY_SYSTEM, brand, n=max(1, n), channel=channel)),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -293,6 +300,7 @@ def write_posts(
     for row in rows:
         row["model"] = model
         row["channel"] = channel
+        row["skill_context"] = skills.metadata
     return rows
 
 
@@ -324,9 +332,12 @@ def write_channel_set(
     user = _facts(product, brand, positioning) + "\nChannels: " + ", ".join(wanted)
     if angle:
         user += f"\nAngle to develop: {angle}"
+    special_channels = set(wanted) & {"email", "blog"}
+    action = wanted[0] if len(set(wanted)) == 1 and special_channels else "channel-set" if special_channels else "copy"
+    skills = build_action_skill_context("marketing", action, workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["copy"],
-        _fill(_SET_SYSTEM, brand),
+        skills.augment_system(_fill(_SET_SYSTEM, brand)),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -348,6 +359,7 @@ def write_channel_set(
         if rows:
             rows[0]["model"] = model
             rows[0]["channel"] = channel
+            rows[0]["skill_context"] = skills.metadata
             out[channel] = rows[0]
     return out
 
@@ -366,9 +378,10 @@ def write_variants(
         _facts(product, brand, positioning)
         + f"\nChannel: {channel}\nWinning post:\n{winner.get('hook') or winner.get('title') or ''}\n{winner.get('body') or ''}"
     )
+    skills = build_action_skill_context("marketing", "variants", workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["variants"],
-        _fill(_VARIANT_SYSTEM, brand, n=max(1, n)),
+        skills.augment_system(_fill(_VARIANT_SYSTEM, brand, n=max(1, n))),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -379,6 +392,7 @@ def write_variants(
     for row in rows:
         row["model"] = model
         row["channel"] = channel
+        row["skill_context"] = skills.metadata
     return rows
 
 
@@ -395,9 +409,10 @@ def extract_research(
     for hit in hits[:30]:
         lines.append(f"- [{hit.get('query') or ''}] {hit.get('title') or ''} | {hit.get('url') or ''} | {str(hit.get('snippet') or '')[:220]}")
     user = _facts(product, brand) + "\n\nSearch results:\n" + "\n".join(lines)
+    skills = build_action_skill_context("marketing", "research", workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["research"],
-        _RESEARCH_SYSTEM,
+        skills.augment_system(_RESEARCH_SYSTEM),
         user,
         env_flag=ENV_FLAG,
         profile=settings,
@@ -430,6 +445,7 @@ def extract_research(
         "trends": _strings(data.get("trends"), 6),
         "keywords": [item.lower() for item in _strings(data.get("keywords"), 12)],
         "model": model,
+        "skill_context": skills.metadata,
     }
 
 
@@ -441,9 +457,10 @@ def write_launch_asset(
     positioning: dict[str, Any],
     settings: dict[str, Any] | None = None,
 ) -> str:
+    skills = build_action_skill_context("marketing", "launch", workspace=product.get("workspace"))
     text, _model = ask(
         MARKETING_TASK_ROLES["launch"],
-        _fill(_LAUNCH_SYSTEM, brand),
+        skills.augment_system(_fill(_LAUNCH_SYSTEM, brand)),
         f"Asset: {label} ({item})\n\n{_facts(product, brand, positioning)}",
         env_flag=ENV_FLAG,
         profile=settings,
@@ -472,9 +489,10 @@ def write_launch_kit(
     if not items:
         return {}
     listing = "\n".join(f"- {key}: {label}" for key, label in items)
+    skills = build_action_skill_context("marketing", "launch", workspace=product.get("workspace"))
     data, model = ask_json(
         MARKETING_TASK_ROLES["launch"],
-        _fill(_KIT_SYSTEM, brand),
+        skills.augment_system(_fill(_KIT_SYSTEM, brand)),
         f"{_facts(product, brand, positioning)}\n\nAssets:\n{listing}",
         env_flag=ENV_FLAG,
         profile=settings,

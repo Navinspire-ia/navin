@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 768 534" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase"><style>text{font-family:Arial,sans-serif;}.a-default{ stroke: #94a3b8; fill: none; }.c-backend{ fill: rgba(52, 211, 153, 0.18);    stroke: #059669; }.c-external{ fill: rgba(148, 163, 184, 0.18);   stroke: #64748b; }.c-grid{ stroke: #e2e8f0; fill: none; }.c-lane{ fill: rgba(248, 250, 252, 0.65); stroke: #cbd5e1; stroke-dasharray: 6,6; }.c-mask{ fill: #ffffff; stroke: none; }.c-security{ fill: rgba(251, 113, 133, 0.15);   stroke: #e11d48; }.m-dashed{ fill: #7c3aed; }.m-default{ fill: #94a3b8; }.m-emphasis{ fill: #059669; }.m-security{ fill: #e11d48; }.s-backend{ color: #059669; }.s-external{ color: #64748b; }.s-security{ color: #e11d48; }.semantic-sigil{
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.76;
+      pointer-events: none;
+    }.t-backend{ fill: #059669; }.t-dim{ fill: #94a3b8; }.t-external{ fill: #64748b; }.t-muted{ fill: #64748b; }.t-primary{ fill: #0f172a; }.t-security{ fill: #e11d48; }</style>
+        <title id="archify-diagram-title">Deroulement propose et preuves</title>
+        <desc id="archify-diagram-description">Audit Plateforme de donnees territoriales et API metier</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default" />
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis" />
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security" />
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- Swimlanes -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="712" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Acheteur</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="178" width="712" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="200" class="t-dim" font-size="10" font-weight="600">02 / Equipe proposee</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="304" width="712" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="326" class="t-dim" font-size="10" font-weight="600">03 / Destinataires</text>
+
+        <!-- Phase headers -->
+
+
+        <!-- Workflow groups -->
+
+
+        <!-- Edge paths -->
+        <path data-edge-from="bid_acceptance" data-edge-to="bid_handover" data-edge-key="0" data-composition-points="454,154;454,372;528,372" d="M 454 154 L 454 372 L 528 372" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="bid_contracts" data-edge-to="bid_delivery" data-edge-key="1" data-composition-points="260,246;288,246" d="M 260 246 L 288 246" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="bid_delivery" data-edge-to="bid_acceptance" data-edge-key="2" data-composition-points="334,212;334,120;408,120" d="M 334 212 L 334 120 L 408 120" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="bid_scope" data-edge-to="bid_contracts" data-edge-key="3" data-composition-points="140,120;214,120;214,212" d="M 140 120 L 214 120 L 214 212" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+
+        <!-- Nodes -->
+        <g id="node-bid_scope" data-node-id="bid_scope" data-node-label="Cadrage" tabindex="0" role="button" aria-label="Focus Cadrage, Exigences et acces, Acheteur" aria-pressed="false" data-node-kind="external" data-node-sublabel="Exigences et acces" data-node-tag="EXG-01" data-node-context="Acheteur">
+          <title>Cadrage · Exigences et acces · Acheteur · EXG-01</title>
+          <rect x="48" y="86" width="92" height="68" rx="6" class="c-mask"/>
+          <rect x="48" y="86" width="92" height="68" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(54 92) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="94" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cadrage</text>
+          <text data-detail="context" x="94" y="124" class="t-muted" font-size="7.7" text-anchor="middle">Exigences et acces</text>
+        <text data-detail="fine" x="94" y="142" class="t-external" font-size="7" text-anchor="middle">EXG-01</text>
+        </g>
+
+        <g id="node-bid_acceptance" data-node-id="bid_acceptance" data-node-label="Reprise" tabindex="0" role="button" aria-label="Focus Reprise, RPO 24h / RTO 4h, Acheteur" aria-pressed="false" data-node-kind="security" data-node-sublabel="RPO 24h / RTO 4h" data-node-tag="EXG-05" data-node-context="Acheteur">
+          <title>Reprise · RPO 24h / RTO 4h · Acheteur · EXG-05</title>
+          <rect x="408" y="86" width="92" height="68" rx="6" class="c-mask"/>
+          <rect x="408" y="86" width="92" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(414 92) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="454" y="107" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Reprise</text>
+          <text data-detail="context" x="454" y="124" class="t-muted" font-size="8" text-anchor="middle">RPO 24h / RTO 4h</text>
+        <text data-detail="fine" x="454" y="142" class="t-security" font-size="7" text-anchor="middle">EXG-05</text>
+        </g>
+
+        <g id="node-bid_contracts" data-node-id="bid_contracts" data-node-label="API REST" tabindex="0" role="button" aria-label="Focus API REST, Contrats a valider, Equipe proposee" aria-pressed="false" data-node-kind="backend" data-node-sublabel="Contrats a valider" data-node-tag="EXG-02" data-node-context="Equipe proposee">
+          <title>API REST · Contrats a valider · Equipe proposee · EXG-02</title>
+          <rect x="168" y="212" width="92" height="68" rx="6" class="c-mask"/>
+          <rect x="168" y="212" width="92" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(174 218) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="214" y="233" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">API REST</text>
+          <text data-detail="context" x="214" y="250" class="t-muted" font-size="7.7" text-anchor="middle">Contrats a valider</text>
+        <text data-detail="fine" x="214" y="268" class="t-backend" font-size="7" text-anchor="middle">EXG-02</text>
+        </g>
+
+        <g id="node-bid_delivery" data-node-id="bid_delivery" data-node-label="12 sources" tabindex="0" role="button" aria-label="Focus 12 sources, PostgreSQL, Equipe proposee" aria-pressed="false" data-node-kind="backend" data-node-sublabel="PostgreSQL" data-node-tag="EXG-01" data-node-context="Equipe proposee">
+          <title>12 sources · PostgreSQL · Equipe proposee · EXG-01</title>
+          <rect x="288" y="212" width="92" height="68" rx="6" class="c-mask"/>
+          <rect x="288" y="212" width="92" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(294 218) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="334" y="233" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">12 sources</text>
+          <text data-detail="context" x="334" y="250" class="t-muted" font-size="8" text-anchor="middle">PostgreSQL</text>
+        <text data-detail="fine" x="334" y="268" class="t-backend" font-size="7" text-anchor="middle">EXG-01</text>
+        </g>
+
+        <g id="node-bid_handover" data-node-id="bid_handover" data-node-label="Transfert" tabindex="0" role="button" aria-label="Focus Transfert, Supports editables, Destinataires" aria-pressed="false" data-node-kind="external" data-node-sublabel="Supports editables" data-node-tag="EXG-07" data-node-context="Destinataires">
+          <title>Transfert · Supports editables · Destinataires · EXG-07</title>
+          <rect x="528" y="338" width="92" height="68" rx="6" class="c-mask"/>
+          <rect x="528" y="338" width="92" height="68" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(534 344) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="574" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Transfert</text>
+          <text data-detail="context" x="574" y="376" class="t-muted" font-size="7.7" text-anchor="middle">Supports editables</text>
+        <text data-detail="fine" x="574" y="394" class="t-external" font-size="7" text-anchor="middle">EXG-07</text>
+        </g>
+
+        <!-- Edge labels -->
+
+
+
+
+
+        <!-- Legend -->
+
+      </svg>

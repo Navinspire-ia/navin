@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from navin.loop_schedule import LoopScheduleError
 from navin.tenders.desk import (
     advance,
     download_pack,
@@ -21,7 +22,6 @@ from navin.tenders.errors import TenderError
 from navin.tenders.heartbeat import HEARTBEAT_TENDERS_ACTIONS
 from navin.tenders.loop import maybe_tick, start_loop, stop_loop, update_loop_schedule
 from navin.tenders.store import TenderStore
-from navin.loop_schedule import LoopScheduleError
 
 __all__ = ["HEARTBEAT_TENDERS_ACTIONS", "handle_tenders_action", "normalize_tenders_action"]
 
@@ -276,14 +276,22 @@ def handle_tenders_action(action: str, body: dict[str, Any] | None = None) -> di
         store.accept_discovery(host)
         return snapshot(store)
     if act == "notify":
+        import uuid
+
         from navin.tenders.notify import deliver_alert
 
         title = str(body.get("title") or "Navin Tenders").strip() or "Navin Tenders"
         detail = str(body.get("detail") or "Test from Config. Channels that are on will receive this.").strip()
-        sent = deliver_alert(store, title=title, detail=detail, level="info")
+        sent = deliver_alert(store, title=title, detail=detail, level="info",
+                             event_id=f"manual_test:{uuid.uuid4().hex}", event_type="manual_test")
         snap = snapshot(store)
         snap["notify"] = sent
         return snap
+    if act == "retry-alerts":
+        from navin.bus.alerts import retry_failed_alerts
+
+        retry_failed_alerts(store, module="tenders")
+        return snapshot(store)
     if act == "knowledge":
         profile = store.load_profile()
         for key in ("references", "documents", "team", "price_book"):

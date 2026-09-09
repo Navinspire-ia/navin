@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import type { Group } from "three";
 
 import type { MontageTimeline } from "@/lib/api";
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
 import { timelineDuration, visualDuration } from "./timelineModel";
 
 type SpatialPreviewProps = {
@@ -93,7 +94,7 @@ function TrackScene({
         blur={2.4}
         far={4}
       />
-      <Environment preset="city" />
+      <StudioEnvironment />
       <OrbitControls
         enablePan={false}
         enableZoom

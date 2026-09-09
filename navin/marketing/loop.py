@@ -29,7 +29,7 @@ from navin.marketing.growth import run_growth_cycle
 from navin.marketing.heartbeat import brand_is_armed
 from navin.marketing.lock import marketing_desk_lock
 from navin.marketing.measure import collect_metrics
-from navin.marketing.publish import publish_due
+from navin.marketing.publish import poll_pending_publications, publish_due
 from navin.marketing.store import MarketingStore
 from navin.marketing.watch import run_watch
 
@@ -255,6 +255,12 @@ def maybe_tick(
     except (TypeError, ValueError):
         due_at = 0.0
     if not force and due_at > clock + 0.01:
+        continued = poll_pending_publications(desk, now=clock)
+        if continued.get("checked"):
+            return {
+                "did_work": True, "phase": "publishing", "reason": "checking accepted publications",
+                "publish": continued, "loop": state,
+            }
         return {
             "did_work": False,
             "phase": "sleep",

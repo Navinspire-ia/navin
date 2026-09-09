@@ -65,6 +65,14 @@ Build (depuis WSL, l'interop traverse vers Windows ; ou depuis PowerShell) :
 make windows        # sidecar + app desktop : .msi (WiX) + -setup.exe (NSIS)
 ```
 
+`packaging/windows/signing.env` (Azure Artifact Signing, meme identite a chaque
+release) signe le sidecar, NavinUpdater, le sandbox, l'exe de fenetre, le MSI
+et le setup. `verify-windows-signatures.ps1` exige `Status=Valid` sur les
+installeurs publies et, si 7-Zip est la, sur les exe first-party qu'ils
+contiennent. Ne jamais retoucher un fichier apres signature : un octet change
+le hash et SmartScreen repart de zero. `Status=Valid` ne fait pas disparaitre
+l'ecran bleu ; la reputation du hash se construit cote Microsoft.
+
 ## macOS
 
 Prerequis (une fois, sur le Mac) :
@@ -97,13 +105,18 @@ identifie" au premier lancement.
 ```bash
 make aws-upload                 # version de l'app desktop (tauri.conf.json)
 make aws-upload VERSION=1.1.0   # autre version
+make aws-upload VERSION=2.0.1 PLATFORM=linux    # n'écrase que Linux
+make aws-upload VERSION=2.0.1 PLATFORM=windows  # n'écrase que Windows
+make aws-upload VERSION=2.0.1 PLATFORM=macos    # n'écrase que macOS
 ```
 
 Le script televerse chaque artefact de `os/` sous `v<version>/` : meme
-version + meme nom = fichier ecrase, nouvelle version = nouveau prefixe. Il
-genere le `SHA256SUMS.txt` global et **refuse de publier une version absente
-du catalogue du site** (`site/src/lib/releases.ts`), pour que le bucket S3 et
-la page de telechargement ne divergent jamais.
+version + meme nom = fichier ecrase, nouvelle version = nouveau prefixe.
+`PLATFORM=linux|windows|macos` limite l'envoi a cet OS : les autres cles S3
+de la meme version ne sont ni supprimees ni reuploadees. `SHA256SUMS.txt`,
+`releases.json` et le manifeste d'update sont fusionnes avec ce qui est deja
+en ligne. Sans `PLATFORM`, seuls les fichiers presents localement dans `os/`
+partent ; les absents sont signales, pas detruits sur S3.
 
 ## Verifier un artefact
 

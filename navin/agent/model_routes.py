@@ -313,3 +313,58 @@ def resolve_vision_route(
     if not media_needs_vision(media) and not text_needs_vision(text):
         return None
     return resolve_model_route("vision", routes=routes, known_presets=known_presets)
+
+
+# Turns that ask the agent to drive the desktop (mouse / keyboard / native
+# apps). French and English, matched on the user's own words: the tool being
+# enabled is not enough, a "resume this PDF" turn must not pay for a grounding
+# model. Kept deliberately narrow; browsing has its own tool and route.
+_COMPUTER_RE = re.compile(
+    r"(?ix)"
+    r"\b(?:"
+    r"computer[ -]use|desktop\s+control|"
+    r"(?:on|from)\s+my\s+(?:screen|desktop|computer|pc|mac)|"
+    r"(?:take|grab)\s+(?:control|over)\s+(?:of\s+)?my|"
+    r"(?:click|double[ -]click|right[ -]click)\s+(?:on\s+)?(?:the|that|this)\b|"
+    r"open\s+(?:the\s+)?(?:app(?:lication)?|program|software)\b|"
+    r"in\s+(?:excel|word|outlook|powerpoint|photoshop|illustrator|blender|"
+    r"autocad|solidworks|premiere|figma|notepad|finder|explorer|teams|slack|"
+    r"the\s+file\s+explorer|the\s+finder|system\s+settings|the\s+control\s+panel)\b|"
+    r"sur\s+mon\s+(?:écran|ecran|bureau|ordinateur|ordi|pc|mac)\b|"
+    r"prends?\s+(?:le\s+)?contr[ôo]le\s+(?:de\s+)?(?:mon|ma|l')|"
+    r"contr[ôo]le\s+(?:mon|l')\s*(?:ordinateur|ordi|pc|écran|ecran)|"
+    r"(?:clique|double[ -]clique|clic\s+droit)\s+(?:sur|dans)\b|"
+    r"ouvre\s+(?:l'|le\s+|la\s+)?(?:appli(?:cation)?|logiciel|programme)\b|"
+    r"dans\s+(?:excel|word|outlook|powerpoint|photoshop|illustrator|blender|"
+    r"autocad|solidworks|premiere|figma|le\s+bloc-notes|l'explorateur|"
+    r"les\s+param[èe]tres\s+(?:syst[èe]me|windows)|le\s+panneau\s+de\s+configuration)\b|"
+    r"pilote\s+(?:mon|l')\s*(?:ordinateur|ordi|pc|bureau)|"
+    r"utilise\s+(?:ma\s+souris|mon\s+clavier|la\s+souris|le\s+clavier)|"
+    r"use\s+(?:my|the)\s+(?:mouse|keyboard)"
+    r")"
+)
+
+
+def text_needs_computer(text: str | None) -> bool:
+    """True when the user asks for desktop control in plain words."""
+    body = (text or "").strip()
+    if not body or len(body) > 4000:
+        return False
+    return bool(_COMPUTER_RE.search(body))
+
+
+def resolve_computer_route(
+    text: str | None,
+    *,
+    routes: Mapping[str, str] | None = None,
+    known_presets: set[str] | None = None,
+    active_session: bool = False,
+) -> str | None:
+    """Preset for GUI grounding when the turn asks to drive the desktop.
+
+    Only the ``computer`` role is consulted: the ``vision`` preset is tuned for
+    describing images and is often a small model that cannot place a click.
+    """
+    if not active_session and not text_needs_computer(text):
+        return None
+    return resolve_model_route("computer", routes=routes, known_presets=known_presets)

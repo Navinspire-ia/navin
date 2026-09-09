@@ -283,7 +283,10 @@ export function MarketingWorkspace({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
-  const [pane, setPane] = useState<Pane>("home");
+  const [pane, setPane] = useState<Pane>(() => {
+    const requested = new URLSearchParams(window.location.hash.split("?")[1] || "").get("pane");
+    return PANES.some((item) => item.id === requested) ? requested as Pane : "home";
+  });
   const [company, setCompany] = useState("");
   const [tone, setTone] = useState("");
   const [audience, setAudience] = useState("");
@@ -300,7 +303,7 @@ export function MarketingWorkspace({
   const [competitorNote, setCompetitorNote] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] || "").get("oauth_error") || "");
   const [hint, setHint] = useState("");
   const [sourceKind, setSourceKind] = useState<SourceKind>("recent");
   const [sourceUrl, setSourceUrl] = useState("");

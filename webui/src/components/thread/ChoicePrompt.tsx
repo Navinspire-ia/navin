@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { MessageCircleQuestion } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -13,23 +14,29 @@ interface ChoicePromptProps {
   onRespond: (requestId: string, optionId: string, skipped?: boolean, customText?: string) => void;
 }
 
+const spring = { type: "spring" as const, duration: 0.3, bounce: 0 };
+
+function optionTitle(label: string, detail: string): string {
+  return detail ? `${label} - ${detail}` : label;
+}
+
 /**
  * The agent stopped because the next step is a real fork.
  *
- * Unlike an approval, this is not allow/refuse. It is A/B/C plus a last
- * option where the user types their own answer, so Navin's list is never
- * the only way through.
+ * Compact chat-width card: one line per option (label then subtitle), no wrap,
+ * so it stays inside the composer column instead of filling the pane.
  */
 export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
   const { t } = useTranslation();
   const { client } = useClient();
+  const reduceMotion = useReducedMotion();
   const [selected, setSelected] = useState(
     () => request.recommendedId || request.options[0]?.id || "",
   );
   const [customText, setCustomText] = useState("");
   const [answered, setAnswered] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>(client.status);
-  const customRef = useRef<HTMLTextAreaElement>(null);
+  const customRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => client.onStatus(setStatus), [client]);
   const connected = status === "open";
@@ -61,8 +68,9 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
     if (!request.allowSkip) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      // Typing a custom answer: Escape should not skip the whole card.
-      if (event.target instanceof HTMLTextAreaElement) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
       event.preventDefault();
       skip();
     };
@@ -76,6 +84,19 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
   };
 
   const otherLetter = String.fromCharCode(65 + request.options.length);
+  const otherDetail = t(
+    "thread.choice.otherDetail",
+    "Type your own answer. Navin will follow what you write.",
+  );
+
+  const rowClass = (active: boolean) =>
+    cn(
+      "flex h-7 w-full min-w-0 items-center gap-1.5 rounded-md border px-2 text-left text-[12px] leading-4",
+      "transition-[border-color,background-color]",
+      active
+        ? "border-primary/50 bg-primary/10"
+        : "border-transparent hover:border-border/70 hover:bg-background/80",
+    );
 
   return (
     <div
@@ -83,131 +104,120 @@ export function ChoicePrompt({ request, onRespond }: ChoicePromptProps) {
       aria-labelledby={`choice-title-${request.requestId}`}
       data-choice-prompt-scroll
       className={cn(
-        "mb-2 max-h-[min(52vh,32rem)] overflow-y-auto overscroll-contain rounded-lg border border-border/80 bg-card",
-        "px-3 py-2.5 text-[12px] leading-5",
-        "animate-in fade-in-0 slide-in-from-bottom-1",
+        "mb-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-border/70 bg-card/95",
+        "px-1.5 py-1.5 text-[12px]",
       )}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex min-w-0 items-center gap-2 px-1">
         <MessageCircleQuestion
-          className="mt-0.5 h-4 w-4 shrink-0 text-primary"
+          className="h-3.5 w-3.5 shrink-0 text-primary"
           aria-hidden
         />
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {t("thread.choice.title", "Questions")}
-          </p>
-          <p
-            id={`choice-title-${request.requestId}`}
-            className="mt-0.5 font-medium text-foreground"
-          >
-            {request.question}
-          </p>
-          <div className="mt-2 flex flex-col gap-1.5" role="radiogroup">
-            {request.options.map((option, index) => {
-              const active = selected === option.id;
-              const letter = String.fromCharCode(65 + index);
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  disabled={busy}
-                  onClick={() => setSelected(option.id)}
-                  className={cn(
-                    "rounded-md border px-2.5 py-2 text-left transition-colors",
-                    active
-                      ? "border-primary/50 bg-primary/10"
-                      : "border-border/70 bg-background hover:border-border",
-                  )}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="mt-px w-4 shrink-0 font-semibold text-muted-foreground">
-                      {letter}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-foreground">
-                        {option.label}
-                        {option.recommended ? (
-                          <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                            {t("thread.choice.recommended", "Recommended")}
-                          </span>
-                        ) : null}
-                      </p>
-                      {option.detail ? (
-                        <p className="mt-0.5 text-muted-foreground">{option.detail}</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-            <div
-              className={cn(
-                "rounded-md border px-2.5 py-2 text-left transition-colors",
-                otherSelected
-                  ? "border-primary/50 bg-primary/10"
-                  : "border-border/70 bg-background hover:border-border",
-              )}
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={otherSelected}
-                disabled={busy}
-                onClick={selectOther}
-                className="flex w-full items-start gap-2 text-left"
-              >
-                <span className="mt-px w-4 shrink-0 font-semibold text-muted-foreground">
-                  {otherLetter}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-foreground">
-                    {t("thread.choice.other", "Other")}
-                  </p>
-                  <p className="mt-0.5 text-muted-foreground">
-                    {t(
-                      "thread.choice.otherDetail",
-                      "Type your own answer. Navin will follow what you write.",
-                    )}
-                  </p>
-                </div>
-              </button>
-              <textarea
-                ref={customRef}
-                value={customText}
-                disabled={busy}
-                maxLength={CUSTOM_CHOICE_MAX_CHARS}
-                rows={3}
-                onFocus={selectOther}
-                onChange={(event) => {
-                  setSelected(OTHER_CHOICE_ID);
-                  setCustomText(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                    event.preventDefault();
-                    continueChoice();
-                  }
-                }}
-                placeholder={t("thread.choice.otherPlaceholder", "Your answer")}
-                aria-label={t("thread.choice.other", "Other")}
-                className="mt-2 w-full resize-y rounded-md border border-border/70 bg-background px-2 py-1.5 text-[12px] leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/50"
-              />
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {request.allowSkip ? (
-              <Button size="sm" variant="ghost" disabled={busy} onClick={skip}>
-                {t("thread.choice.skip", "Skip Esc")}
-              </Button>
-            ) : null}
-            <Button size="sm" className="ml-auto" disabled={busy || !canContinue} onClick={continueChoice}>
-              {t("thread.choice.continue", "Continue")}
+        <p className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {t("thread.choice.title", "Questions")}
+        </p>
+        <p
+          id={`choice-title-${request.requestId}`}
+          className="min-w-0 flex-1 truncate font-medium text-foreground"
+          title={request.question}
+        >
+          {request.question}
+        </p>
+        <div className="flex shrink-0 items-center gap-1">
+          {request.allowSkip ? (
+            <Button size="sm" variant="ghost" className="h-7 px-2" disabled={busy} onClick={skip}>
+              {t("thread.choice.skip", "Skip Esc")}
             </Button>
-          </div>
+          ) : null}
+          <Button size="sm" className="h-7 px-2.5" disabled={busy || !canContinue} onClick={continueChoice}>
+            {t("thread.choice.continue", "Continue")}
+          </Button>
         </div>
+      </div>
+      <div className="mt-1 flex min-w-0 flex-col gap-0.5" role="radiogroup">
+        {request.options.map((option, index) => {
+          const active = selected === option.id;
+          const letter = String.fromCharCode(65 + index);
+          const title = optionTitle(option.label, option.detail);
+          return (
+            <motion.button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={busy}
+              title={title}
+              onClick={() => setSelected(option.id)}
+              className={rowClass(active)}
+              whileTap={reduceMotion ? undefined : { scale: 0.96 }}
+              transition={spring}
+            >
+              <span className="w-3.5 shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                {letter}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                <span className="font-medium text-foreground">{option.label}</span>
+                {option.detail ? (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {option.detail}
+                  </span>
+                ) : null}
+              </span>
+              {option.recommended ? (
+                <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                  {t("thread.choice.recommended", "Recommended")}
+                </span>
+              ) : null}
+            </motion.button>
+          );
+        })}
+        <motion.div
+          className={rowClass(otherSelected)}
+          whileTap={reduceMotion ? undefined : { scale: 0.96 }}
+          transition={spring}
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={otherSelected}
+            disabled={busy}
+            title={optionTitle(t("thread.choice.other", "Other"), otherDetail)}
+            onClick={selectOther}
+            className="flex min-w-0 shrink-0 items-center gap-1.5 text-left"
+          >
+            <span className="w-3.5 shrink-0 text-[11px] font-semibold tabular-nums text-muted-foreground">
+              {otherLetter}
+            </span>
+            <span className="font-medium text-foreground">
+              {t("thread.choice.other", "Other")}
+            </span>
+          </button>
+          <input
+            ref={customRef}
+            value={customText}
+            disabled={busy}
+            maxLength={CUSTOM_CHOICE_MAX_CHARS}
+            onFocus={selectOther}
+            onChange={(event) => {
+              setSelected(OTHER_CHOICE_ID);
+              setCustomText(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                continueChoice();
+              }
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                continueChoice();
+              }
+            }}
+            placeholder={t("thread.choice.otherPlaceholder", "Your answer")}
+            aria-label={t("thread.choice.other", "Other")}
+            className="h-5 min-w-0 flex-1 bg-transparent text-[12px] leading-5 text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </motion.div>
       </div>
     </div>
   );

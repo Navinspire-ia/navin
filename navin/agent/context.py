@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from navin.agent.memory import MemoryStore
+from navin.agent.skill_routing import (
+    SKILL_CONTEXT_METADATA_KEY,
+    ActionSkillContext,
+    build_action_skill_context,
+    skill_route_for_turn,
+)
 from navin.agent.skills import MAX_OWNED_PRELOAD, SkillsLoader
 from navin.agent.tools import mcp as mcp_tools
 from navin.agent.tools.registry import ToolRegistry
@@ -82,6 +88,24 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
 
+    def _action_skill_context(
+        self,
+        metadata: Mapping[str, Any] | None,
+        current_message: str,
+        skill_names: list[str] | None,
+        workspace: Path,
+        extra_disabled_skills: set[str] | None,
+    ) -> ActionSkillContext | None:
+        selected = skill_route_for_turn(metadata, current_message, skill_names=skill_names)
+        if selected is None:
+            return None
+        return build_action_skill_context(
+            *selected,
+            workspace=workspace,
+            disabled_skills=extra_disabled_skills,
+            loader=self.skills,
+        )
+
     def build_system_prompt(
         self,
         skill_names: list[str] | None = None,
@@ -95,6 +119,8 @@ class ContextBuilder:
         evidence_only: bool = False,
         slim_skill_preload: bool = True,
         current_message: str | None = None,
+        session_metadata: Mapping[str, Any] | None = None,
+        action_skill_context: ActionSkillContext | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills.
 
@@ -103,7 +129,8 @@ class ContextBuilder:
         one even at a 100% cache hit, and a multi-step turn pays that on
         every step. Preloading every skill body spent ~9k tokens per call on
         playbooks the turn mostly did not use; they are one
-        ``skill action=read`` away instead.
+        ``skill action=read`` away instead. Action-specific desk playbooks
+        remain complete even in slim mode, including project overrides.
         """
         root = workspace or self.workspace
         parts = [self._get_identity(channel=channel, workspace=root)]
@@ -161,6 +188,16 @@ class ContextBuilder:
         if memory and not self._is_template_content(memory_store.read_memory(), "memory/MEMORY.md"):
             parts.append(f"# Memory\n\n{memory}")
 
+        action_skills = action_skill_context or self._action_skill_context(
+            session_metadata,
+            current_message or "",
+            skill_names,
+            root,
+            extra_disabled_skills,
+        )
+        if action_skills and action_skills.prompt:
+            parts.append(action_skills.prompt)
+
         # always=true skills plus an optional per-turn preload list (workflow
         # briefs set this so "/studio" etc. actually inject SKILL.md bodies
         # instead of only naming them in the user message). Slim /forge turns
@@ -169,7 +206,7 @@ class ContextBuilder:
         owned = skills.owned_skills()
         owned_names = [entry["name"] for entry in owned[:MAX_OWNED_PRELOAD]]
         mentioned = skills.mentioned_skill_names(current_message or "")
-        seen_active: set[str] = set()
+        seen_active: set[str] = set(action_skills.requested if action_skills else ())
 
         def _take(names: Sequence[str] | None) -> list[str]:
             taken: list[str] = []
@@ -197,6 +234,8 @@ class ContextBuilder:
                 "Do not read every listed skill at the start of the turn, "
                 "and do not load a second playbook until that phase needs it."
             ]
+            if action_skills and action_skills.loaded:
+                blocks.insert(0, "The specialist playbooks above are already loaded in full for the current action.")
             if suggested:
                 blocks.append("Suggested for this turn: " + ", ".join(suggested) + ".")
             if owned_listed:
@@ -360,12 +399,17 @@ class ContextBuilder:
                 root / filename,
             )
             for file_path in candidates:
-                if not file_path.exists():
+                if not file_path.is_file():
+                    continue
+                try:
+                    raw = file_path.read_text(encoding="utf-8-sig")
+                except (OSError, UnicodeDecodeError):
+                    parts.append(f"## {filename}\n\nCould not read {file_path.as_posix()}. Inspect its permissions and encoding before editing the project.")
                     continue
                 if filename == "AGENTS.md":
                     any_agents_md = True
                 content = self._resolve_at_imports(
-                    file_path.read_text(encoding="utf-8"), file_path
+                    raw, file_path
                 )
                 if content in seen:
                     continue
@@ -379,10 +423,13 @@ class ContextBuilder:
         # both would duplicate the instructions.
         if not any_agents_md:
             claude_md = root / "CLAUDE.md"
-            if claude_md.exists():
-                content = self._resolve_at_imports(
-                    claude_md.read_text(encoding="utf-8"), claude_md
-                )
+            if claude_md.is_file():
+                try:
+                    content = self._resolve_at_imports(
+                        claude_md.read_text(encoding="utf-8-sig"), claude_md
+                    )
+                except (OSError, UnicodeDecodeError):
+                    content = f"Could not read {claude_md.as_posix()}. Inspect its permissions and encoding before editing the project."
                 parts.insert(0, f"## CLAUDE.md\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
@@ -419,7 +466,7 @@ class ContextBuilder:
             try:
                 if not target.is_file() or target.stat().st_size > cls._MAX_IMPORT_BYTES:
                     return ""
-                imported = target.read_text(encoding="utf-8")
+                imported = target.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
                 return ""
             seen.add(target)
@@ -472,6 +519,9 @@ class ContextBuilder:
             slim_skill_preload = bool(
                 session_metadata.get(SLIM_SKILL_PRELOAD_METADATA_KEY)
             )
+        action_skills = self._action_skill_context(
+            session_metadata, current_message, skill_names, root, extra_disabled_skills,
+        )
         messages = [
             {
                 "role": "system",
@@ -487,10 +537,14 @@ class ContextBuilder:
                     evidence_only=evidence_only,
                     slim_skill_preload=slim_skill_preload,
                     current_message=current_message,
+                    session_metadata=session_metadata,
+                    action_skill_context=action_skills,
                 ),
             },
             *history,
         ]
+        if action_skills is not None:
+            messages[0]["_meta"] = {SKILL_CONTEXT_METADATA_KEY: action_skills.metadata}
         if messages[-1].get("role") == current_role:
             last = dict(messages[-1])
             last["content"] = self._merge_message_content(last.get("content"), merged)

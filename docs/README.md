@@ -96,6 +96,7 @@ For shorter, outcome-focused walkthroughs, browse the [task guide index](./guide
 | Provider setup cookbook | [Provider Cookbook](./provider-cookbook.md) |
 | Runtime self-inspection and tuning | [My Tool](./my-tool.md) |
 | Scrape / crawl / export reference | [Scrape Tool](./scrape-tool.md) |
+| Desktop control (screen, mouse, keyboard in any app) | [Computer Tool](./computer-tool.md) |
 | Expo / React Native / Flutter run + preview | [Mobile Agent](./mobile.md) |
 | Phone / tablet chat client (WebUI PWA) | [Mobile usage PWA](./mobile-usage-app.md) |
 | Environment variables | [Environment variables](./environment-variables.md) |
@@ -111,4 +112,4 @@ Keep real API keys, bot tokens, and passwords out of issues and public logs.
 | Add a channel package | [Channel Plugin Guide](./channel-plugin-guide.md) |
 | Build the WebUI source | [WebUI Development](../webui/README.md) |
 
-If a command or screen no longer matches these docs, please [open an issue](https://github.com/navinspire-ai/navin-agi/issues) with your navin version, operating system, and the page that needs correction.
+If a command or screen no longer matches these docs, please [open an issue](https://github.com/Navinspire-ia/navin/issues) with your navin version, operating system, and the page that needs correction.

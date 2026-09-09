@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from rich.markup import escape
-from textual import on, work
+from textual import events, on, work
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
@@ -120,6 +121,7 @@ _SETTINGS_SECTIONS = frozenset(
         "guardrails",
         "git",
         "browser",
+        "computer",
         "rules",
         "about",
     }
@@ -259,6 +261,26 @@ class SlashCommands(Provider):
 # ---------------------------------------------------------------------------
 
 
+class NavinScreen(Screen):
+    """Right-click copies without wiping the current selection.
+
+    Textual treats every MouseDown as the start of a new selection. A
+    right-click at the same cell then clears it on MouseUp, so copy ran
+    against an empty selection. Swallow button 3 before that happens.
+    """
+
+    def _forward_event(self, event: events.Event) -> None:
+        button = getattr(event, "button", 0)
+        if isinstance(event, events.MouseEvent) and button == 3:
+            if isinstance(event, events.MouseDown):
+                copy = getattr(self.app, "copy_from_pointer", None)
+                if callable(copy):
+                    copy()
+            event.stop()
+            return
+        super()._forward_event(event)
+
+
 class NavinApp(App[None]):
     TITLE = "navin-cli"
     ALLOW_SELECT = True
@@ -279,11 +301,19 @@ class NavinApp(App[None]):
     #dock.-hidden { display: none; height: 0; min-height: 0; }
     Toast { background: $panel; border-left: thick $primary; }
     UserMessage.-find, AssistantMessage.-find { background: $secondary 22%; }
-    MarkdownBlock > .code_inline,
-    MarkdownBlock:dark > .code_inline,
-    MarkdownBlock:light > .code_inline {
-        text-style: bold;
-        color: $primary;
+    Markdown MarkdownBlock > .code_inline,
+    Markdown MarkdownBlock:dark > .code_inline,
+    Markdown MarkdownBlock:light > .code_inline {
+        color: $foreground;
+        background: transparent;
+    }
+    Markdown MarkdownBlock > .code_path,
+    Markdown MarkdownBlock:dark > .code_path {
+        color: #8FBC8F;
+        background: transparent;
+    }
+    Markdown MarkdownBlock:light > .code_path {
+        color: #2D6A4F;
         background: transparent;
     }
     """
@@ -308,9 +338,16 @@ class NavinApp(App[None]):
         Binding("f4", "open_agi", "AGI"),
         Binding("f1", "show_help", "Help"),
         Binding("escape", "stop_turn", "Stop", show=True),
+        Binding("ctrl+c", "copy_selection", "Copy", show=False, priority=True),
+        Binding("super+c", "copy_selection", "Copy", show=False, priority=True),
+        Binding("ctrl+insert", "copy_selection", "Copy", show=False),
         Binding("ctrl+shift+c", "copy_reply", "Copy reply", show=False),
+        Binding("super+shift+c", "copy_reply", "Copy reply", show=False),
         Binding("ctrl+f", "find", "Find", show=False),
+        Binding("super+f", "find", "Find", show=False),
         Binding("ctrl+v", "paste_composer", "Paste", show=False),
+        Binding("super+v", "paste_composer", "Paste", show=False),
+        Binding("super+shift+v", "paste_composer", "Paste", show=False),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
@@ -348,6 +385,9 @@ class NavinApp(App[None]):
         self._account_service: Any = None
 
     # -- layout -----------------------------------------------------------
+
+    def get_default_screen(self) -> Screen:
+        return NavinScreen(id="_default")
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -1210,23 +1250,69 @@ class NavinApp(App[None]):
     def _chat_scroll(self, event: Composer.ChatScroll) -> None:
         self.transcript.nudge(event.delta)
 
+    def copy_to_clipboard(self, text: str) -> None:
+        """OSC 52 plus the OS clipboard (pbcopy / clip / wl-copy).
+
+        Apple Terminal ignores OSC 52, so the in-app clipboard alone is not
+        enough for Ctrl+C or copy-on-select.
+        """
+        super().copy_to_clipboard(text)
+        from navin.tui.clipboard import write_clipboard
+
+        write_clipboard(text)
+
+    def _selected_text(self) -> str:
+        selected = ""
+        with contextlib.suppress(Exception):
+            selected = self.screen.get_selected_text() or ""
+        if not selected:
+            extra = getattr(self.focused, "selected_text", None)
+            if extra:
+                selected = str(extra)
+        return selected
+
+    def _last_assistant_text(self) -> str:
+        last: AssistantMessage | None = None
+        with contextlib.suppress(Exception):
+            for widget in self.transcript.children:
+                if isinstance(widget, AssistantMessage) and widget.text.strip():
+                    last = widget
+        return last.text if last is not None else ""
+
+    def action_copy_selection(self) -> None:
+        """Copy the mouse selection, or the focused input selection."""
+        selected = self._selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            return
+        raise SkipAction()
+
+    @on(events.TextSelected)
+    def _copy_on_select(self, _event: events.TextSelected) -> None:
+        selected = self._selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+
+    def copy_from_pointer(self) -> None:
+        """Right-click: copy the selection, or the last assistant reply."""
+        from navin.tui.clipboard import pointer_copy_text
+
+        text = pointer_copy_text(self._selected_text(), self._last_assistant_text())
+        if text:
+            self.copy_to_clipboard(text)
+
     def action_copy_reply(self) -> None:
         """Copy selected text, or the last assistant reply if nothing is selected."""
-        selected = None
-        with contextlib.suppress(Exception):
-            selected = self.screen.get_selected_text()
+        selected = self._selected_text()
         if selected:
             self.copy_to_clipboard(selected)
             self.notify("Copied", timeout=1.2)
             return
-        last: AssistantMessage | None = None
-        for widget in self.transcript.children:
-            if isinstance(widget, AssistantMessage) and widget.text.strip():
-                last = widget
-        if last is None or not last.text.strip():
+        last = self._last_assistant_text()
+        if not last.strip():
             self.notify("Nothing to copy", severity="warning", timeout=1.5)
             return
-        self.copy_to_clipboard(last.text)
+        self.copy_to_clipboard(last)
         self.notify("Reply copied", timeout=1.2)
 
     async def action_export_transcript(self) -> None:
@@ -1485,6 +1571,7 @@ class NavinApp(App[None]):
         "guardrails": "guardrails",
         "git": "git",
         "browser": "browser",
+        "computer": "computer",
         "rules": "rules",
     }
 

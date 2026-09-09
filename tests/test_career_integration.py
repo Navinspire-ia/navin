@@ -410,7 +410,13 @@ class CareerDeskPipelineTest(unittest.TestCase):
 
                 oid = by_country["FR"]["id"]
                 prepared = asyncio.run(tool.execute(action="prepare", id=oid))
-                self.assertIn("Do not invent", prepared["prepared"]["summary"])
+                pack = prepared["prepared"]
+                self.assertNotIn("Do not invent", pack["cv_text"])
+                self.assertIn("Python", pack["cv_text"])
+                self.assertIn("Spark", pack["cv_text"])
+                self.assertNotIn("AWS", pack["cv"].get("skills", ""))
+                self.assertEqual(pack["cv"].get("experiences"), [])
+                self.assertEqual(pack["generation"]["status"], "needs_review")
                 applied = asyncio.run(tool.execute(action="apply", id=oid))
                 fr = next(row for row in applied["opportunities"] if row["id"] == oid)
                 self.assertIn(fr["stage"], {"ready", "applied"})

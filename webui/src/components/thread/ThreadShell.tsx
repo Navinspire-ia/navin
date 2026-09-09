@@ -53,6 +53,10 @@ import { useProveChange } from "@/hooks/useProveChange";
 import { codePanelHref } from "@/lib/code-panel-route";
 import { ApprovalPrompt } from "@/components/thread/ApprovalPrompt";
 import { ChoicePrompt } from "@/components/thread/ChoicePrompt";
+import { LiveVoiceBar } from "@/components/thread/LiveVoiceBar";
+import { LiveVoiceSetupDialog } from "@/components/thread/LiveVoiceSetupDialog";
+import { useLiveVoice } from "@/hooks/useLiveVoice";
+import { useLiveVoiceSetup } from "@/hooks/useLiveVoiceSetup";
 import { ConnectionStatusBanner } from "@/components/thread/ConnectionStatusBanner";
 import type { SelectedModelRoute } from "@/components/thread/QuotaLimitCard";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
@@ -274,6 +278,7 @@ interface ThreadShellProps {
   settingsSnapshot?: SettingsPayload | null;
   onSettingsChange?: (settings: SettingsPayload) => void;
   onOpenModelSettings?: () => void;
+  onOpenVoiceSettings: () => void;
   skills?: SkillSummary[];
   onOpenFileInEditor?: (
     path: string,
@@ -598,6 +603,7 @@ export function ThreadShell({
   settingsSnapshot = null,
   onSettingsChange,
   onOpenModelSettings,
+  onOpenVoiceSettings,
   // A literal default would hand the memoized composer a new array on every
   // render and defeat the shallow compare.
   skills = NO_SKILLS,
@@ -1159,6 +1165,9 @@ export function ThreadShell({
     }
   }, [showHeroComposer, productModule]);
 
+  // Set by useLiveVoice below; a ref because the voice hook itself sends
+  // through handleThreadSend -> withSendDefaults.
+  const liveVoiceEnabledRef = useRef(false);
   const withSendDefaults = useCallback(
     (options?: SendOptions): SendOptions | undefined => {
       const moduleId = (productModule || "").trim().toLowerCase();
@@ -1166,7 +1175,10 @@ export function ThreadShell({
       const openFiles = isCode ? getDevOpenFiles() : [];
       const openFilesOpt = openFiles.length ? openFiles : undefined;
       const modelPreset = threadPresetRow?.name ?? (threadAutoMode ? AUTO_MODEL_PRESET : null);
-      if (!workspaceScope && !modelPreset && !productModule && !openFilesOpt) {
+      // Typed or spoken, every turn of a live voice conversation is read
+      // aloud, so the agent gets the same brief either way.
+      const voiceMode = liveVoiceEnabledRef.current;
+      if (!workspaceScope && !modelPreset && !productModule && !openFilesOpt && !voiceMode) {
         return options;
       }
       return {
@@ -1175,6 +1187,7 @@ export function ThreadShell({
         ...(modelPreset ? { modelPreset } : {}),
         ...(productModule ? { productModule } : {}),
         ...(openFilesOpt ? { openFiles: openFilesOpt } : {}),
+        ...(voiceMode ? { voiceMode: true } : {}),
       };
     },
     [productModule, threadAutoMode, threadPresetRow, workspaceScope],
@@ -1260,14 +1273,14 @@ export function ThreadShell({
         const voice = settings.voice;
         if (!voice) return;
         void updateVoiceSettings(token, {
-          ttsProvider: voice.tts_provider || "",
+          ttsProvider: preset.provider || voice.tts_provider || "",
           ttsModel: preset.model,
-          voice: voice.voice || "eve",
+          voice: "auto",
           autoSpeak: voice.auto_speak,
           responseFormat: voice.response_format,
           realtimeEnabled: voice.realtime_enabled,
         })
-          .then((next) => setSettings(next))
+          .then((next) => { setSettings(next); onSettingsChange?.(next); })
           .catch((err) => {
             console.error("Failed to update TTS model", err);
           });
@@ -1292,13 +1305,13 @@ export function ThreadShell({
         const transcription = settings.transcription;
         void updateTranscriptionSettings(token, {
           enabled: transcription?.enabled ?? true,
-          provider: transcription?.provider || "",
+          provider: preset.provider || transcription?.provider || "",
           model: preset.model,
           language: transcription?.language ?? "",
           maxDurationSec: transcription?.max_duration_sec ?? 120,
           maxUploadMb: transcription?.max_upload_mb ?? 25,
         })
-          .then((next) => setSettings(next))
+          .then((next) => { setSettings(next); onSettingsChange?.(next); })
           .catch((err) => {
             console.error("Failed to update transcription model", err);
           });
@@ -1327,7 +1340,7 @@ export function ThreadShell({
       if (chatId) saveThreadModelPreset(chatId, presetName);
       saveLastModelPick(presetName);
     },
-    [chatId, onOpenModelSettings, settings, token],
+    [chatId, onOpenModelSettings, onSettingsChange, settings, token],
   );
 
   const handleHideModel = useCallback(
@@ -1689,6 +1702,74 @@ export function ThreadShell({
     },
     [isViewer, send, withSendDefaults],
   );
+
+  // Live voice conversation: microphone in, assistant voice out, question
+  // cards answered by speaking. One session per chat, owned here so the bar
+  // above the composer and the toolbar toggle share the same state.
+  const liveVoice = useLiveVoice({
+    client,
+    chatId,
+    messages,
+    isStreaming,
+    pendingChoices,
+    respondToChoice,
+    onUtterance: handleThreadSend,
+    wantsWav: settings?.transcription?.provider === "xiaomi_mimo",
+    disabled: isViewer || !chatId,
+  });
+  liveVoiceEnabledRef.current = liveVoice.enabled;
+  const liveSetup = useLiveVoiceSetup(token, chatId ?? "", (next) => {
+    setSettings(next);
+    onSettingsChange?.(next);
+  });
+  const liveToggleRef = useRef(liveVoice.toggle);
+  liveToggleRef.current = liveVoice.toggle;
+
+  // Landing composer (no chat yet): the voice button first creates the chat,
+  // then the conversation starts as soon as that chat is the current one.
+  const pendingVoiceStartRef = useRef<string | null>(null);
+  const [welcomeVoiceStarting, setWelcomeVoiceStarting] = useState(false);
+  const startLiveVoice = useCallback(() => {
+    if (isViewer || booting) return;
+    if (liveVoiceEnabledRef.current) {
+      liveToggleRef.current();
+      return;
+    }
+    if (liveSetup.checking || welcomeVoiceStarting) return;
+    void (async () => {
+      if (!await liveSetup.check()) return;
+      if (chatId) {
+        liveToggleRef.current();
+        return;
+      }
+      setWelcomeVoiceStarting(true);
+      try {
+        const newId = await onCreateChat?.(workspaceScope, { keepWorkbench: true });
+        if (!newId) {
+          setWelcomeVoiceStarting(false);
+          return;
+        }
+        pendingVoiceStartRef.current = newId;
+      } catch {
+        setWelcomeVoiceStarting(false);
+      }
+    })();
+  }, [booting, chatId, isViewer, liveSetup, onCreateChat, welcomeVoiceStarting, workspaceScope]);
+  useEffect(() => {
+    if (!chatId || pendingVoiceStartRef.current !== chatId) return;
+    pendingVoiceStartRef.current = null;
+    setWelcomeVoiceStarting(false);
+    if (!liveVoice.enabled) liveVoice.toggle();
+  }, [chatId, liveVoice]);
+  const liveVoiceToggle = useMemo(
+    () => ({
+      state: liveSetup.checking || welcomeVoiceStarting ? ("starting" as const) : liveVoice.state,
+      toggle: startLiveVoice,
+      disabled: isViewer || booting || liveSetup.checking || welcomeVoiceStarting,
+    }),
+    [booting, startLiveVoice, isViewer, liveSetup.checking, liveVoice.state, welcomeVoiceStarting],
+  );
+  const welcomeVoiceToggle = liveVoiceToggle;
 
   /** Cursor-style Build: flip to Agent, then execute the plan via /forge. */
   const handlePlanBuild = useCallback(
@@ -2259,8 +2340,20 @@ export function ThreadShell({
         />
       ) : null}
       {!isViewer && pendingChoices.length > 0 ? (
-        <ChoicePrompt request={pendingChoices[0]} onRespond={respondToChoice} />
+        <div
+          className={
+            showHeroComposer
+              ? "relative mx-auto w-full min-w-0 max-w-[58rem]"
+              : "relative mx-auto w-full min-w-0 max-w-[49.5rem]"
+          }
+        >
+          <ChoicePrompt request={pendingChoices[0]} onRespond={respondToChoice} />
+        </div>
       ) : null}
+      <LiveVoiceSetupDialog open={liveSetup.open} settings={liveSetup.settings}
+        busy={liveSetup.checking} failed={liveSetup.failed} onRetry={startLiveVoice}
+        onDismiss={liveSetup.dismiss}
+        onConfigure={() => { liveSetup.dismiss(); onOpenVoiceSettings(); }} />
       {session && chatId ? (
         <div
           className={
@@ -2269,6 +2362,8 @@ export function ThreadShell({
               : "relative mx-auto w-full max-w-[49.5rem]"
           }
         >
+          {!isViewer ? <LiveVoiceBar control={liveVoice} onOpenSettings={onOpenVoiceSettings}
+            voiceLabel={settings?.voice ? `${settings.voice.tts_model} · ${settings.voice.voice}` : undefined} /> : null}
           {!isViewer ? (
             <PendingReviewPanel
               changes={pendingReview.changes}
@@ -2326,6 +2421,7 @@ export function ThreadShell({
           skills={skills}
           onStop={stop}
           onTranscribeAudio={transcribeAudio}
+          liveVoice={liveVoiceToggle}
           runStartedAt={runStartedAt}
           goalState={goalState}
           workspaceScope={workspaceScope}
@@ -2383,6 +2479,7 @@ export function ThreadShell({
           skills={skills}
           runStartedAt={runStartedAt}
           onTranscribeAudio={transcribeAudio}
+          liveVoice={welcomeVoiceToggle}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}

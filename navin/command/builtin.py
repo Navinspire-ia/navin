@@ -496,7 +496,7 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
     BuiltinCommandSpec(
         "/ads",
         "Ads studio",
-        "Paid media desk: Google Ads, Meta Ads, TikTok Ads, Reddit Ads via MCP.",
+        "Paid media desk: exports analysis engine plus Google, Microsoft, Meta, TikTok, Reddit, LinkedIn Ads via MCP.",
         "badge-dollar-sign",
         "[platform|account|brief]",
         lifecycle="agent_turn",
@@ -2374,18 +2374,27 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "studio-expert-contract, critic-reviewer, paid-ads-manager, marketing-analytics, "
         "conversion-rate-optimization, copywriting-agent, ad-creative-generator",
         "Act as a senior paid-media desk under studio-expert-contract. "
-        "Platforms: Google Ads (MCP `google-ads`), Meta Ads (MCP `meta-ads` at "
-        "https://mcp.facebook.com/ads), TikTok Ads (MCP `tiktok-ads`), Reddit Ads "
-        "(MCP `reddit-ads`), LinkedIn Ads (MCP `linkedin-ads`). "
+        "Platforms: Google Ads (MCP `google-ads`), Microsoft Ads (MCP `microsoft-ads`), "
+        "Meta Ads (MCP `meta-ads` at https://mcp.facebook.com/ads), TikTok Ads (MCP "
+        "`tiktok-ads`), Reddit Ads (MCP `reddit-ads`), LinkedIn Ads (MCP `linkedin-ads`). "
         "1) Confirm platform(s), account/advertiser ids, objective+KPI, budget, geo/language. "
-        "2) If the matching MCP is connected (Settings → MCP), list accounts and read live "
-        "campaign/ad-set/ad structure and recent metrics via MCP tools before inventing "
-        "topology or performance numbers. "
-        "3) Otherwise stay advisory: ask for Ads Manager exports/CSV and label estimates. "
-        "4) Structure campaigns (campaign → ad set/group → creatives), negatives/audiences, "
-        "tracking checklist, and weekly kill/scale loop. Prefer read-only MCP first; never "
-        "mutate budgets/bids/status without explicit user approval. "
-        "5) Save under ads/ (MD/CSV) plus a Track A ads-report-* UI "
+        "2) Use the `ads` engine for every number: action=pipeline on Ads Manager exports "
+        "(CSV/XLSX attached to the chat or under ads/imports/) or on MCP report rows passed "
+        "as data; it computes CTR/CPC/CPA/ROAS per campaign, ad group, ad, keyword and search "
+        "term, flags wasted spend, high CPA, low CTR, fatigue, quality score and pacing, and "
+        "writes proposed changes to ads/changes.jsonl. "
+        "3) If the matching MCP is connected (Settings → MCP), list accounts and read live "
+        "campaign/ad-set/ad structure and recent reports via MCP tools first, then feed the "
+        "rows to the engine before inventing topology or performance numbers. "
+        "4) Without MCP or exports stay advisory: ask for the exports and label estimates; "
+        "keep the engine data_gap entries visible. "
+        "5) Structure campaigns (campaign → ad set/group → creatives), negatives/audiences, "
+        "tracking checklist, and weekly kill/scale loop from the engine findings. Changes "
+        "stay proposed until the user approves them (action=changes status=approved); then "
+        "action=export_changes (csv / google_editor / microsoft_bulk) or apply the approved "
+        "ones through the MCP write tools and verify. Never mutate budgets/bids/status "
+        "without that approval. "
+        "6) Save under ads/ (MD/CSV/JSON) plus a Track A ads-report-* UI "
         "(Three.js, open_preview, not PDF) with evidence paths; "
         "critic-review then PASS/WARN/BLOCK gate. No invented ROAS/CPC.",
     ),
@@ -3678,7 +3687,9 @@ async def cmd_checkpoint(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-_PILOT_TASKS = ("search", "plan", "review", "security", "dev", "fast", "deep", "docs")
+_PILOT_TASKS = (
+    "search", "plan", "review", "security", "dev", "fast", "deep", "docs", "vision", "computer",
+)
 
 
 def _model_routes() -> dict[str, str]:

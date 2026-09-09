@@ -510,7 +510,7 @@ class SyncTest(unittest.TestCase):
         with mock.patch.object(managed_catalog.httpx, "get", return_value=response):
             self.assertTrue(sync_managed_catalog(config))
         self.assertEqual(config.agents.defaults.model, "z-ai/glm-5.3-flash")
-        expected_roles = set(managed_catalog.ROLE_TIERS) | {"vision"}
+        expected_roles = set(managed_catalog.ROLE_TIERS) | {"vision", "computer"}
         self.assertEqual(set(config.model_routes), expected_roles)
         self.assertEqual(
             config.model_routes["vision"],

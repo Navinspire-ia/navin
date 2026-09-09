@@ -772,6 +772,13 @@ export default defineConfig(({ mode }) => {
       host: "0.0.0.0",
       port: 5173,
       strictPort: true,
+      // WSL inotify hits ENOSPC quickly (many Vite/Node trees). Polling
+      // keeps :5173 up instead of crashing after "ready".
+      watch: {
+        usePolling: Boolean(process.env.WSL_DISTRO_NAME)
+          || process.env.CHOKIDAR_USEPOLLING === "1"
+          || process.env.CHOKIDAR_USEPOLLING === "true",
+      },
       // Publish (Cloudflare Quick Tunnel) rewrites the Host header to
       // *.trycloudflare.com. Vite blocks unknown hosts by default.
       allowedHosts: [".trycloudflare.com", ".nport.link", "localhost", "127.0.0.1"],

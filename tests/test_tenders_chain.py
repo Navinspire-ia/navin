@@ -61,6 +61,7 @@ class TendersChainAZTest(unittest.TestCase):
         os.environ.pop("NAVIN_TENDERS_AI", None)
         self._tmp.cleanup()
 
+    @patch("navin.tenders.desk.enrich_notice", new=lambda row: row)
     def test_every_action_from_empty_wizard_to_won_and_back(self) -> None:
         snap = handle_tenders_action("snapshot")
         self.assertFalse(snap["wizard_ready"])
@@ -168,8 +169,10 @@ class TendersChainAZTest(unittest.TestCase):
         self.assertIn("Atelier Chain", row["response"]["letter"])
         self.assertIn(row["title"], row["response"]["letter"])
         self.assertTrue(row["response"]["from_file"])
-        self.assertIn("Atelier Cloud", row["response"]["letter"])
-        self.assertIn("Atelier Cloud", row["response"]["methodology"])
+        self.assertNotIn("Offer model Atelier Cloud", row["response"]["letter"])
+        self.assertNotIn("Offer model Atelier Cloud", row["response"]["methodology"])
+        template_material = "\n".join(item["excerpt"] for item in row["response"]["template_material"])
+        self.assertIn("Offer model Atelier Cloud", template_material)
 
         mailed = handle_tenders_action("mail", {"id": go_row["id"], "kind": "clarification"})
         self.assertTrue(mailed["draft"])

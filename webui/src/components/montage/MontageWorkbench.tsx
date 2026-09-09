@@ -376,7 +376,7 @@ export function MontageWorkbench({
           + "1) If no video is attached or in the workspace, ask ONCE for the file or URL. "
           + "2) montage(action=transcribe, path=<video>) for timed source.srt. "
           + "3) Translate the cues to the target language: keep numbering and timing EXACTLY, max ~42 chars per line, split long cues on two lines, save as translated.srt next to source.srt. "
-          + "4) Burn them: montage(action=assemble, visuals=<video>, srt=translated.srt, profile matching the source format). "
+          + "4) Burn them while retaining the soundtrack: montage(action=assemble, visuals=<video>, voice=<video>, srt=translated.srt, profile matching the source format). "
           + "5) Deliver the MP4 plus the .srt file path so the user can also upload it as closed captions. Never invent timings.",
       },
       {

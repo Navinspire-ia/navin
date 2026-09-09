@@ -158,11 +158,10 @@ def resolve_transcription_config(config: Any) -> EffectiveTranscriptionConfig:
     api_key = _resolve_transcription_api_key(provider, provider_cfg, config)
     api_base = _resolve_transcription_api_base(provider, provider_cfg)
     model = (getattr(top, "model", None) or default_model).strip()
-    # Micro toujours branché quand une clé existe quelque part : si le provider
-    # configuré n'a pas de clé, bascule runtime vers Navin (clé managée du plan)
-    # puis vers OpenRouter BYOK (même protocole, mêmes slugs).
-    # Keep local providers on their own base URL even without a real API key.
-    if not api_key and not _is_local_transcription_provider(provider):
+    # Only legacy automatic settings may fall back to a managed/shared key.
+    # Keep an explicit BYOK choice on its provider even when its key is missing.
+    explicit_provider = bool(getattr(top, "provider", None))
+    if not api_key and not explicit_provider and not _is_local_transcription_provider(provider):
         generic_models = {"whisper-large-v3", "whisper-1", "whisper", ""}
         for fallback in ("navin", "openrouter"):
             if provider == fallback:

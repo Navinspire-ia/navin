@@ -604,7 +604,8 @@ class CareerApiTest(unittest.TestCase):
                 )
                 prepared = handle_career_action("prepare", {"id": "job-test1"})
                 self.assertTrue(prepared["prepared"]["cv_name"].endswith(".docx"))
-                self.assertIn("Do not invent", prepared["prepared"]["summary"])
+                self.assertNotIn("Do not invent", prepared["prepared"]["summary"])
+                self.assertFalse(prepared["prepared"]["pack_ready"])
                 self.assertIn("Data Engineer", prepared["prepared"]["cv_text"])
 
     def test_wizard_company_profile_persists(self) -> None:
@@ -722,7 +723,7 @@ class CareerApiTest(unittest.TestCase):
                     handle_career_action("explode")
                 self.assertEqual(ctx.exception.status, 400)
 
-    def test_linkedin_autopilot_is_blocked(self) -> None:
+    def test_linkedin_apply_requires_actual_candidate_facts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = CareerStore(Path(tmp))
             store.save_profile({"apply_mode": "autopilot"})
@@ -741,7 +742,7 @@ class CareerApiTest(unittest.TestCase):
             with patch("navin.webui.career_api._store", return_value=store):
                 with self.assertRaises(CareerError) as ctx:
                     handle_career_action("apply", {"id": "job-li"})
-                self.assertIn("LinkedIn", ctx.exception.message)
+                self.assertIn("master CV", ctx.exception.message)
 
     def test_import_linkedin_paste_never_fetches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1194,7 +1195,10 @@ class CareerOfficialApiTest(unittest.TestCase):
                                 with patch("navin.career.official.fetch_jooble", return_value=[]) as jooble:
                                     with patch(
                                         "navin.career.official.fetch_usajobs", return_value=[]
-                                    ) as usajobs:
+                                    ) as usajobs, patch(
+                                        "navin.career.collect.collect_employers",
+                                        return_value={"jobs": [], "checked": 0, "reports": [], "errors": []},
+                                    ):
                                         result = asyncio.run(
                                             tool.execute(action="search", brief="Data Engineer")
                                         )

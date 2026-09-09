@@ -460,9 +460,11 @@ def _run_cycle(
 
         added = _added_from_hunt(hunt)
         alerts = int((watch or {}).get("count") or 0)
+        from navin.tenders.watch import digest_was_delivered
+
         watch_ok = (
             not watch_error
-            and (alerts == 0 or bool((watch or {}).get("delivered") or (watch or {}).get("sent")))
+            and (alerts == 0 or (watch or {}).get("delivered") is True or digest_was_delivered((watch or {}).get("sent")))
         )
         due = next_due_after(state, now=clock, fallback_s=86400)
         cycle = int(state.get("cycle") or 0) + 1
@@ -486,6 +488,8 @@ def _run_cycle(
                 "error_streak": 0,
                 "added": added,
                 "alerts": alerts,
+                "alerts_confirmed": alerts if watch_ok else 0,
+                "alerts_pending": alerts if not watch_ok else 0,
             }
         )
         state = _finish_cycle_state(desk, state, clock=clock)

@@ -1,7 +1,8 @@
 """Navin color themes for the terminal UI.
 
-Brand colors: blue ``#0369FF`` and teal ``#54D4CD``. Chrome (keys, dock)
-stays quiet gray; tools, reasoning and status use the brand colors.
+Brand chrome uses a sky blue that stays readable on black without the
+neon punch of ``#0369FF``. Teal ``#54D4CD`` stays for accents. File paths
+use sage green; inline code that is not a path stays with the body text.
 Built-in Textual themes stay selectable from the theme picker.
 
 ``navin`` (Navin Night) is the default; ``navin-light`` (Navin Day) is the
@@ -12,9 +13,13 @@ from __future__ import annotations
 
 from textual.theme import Theme
 
+# Sky blue: same family as the brand mark, lighter so labels do not glare.
+PRIMARY_INK = "#5EA8FF"
+PRIMARY_INK_LIGHT = "#3D82FF"
+
 NAVIN_DARK = Theme(
     name="navin",
-    primary="#0369FF",
+    primary=PRIMARY_INK,
     secondary="#54D4CD",
     accent="#54D4CD",
     warning="#E6B84C",
@@ -44,16 +49,17 @@ NAVIN_DARK = Theme(
         "footer-key-foreground": "#8A8A8A",
         "footer-description-foreground": "#8A8A8A",
         "button-color-foreground": "#111111",
-        "markdown-code-inline-background": "#0A2A28",
+        "markdown-code-inline-background": "transparent",
         "markdown-code-block-background": "#121212",
-        "link-color": "#0369FF",
-        "link-color-hover": "#0369FF",
+        "link-color": "#7AA8A2",
+        "link-color-hover": "#8FBC8F",
+        "path": "#8FBC8F",
     },
 )
 
 NAVIN_LIGHT = Theme(
     name="navin-light",
-    primary="#0369FF",
+    primary=PRIMARY_INK_LIGHT,
     secondary="#0F766E",
     accent="#0F766E",
     warning="#B45309",
@@ -78,10 +84,11 @@ NAVIN_LIGHT = Theme(
         "footer-key-foreground": "#2E2E2E",
         "footer-description-foreground": "#6A6A6A",
         "button-color-foreground": "#FFFFFF",
-        "markdown-code-inline-background": "#E8E8E8",
+        "markdown-code-inline-background": "transparent",
         "markdown-code-block-background": "#FFFFFF",
         "link-color": "#0F766E",
-        "link-color-hover": "#0369FF",
+        "link-color-hover": "#2D6A4F",
+        "path": "#2D6A4F",
     },
 )
 

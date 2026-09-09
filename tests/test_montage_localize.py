@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,6 +47,28 @@ def test_sync_gate_blocks_a_failed_voice_track(tmp_path: Path) -> None:
         assert_sync_gate_ok(voice)
 
 
+@pytest.mark.asyncio
+async def test_oversized_transcription_fails_before_any_provider_call(tmp_path, monkeypatch):
+    from navin.montage.localize import transcribe_video
+
+    transcriber = AsyncMock(side_effect=AssertionError("partial transcription is forbidden"))
+    monkeypatch.setattr("navin.montage.detect.find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr("navin.config.loader.load_config", lambda: object())
+    monkeypatch.setattr(
+        "navin.audio.transcription.resolve_transcription_config",
+        lambda _: SimpleNamespace(enabled=True, configured=True),
+    )
+    monkeypatch.setattr("navin.audio.transcription.transcribe_audio_file", transcriber)
+    monkeypatch.setattr(
+        "navin.montage.localize._run_ffmpeg",
+        AsyncMock(return_value="Duration: 02:00:00.00, start: 0.000000, bitrate: 256 kb/s"),
+    )
+    with pytest.raises(LocalizeError, match="Split the video"):
+        await transcribe_video(tmp_path, str(tmp_path / "long-source.mp4"))
+    transcriber.assert_not_called()
+    assert not list(tmp_path.rglob("source.srt"))
+
+
 def test_sync_gate_allows_a_passing_or_reportless_track(tmp_path: Path) -> None:
     voice = tmp_path / "voice.wav"
     voice.write_bytes(b"RIFF....")
@@ -75,6 +99,13 @@ class TestParseSilences:
 
 
 class TestSpeechSegments:
+    def test_two_hour_recording_keeps_the_last_speech_window(self) -> None:
+        segments = speech_segments([], duration=7200.0)
+        assert len(segments) > 400
+        assert segments[0][0] == 0.0
+        assert segments[-1][1] == 7200.0
+        assert sum(end - start for start, end in segments) == pytest.approx(7200.0)
+
     def test_inverts_silences(self) -> None:
         segments = speech_segments([(4.2, 5.0), (11.5, 12.4)], duration=15.0)
         assert segments == [(0.0, 4.2), (5.0, 11.5), (12.4, 15.0)]

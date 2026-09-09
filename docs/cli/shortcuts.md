@@ -20,6 +20,9 @@ These keys apply in `navin-cli`.
 | Ctrl+W | Workspace / project folder |
 | Ctrl+B | Right panel |
 | Ctrl+N | New chat |
+| Ctrl+C / Cmd+C | Copy the selection (does not quit). Selecting text or right-click also copies it. |
+| Ctrl+V / Cmd+V | Paste from the OS clipboard |
+| Ctrl+Shift+C | Copy the last assistant reply |
 | Ctrl+F | Find in the conversation |
 | F2 | Graph |
 | F3 | Evolve |

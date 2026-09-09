@@ -105,6 +105,11 @@ esac
 "$binary" python -c "import navin.career.desk_cli, navin.leads.desk_cli, navin.marketing.desk_cli, navin.tenders.desk_cli, navin.trading.desk_cli" \
   || { printf 'The build is missing a studio desk module.\n' >&2; exit 1; }
 
+# Exercise the shipped Playwright driver, browser preparation and native desktop
+# bindings. This catches dependencies present in the checkout but absent frozen.
+"$binary" python -m navin.computer.smoke \
+  || { printf 'The browser/computer runtime failed in the sidecar.\n' >&2; exit 1; }
+
 # TLS has two consumers of one bundled OpenSSL: python's ssl and cryptography's
 # rust binding. A build that kept the wrong copy boots but loses the websocket
 # channel and the WebUI, so load both against the shipped libraries.

@@ -180,13 +180,15 @@ class CareerHeartbeatNotifyTest(unittest.TestCase):
             notifier.assert_called_once()
             kwargs = notifier.call_args.kwargs
             self.assertEqual(kwargs["source"], "career")
-            self.assertEqual(kwargs["key"], "career-alert")
-            self.assertTrue(sent["webui"])
+            self.assertTrue(kwargs["key"].startswith("career-"))
+            self.assertTrue(sent["webui_queued"])
+            self.assertFalse(sent["webui"])
+            self.assertFalse(sent["complete"])
             self.assertFalse(sent["telegram"])
             self.assertFalse(sent["email"])
             self.assertFalse(sent["whatsapp"])
 
-    def test_telegram_chat_id_goes_to_the_bus(self) -> None:
+    def test_telegram_chat_id_is_queued_without_claiming_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = CareerStore(Path(tmp))
             store.save_profile(
@@ -197,13 +199,16 @@ class CareerHeartbeatNotifyTest(unittest.TestCase):
             )
             with (
                 patch("navin.career.notify.notify", return_value=False),
-                patch("navin.career.notify._put_outbound", return_value=True) as outbound,
+                patch("navin.bus.alerts._cfg", return_value={"enabled": True, "token": "audit-fake-token"}),
+                patch("navin.bus.alerts._enqueue", return_value=True) as outbound,
             ):
                 sent = deliver_alert(store, title="1 career alert", detail="Match: A")
             outbound.assert_called_once()
-            self.assertEqual(outbound.call_args.args[0], "telegram")
-            self.assertEqual(outbound.call_args.args[1], "4242")
-            self.assertTrue(sent["telegram"])
+            self.assertEqual(outbound.call_args.args[1].channel, "telegram")
+            self.assertEqual(outbound.call_args.args[1].chat_id, "4242")
+            self.assertEqual(sent["receipts"]["telegram"]["status"], "pending")
+            self.assertFalse(sent["telegram"])
+            self.assertFalse(sent["complete"])
 
 
 class CareerHeartbeatGateTest(unittest.TestCase):
@@ -418,29 +423,19 @@ class CareerHeartbeatGateTest(unittest.TestCase):
             self.assertIn("Staff Data Engineer", payload["watch"]["digest"])
             self.assertEqual(tick_watch(store)["count"], 0)
 
-    def test_put_outbound_needs_bus_and_chat(self) -> None:
-        from navin.career.notify import _put_outbound, _send_email
-
-        self.assertFalse(_put_outbound("telegram", "", "hello"))
-        self.assertFalse(_put_outbound("telegram", "1", ""))
-        self.assertFalse(_send_email("", "t", "b"))
-        self.assertFalse(_send_email("nope", "t", "b"))
-
-        class _Queue:
-            def __init__(self) -> None:
-                self.items: list[object] = []
-
-            def put_nowait(self, item: object) -> None:
-                self.items.append(item)
-
-        class _Bus:
-            def __init__(self) -> None:
-                self.outbound = _Queue()
-
-        bus = _Bus()
-        with patch("navin.bus.notify._default_bus", bus):
-            self.assertTrue(_put_outbound("telegram", "99", "Match: A"))
-        self.assertEqual(len(bus.outbound.items), 1)
+    def test_alert_needs_recipient_and_running_dispatcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("navin.bus.alerts._RUNTIME", {}, clear=True), patch(
+            "navin.bus.alerts._cfg", return_value={"enabled": True, "token": "audit-fake-token"}
+        ):
+            store = CareerStore(Path(tmp))
+            store.save_profile({"channels": {"telegram": True, "telegram_to": ""}})
+            missing = deliver_alert(store, title="Audit A", detail="Audit message")
+            self.assertFalse(missing["complete"])
+            self.assertEqual(missing["receipts"]["telegram"]["error"], "destination_missing")
+            store.save_profile({"channels": {"telegram": True, "telegram_to": "99"}})
+            closed = deliver_alert(store, title="Audit B", detail="Audit message")
+            self.assertFalse(closed["telegram"])
+            self.assertEqual(closed["receipts"]["telegram"]["error"], "gateway_not_running")
 
     def test_armed_profile_matches_watch_skip_rule(self) -> None:
         self.assertFalse(profile_is_armed(None))

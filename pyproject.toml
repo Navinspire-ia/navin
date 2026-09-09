@@ -62,6 +62,9 @@ dependencies = [
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
+    # Computer is available in the standard CLI and desktop installation.
+    "pillow>=10.0.0",
+    "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
@@ -166,6 +169,16 @@ browser = [
     # MIT browser agent library (tabs, DOM index, extract, upload, …). See THIRD_PARTY_NOTICES.md.
     "browser-use>=0.13.7,<0.14.0",
 ]
+computer = [
+    # Compatibility extra; these dependencies are also installed by default.
+    # Windows and macOS drive the OS through ctypes and ship nothing else;
+    # Pillow scales screenshots for the model and grabs the screen on Windows /
+    # X11, python-xlib drives X11 (XTest) without the xdotool CLI. Wayland uses
+    # the desktop portal through system packages (python3-gi, gstreamer,
+    # pipewire) that pip cannot install: `navin computer doctor` lists them.
+    "pillow>=10.0.0",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+]
 dev = [
     "aiohttp>=3.9.0,<4.0.0",
     "ruff>=0.1.0",
@@ -184,12 +197,14 @@ dev = [
     "markdown>=3.5,<4.0",
     "yt-dlp>=2024.10.0",
     "pycryptodomex>=3.20.0",
+    # Desktop control (`computer` tool) on Linux X11 / Xvfb test displays.
+    "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
 [project.urls]
 Homepage = "https://navin.live"
-Repository = "https://github.com/navinspire-ai/navin-agi"
-Issues = "https://github.com/navinspire-ai/navin-agi/issues"
+Repository = "https://github.com/Navinspire-ia/navin"
+Issues = "https://github.com/Navinspire-ia/navin/issues"
 
 [project.scripts]
 navin = "navin.cli.commands:run"
@@ -199,6 +214,11 @@ navin-cli = "navin.cli.commands:run_cli"
 # automatically via pkgutil scanning in ToolLoader.discover().
 # [project.entry-points."navin.tools"]
 # my_plugin = "my_package.plugins:MyTool"
+
+[tool.uv]
+# Browser runtime and scraper-project fetchers require incompatible AnyIO versions.
+# Keep either optional environment installable without changing vendor pins.
+conflicts = [[{ extra = "browser" }, { extra = "scraping" }]]
 
 [build-system]
 requires = ["hatchling"]
@@ -265,4 +285,3 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
-

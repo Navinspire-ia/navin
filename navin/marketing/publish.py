@@ -1,10 +1,9 @@
 """Publish desk content to real channels, with a scheduled queue and UTM links.
 
-API channels: LinkedIn (Posts API, ugcPosts fallback), X (OAuth 1.0a, v2
-tweets), Facebook Pages (Graph API), Telegram (Bot API), email (Navin SMTP
-channel), signed webhook, Markdown blog folder. The rest of the channel list
-(instagram, tiktok, youtube, reddit, producthunt) has no posting API worth
-trusting for a desk: those posts stay copy-and-paste and the UI says so.
+API channels include LinkedIn, Facebook Pages, Reddit, Instagram and TikTok.
+Media processing keeps a content row in ``publishing`` until the provider
+confirms publication. YouTube and Product Hunt retain a manual handoff or an
+explicitly configured webhook bridge.
 
 Every publish attempt leaves a receipt on the content row (url, remote id,
 error) so the loop and the UI never guess what happened.
@@ -29,22 +28,28 @@ from typing import Any
 
 from loguru import logger
 
+from navin.marketing import social_publish
 from navin.marketing.errors import MarketingError
+from navin.marketing.media_delivery import resolve_publish_media
 from navin.marketing.store import CHANNELS, PUBLISH_CHANNELS, MarketingStore
+from navin.utils.atomic_io import InterProcessLock, LockTimeoutError
 
 HttpResult = tuple[int, dict[str, str], bytes]
 HttpFn = Callable[[str, str, dict[str, str], bytes | None], HttpResult]
 
 MANUAL_CHANNELS = tuple(channel for channel in CHANNELS if channel not in PUBLISH_CHANNELS)
 X_LIMIT = 280
-LINKEDIN_VERSION = "202507"
-GRAPH_VERSION = "v21.0"
+LINKEDIN_VERSION = social_publish.LINKEDIN_VERSION
+GRAPH_VERSION = social_publish.GRAPH_VERSION
 _TIMEOUT_S = 25
 
 HINTS = {
     "linkedin": "Token OAuth avec le scope w_member_social (ou w_organization_social) ; author = urn:li:person:... ou urn:li:organization:...",
     "x": "App X avec acces Read and Write : API key, API secret, Access token, Access secret (OAuth 1.0a).",
     "facebook": "Page access token avec pages_manage_posts + l'identifiant de la Page.",
+    "instagram": "Compte Instagram professionnel, permission content_publish et image JPEG ou reel disponible sur une URL HTTPS publique.",
+    "tiktok": "Compte TikTok avec video.publish, choix de confidentialite et accord explicite pour chaque contenu. Les medias heberges exigent un domaine verifie dans l'app TikTok.",
+    "reddit": "OAuth avec identity + submit, subreddit choisi et respect des regles de la communaute.",
     "telegram": "Bot token (ou le bot Navin) et le chat id / @canal ou le bot est admin.",
     "email": "Canal Email Navin configure (SMTP) et une liste de destinataires.",
     "webhook": "URL HTTPS qui recoit un JSON signe HMAC-SHA256 (en-tete X-Navin-Signature).",
@@ -237,6 +242,14 @@ def channel_state(store: MarketingStore, settings: dict[str, Any] | None = None)
                 missing.append("facebook_page_token")
             if not cfg.get("page_id"):
                 missing.append("page_id")
+        elif channel in {"instagram", "tiktok", "reddit"}:
+            token_key = f"{channel}_access_token"
+            if not secrets.get(token_key):
+                missing.append(token_key)
+            if channel == "instagram" and not cfg.get("instagram_user_id"):
+                missing.append("instagram_user_id")
+            if channel == "reddit" and not cfg.get("subreddit"):
+                missing.append("subreddit")
         elif channel == "telegram":
             if not (secrets.get("telegram_bot_token") or _navin_telegram_token()):
                 missing.append("telegram_bot_token")
@@ -272,7 +285,8 @@ def channel_state(store: MarketingStore, settings: dict[str, Any] | None = None)
         )
     webhook_ready = any(row["channel"] == "webhook" and row["ready"] for row in rows)
     for row in rows:
-        if row["mode"] == "manual" and webhook_ready:
+        legacy_bridge = row["channel"] in {"instagram", "tiktok", "reddit"} and not any(row["secrets"].values())
+        if (row["mode"] == "manual" or legacy_bridge) and webhook_ready:
             row["bridge"] = "webhook"
             row["ready"] = True
     return rows
@@ -304,14 +318,24 @@ def _linkedin_author(token: str, cfg: dict[str, Any], http: HttpFn) -> str:
     return f"urn:li:person:{sub}"
 
 
+def _social_text_post(http: HttpFn, url: str, headers: dict[str, str], data: bytes) -> HttpResult:
+    try:
+        return http("POST", url, headers, data)
+    except (MarketingError, OSError, TimeoutError) as exc:
+        raise social_publish.SocialPublishError("The provider did not confirm its response; check the account before retrying publication", status=502, outcome_unknown=True) from exc
+
+
 def post_linkedin(text: str, store: MarketingStore, cfg: dict[str, Any], http: HttpFn, *, row: dict[str, Any] | None = None, link: str = "") -> dict[str, Any]:
+    media = social_publish.validate_content("linkedin", store, cfg, row or {}, text)
     token = store.get_secret("linkedin_token")
     author = _linkedin_author(token, cfg, http)
+    if media["kind"]:
+        return social_publish.post_linkedin_media(text, store, cfg, http, row=row or {}, author=author)
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "X-Restli-Protocol-Version": "2.0.0",
-        "LinkedIn-Version": LINKEDIN_VERSION,
+        "LinkedIn-Version": str(cfg.get("linkedin_version") or LINKEDIN_VERSION),
     }
     title = str((row or {}).get("title") or (row or {}).get("hook") or "").strip()[:200]
     payload: dict[str, Any] = {
@@ -325,7 +349,7 @@ def post_linkedin(text: str, store: MarketingStore, cfg: dict[str, Any], http: H
     if link:
         # The tracked link becomes the article card, so the click lands with its UTM tags.
         payload["content"] = {"article": {"source": link, "title": title or link}}
-    status, resp_headers, body = http("POST", "https://api.linkedin.com/rest/posts", headers, json.dumps(payload).encode())
+    status, resp_headers, body = _social_text_post(http, "https://api.linkedin.com/rest/posts", headers, json.dumps(payload).encode())
     if status in (400, 404, 426):
         # Older apps only have the v2 share endpoint.
         share: dict[str, Any] = {"shareCommentary": {"text": text}, "shareMediaCategory": "NONE"}
@@ -339,11 +363,13 @@ def post_linkedin(text: str, store: MarketingStore, cfg: dict[str, Any], http: H
             "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
         }
         legacy_headers = {key: value for key, value in headers.items() if key != "LinkedIn-Version"}
-        status, resp_headers, body = http("POST", "https://api.linkedin.com/v2/ugcPosts", legacy_headers, json.dumps(legacy).encode())
+        status, resp_headers, body = _social_text_post(http, "https://api.linkedin.com/v2/ugcPosts", legacy_headers, json.dumps(legacy).encode())
     if status not in (200, 201):
-        raise MarketingError(f"linkedin post failed - {_error_text(status, body)}", status=502)
-    urn = str(resp_headers.get("x-restli-id") or _json(body).get("id") or "").strip()
-    return {"id": urn, "url": f"https://www.linkedin.com/feed/update/{urn}" if urn else "", "author": author}
+        raise social_publish.SocialPublishError(f"linkedin post failed - {_error_text(status, body)}", status=status if 400 <= status < 500 else 502, outcome_unknown=status >= 500)
+    urn = str({key.lower(): value for key, value in resp_headers.items()}.get("x-restli-id") or _json(body).get("id") or "").strip()
+    if not urn:
+        raise social_publish.SocialPublishError("LinkedIn returned no post ID; publication is not confirmed", status=502, outcome_unknown=True)
+    return {"id": urn, "url": f"https://www.linkedin.com/feed/update/{urn}", "author": author, "published": True, "pending": False}
 
 
 def test_linkedin(store: MarketingStore, cfg: dict[str, Any], http: HttpFn) -> dict[str, Any]:
@@ -392,18 +418,23 @@ def test_x(store: MarketingStore, cfg: dict[str, Any], http: HttpFn) -> dict[str
 
 
 def post_facebook(text: str, store: MarketingStore, cfg: dict[str, Any], http: HttpFn, *, row: dict[str, Any] | None = None, link: str = "") -> dict[str, Any]:
+    media = social_publish.validate_content("facebook", store, cfg, row or {}, text)
+    if media["kind"]:
+        return social_publish.post_facebook_media(text, store, cfg, http, row=row or {})
     token = store.get_secret("facebook_page_token")
     page = str(cfg.get("page_id") or "").strip()
-    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{page}/feed"
+    url = f"{social_publish._graph(cfg)}/{page}/feed"
     fields = {"message": text, "access_token": token}
     if link:
         fields["link"] = link
     form = urllib.parse.urlencode(fields).encode()
-    status, _headers, body = http("POST", url, {"Content-Type": "application/x-www-form-urlencoded"}, form)
+    status, _headers, body = _social_text_post(http, url, {"Content-Type": "application/x-www-form-urlencoded"}, form)
     if status != 200:
-        raise MarketingError(f"facebook post failed - {_error_text(status, body)}", status=502)
+        raise social_publish.SocialPublishError(f"facebook post failed - {_error_text(status, body)}", status=status if 400 <= status < 500 else 502, outcome_unknown=status >= 500)
     post_id = str(_json(body).get("id") or "").strip()
-    return {"id": post_id, "url": f"https://www.facebook.com/{post_id}" if post_id else ""}
+    if not post_id:
+        raise social_publish.SocialPublishError("Facebook returned no post ID; publication is not confirmed", status=502, outcome_unknown=True)
+    return {"id": post_id, "url": f"https://www.facebook.com/{post_id}", "published": True, "pending": False}
 
 
 def test_facebook(store: MarketingStore, cfg: dict[str, Any], http: HttpFn) -> dict[str, Any]:
@@ -411,8 +442,8 @@ def test_facebook(store: MarketingStore, cfg: dict[str, Any], http: HttpFn) -> d
     page = str(cfg.get("page_id") or "").strip()
     if not token or not page:
         raise MarketingError("facebook_page_token and page_id are required", status=400)
-    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{page}?fields=name&access_token={urllib.parse.quote(token)}"
-    status, _headers, body = http("GET", url, {}, None)
+    url = f"{social_publish._graph(cfg)}/{page}?fields=name"
+    status, _headers, body = http("GET", url, {"Authorization": f"Bearer {token}"}, None)
     if status != 200:
         raise MarketingError(f"facebook token rejected - {_error_text(status, body)}", status=502)
     return {"account": str(_json(body).get("name") or page)}
@@ -597,11 +628,45 @@ _POSTERS: dict[str, Callable[..., dict[str, Any]]] = {
     "linkedin": post_linkedin,
     "x": post_x,
     "facebook": post_facebook,
+    "instagram": social_publish.post_instagram,
+    "tiktok": social_publish.post_tiktok,
+    "reddit": social_publish.post_reddit,
     "telegram": post_telegram,
     "email": post_email,
     "webhook": post_webhook,
     "blog": post_blog,
 }
+
+
+def _refresh_social_token(store: MarketingStore, channel: str, http: HttpFn) -> None:
+    """Use the same injectable transport for token renewal and publication."""
+    if channel not in social_publish.SOCIAL_CHANNELS:
+        return
+    from navin.marketing.oauth import ensure_access_token
+
+    def oauth_http(method: str, url: str, *, data: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
+        request_headers = {"Accept": "application/json", **(headers or {})}
+        encoded = urllib.parse.urlencode(data).encode() if data is not None else None
+        if encoded is not None:
+            request_headers["Content-Type"] = "application/x-www-form-urlencoded"
+        try:
+            status, _, body = http(method, url, request_headers, encoded)
+        except (MarketingError, OSError, TimeoutError):
+            raise MarketingError("Social token renewal could not reach the provider; reconnect if this persists", status=502) from None
+        result = _json(body)
+        if not 200 <= status < 300 or not result:
+            raise MarketingError(f"Social token renewal refused (HTTP {status}); reconnect the account", status=401)
+        return result
+
+    ensure_access_token(store, channel, http=oauth_http)
+
+
+def creator_info(store: MarketingStore, channel: str, *, http: HttpFn | None = None) -> dict[str, Any]:
+    channel = str(channel or "").strip().lower()
+    client = http or http_request
+    _refresh_social_token(store, channel, client)
+    with InterProcessLock(store.path(".oauth.lock"), timeout=5):
+        return social_publish.creator_info(store, channel, _channel_config(store.load_settings(), channel), client)
 _TESTERS: dict[str, Callable[..., dict[str, Any]]] = {
     "linkedin": test_linkedin,
     "x": test_x,
@@ -619,12 +684,16 @@ _TESTERS: dict[str, Callable[..., dict[str, Any]]] = {
 def test_connection(store: MarketingStore, channel: str, *, http: HttpFn | None = None) -> dict[str, Any]:
     channel = str(channel or "").lower().strip()
     tester = _TESTERS.get(channel)
-    if tester is None:
+    if tester is None and channel not in {"instagram", "tiktok", "reddit"}:
         raise MarketingError(f"{channel or 'channel'} has no API connector", status=400)
     settings = store.load_settings()
     cfg = _channel_config(settings, channel)
     try:
-        result = tester(store, cfg, http or http_request)
+        client = http or http_request
+        _refresh_social_token(store, channel, client)
+        result = tester(store, cfg, client) if tester else social_publish.creator_info(store, channel, cfg, client)
+        if channel == "tiktok":
+            result["account"] = str(result.get("creator_nickname") or result.get("creator_username") or "TikTok creator")
     except MarketingError as exc:
         store.save_settings({"publish": {channel: {"tested_at": time.time(), "last_error": exc.message}}})
         store.append_journal({"kind": "publish", "text": f"{channel} connection failed - {exc.message}"})
@@ -655,8 +724,8 @@ def tracked_link(store: MarketingStore, row: dict[str, Any], settings: dict[str,
 
 def approve(store: MarketingStore, content_id: str) -> dict[str, Any]:
     row = store.get_content(content_id)
-    if row.get("status") in {"published"}:
-        raise MarketingError("content is already published", status=409)
+    if row.get("status") in {"published", "publishing"}:
+        raise MarketingError("content is already published or publishing", status=409)
     saved = store.upsert_content({"id": content_id, "status": "approved", "approved_at": time.time(), "error": ""})
     store.append_journal({"kind": "publish", "text": f"approved {content_id} ({row.get('channel')})"})
     return saved
@@ -691,8 +760,8 @@ def parse_when(value: Any, *, now: float | None = None) -> float:
 
 def schedule(store: MarketingStore, content_id: str, when: Any, *, now: float | None = None) -> dict[str, Any]:
     row = store.get_content(content_id)
-    if row.get("status") == "published":
-        raise MarketingError("content is already published", status=409)
+    if row.get("status") in {"published", "publishing"}:
+        raise MarketingError("content is already published or publishing", status=409)
     stamp = parse_when(when, now=now)
     saved = store.upsert_content({"id": content_id, "status": "scheduled", "scheduled_at": stamp, "error": ""})
     store.append_journal(
@@ -719,79 +788,240 @@ def publish_content(
     origin: str = "manual",
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Post one content row now.
+    """Serialize posting and its receipt so concurrent requests cannot post twice."""
+    arguments = {"http": http, "force": force, "origin": origin, "dry_run": dry_run}
+    if dry_run:
+        return _publish_content(store, content_id, **arguments)
+    try:
+        with InterProcessLock(store.root / ".publish.lock", timeout=0):
+            return _publish_content(store, content_id, **arguments)
+    except LockTimeoutError as exc:
+        raise MarketingError("a publication is already in progress; refresh before retrying", status=409) from exc
 
-    API channels post through their connector. Manual channels (instagram,
-    tiktok, ...) go through the webhook when one is enabled (Zapier, Make, a
-    Buffer bridge), otherwise they are marked published with the copy-ready
-    text so the operator pastes it. ``dry_run`` renders everything and posts
-    nothing.
-    """
+
+def _publish_content(
+    store: MarketingStore,
+    content_id: str,
+    *,
+    http: HttpFn | None = None,
+    force: bool = False,
+    origin: str = "manual",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Post one content, preserving an asynchronous or uncertain receipt."""
     row = store.get_content(content_id)
     channel = str(row.get("channel") or "")
     if row.get("status") == "published" and not force:
         raise MarketingError("content is already published", status=409)
+    if row.get("status") == "publishing":
+        raise MarketingError("content is already publishing; check its status before starting another post", status=409)
     settings = store.load_settings()
     link = tracked_link(store, row, settings)
     text = render_for_channel(row, link)
     states = {item["channel"]: item for item in channel_state(store, settings)}
     via = channel
-    if channel in MANUAL_CHANNELS:
-        if states.get("webhook", {}).get("ready"):
-            via = "webhook"
-        else:
-            if dry_run:
-                return {"ok": True, "dry_run": True, "manual": True, "via": "manual", "text": text, "link": link, "content": row}
-            saved = store.upsert_content(
-                {
-                    "id": content_id,
-                    "utm_url": link,
-                    "publish_text": text,
-                    "status": "published",
-                    "published_at": time.time(),
-                    "receipt": {"channel": channel, "mode": "manual", "origin": origin},
-                    "error": "",
-                }
-            )
-            store.append_journal({"kind": "publish", "text": f"{channel} {content_id} marked published (manual channel)"})
-            return {"ok": True, "manual": True, "via": "manual", "content": saved, "text": text, "link": link}
+    if states.get(channel, {}).get("bridge") == "webhook":
+        via = "webhook"
+    elif channel in MANUAL_CHANNELS:
+        if dry_run:
+            return {"ok": True, "dry_run": True, "manual": True, "via": "manual", "text": text, "link": link, "content": row, "confirmed": False}
+        saved = store.upsert_content({
+            "id": content_id, "utm_url": link, "publish_text": text, "status": "published",
+            "published_at": time.time(), "receipt": {"channel": channel, "mode": "manual", "origin": origin}, "error": "",
+        })
+        store.append_journal({"kind": "publish", "text": f"{channel} {content_id} marked published (manual channel)"})
+        return {"ok": True, "manual": True, "via": "manual", "content": saved, "text": text, "link": link, "confirmed": False}
     state = states.get(via)
     if not state or not state.get("configured"):
         missing = ", ".join((state or {}).get("missing") or []) or "connector"
         raise MarketingError(f"{via} is not configured ({missing})", status=409)
+    if via in social_publish.SOCIAL_CHANNELS and not state.get("enabled"):
+        raise MarketingError(f"activate the {via} connector before publishing", status=409)
+    prepared = resolve_publish_media(store, row, create=False) if via in social_publish.SOCIAL_CHANNELS else row
+    if via == "reddit" and prepared.get("reddit_kind") == "link" and not prepared.get("reddit_url"):
+        prepared = {**prepared, "reddit_url": link}
+    if via in social_publish.SOCIAL_CHANNELS:
+        social_publish.validate_content(via, store, _channel_config(settings, via), prepared, text)
     if dry_run:
-        return {"ok": True, "dry_run": True, "manual": False, "via": via, "text": text, "link": link, "content": row}
+        return {"ok": True, "dry_run": True, "manual": False, "via": via, "text": text, "link": link, "content": row, "confirmed": False}
     cfg = _channel_config(settings, via)
     poster = _POSTERS[via]
     try:
-        receipt = poster(text, store, cfg, http or http_request, row=row, link=link)
+        client = http or http_request
+        if via in social_publish.SOCIAL_CHANNELS:
+            _refresh_social_token(store, via, client)
+            with InterProcessLock(store.path(".oauth.lock"), timeout=5):
+                cfg = _channel_config(store.load_settings(), via)
+                if not cfg.get("enabled"):
+                    raise MarketingError(f"activate the {via} connector before publishing", status=409)
+                prepared = resolve_publish_media(store, row, create=True)
+                if via == "reddit" and prepared.get("reddit_kind") == "link" and not prepared.get("reddit_url"):
+                    prepared = {**prepared, "reddit_url": link}
+                social_publish.validate_content(via, store, cfg, prepared, text)
+                intent = {
+                    "channel": channel, "via": via, "mode": "api", "origin": origin,
+                    "phase": "starting", "pending": True, "published": False,
+                    "started_at": time.time(), "account_binding": _account_binding(store, via, cfg),
+                }
+                store.upsert_content({
+                    "id": content_id, "status": "publishing", "receipt": intent,
+                    "utm_url": link, "publish_text": text, "error": "", "published_url": "", "remote_id": "", "published_at": 0,
+                })
+                receipt = poster(text, store, cfg, client, row=prepared, link=link)
+        else:
+            receipt = poster(text, store, cfg, client, row=row, link=link)
     except MarketingError as exc:
-        store.upsert_content({"id": content_id, "status": "failed", "error": exc.message, "failed_at": time.time(), "utm_url": link})
-        store.append_journal({"kind": "publish", "text": f"{channel} {content_id} failed - {exc.message}"})
-        return {"ok": False, "error": exc.message, "content": store.get_content(content_id)}
+        return _publication_error(store, content_id, exc, via=via, text=text, link=link)
     except Exception as exc:  # noqa: BLE001 - connector bug must not kill the loop
         logger.exception("marketing publish failed")
         message = f"{type(exc).__name__}: {exc}"[:240]
-        store.upsert_content({"id": content_id, "status": "failed", "error": message, "failed_at": time.time(), "utm_url": link})
-        store.append_journal({"kind": "publish", "text": f"{channel} {content_id} failed - {message}"})
-        return {"ok": False, "error": message, "content": store.get_content(content_id)}
-    saved = store.upsert_content(
-        {
-            "id": content_id,
-            "status": "published",
-            "published_at": time.time(),
-            "published_url": str(receipt.get("url") or ""),
-            "remote_id": str(receipt.get("id") or ""),
-            "utm_url": link,
-            "publish_text": text,
-            "receipt": {"channel": channel, "via": via, "mode": "api", "origin": origin, **receipt},
-            "error": "",
-        }
-    )
-    store.append_journal(
-        {"kind": "publish", "text": f"{channel} {content_id} published via {via} {receipt.get('url') or receipt.get('id') or ''}".strip()}
-    )
-    return {"ok": True, "manual": False, "via": via, "content": saved, "text": text, "link": link}
+        error = social_publish.SocialPublishError(message, status=502, outcome_unknown=via in social_publish.SOCIAL_CHANNELS)
+        return _publication_error(store, content_id, error, via=via, text=text, link=link)
+    return _publication_result(store, content_id, receipt, via=via, text=text, link=link, origin=origin)
+
+
+def _account_binding(store: MarketingStore, channel: str, cfg: dict[str, Any]) -> dict[str, str]:
+    from navin.marketing.oauth import connection_status
+
+    identity = str(connection_status(store, channel).get("account_id") or "")
+    configured = str(cfg.get({"instagram": "instagram_user_id", "facebook": "page_id", "linkedin": "author"}.get(channel, "")) or "")
+    binding = {"account_id": identity, "configured_account": configured, "auth_mode": str(cfg.get("auth_mode") or "")}
+    if not identity:
+        # Legacy tokens have no independently verified identity. Renewal of a
+        # managed OAuth token does not change the stable binding above.
+        token = store.get_secret(social_publish.TOKEN_KEYS[channel])
+        binding["manual_token_fingerprint"] = hmac.new(token.encode(), b"Navin publication account binding", hashlib.sha256).hexdigest()
+    return binding
+
+
+def _publication_result(
+    store: MarketingStore, content_id: str, receipt: dict[str, Any], *, via: str,
+    text: str, link: str, origin: str = "manual",
+) -> dict[str, Any]:
+    previous = store.get_content(content_id)
+    old_receipt = previous.get("receipt") if isinstance(previous.get("receipt"), dict) else {}
+    receipt = {"channel": previous.get("channel"), "via": via, "mode": "api", "origin": origin, **old_receipt,
+               "error": "", "failed": False, "pending": False, "published": via not in social_publish.SOCIAL_CHANNELS, **receipt}
+    pending = bool(receipt.get("pending"))
+    failed = bool(receipt.get("failed")) or receipt.get("phase") == "failed"
+    confirmed = not pending and not failed and (receipt.get("published") is True or via not in social_publish.SOCIAL_CHANNELS)
+    if not (pending or failed or confirmed):
+        pending = True
+        receipt.update({"phase": "unknown", "pending": True, "published": False, "error": "The provider did not confirm publication; check the remote account before retrying"})
+    status = "publishing" if pending else "failed" if failed else "published"
+    message = str(receipt.get("error") or "")
+    patch: dict[str, Any] = {
+        "id": content_id, "status": status, "publish_checked_at": time.time(), "utm_url": link,
+        "publish_text": text, "receipt": receipt, "error": message,
+    }
+    if confirmed:
+        patch.update({"published_at": time.time(), "published_url": str(receipt.get("url") or ""), "remote_id": str(receipt.get("id") or "")})
+    elif failed:
+        patch["failed_at"] = time.time()
+    saved = store.upsert_content(patch)
+    if previous.get("status") != status or old_receipt.get("phase") != receipt.get("phase"):
+        store.append_journal({"kind": "publish", "text": f"{previous.get('channel')} {content_id} {status} via {via} {message or receipt.get('url') or receipt.get('operation_id') or ''}".strip()})
+    return {"ok": not failed and not message, "pending": pending, "confirmed": confirmed, "manual": False, "via": via, "content": saved, "text": text, "link": link, "error": message}
+
+
+def _publication_error(
+    store: MarketingStore, content_id: str, error: MarketingError, *, via: str,
+    text: str, link: str, polling: bool = False,
+) -> dict[str, Any]:
+    previous = store.get_content(content_id)
+    receipt = dict(previous.get("receipt") or {})
+    unknown = bool(getattr(error, "outcome_unknown", False))
+    pending = polling or unknown
+    receipt.update({"pending": pending, "published": False, "failed": not pending, "error": error.message})
+    if unknown and receipt.get("phase") == "starting":
+        receipt["phase"] = "unknown"
+    elif not pending:
+        receipt["phase"] = "failed"
+    if getattr(error, "code", ""):
+        receipt["error_code"] = error.code
+    if getattr(error, "retry_after_s", None) is not None:
+        receipt["retry_after_s"] = error.retry_after_s
+    if pending:
+        receipt["poll_after_s"] = max(30, float(getattr(error, "retry_after_s", None) or 0))
+    result = _publication_result(store, content_id, receipt, via=via, text=text, link=link)
+    result.update({"ok": False, "error": error.message, "status": error.status})
+    return result
+
+
+def content_capabilities(store: MarketingStore, row: dict[str, Any]) -> dict[str, Any]:
+    """Read-only validation for the content editor; never refresh an OAuth token."""
+    link = tracked_link(store, row)
+    try:
+        prepared = resolve_publish_media(store, row, create=False)
+        if prepared.get("channel") == "reddit" and prepared.get("reddit_kind") == "link" and not prepared.get("reddit_url"):
+            prepared = {**prepared, "reddit_url": link}
+        return social_publish.content_capabilities(store, prepared, render_for_channel(row, link))
+    except MarketingError as exc:
+        result = social_publish.content_capabilities(store, row, render_for_channel(row, link))
+        result.update({"can_publish": False, "errors": list(dict.fromkeys([exc.message, *result["errors"]]))})
+        return result
+
+
+def publish_status(store: MarketingStore, content_id: str, *, http: HttpFn | None = None) -> dict[str, Any]:
+    """Poll a known operation, publishing its processed media when it is ready."""
+    try:
+        with InterProcessLock(store.path(".publish.lock"), timeout=0):
+            row = store.get_content(content_id)
+            via = str((row.get("receipt") or {}).get("via") or row.get("channel") or "")
+            text, link = str(row.get("publish_text") or ""), str(row.get("utm_url") or "")
+            if row.get("status") != "publishing":
+                return {"ok": row.get("status") == "published", "pending": False, "confirmed": row.get("status") == "published" and (row.get("receipt") or {}).get("mode") != "manual", "content": row, "via": via, "text": text, "link": link}
+            client = http or http_request
+            try:
+                cfg = _channel_config(store.load_settings(), via)
+                if not cfg.get("enabled"):
+                    raise MarketingError(f"The {via} connector is paused; activate it to continue this publication", status=409)
+                _refresh_social_token(store, via, client)
+                with InterProcessLock(store.path(".oauth.lock"), timeout=5):
+                    cfg = _channel_config(store.load_settings(), via)
+                    if not cfg.get("enabled"):
+                        raise MarketingError(f"The {via} connector is paused", status=409)
+                    expected = (row.get("receipt") or {}).get("account_binding")
+                    if not expected or expected != _account_binding(store, via, cfg):
+                        raise MarketingError("This publication belongs to a different account or token; reconnect its original account before continuing", status=409)
+                    receipt = social_publish.poll_status(store, row, cfg, client)
+            except MarketingError as exc:
+                return _publication_error(store, content_id, exc, via=via, text=text, link=link, polling=True)
+            except Exception as exc:  # noqa: BLE001 - keep an uncertain operation out of the new-post queue
+                logger.exception("marketing publication status failed")
+                error = social_publish.SocialPublishError(f"Could not check publication ({type(exc).__name__}); refresh its status", status=502)
+                return _publication_error(store, content_id, error, via=via, text=text, link=link, polling=True)
+            return _publication_result(store, content_id, receipt, via=via, text=text, link=link)
+    except LockTimeoutError as exc:
+        raise MarketingError("a publication is already in progress; refresh its status shortly", status=409) from exc
+
+
+def poll_pending_publications(
+    store: MarketingStore, *, http: HttpFn | None = None, limit: int = 10, now: float | None = None,
+) -> dict[str, Any]:
+    """Bounded continuation of accepted operations; never start a new post."""
+    clock = now if now is not None else time.time()
+    report: dict[str, Any] = {"sent": [], "failed": [], "pending": [], "skipped": []}
+    enabled = {item["channel"] for item in channel_state(store) if item.get("enabled") and item.get("configured")}
+    pending = sorted((row for row in store.load_content() if row.get("status") == "publishing"), key=lambda row: float(row.get("publish_checked_at") or 0))
+    checked = 0
+    for row in pending:
+        receipt = row.get("receipt") or {}
+        if row.get("channel") not in enabled or clock < float(row.get("publish_checked_at") or 0) + max(5, float(receipt.get("poll_after_s") or 15)) or checked >= max(0, min(10, limit)):
+            report["skipped"].append(row["id"])
+            continue
+        try:
+            result = publish_status(store, row["id"], http=http)
+        except MarketingError as exc:
+            if exc.status == 409:
+                report["skipped"].append(row["id"])
+                break
+            result = {"ok": False, "pending": True, "content": row, "error": exc.message}
+        target = "pending" if result.get("pending") else "sent" if result.get("confirmed") else "failed"
+        report[target].append({"id": row["id"], "channel": row.get("channel"), **result})
+        checked += 1
+    report["checked"] = checked
+    return report
 
 
 def publish_queue(store: MarketingStore, *, now: float | None = None) -> dict[str, Any]:
@@ -813,6 +1043,7 @@ def publish_queue(store: MarketingStore, *, now: float | None = None) -> dict[st
         "approved": [row["id"] for row in approved],
         "auto": [row["id"] for row in auto],
         "blocked": [row["id"] for row in blocked],
+        "pending": [row["id"] for row in rows if row.get("status") == "publishing"],
         "ready_channels": sorted(ready),
         "per_cycle": int((settings.get("publish") or {}).get("per_cycle") or 1),
         "auto_publish": bool(settings.get("execution_mode") == "autonomous" and settings.get("auto_publish")),
@@ -827,15 +1058,25 @@ def sendable_channels(store: MarketingStore, settings: dict[str, Any] | None = N
     return ready
 
 
-def publish_due(store: MarketingStore, *, now: float | None = None, http: HttpFn | None = None, limit: int | None = None) -> dict[str, Any]:
+def publish_due(
+    store: MarketingStore,
+    *,
+    now: float | None = None,
+    http: HttpFn | None = None,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
     """Loop pass: scheduled rows that are due, then approved rows, then auto-publish."""
     clock = now if now is not None else time.time()
     settings = store.load_settings()
     ready = sendable_channels(store, settings)
     per_cycle = int((settings.get("publish") or {}).get("per_cycle") or 1) if limit is None else limit
     queue = publish_queue(store, now=clock)
-    sent: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
+    continued = {"sent": [], "failed": [], "pending": []} if dry_run else poll_pending_publications(store, now=clock, http=http)
+    sent: list[dict[str, Any]] = continued["sent"]
+    failed: list[dict[str, Any]] = continued["failed"]
+    pending: list[dict[str, Any]] = continued["pending"]
+    preview: list[dict[str, Any]] = []
     skipped: list[str] = []
     budget = per_cycle
     ordered = [(cid, "scheduled") for cid in queue["due"]] + [(cid, "approved") for cid in queue["approved"]] + [(cid, "auto") for cid in queue["auto"]]
@@ -850,18 +1091,33 @@ def publish_due(store: MarketingStore, *, now: float | None = None, http: HttpFn
             # Over the per-cycle budget: stays approved for the next pass.
             skipped.append(content_id)
             continue
-        result = publish_content(store, content_id, http=http, origin=origin)
-        (sent if result.get("ok") else failed).append(
-            {
+        try:
+            result = publish_content(store, content_id, http=http, origin=origin, dry_run=dry_run)
+        except MarketingError as exc:
+            if exc.status == 409:
+                skipped.append(content_id)
+                continue
+            result = {"ok": False, "error": exc.message, "content": row}
+        if result.get("dry_run"):
+            preview.append({"id": content_id, "channel": channel, **result})
+        else:
+            (pending if result.get("pending") else sent if result.get("ok") else failed).append({
                 "id": content_id,
                 "channel": channel,
                 "via": result.get("via") or channel,
                 "url": (result.get("content") or {}).get("published_url", ""),
                 "error": result.get("error", ""),
-            }
-        )
+                **result,
+            })
         if origin != "scheduled":
             budget -= 1
-    if sent or failed:
-        store.append_journal({"kind": "publish", "text": f"loop publish: {len(sent)} sent, {len(failed)} failed, {len(skipped)} waiting"})
-    return {"sent": sent, "failed": failed, "skipped": skipped, "ready_channels": sorted(ready)}
+    if not dry_run and (sent or failed or pending):
+        store.append_journal({"kind": "publish", "text": f"loop publish: {len(sent)} sent, {len(pending)} publishing, {len(failed)} failed, {len(skipped)} waiting"})
+    return {
+        "sent": sent,
+        "failed": failed,
+        "pending": pending,
+        "preview": preview,
+        "skipped": skipped,
+        "ready_channels": sorted(ready),
+    }

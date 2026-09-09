@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Protocol
 
+from navin.audio.models import GROQ_TTS_MODEL, GROQ_TTS_VOICE, NAVIN_TTS_MODEL, NAVIN_TTS_VOICE
+from navin.optional_live import live_modules_available
+
 
 class TtsProviderAdapter(Protocol):
     """Runtime protocol implemented by provider-specific TTS adapters."""
@@ -45,8 +48,8 @@ class TtsProviderSpec:
 TTS_PROVIDERS: tuple[TtsProviderSpec, ...] = (
     TtsProviderSpec(
         name="navin",
-        default_model="google/gemini-3.1-flash-tts-preview",
-        default_voice="eve",
+        default_model=NAVIN_TTS_MODEL,
+        default_voice=NAVIN_TTS_VOICE,
         adapter="navin.providers.tts:NavinTtsProvider",
     ),
     TtsProviderSpec(
@@ -57,14 +60,14 @@ TTS_PROVIDERS: tuple[TtsProviderSpec, ...] = (
     ),
     TtsProviderSpec(
         name="openrouter",
-        default_model="google/gemini-3.1-flash-tts-preview",
-        default_voice="eve",
+        default_model=NAVIN_TTS_MODEL,
+        default_voice=NAVIN_TTS_VOICE,
         adapter="navin.providers.tts:OpenRouterTtsProvider",
     ),
     TtsProviderSpec(
         name="groq",
-        default_model="playai-tts",
-        default_voice="Fritz-PlayAI",
+        default_model=GROQ_TTS_MODEL,
+        default_voice=GROQ_TTS_VOICE,
         adapter="navin.providers.tts:GroqTtsProvider",
     ),
     TtsProviderSpec(
@@ -94,8 +97,6 @@ TTS_PROVIDERS: tuple[TtsProviderSpec, ...] = (
         aliases=("lm-studio", "lmstudio"),
     ),
 )
-
-from navin.optional_live import live_modules_available
 
 if not live_modules_available():
     TTS_PROVIDERS = tuple(spec for spec in TTS_PROVIDERS if spec.name != "navin")

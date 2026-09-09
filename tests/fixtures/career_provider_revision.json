@@ -1,0 +1,465 @@
+{
+  "fictional": true,
+  "captured_provider": "deepseek-v4-flash",
+  "input": {
+    "fictional": true,
+    "profile": {
+      "display_name": "Camille Morel",
+      "headline": "Ingénieure data",
+      "email": "camille@example.invalid",
+      "city": "Lyon",
+      "document_language": "fr",
+      "languages": [
+        "fr",
+        "en"
+      ],
+      "stack": [
+        "SQL",
+        "Python",
+        "Spark",
+        "AWS",
+        "Airflow"
+      ],
+      "summary": "Ingénieure data spécialisée dans les pipelines Python et Spark sur AWS.",
+      "master_cv": "Camille Morel\nIngénieure data\nExpérience professionnelle\nSenior Data Engineer | Atelier Boréal | 2022 - présent\nOptimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.\nFormation de 3 analystes aux contrôles SQL.\n\nData Engineer | Orme Conseil | 2019-2022\nAutomatisation de 8 sources Python avec Airflow.\n\nAnalyste | Rivage Études | 2017-2019\nReporting SQL pour les équipes produit.\nFormation\nMaster informatique | Université du Rhône | 2017\nCertifications\nAWS Certified Data Engineer | 2024",
+      "experiences": [
+        {
+          "title": "Analyste",
+          "company": "Rivage Études",
+          "period": "2017-2019",
+          "facts": "Reporting SQL pour les équipes produit.\nConception de tableaux de bord SQL pour 5 équipes produit.\nDocumentation des définitions des indicateurs avec les équipes métier."
+        },
+        {
+          "title": "Data Engineer",
+          "company": "Orme Conseil",
+          "period": "2019-2022",
+          "facts": "Automatisation de 8 sources Python avec Airflow.\nDéveloppement de contrôles SQL sur les données de facturation.\nMigration de scripts Python vers des traitements Airflow documentés."
+        },
+        {
+          "title": "Senior Data Engineer",
+          "company": "Atelier Boréal",
+          "period": "2022 - présent",
+          "facts": "Formation de 3 analystes aux contrôles SQL.\nOptimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.\nDéveloppement de tests de qualité SQL sur les données AWS.\nDocumentation des procédures de reprise des pipelines avec l'équipe exploitation."
+        }
+      ],
+      "education": [
+        {
+          "diploma": "Master informatique",
+          "school": "Université du Rhône",
+          "year": "2017"
+        }
+      ],
+      "projects": [
+        "Observatoire des données produit | 2021 | Contrôles SQL et documentation partagée avec 5 équipes.",
+        "Atelier Python | 2023 | Transmission des conventions de tests aux analystes de l'équipe."
+      ],
+      "ai_assist": true,
+      "phone": "+33 6 00 00 00 00",
+      "highlights": [
+        "Pipelines Spark sur AWS : traitement passé de 4 à 2 heures."
+      ]
+    },
+    "job": {
+      "id": "job-fictional-quality",
+      "title": "Senior Data Engineer",
+      "company": "Horizon Mobilité",
+      "country": "FR",
+      "source": "import",
+      "url": "https://employer.example.invalid/jobs/data",
+      "document_language": "fr",
+      "description": "Nous recherchons un Senior Data Engineer pour notre équipe data chez Horizon Mobilité. Python, Spark et AWS sont requis pour les pipelines de données. Vous travaillerez avec les équipes produit et exploitation sur la qualité des données, la documentation et les tests SQL. Airflow est apprécié. Kafka est souhaitable.",
+      "must_haves": [
+        "Python",
+        "Spark",
+        "AWS"
+      ]
+    }
+  },
+  "baseline": {
+    "cv_name": "camille_morel_CV_horizon_mobilite.docx",
+    "cv": {
+      "schema_version": 2,
+      "name": "Camille Morel",
+      "language": "fr",
+      "headline": "Ingénieure data",
+      "contacts": [
+        "camille@example.invalid",
+        "+33 6 00 00 00 00",
+        "Lyon"
+      ],
+      "target": "Senior Data Engineer chez Horizon Mobilité",
+      "summary": "Ingénieure data spécialisée dans les pipelines Python et Spark sur AWS.",
+      "skills": "Python · Spark · AWS · SQL · Airflow",
+      "strengths": [],
+      "highlights": [
+        "Pipelines Spark sur AWS : traitement passé de 4 à 2 heures."
+      ],
+      "experiences": [
+        {
+          "id": "experience-2",
+          "title": "Senior Data Engineer",
+          "company": "Atelier Boréal",
+          "period": "2022 - présent",
+          "bullets": [
+            "Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.",
+            "Développement de tests de qualité SQL sur les données AWS.",
+            "Formation de 3 analystes aux contrôles SQL.",
+            "Documentation des procédures de reprise des pipelines avec l'équipe exploitation."
+          ]
+        },
+        {
+          "id": "experience-1",
+          "title": "Data Engineer",
+          "company": "Orme Conseil",
+          "period": "2019-2022",
+          "bullets": [
+            "Automatisation de 8 sources Python avec Airflow.",
+            "Migration de scripts Python vers des traitements Airflow documentés.",
+            "Développement de contrôles SQL sur les données de facturation."
+          ]
+        },
+        {
+          "id": "experience-0",
+          "title": "Analyste",
+          "company": "Rivage Études",
+          "period": "2017-2019",
+          "bullets": [
+            "Reporting SQL pour les équipes produit.",
+            "Conception de tableaux de bord SQL pour 5 équipes produit.",
+            "Documentation des définitions des indicateurs avec les équipes métier."
+          ]
+        }
+      ],
+      "education": [
+        {
+          "diploma": "Master informatique",
+          "school": "Université du Rhône",
+          "year": "2017"
+        }
+      ],
+      "languages": [
+        "Français",
+        "Anglais"
+      ],
+      "sections": [
+        {
+          "kind": "certifications",
+          "heading": "Certifications",
+          "paragraphs": [
+            "AWS Certified Data Engineer | 2024"
+          ]
+        },
+        {
+          "kind": "projects",
+          "heading": "Projets",
+          "paragraphs": [
+            "Observatoire des données produit | 2021 | Contrôles SQL et documentation partagée avec 5 équipes.",
+            "Atelier Python | 2023 | Transmission des conventions de tests aux analystes de l'équipe."
+          ]
+        }
+      ]
+    },
+    "cover": "Madame, Monsieur,\n\nLe poste de Senior Data Engineer chez Horizon Mobilité m'intéresse pour mettre mes compétences en Python, Spark et AWS au service de votre équipe.\n\nMon expérience chez Atelier Boréal illustre cette contribution : Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures. Développement de tests de qualité SQL sur les données AWS.\n\nMon expérience chez Orme Conseil illustre cette contribution : Automatisation de 8 sources Python avec Airflow. Migration de scripts Python vers des traitements Airflow documentés.\n\nJe vous propose un échange pour préciser vos priorités et la contribution que je pourrais apporter à votre équipe.\n\nCordialement,\nCamille Morel",
+    "language": "fr",
+    "ats_notes": "Compétences présentes : Python, Spark, AWS, SQL, Airflow\nCompétences à vérifier, non ajoutées au CV : qualité des données, Kafka",
+    "ats_requirements": [
+      {
+        "term": "Python",
+        "weight": 3,
+        "status": "present"
+      },
+      {
+        "term": "Spark",
+        "weight": 3,
+        "status": "present"
+      },
+      {
+        "term": "AWS",
+        "weight": 3,
+        "status": "present"
+      },
+      {
+        "term": "qualité des données",
+        "weight": 1,
+        "status": "missing"
+      },
+      {
+        "term": "SQL",
+        "weight": 1,
+        "status": "present"
+      },
+      {
+        "term": "Airflow",
+        "weight": 1,
+        "status": "present"
+      },
+      {
+        "term": "Kafka",
+        "weight": 1,
+        "status": "missing"
+      }
+    ],
+    "ats_score": 85,
+    "keywords_matched": [
+      "Python",
+      "Spark",
+      "AWS",
+      "SQL",
+      "Airflow"
+    ],
+    "keywords_missing": [
+      "qualité des données",
+      "Kafka"
+    ],
+    "pack_ready": true,
+    "from_master": true,
+    "generation": {
+      "mode": "deterministic",
+      "status": "complete",
+      "warnings": [],
+      "skills": {}
+    },
+    "cv_text": "Camille Morel\nIngénieure data\ncamille@example.invalid | +33 6 00 00 00 00 | Lyon\nCandidature : Senior Data Engineer chez Horizon Mobilité\n\nProfil\nIngénieure data spécialisée dans les pipelines Python et Spark sur AWS.\n\nRéalisations clés\n- Pipelines Spark sur AWS : traitement passé de 4 à 2 heures.\n\nExpérience professionnelle\nSenior Data Engineer | Atelier Boréal | 2022 - présent\n- Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.\n- Développement de tests de qualité SQL sur les données AWS.\n- Formation de 3 analystes aux contrôles SQL.\n- Documentation des procédures de reprise des pipelines avec l'équipe exploitation.\nData Engineer | Orme Conseil | 2019-2022\n- Automatisation de 8 sources Python avec Airflow.\n- Migration de scripts Python vers des traitements Airflow documentés.\n- Développement de contrôles SQL sur les données de facturation.\nAnalyste | Rivage Études | 2017-2019\n- Reporting SQL pour les équipes produit.\n- Conception de tableaux de bord SQL pour 5 équipes produit.\n- Documentation des définitions des indicateurs avec les équipes métier.\n\nFormation\nMaster informatique | Université du Rhône | 2017\n\nCompétences\nPython · Spark · AWS · SQL · Airflow\n\nLangues\nFrançais | Anglais\n\nCertifications\nAWS Certified Data Engineer | 2024\n\nProjets\nObservatoire des données produit | 2021 | Contrôles SQL et documentation partagée avec 5 équipes.\nAtelier Python | 2023 | Transmission des conventions de tests aux analystes de l'équipe.\n",
+    "summary": "Ingénieure data spécialisée dans les pipelines Python et Spark sur AWS."
+  },
+  "revision": {
+    "summary": {
+      "text": "Ingénieure data expérimentée en pipelines Python et Spark sur AWS, avec une solide expérience en qualité des données, documentation et collaboration avec les équipes produit et exploitation.",
+      "source_ids": [
+        "profile"
+      ]
+    },
+    "experiences": [
+      {
+        "id": "experience-2",
+        "bullets": [
+          {
+            "text": "Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.",
+            "source_ids": [
+              "experience-2:bullet-0"
+            ]
+          },
+          {
+            "text": "Développement de tests de qualité SQL sur les données AWS.",
+            "source_ids": [
+              "experience-2:bullet-1"
+            ]
+          },
+          {
+            "text": "Formation de 3 analystes aux contrôles SQL.",
+            "source_ids": [
+              "experience-2:bullet-2"
+            ]
+          },
+          {
+            "text": "Documentation des procédures de reprise des pipelines avec l'équipe exploitation.",
+            "source_ids": [
+              "experience-2:bullet-3"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "experience-1",
+        "bullets": [
+          {
+            "text": "Automatisation de 8 sources Python avec Airflow.",
+            "source_ids": [
+              "experience-1:bullet-0"
+            ]
+          },
+          {
+            "text": "Migration de scripts Python vers des traitements Airflow documentés.",
+            "source_ids": [
+              "experience-1:bullet-1"
+            ]
+          },
+          {
+            "text": "Développement de contrôles SQL sur les données de facturation.",
+            "source_ids": [
+              "experience-1:bullet-2"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "experience-0",
+        "bullets": [
+          {
+            "text": "Documentation des définitions des indicateurs avec les équipes métier.",
+            "source_ids": [
+              "experience-0:bullet-2"
+            ]
+          },
+          {
+            "text": "Reporting SQL pour les équipes produit.",
+            "source_ids": [
+              "experience-0:bullet-0"
+            ]
+          },
+          {
+            "text": "Conception de tableaux de bord SQL pour 5 équipes produit.",
+            "source_ids": [
+              "experience-0:bullet-1"
+            ]
+          }
+        ]
+      }
+    ],
+    "skill_order": [
+      "Python",
+      "Spark",
+      "AWS",
+      "Airflow",
+      "SQL"
+    ],
+    "cover": [
+      {
+        "text": "Madame, Monsieur, je suis ravie de postuler au poste de Senior Data Engineer chez Horizon Mobilité. Votre besoin de renforcer les pipelines Python, Spark et AWS en lien avec les équipes produit et exploitation correspond directement à mon parcours.",
+        "source_ids": [
+          "profile"
+        ]
+      },
+      {
+        "text": "Chez Atelier Boréal, j'ai optimisé des pipelines Spark sur AWS, réduisant le temps de traitement de 4 à 2 heures, et développé des tests de qualité SQL sur les données AWS. J'ai également documenté les procédures de reprise des pipelines avec l'équipe exploitation, garantissant la fiabilité et la maintenabilité des flux. Chez Orme Conseil, j'ai automatisé 8 sources Python avec Airflow et migré des scripts vers des traitements documentés, démontrant ma capacité à industrialiser les processus.",
+        "source_ids": [
+          "experience-2:bullet-0",
+          "experience-2:bullet-1",
+          "experience-2:bullet-3",
+          "experience-1:bullet-0",
+          "experience-1:bullet-1"
+        ]
+      },
+      {
+        "text": "Je serais heureuse d'échanger sur la manière dont mon expérience en qualité des données, documentation et collaboration inter-équipes peut contribuer aux objectifs d'Horizon Mobilité. Dans l'attente de votre retour, je vous prie d'agréer, Madame, Monsieur, l'expression de mes salutations distinguées.\n\nCamille Morel",
+        "source_ids": [
+          "profile"
+        ]
+      }
+    ]
+  },
+  "repair_revision": {
+    "summary": {
+      "text": "Ingénieure data spécialisée dans les pipelines Python et Spark sur AWS.",
+      "source_ids": [
+        "profile",
+        "master"
+      ]
+    },
+    "experiences": [
+      {
+        "id": "experience-2",
+        "bullets": [
+          {
+            "text": "Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures.",
+            "source_ids": [
+              "experience-2:bullet-0"
+            ]
+          },
+          {
+            "text": "Développement de tests de qualité SQL sur les données AWS.",
+            "source_ids": [
+              "experience-2:bullet-1"
+            ]
+          },
+          {
+            "text": "Formation de 3 analystes aux contrôles SQL.",
+            "source_ids": [
+              "experience-2:bullet-2"
+            ]
+          },
+          {
+            "text": "Documentation des procédures de reprise des pipelines avec l'équipe exploitation.",
+            "source_ids": [
+              "experience-2:bullet-3"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "experience-1",
+        "bullets": [
+          {
+            "text": "Automatisation de 8 sources Python avec Airflow.",
+            "source_ids": [
+              "experience-1:bullet-0"
+            ]
+          },
+          {
+            "text": "Migration de scripts Python vers des traitements Airflow documentés.",
+            "source_ids": [
+              "experience-1:bullet-1"
+            ]
+          },
+          {
+            "text": "Développement de contrôles SQL sur les données de facturation.",
+            "source_ids": [
+              "experience-1:bullet-2"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "experience-0",
+        "bullets": [
+          {
+            "text": "Reporting SQL pour les équipes produit.",
+            "source_ids": [
+              "experience-0:bullet-0"
+            ]
+          },
+          {
+            "text": "Conception de tableaux de bord SQL pour 5 équipes produit.",
+            "source_ids": [
+              "experience-0:bullet-1"
+            ]
+          },
+          {
+            "text": "Documentation des définitions des indicateurs avec les équipes métier.",
+            "source_ids": [
+              "experience-0:bullet-2"
+            ]
+          }
+        ]
+      }
+    ],
+    "cover": [
+      {
+        "text": "Madame, Monsieur,",
+        "source_ids": []
+      },
+      {
+        "text": "Le poste de Senior Data Engineer chez Horizon Mobilité m'intéresse pour mettre mes compétences en Python, Spark et AWS au service de votre équipe.",
+        "source_ids": [
+          "profile"
+        ]
+      },
+      {
+        "text": "Mon expérience chez Atelier Boréal illustre cette contribution : Optimisation des pipelines Spark sur AWS : traitement réduit de 4 à 2 heures. Développement de tests de qualité SQL sur les données AWS.",
+        "source_ids": [
+          "experience-2:bullet-0",
+          "experience-2:bullet-1"
+        ]
+      },
+      {
+        "text": "Mon expérience chez Orme Conseil illustre cette contribution : Automatisation de 8 sources Python avec Airflow. Migration de scripts Python vers des traitements Airflow documentés.",
+        "source_ids": [
+          "experience-1:bullet-0",
+          "experience-1:bullet-1"
+        ]
+      },
+      {
+        "text": "Je vous propose un échange pour préciser vos priorités et la contribution que je pourrais apporter à votre équipe.",
+        "source_ids": []
+      },
+      {
+        "text": "Cordialement,",
+        "source_ids": []
+      },
+      {
+        "text": "Camille Morel",
+        "source_ids": []
+      }
+    ]
+  }
+}

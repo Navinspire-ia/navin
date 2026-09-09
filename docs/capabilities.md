@@ -189,6 +189,10 @@ Global auto-branch / PR switches and forge tokens (GitHub, GitLab, Forgejo).
 
 Playwright: visible window vs headless, live view in the editor.
 
+### Computer
+
+Desktop control (off by default): the agent sees the real screen and drives the mouse and keyboard in any native app on Windows, macOS, Linux X11 and Wayland. Approval gate, protected apps, kill switch (`navin computer stop`), audit trail, live "Agent desktop" panel with user takeover. Route desktop turns to a grounding model under Task routing. [Computer Tool](./computer-tool.md)
+
 ### Rules
 
 Project rules in `.navin/rules/*.md`.

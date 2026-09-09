@@ -1,7 +1,8 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
+import { ContactShadows, OrbitControls } from "@react-three/drei";
 import type { Group } from "three";
+import { StudioEnvironment } from "@/components/studio/StudioEnvironment";
 
 function Dossier({ heat, reduced }: { heat: number; reduced: boolean }) {
   const group = useRef<Group>(null);
@@ -82,7 +83,7 @@ export function TendersScene({
         <Canvas
           shadows
           dpr={[1, 2]}
-          camera={{ position: [1.6, 1.1, 2.2], fov: 42 }}
+          camera={{ position: [1.6, 1.1, 2.2], fov: 45 }}
           frameloop={playing ? "always" : "demand"}
           gl={{ antialias: true }}
         >
@@ -96,7 +97,7 @@ export function TendersScene({
           />
           <Dossier heat={heat} reduced={!playing} />
           <ContactShadows position={[0, -0.55, 0]} opacity={0.35} scale={4} blur={2.2} />
-          <Environment preset="city" />
+          <StudioEnvironment />
           <OrbitControls enablePan={false} enableZoom={false} enableDamping dampingFactor={0.08} />
         </Canvas>
       </Suspense>
