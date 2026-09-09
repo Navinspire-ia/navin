@@ -51,3 +51,7 @@ marketing/
 artifacts/
 tmp-preview-fixture/
 notarization-log.json
+
+# Audits internes et preuves (captures Tauri, rapports, docx/pptx)
+audit/
+docs/audits/
