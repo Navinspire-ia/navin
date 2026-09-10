@@ -24,7 +24,7 @@ Never search, collect, start, schedule, tick, prepare or apply from heartbeat. N
 
 ## What the hunt does
 
-1. Collect official and open sources (Remotive, ATS JSON, country portals, open web).
+1. Collect official and open sources (public job APIs and RSS such as Remotive, Jobicy, Remote OK, Himalayas, We Work Remotely, Arbeitnow and Hacker News Who is hiring, ATS JSON incl. Workable, JSON-LD JobPosting, Free-Work public listings, country portals, open web).
 2. Watch the local book: Perfect/Good matches and J3/J7 follow-ups.
 3. Alert channels you switched on. The same alert is marked so it does not fire twice.
 

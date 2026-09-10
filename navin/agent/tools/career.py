@@ -149,7 +149,8 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
         force=StringSchema("true to hunt now on action=tick, even if the next slot is later."),
         name=StringSchema(
             "Secret name for action=secret: ADZUNA_APP_ID, ADZUNA_APP_KEY, "
-            "JOOBLE_API_KEY, USAJOBS_API_KEY, USAJOBS_USER_AGENT, CAREER_SMTP_PASSWORD, CAREER_IMAP_PASSWORD."
+            "JOOBLE_API_KEY, USAJOBS_API_KEY, USAJOBS_USER_AGENT, JOBOPPORTUNITIES_API_KEY, "
+            "CAREER_SMTP_PASSWORD, CAREER_IMAP_PASSWORD."
         ),
         value=StringSchema("Secret value for action=secret. Empty deletes it."),
     )

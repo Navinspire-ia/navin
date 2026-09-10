@@ -2220,6 +2220,7 @@ export interface NavinFeatureInfo {
   name: string;
   display_name: string;
   type: "channel" | "feature" | string;
+  kind?: "social" | string;
   enabled: boolean;
   configured?: boolean;
   config_values?: Record<string, string>;
@@ -2229,6 +2230,15 @@ export interface NavinFeatureInfo {
   status: "enabled" | "missing_dependency" | "not_enabled" | string;
   install_supported: boolean;
   requires_restart: boolean;
+  oauth_status?: string;
+  oauth_account?: string;
+  oauth_account_id?: string;
+  oauth_accounts?: { id: string; name: string }[];
+  client_secret_set?: boolean;
+  docs_url?: string;
+  last_error?: string;
+  app_ready?: boolean;
+  suggested_redirect_uri?: string;
 }
 
 

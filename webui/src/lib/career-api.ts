@@ -142,9 +142,34 @@ export interface CareerOpportunity {
   mail_receipt?: CareerMailReceipt;
   last_reply_at?: number;
   duration?: string;
+  duration_months?: number;
   hybrid_days_min?: number;
   hybrid_days_max?: number;
+  /** Shared vocabulary filled by every connector (see navin/career/normalize.py). */
+  contracts?: CareerContract[] | string[];
+  employment_type?: string;
+  experience_level?: CareerExperienceLevel | string;
+  experience_years_min?: number | null;
+  /** Posted seniority text ("Senior", "3+ years") kept for legacy rows. */
+  seniority?: string;
+  start_date?: string;
+  valid_through?: string;
+  daily_rate_min?: number | null;
+  daily_rate_max?: number | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
 }
+
+export type CareerContract =
+  | "contractor"
+  | "permanent"
+  | "fixed-term"
+  | "part-time"
+  | "temporary"
+  | "internship"
+  | "apprenticeship";
+
+export type CareerExperienceLevel = "junior" | "mid" | "senior" | "expert";
 
 export interface CareerApplication {
   id: string;
@@ -612,7 +637,15 @@ export const FALLBACK_STACK: CareerStack = {
   ],
   connectors: [
     { id: "remotive", name: "Remotive", live: true, docs: "https://remotive.com/api/remote-jobs" },
-    { id: "ats", name: "Greenhouse / Lever / Ashby", live: true, docs: "https://developers.greenhouse.io/" },
+    { id: "ats", name: "Greenhouse / Lever / Ashby / Workable", live: true, docs: "https://developers.greenhouse.io/" },
+    {
+      id: "feeds",
+      name: "Public job APIs and RSS",
+      live: true,
+      ingest: "public_api",
+      docs: "https://github.com/Jobicy/remote-jobs-api/blob/main/README.md",
+    },
+    { id: "jsonld", name: "schema.org JobPosting", live: true, ingest: "jsonld", docs: "https://schema.org/JobPosting" },
     {
       id: "employers",
       name: "ESN / consulting / agency feeds",
@@ -648,12 +681,27 @@ export const FALLBACK_STACK: CareerStack = {
       docs: "https://developer.usajobs.gov/",
     },
     {
+      id: "jobopportunities",
+      name: "Job Opportunities API",
+      live: false,
+      needs_key: true,
+      env: "JOBOPPORTUNITIES_API_KEY",
+      docs: "https://www.jobopportunitiesapi.org/docs",
+    },
+    {
       id: "linkedin",
       name: "LinkedIn",
       live: true,
       recommended: true,
       ingest: "public_listing",
       docs: "https://www.linkedin.com/jobs/search",
+    },
+    {
+      id: "free-work",
+      name: "Free-Work",
+      live: true,
+      ingest: "public_listing",
+      docs: "https://www.free-work.com/fr/tech-it/jobs",
     },
     {
       id: "malt",
@@ -664,7 +712,7 @@ export const FALLBACK_STACK: CareerStack = {
     },
   ],
   rules:
-    "LinkedIn public listings come from the guest job search (no login, rate limited). Never auto Easy Apply. Employer feeds read the ESN, consulting and agency boards of the selected markets directly. CV packs reuse Master CV facts only. Closed boards are official open + paste import.",
+    "LinkedIn public listings come from the guest job search (no login, rate limited). Never auto Easy Apply. Free-Work public listings (FR and GB) come from the public search pages (no login, rate limited). Employer feeds read the ESN, consulting and agency boards of the selected markets directly. CV packs reuse Master CV facts only. Closed boards are official open + paste import.",
 };
 
 export const FALLBACK_CATALOG: CareerSource[] = [
@@ -712,6 +760,69 @@ export const FALLBACK_CATALOG: CareerSource[] = [
     ingest: "official_api",
     url: "https://remotive.com/remote-jobs/api",
     notes: "Public remote API. Attribution required.",
+  },
+  {
+    id: "jobicy",
+    name: "Jobicy",
+    level: 1,
+    zone: "Remote",
+    ingest: "public_api",
+    url: "https://jobicy.com/api/v2/remote-jobs",
+    notes: "Public API, no key: geo, industry and tag filters, salary with currency and period, employment type, level.",
+  },
+  {
+    id: "remoteok",
+    name: "Remote OK",
+    level: 1,
+    zone: "Remote",
+    ingest: "public_api",
+    url: "https://remoteok.com/api",
+    notes: "Public JSON feed. Remote OK credited and the listing link kept. USD salaries.",
+  },
+  {
+    id: "himalayas",
+    name: "Himalayas",
+    level: 1,
+    zone: "Remote",
+    ingest: "public_api",
+    url: "https://himalayas.app/jobs/api",
+    notes: "Public jobs API: salary with currency and period, seniority, employment type, location restrictions.",
+  },
+  {
+    id: "weworkremotely",
+    name: "We Work Remotely",
+    level: 1,
+    zone: "Remote",
+    ingest: "public_rss",
+    url: "https://weworkremotely.com/remote-jobs.rss",
+    notes: "Public RSS: region, contract type, skills, listing link.",
+  },
+  {
+    id: "arbeitnow",
+    name: "Arbeitnow",
+    level: 1,
+    zone: "EU",
+    ingest: "public_api",
+    url: "https://www.arbeitnow.com/api/job-board-api",
+    notes: "Public job board API (Europe, hourly refresh, no key).",
+  },
+  {
+    id: "hn-hiring",
+    name: "Hacker News Who is hiring",
+    level: 1,
+    zone: "World",
+    ingest: "public_api",
+    url: "https://hn.algolia.com/api/v1/search_by_date",
+    notes: "Monthly Ask HN thread read through the public Algolia API.",
+  },
+  {
+    id: "jobopportunities",
+    name: "Job Opportunities API",
+    level: 1,
+    zone: "World",
+    ingest: "official_api",
+    url: "https://www.jobopportunitiesapi.org/docs",
+    notes: "Employer-direct ledger with per-field provenance. Free key: JOBOPPORTUNITIES_API_KEY.",
   },
   {
     id: "greenhouse",
@@ -790,9 +901,9 @@ export const FALLBACK_CATALOG: CareerSource[] = [
     name: "Free-Work",
     level: 3,
     zone: "FR",
-    ingest: "web_agent",
+    ingest: "public_listing",
     url: "https://www.free-work.com/",
-    notes: "IT freelance missions. Web discovery.",
+    notes: "IT freelance missions and jobs, FR and UK. Public search pages read live: TJM, duration, remote mode, skills.",
   },
   {
     id: "malt",

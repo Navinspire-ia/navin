@@ -15,7 +15,9 @@ from navin.career.collect import collect
 from navin.career.dossier import format_agent_status, local_paths, write_local_index
 from navin.career.errors import CareerError
 from navin.career.export import attach_exports
+from navin.career.jsonld import extract_jobpostings, jobposting_facts
 from navin.career.matching import score_opportunity
+from navin.career.normalize import enrich_facts
 from navin.career.sources import (
     INBOX_CLASSES,
     STAGES,
@@ -301,7 +303,15 @@ def import_offer(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
     url = str(body.get("url") or "").strip()
     title = str(body.get("title") or "").strip()
     company = str(body.get("company") or "").strip()
-    description = html_to_text(str(body.get("description") or body.get("body") or "")).strip()
+    raw_body = str(body.get("description") or body.get("body") or "")
+    # A pasted page source with a schema.org JobPosting gives structured facts for free.
+    posting = extract_jobpostings(raw_body)
+    facts = jobposting_facts(posting[0], track=str(body.get("track") or "")) if posting else {}
+    description = html_to_text(raw_body).strip()
+    if facts:
+        title = title or facts["title"]
+        company = company or facts["company"]
+        description = facts["description"] or description
     if not title:
         for line in description.splitlines():
             if line.strip():
@@ -332,6 +342,30 @@ def import_offer(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
         "application_email": str(body.get("application_email") or "").strip(),
         "application_email_source": "provided" if body.get("application_email") else "",
     }
+    if facts:
+        row["location"] = row["location"] or facts["location"]
+        row["country"] = row["country"] or facts["country"]
+        for key in (
+            "contracts",
+            "employment_type",
+            "remote",
+            "experience_level",
+            "experience_years_min",
+            "duration",
+            "duration_months",
+            "start_date",
+            "posted_at",
+            "daily_rate_min",
+            "daily_rate_max",
+            "salary_min",
+            "salary_max",
+            "compensation",
+            "currency",
+        ):
+            value = facts.get(key)
+            if value not in (None, "", []):
+                row[key] = value
+    enrich_facts(row, track=row["track"])
     scored = score_opportunity(row, profile)
     store.upsert_opportunities([scored])
     store.append_journal({"kind": "import", "text": f"{source} {title[:80]}"})

@@ -39,7 +39,7 @@ function row(partial: Partial<TenderSource>): TenderSource {
 
 describe("tenders IDE hashes stay inside the WebView", () => {
   it("keeps Settings Channels and Models on hash routes", () => {
-    expect(CHANNELS_HASH).toBe("#/settings?section=tools");
+    expect(CHANNELS_HASH).toBe("#/settings?section=channels");
     expect(MODELS_HASH).toBe("#/settings?section=models");
   });
 
@@ -90,9 +90,24 @@ describe("tenders loop chrome", () => {
     expect(workspace).toContain('data-testid="tenders-chat"');
     expect(workspace).toContain("IconButton");
     expect(workspace).toContain('iconName: "Refresh"');
-    expect(workspace).toContain('iconName: "Chat"');
+    expect(workspace).toContain('iconName: chatOpen ? "ChatSolid" : "Chat"');
     expect(workspace).not.toContain('text={tx("refresh"');
     expect(workspace).toContain('tx("chat", "Chat")');
+    // Same shell as Career: one header line, no dashboard, no alert delivery block, list first.
+    expect(workspace).toContain('data-testid="tenders-title"');
+    expect(workspace).toContain('data-testid="tenders-open-setup"');
+    expect(workspace).toContain('data-testid="tenders-collect"');
+    expect(workspace).not.toContain("homeDashboard");
+    expect(workspace).not.toContain("HomePane");
+    expect(workspace).not.toContain("TenderAlertDeliveries");
+    expect(workspace).not.toContain("openHome");
+    expect(workspace).toContain("ActivityPane");
+    // The follow-up digest lives in a header button, not a banner above the list.
+    expect(workspace).not.toContain("FollowUpBanner");
+    expect(workspace).toContain("<FollowUpButton");
+    expect(workspace).toContain('className="ml-auto flex shrink-0 items-center gap-2"');
+    expect(workspace.indexOf('tx("title", "Tenders")')).toBeLessThan(workspace.indexOf('tx("tenderBook"'));
+    expect(workspace.indexOf('tx("collectNow"')).toBeLessThan(workspace.indexOf("tenders-open-setup"));
     expect(workspace).toContain('run("stop")');
     expect(workspace).toContain('run("tick", { force: true })');
     expect(workspace).toContain("setScheduleOpen(true)");
@@ -121,6 +136,13 @@ describe("tenders loop chrome", () => {
     expect(desk).toContain("TenderFactsRow");
     expect(desk).toContain("flex-nowrap");
     expect(desk).toContain("TenderNoticeDialog");
+    expect(desk).toContain("tenders-notice-card");
+    expect(desk).toContain("leading={listTabs}");
+    expect(desk).toContain("tenders-result-count");
+    expect(desk).toContain('tx("viewNotice", "View this notice")');
+    expect(desk).toContain("countryDisplayName");
+    expect(desk).not.toContain("HomePane");
+    expect(desk).toContain("ActivityPane");
     expect(desk).not.toContain("match_reasons");
     expect(desk).not.toContain("fr manquant");
     expect(desk).toContain('data-testid="tenders-notice-chips"');
@@ -132,8 +154,9 @@ describe("tenders loop chrome", () => {
     expect(desk).not.toContain('data-testid="tenders-layout-list"');
     expect(desk).not.toContain('data-testid="tenders-layout-cards"');
     expect(desk).not.toContain("layoutCards");
-    expect(desk).toContain('layout = "list"');
-    expect(desk).toContain("tenders-notice-table");
+    expect(desk).not.toContain("NoticeLayout");
+    expect(desk).not.toContain("tenders-notice-table");
+    expect(desk).not.toContain("<table");
     expect(desk).not.toContain("min-w-[72rem]");
     expect(desk).toContain("NoticeGoButtons");
     expect(desk).toContain('onAction("go"');

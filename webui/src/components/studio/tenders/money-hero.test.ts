@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { HomePane, NoticesPane } from "@/components/studio/tenders/TendersDesk";
+import { ActivityPane, NoticesPane } from "@/components/studio/tenders/TendersDesk";
 import type { TenderDesk } from "@/lib/tenders-api";
 
 const tx = (_key: string, fallback: string, values?: Record<string, string | number>) =>
@@ -27,64 +27,11 @@ function desk(partial: Partial<TenderDesk> = {}): TenderDesk {
   };
 }
 
-describe("tenders money-first home", () => {
-  it("treats a full no-go book as time saved, not as a failed desk", () => {
+describe("tenders desk without a dashboard", () => {
+  it("keeps the loop, CRM push and collect report in a folded activity block", () => {
     const html = renderToStaticMarkup(
-      createElement(HomePane, {
+      createElement(ActivityPane, {
         desk: desk({
-          tenders: [
-            {
-              id: "a",
-              source_id: "ted",
-              country: "FR",
-              title: "Espaces verts",
-              stage: "no-go",
-              go: false,
-            },
-          ],
-        }),
-        kpis: [],
-        tx,
-        busy: "",
-        token: "tok",
-        onCollect: () => {},
-        onOpen: () => {},
-        onSetup: () => {},
-        onFollow: () => {},
-        onCrmSync: () => {},
-        onDiscoverAccept: () => {},
-        onOpenBook: () => {},
-      }),
-    );
-    expect(html).toContain("1 notices read. Your time stays on deals you can win.");
-    expect(html).toContain("text-balance");
-    expect(html).not.toContain("whitespace-nowrap");
-    expect(html).toContain("tenders-tile-grid");
-    expect(html).toContain("Review no-gos");
-    expect(html).toContain("Open the tender list");
-    expect(html).toContain("Espaces verts");
-    expect(html).toContain("Bidding as");
-    expect(html).toContain("Atelier Demo");
-    expect(html).not.toContain("Search a notice");
-    expect(html).not.toContain("Result filters");
-    expect(html).toContain("overflow-x-hidden");
-    expect(html).toContain("break-words");
-    expect(html).toContain("minmax(min(100%,16rem),1fr)");
-  });
-
-  it("keeps the money hero CTAs wrap-ready when three actions sit in a row", () => {
-    const html = renderToStaticMarkup(
-      createElement(HomePane, {
-        desk: desk({
-          profile: {
-            send_mode: "approval",
-            countries: ["FR", "CH", "BE", "LU", "AE", "QA"],
-            crafts: ["AI", "Data", "Cloud", "Digital"],
-            currency: "EUR",
-            name: "Candidat Navinspire",
-            specialty: "AI, Data, Cloud, Digital, Dve",
-          },
-          kpis: { weighted_value: 142_400_000, deadline_7d: 1, open: 12 },
           tenders: [
             {
               id: "go-1",
@@ -96,28 +43,26 @@ describe("tenders money-first home", () => {
               score: 82,
             },
           ],
+          collect: [{ source_id: "ted", ok: true, count: 4 }],
         }),
-        kpis: [],
         tx,
         busy: "",
         token: "tok",
-        onCollect: () => {},
-        onOpen: () => {},
-        onSetup: () => {},
-        onFollow: () => {},
         onCrmSync: () => {},
         onDiscoverAccept: () => {},
-        onOpenBook: () => {},
       }),
     );
-    expect(html).toContain("142.4 M EUR");
-    expect(html).toContain("Open the tender list");
-    expect(html).toContain("Open the next notice");
-    expect(html).toContain("Find official notices");
-    expect(html).toContain("Candidat Navinspire");
-    expect(html).toContain("break-words");
-    expect(html).toContain("minmax(min(100%,16rem),1fr)");
-    expect(html).not.toContain("whitespace-nowrap");
+    expect(html).toContain('data-testid="tenders-activity"');
+    expect(html).toContain("<details");
+    expect(html).toContain("Loop, sources and CRM");
+    expect(html).toContain("tenders-autopilot-badge");
+    expect(html).toContain("Autopilot paused");
+    expect(html).toContain("Push deals to CRM");
+    expect(html).toContain("Last collect");
+    expect(html).not.toContain("Open the tender list");
+    expect(html).not.toContain("Public contracts pay");
+    expect(html).not.toContain("tenders-tile-grid");
+    expect(html).not.toContain("Search a notice");
   });
 
   it("puts the full book and result filters on the Tender page", () => {
@@ -162,15 +107,22 @@ describe("tenders money-first home", () => {
     expect(html).not.toContain("Cards");
     expect(html).toContain('data-testid="tenders-notice-chips"');
     expect(html).toContain("flex-nowrap");
-    expect(html.indexOf("All ·")).toBeLessThan(html.indexOf("Favorites ·"));
-    expect(html.indexOf("Favorites ·")).toBeLessThan(html.indexOf("In play ·"));
+    // Same order as the Career desk: pipeline buckets first, then Favorites and Archive.
+    expect(html.indexOf("All ·")).toBeLessThan(html.indexOf("In play ·"));
+    expect(html.indexOf("In play ·")).toBeLessThan(html.indexOf("Favorites ·"));
+    expect(html.indexOf("Favorites ·")).toBeLessThan(html.indexOf("Archive ·"));
     expect(html).not.toContain("Notices ·");
     expect(html).toContain("10 per page");
+    // Quick chips stay visible; the full field grid only opens on "Show filters".
+    expect(html).toContain('data-testid="notice-quick-filters"');
+    expect(html).toContain('data-testid="notice-chip-country"');
+    expect(html).toContain('data-testid="notice-chip-budget"');
+    expect(html).not.toContain('data-testid="notice-filter-fields"');
     expect(html).not.toContain("Min budget");
-    expect(html).not.toContain("GO / NO-GO");
     expect(html).not.toContain("Language");
     expect(html).not.toContain('data-testid="tenders-notice-go"');
-    expect(html).toContain("tenders-notice-table");
+    expect(html).toContain('data-testid="tenders-notice-card"');
+    expect(html).not.toContain("tenders-notice-table");
   });
 
   it("opens the book on All even when notices are still in play", () => {

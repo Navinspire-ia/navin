@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { CareerOpportunity } from "@/lib/career-api";
+import { offerContracts, offerDayRate, offerExperience, offerSalary } from "@/lib/career-facts";
 
 /** Facet value for an empty country / domain / company / source. */
 export const NONE_FACET = "__none__";
@@ -27,6 +28,14 @@ export interface OfferFacetFilter {
   maxScore: string;
   minPay: string;
   maxPay: string;
+  /** Board-style filters: contract kinds, experience band, freshness, mission length, pay floors. */
+  contracts: string[];
+  experiences: string[];
+  postedWithin: "" | "1" | "7" | "14" | "30";
+  minDuration: string;
+  maxDuration: string;
+  minDayRate: string;
+  minSalary: string;
 }
 
 export interface OfferFacets {
@@ -41,7 +50,11 @@ export interface OfferFacets {
   languages: string[];
   stacks: string[];
   buckets: string[];
+  contracts: string[];
+  experiences: string[];
 }
+
+export const POSTED_WITHIN_DAYS = ["1", "7", "14", "30"] as const;
 
 const DOMAIN_HINTS = [
   "data",
@@ -90,6 +103,13 @@ export function emptyOfferFilter(): OfferFacetFilter {
     maxScore: "",
     minPay: "",
     maxPay: "",
+    contracts: [],
+    experiences: [],
+    postedWithin: "",
+    minDuration: "",
+    maxDuration: "",
+    minDayRate: "",
+    minSalary: "",
   };
 }
 
@@ -115,7 +135,29 @@ export function offerFilterCount(filter: OfferFacetFilter): number {
   if (filter.arrivedFrom || filter.arrivedTo) n += 1;
   if (filter.minScore || filter.maxScore) n += 1;
   if (filter.minPay || filter.maxPay) n += 1;
+  if (filter.contracts?.length) n += 1;
+  if (filter.experiences?.length) n += 1;
+  if (filter.postedWithin) n += 1;
+  if (filter.minDuration || filter.maxDuration) n += 1;
+  if (filter.minDayRate) n += 1;
+  if (filter.minSalary) n += 1;
   return n;
+}
+
+/** Months a mission runs, from the structured field or the posted "6 months" / "1 year" label. */
+export function offerDurationMonths(row: CareerOpportunity): number {
+  const structured = Number(row.duration_months);
+  if (Number.isFinite(structured) && structured > 0) return structured;
+  const label = String(row.duration || "").trim();
+  const match = label.match(/(\d+(?:[.,]\d+)?)\s*(mois|months?|ans?|years?|semaines?|weeks?|jours?|days?)/i);
+  if (!match) return 0;
+  const count = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(count) || count <= 0) return 0;
+  const unit = match[2].toLowerCase();
+  if (/^(an|year)/.test(unit)) return Math.round(count * 12);
+  if (/^(semaine|week)/.test(unit)) return Math.max(1, Math.round(count / 4));
+  if (/^(jour|day)/.test(unit)) return Math.max(1, Math.round(count / 21));
+  return Math.round(count);
 }
 
 export function offerIsoDay(value: unknown): string {
@@ -158,6 +200,8 @@ export function offerFacets(rows: CareerOpportunity[], hints: string[] = []): Of
   const languages = new Set<string>();
   const stacks = new Set<string>();
   const buckets = new Set<string>();
+  const contracts = new Set<string>();
+  const experiences = new Set<string>();
   for (const row of rows) {
     countries.add((row.country || "").trim().toUpperCase() || NONE_FACET);
     domains.add(offerDomain(row, hints) || NONE_FACET);
@@ -181,7 +225,12 @@ export function offerFacets(rows: CareerOpportunity[], hints: string[] = []): Of
     }
     const bucket = String(row.bucket || "").trim();
     if (bucket) buckets.add(bucket);
+    for (const kind of offerContracts(row)) contracts.add(kind);
+    const level = offerExperience(row);
+    if (level) experiences.add(level);
   }
+  const contractOrder = ["contractor", "permanent", "fixed-term", "part-time", "temporary", "internship", "apprenticeship"];
+  const experienceOrder = ["junior", "mid", "senior", "expert"];
   const byLabel = (left: string, right: string) => {
     if (left === NONE_FACET) return 1;
     if (right === NONE_FACET) return -1;
@@ -199,7 +248,16 @@ export function offerFacets(rows: CareerOpportunity[], hints: string[] = []): Of
     languages: [...languages].sort(),
     stacks: [...stacks].sort(byLabel),
     buckets: [...buckets].sort(),
+    contracts: [...contracts].sort((left, right) => contractOrder.indexOf(left) - contractOrder.indexOf(right)),
+    experiences: [...experiences].sort((left, right) => experienceOrder.indexOf(left) - experienceOrder.indexOf(right)),
   };
+}
+
+function postedWithinFloor(days: string, now: Date = new Date()): string {
+  const count = Number(days);
+  if (!Number.isFinite(count) || count <= 0) return "";
+  const floor = new Date(now.getTime() - count * 24 * 60 * 60 * 1000);
+  return floor.toISOString().slice(0, 10);
 }
 
 function inIsoRange(day: string, from: string, to: string): boolean {
@@ -232,6 +290,13 @@ export function applyOfferFilter(
   const maxScore = asNumber(filter.maxScore);
   const minPay = asNumber(filter.minPay);
   const maxPay = asNumber(filter.maxPay);
+  const minDuration = asNumber(filter.minDuration || "");
+  const maxDuration = asNumber(filter.maxDuration || "");
+  const minDayRate = asNumber(filter.minDayRate || "");
+  const minSalary = asNumber(filter.minSalary || "");
+  const freshFloor = postedWithinFloor(filter.postedWithin || "");
+  const pickedContracts = filter.contracts || [];
+  const pickedExperiences = filter.experiences || [];
   const needle = filter.query.trim().toLowerCase();
   return rows.filter((row) => {
     if (needle) {
@@ -280,6 +345,31 @@ export function applyOfferFilter(
     if (maxScore != null && (row.match_score == null || row.match_score > maxScore)) return false;
     if (minPay != null && (row.compensation == null || row.compensation < minPay)) return false;
     if (maxPay != null && (row.compensation == null || row.compensation > maxPay)) return false;
+    if (pickedContracts.length) {
+      const kinds = offerContracts(row);
+      if (!pickedContracts.some((kind) => kinds.includes(kind))) return false;
+    }
+    if (pickedExperiences.length && !pickedExperiences.includes(offerExperience(row))) return false;
+    if (freshFloor) {
+      const day = offerIsoDay(row.posted_at);
+      if (!day || day < freshFloor) return false;
+    }
+    if (minDuration != null || maxDuration != null) {
+      const months = offerDurationMonths(row);
+      if (!months) return false;
+      if (minDuration != null && months < minDuration) return false;
+      if (maxDuration != null && months > maxDuration) return false;
+    }
+    if (minDayRate != null) {
+      const day = offerDayRate(row);
+      const top = day.max || day.min;
+      if (!top || top < minDayRate) return false;
+    }
+    if (minSalary != null) {
+      const year = offerSalary(row);
+      const top = year.max || year.min;
+      if (!top || top < minSalary) return false;
+    }
     return true;
   });
 }

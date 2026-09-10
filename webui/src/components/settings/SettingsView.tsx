@@ -52,6 +52,7 @@ import {
   Plus,
   Orbit,
   Palette,
+  Radio,
   Pencil,
   Puzzle,
   RotateCcw,
@@ -83,7 +84,13 @@ import { ModelTokenUsageTable } from "@/components/settings/ModelTokenUsageTable
 import { TokenUsageHeatmap } from "@/components/settings/TokenUsageHeatmap";
 import { ExecPolicySettings } from "@/components/settings/ExecPolicySettings";
 import { ToggleButton } from "@/components/settings/ToggleButton";
-import { isHiddenToolsChannel } from "@/components/settings/channels/catalog";
+import {
+  channelFilterTab,
+  isHiddenToolsChannel,
+  isSocialChannel,
+  mergeSocialChannelFeatures,
+  type ChannelFilterTab,
+} from "@/components/settings/channels/catalog";
 import {
   channelDisplayName,
   channelSearchText,
@@ -239,6 +246,7 @@ export type SettingsSectionKey =
   | "browser"
   | "computer"
   | "tools"
+  | "channels"
   | "apps"
   | "automations"
   | "skills"
@@ -248,7 +256,7 @@ export type SettingsSectionKey =
   | "about";
 
 type AppsKindFilter = "all" | "ready" | "cli" | "mcp";
-type ToolsKindFilter = "all" | "mcp" | "channels";
+type ToolsPane = "mcp" | "channels";
 
 const SHARED_MCP_NAMES = new Set(["linkedin", "exa"]);
 const CAREER_MCP_NAMES = new Set(["linkedin", "notion", "github", "exa"]);
@@ -1213,7 +1221,7 @@ export function SettingsView({
   }, [activeSection, token]);
 
   useEffect(() => {
-    if (!["tools", "models", "providers", "browser"].includes(activeSection)) return;
+    if (!["tools", "channels", "models", "providers", "browser"].includes(activeSection)) return;
     let cancelled = false;
     setNavinFeaturesLoading(true);
     fetchNavinFeatures(token)
@@ -2553,6 +2561,49 @@ export function SettingsView({
       case "tools":
         return (
           <ToolsSettings
+            pane="mcp"
+            token={token}
+            navinFeatures={navinFeatures}
+            loading={navinFeaturesLoading}
+            query={channelsQuery}
+            actionKey={navinFeatureAction}
+            docsBaseUrl={settings.docs?.base_url}
+            showBrandLogos={localPrefs.brandLogos}
+            error={navinFeaturesError}
+            requiresRestartPending={pendingRestartSections.runtime}
+            onQueryChange={setChannelsQuery}
+            onAction={handleNavinFeatureAction}
+            onFeaturesUpdate={setNavinFeatures}
+            onDismissStatus={() => {
+              setNavinFeaturesError(null);
+              setMcpMessage(null);
+              setMcpError(null);
+            }}
+            onRestart={restartViaSettingsSurface}
+            isRestarting={isRestarting || hostEngineApplying}
+            mcpPresets={mcpPresets}
+            mcpPresetsLoading={mcpPresetsLoading}
+            mcpActionKey={mcpPresetAction}
+            mcpMessage={mcpMessage}
+            mcpError={mcpError}
+            mcpFieldValues={mcpFieldValues}
+            onMcpFieldChange={(presetName, fieldName, value) => {
+              setMcpFieldValues((prev) => ({
+                ...prev,
+                [presetName]: {
+                  ...(prev[presetName] ?? {}),
+                  [fieldName]: value,
+                },
+              }));
+            }}
+            onMcpAction={handleMcpPresetAction}
+            onMcpToolsChange={handleMcpToolsChange}
+          />
+        );
+      case "channels":
+        return (
+          <ToolsSettings
+            pane="channels"
             token={token}
             navinFeatures={navinFeatures}
             loading={navinFeaturesLoading}
@@ -2833,7 +2884,9 @@ export function SettingsView({
       <main
         className={cn(
           "min-h-0 min-w-0 flex-1 overscroll-contain [scrollbar-gutter:stable]",
-          activeSection === "tools" ? "overflow-y-auto xl:overflow-hidden" : "overflow-y-auto",
+          activeSection === "tools" || activeSection === "channels"
+            ? "overflow-y-auto xl:overflow-hidden"
+            : "overflow-y-auto",
         )}
         data-panel-scroll=""
       >
@@ -2841,11 +2894,13 @@ export function SettingsView({
           className={cn(
             "mx-auto w-full px-4 pb-6 pt-4 sm:px-8 sm:pb-8",
             activeSection === "tools" ||
+              activeSection === "channels" ||
               activeSection === "apps" ||
               activeSection === "models"
               ? "max-w-[1240px] xl:px-10"
               : "max-w-[920px]",
-            activeSection === "tools" && "flex min-h-full flex-col xl:h-full xl:min-h-0",
+            (activeSection === "tools" || activeSection === "channels") &&
+              "flex min-h-full flex-col xl:h-full xl:min-h-0",
             hostChromeInset && SETTINGS_HOST_CHROME_PAD,
           )}
         >
@@ -2957,7 +3012,7 @@ export function SettingsView({
             <div
               className={cn(
                 "space-y-5",
-                activeSection === "tools" &&
+                (activeSection === "tools" || activeSection === "channels") &&
                   "flex min-h-0 flex-1 flex-col xl:overflow-hidden",
               )}
             >
@@ -2988,6 +3043,7 @@ const SETTINGS_NAV_ITEMS: Array<{
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "computer", icon: Monitor, fallback: "Computer" },
   { key: "tools", icon: Wrench, fallback: "Tools & Mcp", labelKey: "settings.nav.toolsMcp" },
+  { key: "channels", icon: Radio, fallback: "Channels" },
   { key: "skills", icon: Brain, fallback: "Skills & Loop", labelKey: "settings.nav.skillsLoop" },
   { key: "image", icon: ImageIcon, fallback: "Image" },
   { key: "video", icon: Clapperboard, fallback: "Video" },
@@ -3008,6 +3064,7 @@ function titleForSection(section: SettingsSectionKey): string {
   if (section === "apps") return "Plugins et Mcp";
   if (section === "automations") return "Loop";
   if (section === "tools") return "Tools & Mcp";
+  if (section === "channels") return "Channels";
   return SETTINGS_NAV_ITEMS.find((item) => item.key === section)?.fallback ?? "Settings";
 }
 
@@ -7948,6 +8005,7 @@ function mcpSearchText(preset: McpPresetInfo): string {
 }
 
 function ToolsSettings({
+  pane = "mcp",
   token,
   navinFeatures,
   loading,
@@ -7973,6 +8031,7 @@ function ToolsSettings({
   onMcpAction,
   onMcpToolsChange,
 }: {
+  pane?: ToolsPane;
   token: string;
   navinFeatures: NavinFeaturesPayload | null;
   loading: boolean;
@@ -8001,8 +8060,9 @@ function ToolsSettings({
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const normalizedQuery = query.trim().toLowerCase();
-  const [filter, setFilter] = useState<ToolsKindFilter>("all");
   const containerRef = useRef<HTMLDivElement>(null);
+  const showMcp = pane === "mcp";
+  const showChannels = pane === "channels";
   const allPresets = (mcpPresets?.presets ?? []).filter(
     (preset) => !normalizedQuery || mcpSearchText(preset).includes(normalizedQuery),
   );
@@ -8025,7 +8085,7 @@ function ToolsSettings({
       const byReady = Number(!(left.configured && left.installed)) - Number(!(right.configured && right.installed));
       return byReady || left.display_name.localeCompare(right.display_name);
     });
-  const allChannels = (navinFeatures?.features ?? [])
+  const allChannels = mergeSocialChannelFeatures(navinFeatures?.features ?? [])
     .filter((feature) => feature.type === "channel")
     .filter((feature) => !isHiddenToolsChannel(feature.name))
     .filter((feature) => !normalizedQuery || channelSearchText(feature).includes(normalizedQuery))
@@ -8033,34 +8093,24 @@ function ToolsSettings({
       const rank = Number(!left.ready) - Number(!right.ready);
       return rank || channelDisplayName(left).localeCompare(channelDisplayName(right));
     });
-  const showMcp = filter === "all" || filter === "mcp";
-  const showChannels = filter === "all" || filter === "channels";
   const channels = showChannels ? allChannels : [];
+  const [channelTab, setChannelTab] = useState<ChannelFilterTab>("all");
+  const socialChannels = channels.filter((feature) => isSocialChannel(feature.name) || feature.kind === "social");
+  const chatChannels = channels.filter((feature) => channelFilterTab(feature.name) === "chat");
+  const otherChannels = channels.filter((feature) => channelFilterTab(feature.name) === "other");
+  const visibleSocial = channelTab === "all" || channelTab === "social" ? socialChannels : [];
+  const visibleChat = channelTab === "all" || channelTab === "chat" ? chatChannels : [];
+  const visibleOther = channelTab === "all" || channelTab === "other" ? otherChannels : [];
   const [selectedChannelName, setSelectedChannelName] = useState<string | null>(null);
   const selectedChannel =
     selectedChannelName
       ? channels.find((feature) => feature.name === selectedChannelName) ?? null
       : null;
-  const filterOptions: Array<{ value: ToolsKindFilter; label: string; count: number }> = [
-    {
-      value: "all",
-      label: tx("settings.tools.filterAll", "All"),
-      count: allPresets.length + allChannels.length,
-    },
-    {
-      value: "mcp",
-      label: tx("settings.tools.filterMcp", "MCP"),
-      count: allPresets.length,
-    },
-    {
-      value: "channels",
-      label: tx("settings.tools.filterChannels", "Channels"),
-      count: allChannels.length,
-    },
-  ];
   const statusMessage = error || mcpError || (!selectedChannel ? mcpMessage : null);
   const statusIsError = Boolean(error || mcpError);
-  const catalogLoading = (loading && !navinFeatures) || (mcpPresetsLoading && !mcpPresets);
+  const catalogLoading = showChannels
+    ? loading && !navinFeatures
+    : (loading && !navinFeatures) || (mcpPresetsLoading && !mcpPresets);
   const hasMcp = showMcp && allPresets.length > 0;
   const hasChannels = channels.length > 0;
   const empty = !catalogLoading && !hasMcp && !hasChannels;
@@ -8081,41 +8131,60 @@ function ToolsSettings({
       className="flex min-h-full flex-1 flex-col xl:min-h-0 xl:overflow-hidden"
     >
       <section className="shrink-0 space-y-5">
-        <p className="max-w-[46rem] text-[13px] leading-6 text-muted-foreground">
-          {tx(
-            "settings.tools.description",
-            "Enable official MCP the agent can call, then connect chat channels. Tenders recommends LinkedIn for buyer research. Career uses Notion, GitHub, and Exa from this page.",
-          )}
-        </p>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder={tx("settings.tools.searchPlaceholder", "Search MCP or channels")}
-              className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
-            />
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-1.5 rounded-2xl bg-muted/55 p-1">
-            {filterOptions.map((option) => (
+        {showChannels ? null : (
+          <p className="max-w-[46rem] text-[13px] leading-6 text-muted-foreground">
+            {tx(
+              "settings.tools.description",
+              "Enable official MCP the agent can call. Tenders recommends LinkedIn for buyer research. Career uses Notion, GitHub, and Exa from this page.",
+            )}
+          </p>
+        )}
+        <div className="relative min-w-0">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder={
+              showChannels
+                ? tx("settings.tools.searchChannelsPlaceholder", "Search channels")
+                : tx("settings.tools.searchMcpPlaceholder", "Search MCP")
+            }
+            className="h-11 rounded-2xl border-border/60 bg-card/90 pl-10 text-[13px] shadow-sm"
+          />
+        </div>
+        {showChannels ? (
+          <div
+            role="tablist"
+            aria-label={tx("settings.tools.channelFilters", "Channel filters")}
+            className="inline-flex flex-wrap rounded-2xl border border-border/60 bg-muted/50 p-1"
+          >
+            {(
+              [
+                ["all", tx("settings.tools.filterAll", "All"), channels.length],
+                ["social", tx("settings.tools.filterSocial", "Social networks"), socialChannels.length],
+                ["chat", tx("settings.tools.filterChat", "Chat"), chatChannels.length],
+                ["other", tx("settings.tools.filterOther", "Other"), otherChannels.length],
+              ] as const
+            ).map(([id, label, count]) => (
               <button
-                key={option.value}
+                key={id}
                 type="button"
-                onClick={() => setFilter(option.value)}
+                role="tab"
+                aria-selected={channelTab === id}
+                onClick={() => setChannelTab(id)}
                 className={cn(
-                  "rounded-xl px-3 py-1.5 text-[12px] font-medium transition-colors",
-                  filter === option.value
-                    ? "bg-primary/10 text-primary shadow-sm"
+                  "rounded-xl px-3.5 py-1.5 text-[13px] font-semibold transition-colors",
+                  channelTab === id
+                    ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {option.label}
-                <span className="ml-1 text-[11px] opacity-70">{option.count}</span>
+                {label}
+                <span className="ml-1.5 text-[11px] font-medium text-muted-foreground">{count}</span>
               </button>
             ))}
           </div>
-        </div>
+        ) : null}
       </section>
 
       {statusMessage ? (
@@ -8146,7 +8215,9 @@ function ToolsSettings({
           </div>
         ) : empty ? (
           <div className="min-h-0 flex-1 px-3 py-12 text-center text-sm text-muted-foreground">
-            {tx("settings.tools.empty", "No tools match this filter.")}
+            {showChannels
+              ? tx("settings.tools.emptyChannels", "No channels match this search.")
+              : tx("settings.tools.empty", "No tools match this search.")}
           </div>
         ) : (
           <div
@@ -8285,28 +8356,95 @@ function ToolsSettings({
                 </div>
               ) : null}
               {hasChannels ? (
-                <div>
-                  {showMcp ? (
-                    <div className="mb-2.5 flex items-center gap-2 px-0.5">
-                      <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                        {tx("settings.tools.channelsTitle", "Channels")}
-                      </h3>
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        {channels.length}
-                      </span>
+                <div data-testid="tools-channels" className="space-y-6">
+                  {visibleSocial.length ? (
+                    <div>
+                      {channelTab === "all" ? (
+                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
+                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                            {tx("settings.tools.socialChannelsTitle", "Social networks")}
+                          </h3>
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {visibleSocial.length}
+                          </span>
+                        </div>
+                      ) : null}
+                      {channelTab === "social" ? (
+                        <p className="mb-2.5 max-w-xl px-0.5 text-[12px] leading-5 text-muted-foreground">
+                          {tx(
+                            "settings.tools.socialChannelsHint",
+                            "Same accounts as Marketing. Connect, turn On, then agents can publish.",
+                          )}
+                        </p>
+                      ) : null}
+                      <div className="space-y-2">
+                        {visibleSocial.map((feature) => (
+                          <ChannelCatalogRow
+                            key={feature.name}
+                            feature={feature}
+                            selected={selectedChannel?.name === feature.name}
+                            showBrandLogos={showBrandLogos}
+                            onSelect={() => openChannel(feature.name)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   ) : null}
-                  <div className="space-y-2">
-                    {channels.map((feature) => (
-                      <ChannelCatalogRow
-                        key={feature.name}
-                        feature={feature}
-                        selected={selectedChannel?.name === feature.name}
-                        showBrandLogos={showBrandLogos}
-                        onSelect={() => openChannel(feature.name)}
-                      />
-                    ))}
-                  </div>
+                  {visibleChat.length ? (
+                    <div>
+                      {channelTab === "all" ? (
+                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
+                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                            {tx("settings.tools.chatChannelsTitle", "Chat")}
+                          </h3>
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {visibleChat.length}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        {visibleChat.map((feature) => (
+                          <ChannelCatalogRow
+                            key={feature.name}
+                            feature={feature}
+                            selected={selectedChannel?.name === feature.name}
+                            showBrandLogos={showBrandLogos}
+                            onSelect={() => openChannel(feature.name)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {visibleOther.length ? (
+                    <div>
+                      {channelTab === "all" ? (
+                        <div className="mb-2.5 flex items-center gap-2 px-0.5">
+                          <h3 className="text-[13px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                            {tx("settings.tools.otherChannelsTitle", "Other")}
+                          </h3>
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {visibleOther.length}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        {visibleOther.map((feature) => (
+                          <ChannelCatalogRow
+                            key={feature.name}
+                            feature={feature}
+                            selected={selectedChannel?.name === feature.name}
+                            showBrandLogos={showBrandLogos}
+                            onSelect={() => openChannel(feature.name)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {!visibleSocial.length && !visibleChat.length && !visibleOther.length ? (
+                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                      {tx("settings.tools.emptyChannels", "No channels match this search.")}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import time
@@ -128,6 +129,77 @@ def _valid_redirect(value: str, provider: str) -> str:
     return value
 
 
+def _node_field(node: Any, name: str) -> Any:
+    if node is None:
+        return None
+    if isinstance(node, dict):
+        return node.get(name)
+    return getattr(node, name, None)
+
+
+def ide_gateway_origin(config: Any | None = None) -> str:
+    """HTTP origin of the local IDE gateway (not the Vite :5173 proxy)."""
+    from navin.config.loader import load_config
+
+    websocket = _node_field(_node_field(config or load_config(), "channels"), "websocket")
+    host = str(_node_field(websocket, "host") or "127.0.0.1").strip()
+    if host in {"0.0.0.0", "::", "[::]", ""}:
+        host = "127.0.0.1"
+    elif host == "localhost":
+        host = "127.0.0.1"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = int(_node_field(websocket, "port") or 8765)
+    except (TypeError, ValueError):
+        port = 8765
+    return f"http://{host}:{port}"
+
+
+def public_install_origin(store: MarketingStore) -> str:
+    raw = str((store.load_settings() or {}).get("media_base_url") or "").strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def suggested_redirect_uri(store: MarketingStore, provider: str, *, config: Any | None = None) -> str:
+    """Callback to register: public HTTPS install, else the IDE gateway for Reddit."""
+    provider = _provider(provider)
+    saved = str(_book(store).get(provider, {}).get("redirect_uri") or "").strip()
+    if saved:
+        return saved
+    public = public_install_origin(store)
+    if public:
+        return public + CALLBACK_PATH
+    if provider == "reddit":
+        return ide_gateway_origin(config) + CALLBACK_PATH
+    return ""
+
+
+def _env_value(*names: str) -> str:
+    for name in names:
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def env_app_credentials(provider: str) -> tuple[str, str]:
+    key = provider.upper()
+    client_id = _env_value(f"NAVIN_{key}_CLIENT_ID", f"{key}_CLIENT_ID")
+    secret = _env_value(f"NAVIN_{key}_CLIENT_SECRET", f"{key}_CLIENT_SECRET")
+    if provider == "tiktok":
+        client_id = client_id or _env_value("NAVIN_TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_KEY", "TIKTOK_APP_ID")
+        secret = secret or _env_value("TIKTOK_SECRET")
+    return client_id, secret
+
+
+def secret_required(provider: str) -> bool:
+    return provider != "reddit"
+
+
 def _book(store: MarketingStore) -> dict[str, Any]:
     raw = _read_json(store.path("oauth.json"), {})
     return raw if isinstance(raw, dict) else {}
@@ -147,21 +219,26 @@ def connection_status(store: MarketingStore, provider: str) -> dict[str, Any]:
     token_present = bool(store.get_secret(_TOKEN_KEYS[provider]))
     expiry = float(row.get("expires_at") or 0)
     status = str(row.get("status") or "not_connected")
+    env_id, env_secret = env_app_credentials(provider)
+    client_id = str(row.get("client_id") or env_id or "")
+    redirect_uri = str(row.get("redirect_uri") or "") or suggested_redirect_uri(store, provider)
+    secret_set = bool(store.get_secret(f"{provider}_client_secret") or env_secret)
     if status == "connected" and not token_present:
         status = "not_connected"
     if status == "connected" and expiry and expiry <= time.time():
         status = "refresh_required" if row.get("refreshable") else "expired"
     return {
         "provider": provider, "status": status,
-        "client_id": str(row.get("client_id") or ""),
-        "client_secret_set": bool(store.get_secret(f"{provider}_client_secret")),
-        "redirect_uri": str(row.get("redirect_uri") or ""),
+        "client_id": client_id,
+        "client_secret_set": secret_set,
+        "redirect_uri": redirect_uri,
         "account": str(row.get("account") or ""), "account_id": str(row.get("account_id") or ""),
         "accounts": [{"id": str(item.get("id") or ""), "name": str(item.get("name") or "")} for item in row.get("accounts", [])],
         "expires_at": expiry, "refreshable": bool(row.get("refreshable")),
         "requested_scopes": list(_SCOPES[provider]), "granted_scopes": list(row.get("granted_scopes") or []),
         "scope_status": str(row.get("scope_status") or "not_checked"),
         "last_error": str(row.get("last_error") or ""), "docs_url": _DOCS[provider],
+        "suggested_redirect_uri": suggested_redirect_uri(store, provider),
     }
 
 
@@ -187,22 +264,46 @@ def configure_connection(store: MarketingStore, provider: str, fields: Mapping[s
     return connection_status(store, provider)
 
 
-def start_connection(store: MarketingStore, provider: str, *, session_key: str = "") -> dict[str, Any]:
+def start_connection(
+    store: MarketingStore,
+    provider: str,
+    *,
+    session_key: str = "",
+    return_to: str = "",
+) -> dict[str, Any]:
     provider = _provider(provider)
     with InterProcessLock(store.path(".oauth.lock"), timeout=5):
-        config = _book(store).get(provider, {})
-        redirect_uri = _valid_redirect(str(config.get("redirect_uri") or ""), provider)
-        client_id = str(config.get("client_id") or "")
-        if not client_id or not store.get_secret(f"{provider}_client_secret"):
-            raise MarketingError("Configure the application's client ID and secret first", status=400)
+        config = dict(_book(store).get(provider, {}))
+        env_id, env_secret = env_app_credentials(provider)
+        client_id = str(config.get("client_id") or env_id or "").strip()
+        if env_secret and not store.get_secret(f"{provider}_client_secret"):
+            store.save_secret(f"{provider}_client_secret", env_secret)
+        redirect_uri = _valid_redirect(
+            str(config.get("redirect_uri") or "") or suggested_redirect_uri(store, provider),
+            provider,
+        )
+        if client_id != config.get("client_id") or redirect_uri != config.get("redirect_uri"):
+            _update(store, provider, {"client_id": client_id, "redirect_uri": redirect_uri, "last_error": ""})
+            config["client_id"] = client_id
+            config["redirect_uri"] = redirect_uri
+        if not client_id or (secret_required(provider) and not store.get_secret(f"{provider}_client_secret")):
+            raise MarketingError(
+                "Sign in with the provider. Create the app once, or set its CLIENT_ID in the environment. "
+                "Your account id is filled automatically after Connect.",
+                status=400,
+            )
         state, cookie = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         now = time.time()
         states = _read_json(store.path("oauth-pending.json"), {})
         states = {key: value for key, value in states.items() if isinstance(value, dict) and float(value.get("expires_at") or 0) > now}
         if len(states) >= 12:
             raise MarketingError("Too many pending connections; finish one or wait ten minutes", status=429)
-        states[_digest(state)] = {"provider": provider, "cookie_hash": _digest(cookie), "expires_at": now + STATE_TTL,
-                                  "client_id": client_id, "redirect_uri": redirect_uri, "session_key": session_key}
+        landing = return_to if return_to in {"channels", "marketing"} else ""
+        states[_digest(state)] = {
+            "provider": provider, "cookie_hash": _digest(cookie), "expires_at": now + STATE_TTL,
+            "client_id": client_id, "redirect_uri": redirect_uri, "session_key": session_key,
+            "return_to": landing,
+        }
         _atomic_write(store.path("oauth-pending.json"), states)
     params = {"client_key" if provider == "tiktok" else "client_id": client_id, "redirect_uri": redirect_uri,
               "response_type": "code", "state": state,
@@ -327,8 +428,9 @@ def finish_connection(store: MarketingStore, query: Mapping[str, str], cookie_he
     with InterProcessLock(store.path(".oauth.lock"), timeout=5):
         states = _read_json(store.path("oauth-pending.json"), {})
         pending = states.get(_digest(state), {})
+        landing = str(pending.get("return_to") or "")
         if not pending or float(pending.get("expires_at") or 0) <= time.time():
-            raise MarketingError("Authorization expired or already used; reconnect from Marketing", status=400)
+            raise MarketingError("Authorization expired or already used; reconnect from Settings > Channels", status=400)
         if cookie is None or not hmac.compare_digest(_digest(cookie.value), str(pending.get("cookie_hash") or "")):
             raise MarketingError("Authorization must finish in the browser that started it", status=403)
         provider = _provider(pending["provider"])
@@ -353,7 +455,12 @@ def finish_connection(store: MarketingStore, query: Mapping[str, str], cookie_he
         except MarketingError as exc:
             _update(store, provider, {"last_error": exc.message})
             raise
-    return {"connection": connection_status(store, provider), "session_key": pending.get("session_key", ""), "cookie_name": cookie_name(state)}
+    return {
+        "connection": connection_status(store, provider),
+        "session_key": pending.get("session_key", ""),
+        "cookie_name": cookie_name(state),
+        "return_to": landing,
+    }
 
 
 def _select_facebook(store: MarketingStore, account_id: str, http: Http) -> None:

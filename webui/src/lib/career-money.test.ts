@@ -4,7 +4,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { CareerOpportunity } from "@/lib/career-api";
-import { BILLABLE_DAYS, careerMoney, formatMoney, monthlyFromSalary } from "@/lib/career-money";
+import {
+  BILLABLE_DAYS,
+  careerMoney,
+  currencySymbol,
+  formatMoney,
+  formatPayRange,
+  monthlyFromSalary,
+} from "@/lib/career-money";
 
 function offer(row: Partial<CareerOpportunity>): CareerOpportunity {
   return { id: row.id || "job-1", source: "remotive", title: "Role", stage: "discovered", ...row };
@@ -55,5 +62,17 @@ describe("career money", () => {
   it("formats a readable amount", () => {
     expect(formatMoney(11700, "EUR", "fr")).toContain("11");
     expect(formatMoney(0, "EUR", "fr")).toBe("");
+  });
+
+  it("prints board-style pay ranges in the offer currency", () => {
+    expect(formatPayRange(400, 600, "EUR", "day", "/j")).toBe("400-600 €/j");
+    expect(formatPayRange(40000, 45000, "EUR", "year", "/an")).toBe("40k-45k €/an");
+    expect(formatPayRange(550, null, "GBP", "day", "/day", "en")).toBe("550 £/day");
+    expect(formatPayRange(null, 120000, "USD", "year", "/yr", "en")).toBe("120k $/yr");
+    expect(formatPayRange(30000, 35000, "AED", "year", "/an")).toContain("30k-35k");
+    expect(formatPayRange(null, null, "EUR", "day", "/j")).toBe("");
+    expect(currencySymbol("EUR")).toBe("€");
+    expect(currencySymbol("GBP", "en")).toBe("£");
+    expect(currencySymbol("XYZ")).toBe("XYZ");
   });
 });

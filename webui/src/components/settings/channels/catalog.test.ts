@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   CHANNEL_PRESENTATION,
   channelDocsUrl,
+  channelFilterTab,
   isHiddenToolsChannel,
+  mergeSocialChannelFeatures,
+  SOCIAL_CHANNEL_NAMES,
 } from "@/components/settings/channels/catalog";
 
 describe("tools channel catalog", () => {
@@ -38,5 +41,37 @@ describe("tools channel catalog", () => {
     );
     expect(CHANNEL_PRESENTATION.whatsapp.setup?.mode).toBe("connect");
     expect(CHANNEL_PRESENTATION.whatsapp.setup?.command).toBeUndefined();
+  });
+
+  it("lists marketing social networks as OAuth channels", () => {
+    for (const name of ["reddit", "linkedin", "instagram", "facebook", "tiktok"] as const) {
+      expect(CHANNEL_PRESENTATION[name].setup?.mode).toBe("oauth");
+      expect(CHANNEL_PRESENTATION[name].setup?.officialUrl).toMatch(/^https:\/\//);
+    }
+  });
+
+  it("groups channels into social, chat, and other tabs", () => {
+    expect(channelFilterTab("reddit")).toBe("social");
+    expect(channelFilterTab("telegram")).toBe("chat");
+    expect(channelFilterTab("email")).toBe("other");
+    expect(channelFilterTab("msteams")).toBe("other");
+  });
+
+  it("keeps social networks visible when the gateway catalog omits them", () => {
+    const merged = mergeSocialChannelFeatures([
+      {
+        name: "telegram",
+        display_name: "Telegram",
+        type: "channel",
+        enabled: false,
+        installed: true,
+        ready: false,
+        status: "not_enabled",
+        install_supported: true,
+        requires_restart: true,
+      },
+    ]);
+    expect(merged.map((row) => row.name)).toEqual(["telegram", ...SOCIAL_CHANNEL_NAMES]);
+    expect(merged.filter((row) => row.kind === "social")).toHaveLength(SOCIAL_CHANNEL_NAMES.length);
   });
 });

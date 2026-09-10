@@ -414,6 +414,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "browser",
   "computer",
   "tools",
+  "channels",
   "apps",
   "automations",
   "skills",
@@ -513,23 +514,12 @@ function readShellRoute(): ShellRoute {
   }
   const params = new URLSearchParams(query);
   const rawSettingsSection = params.get("section");
-  const normalizedSection =
-    rawSettingsSection === "channels" ? "tools" : rawSettingsSection;
-  const settingsSection = isSettingsSectionKey(normalizedSection)
-    ? normalizedSection
+  const settingsSection = isSettingsSectionKey(rawSettingsSection)
+    ? rawSettingsSection
     : "overview";
   const activeKey = params.get("chat")?.trim() || null;
 
   if (path === "/settings") {
-    if (rawSettingsSection === "channels") {
-      params.set("section", "tools");
-      const nextHash = `#/settings?${params.toString()}`;
-      window.history.replaceState(
-        null,
-        "",
-        `${window.location.pathname}${window.location.search}${nextHash}`,
-      );
-    }
     const dedicatedView = shellViewForSettingsSection(settingsSection);
     if (dedicatedView !== "settings") {
       const nextParams = new URLSearchParams();

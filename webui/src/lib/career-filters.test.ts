@@ -9,6 +9,7 @@ import {
   applyOfferFilter,
   emptyOfferFilter,
   offerDomain,
+  offerDurationMonths,
   offerFacets,
   offerFilterActive,
   offerFilterCount,
@@ -111,5 +112,93 @@ describe("career result filters", () => {
     filter.domains = [NONE_FACET];
     expect(applyOfferFilter(rows, filter, ["AI"]).map((row) => row.id)).toEqual(["bare"]);
     expect(applyOfferFilter(rows, filter, []).map((row) => row.id)).toEqual(["bare"]);
+  });
+
+  describe("board filters: contract, experience, freshness, duration, pay floors", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const lastMonth = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const board = [
+      offer({
+        id: "mission",
+        title: "AI Architect",
+        country: "FR",
+        currency: "EUR",
+        contracts: ["contractor"],
+        experience_level: "senior",
+        duration: "1 year",
+        duration_months: 12,
+        daily_rate_min: 400,
+        daily_rate_max: 600,
+        posted_at: today,
+      }),
+      offer({
+        id: "cdi",
+        title: "Data Engineer",
+        country: "FR",
+        currency: "EUR",
+        contracts: ["permanent"],
+        experience_level: "mid",
+        salary_min: 40000,
+        salary_max: 45000,
+        posted_at: lastMonth,
+      }),
+      offer({
+        id: "legacy",
+        title: "ML Engineer",
+        country: "BE",
+        employment_type: "CDD 4 mois",
+        duration: "4 mois",
+        seniority: "Junior",
+        posted_at: today,
+      }),
+    ];
+
+    it("lists contract and experience facets in board order", () => {
+      const facets = offerFacets(board);
+      expect(facets.contracts).toEqual(["contractor", "permanent", "fixed-term"]);
+      expect(facets.experiences).toEqual(["junior", "mid", "senior"]);
+    });
+
+    it("keeps only picked contracts and experience bands", () => {
+      const filter = emptyOfferFilter();
+      filter.contracts = ["contractor", "fixed-term"];
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["mission", "legacy"]);
+      filter.contracts = [];
+      filter.experiences = ["mid"];
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["cdi"]);
+      expect(offerFilterCount(filter)).toBe(1);
+    });
+
+    it("drops stale offers when a freshness window is picked", () => {
+      const filter = emptyOfferFilter();
+      filter.postedWithin = "7";
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["mission", "legacy"]);
+      filter.postedWithin = "";
+      expect(applyOfferFilter(board, filter)).toHaveLength(3);
+    });
+
+    it("reads mission length from the structured field or the posted label", () => {
+      expect(offerDurationMonths(board[0])).toBe(12);
+      expect(offerDurationMonths(board[2])).toBe(4);
+      expect(offerDurationMonths(board[1])).toBe(0);
+      const filter = emptyOfferFilter();
+      filter.minDuration = "6";
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["mission"]);
+      filter.minDuration = "";
+      filter.maxDuration = "6";
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["legacy"]);
+    });
+
+    it("applies day rate and yearly salary floors on the posted ranges", () => {
+      const filter = emptyOfferFilter();
+      filter.minDayRate = "500";
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["mission"]);
+      filter.minDayRate = "700";
+      expect(applyOfferFilter(board, filter)).toEqual([]);
+      filter.minDayRate = "";
+      filter.minSalary = "42000";
+      expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["cdi"]);
+      expect(offerFilterCount(filter)).toBe(1);
+    });
   });
 });

@@ -57,6 +57,8 @@ def _empty_collectors():
         "navin.career.collect.search_web_hits": [],
         "navin.career.collect.scrape_open_net": {"jobs": [], "walls": [], "refused": []},
         "navin.career.collect.search_linkedin_jobs": {"jobs": [], "walls": [], "requests": 0},
+        "navin.career.collect.search_freework_jobs": {"jobs": [], "walls": [], "requests": 0, "total": 0},
+        "navin.career.collect.collect_feeds": {"jobs": [], "walls": [], "requests": 0, "by_source": {}},
         "navin.career.collect.collect_employers": {"jobs": [], "checked": 0, "reports": [], "errors": []},
     }
 
@@ -152,7 +154,8 @@ class CareerSourceContractTest(unittest.TestCase):
         self.assertIn("IR35", blob)
         self.assertIn("1099", blob)
         self.assertIn("contractuel", blob)
-        self.assertIn("site:free-work.com", blob)
+        self.assertNotIn("site:free-work.com", blob)
+        self.assertIn("site:francetravail.fr", blob)
         self.assertIn("site:jobserve.com", blob)
         self.assertTrue(any(row.get("kind") == "linkedin_open" for row in queries))
         self.assertIn("job openings", blob)

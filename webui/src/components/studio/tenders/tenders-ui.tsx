@@ -10,16 +10,19 @@ import { cn } from "@/lib/utils";
 
 export const SPRING = { type: "spring" as const, duration: 0.3, bounce: 0 };
 
-export const BUTTON_STYLES = {
-  root: { minHeight: 44, minWidth: 0, maxWidth: "100%", cursor: "pointer" as const },
+/** Same footprint as the Career desk: one-line header and toolbar, labels never wrap. */
+export const BUTTON_STYLES: IButtonStyles = {
+  root: { minHeight: 40, minWidth: 0, padding: "0 12px", cursor: "pointer", flexShrink: 0 },
+  label: { whiteSpace: "nowrap" },
 };
 export const ICON_BUTTON_STYLES: IButtonStyles = {
   root: {
-    height: 44,
-    minHeight: 44,
-    width: 44,
-    minWidth: 44,
+    height: 40,
+    minHeight: 40,
+    width: 40,
+    minWidth: 40,
     cursor: "pointer",
+    flexShrink: 0,
   },
 };
 export const FILL_BUTTON_STYLES: IButtonStyles = {
@@ -87,7 +90,7 @@ export const FILTER_CALLOUT = NOTICE_ROW_MENU.calloutProps;
 export const SURFACE =
   "min-w-0 rounded-2xl shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 dark:outline-white/10";
 
-export const CHANNELS_HASH = "#/settings?section=tools";
+export const CHANNELS_HASH = "#/settings?section=channels";
 export const MODELS_HASH = "#/settings?section=models";
 
 /** Hash routes stay in the Tauri WebView. Never hand these to the OS opener. */
