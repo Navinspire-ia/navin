@@ -36,6 +36,7 @@ INBOX_CLASSES = (
 
 # Preferred markets: languages, cities, freelance aliases, public board domains.
 # Web Job Search uses langs + aliases. LinkedIn is always opened, never fetched.
+# Free-Work has its own public listing reader, so it takes no web search slot.
 MARKETS: dict[str, dict[str, Any]] = {
     "FR": {
         "label": "France",
@@ -43,7 +44,6 @@ MARKETS: dict[str, dict[str, Any]] = {
         "cities": ("Paris", "Lyon", "Toulouse", "Nantes"),
         "aliases": ("freelance", "mission", "TJM", "contrat"),
         "domains": (
-            "free-work.com",
             "francetravail.fr",
             "apec.fr",
             "welcometothejungle.com",
@@ -322,6 +322,94 @@ CATALOG: list[dict[str, Any]] = [
         "notes": "Public remote API. Attribution + original URL required. 24h delay on public feed.",
     },
     {
+        "id": "jobicy",
+        "name": "Jobicy",
+        "level": 1,
+        "zone": "Remote",
+        "ingest": "public_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 8,
+        "url": "https://jobicy.com/api/v2/remote-jobs",
+        "notes": (
+            "Public API, no key: geo (USA, Canada, UK, France, Belgium, Switzerland, UAE, Europe, EMEA, APAC...), "
+            "industry and keyword tag, 200 offers per request, salary min / max / currency / period, "
+            "employment type and level. One hour cache, Jobicy credited, canonical job URL kept."
+        ),
+    },
+    {
+        "id": "remoteok",
+        "name": "Remote OK",
+        "level": 1,
+        "zone": "Remote",
+        "ingest": "public_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 6,
+        "url": "https://remoteok.com/api",
+        "notes": "Public JSON feed. Remote OK credited and the listing link kept, as its terms ask. USD salaries.",
+    },
+    {
+        "id": "himalayas",
+        "name": "Himalayas",
+        "level": 1,
+        "zone": "Remote",
+        "ingest": "public_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 6,
+        "url": "https://himalayas.app/jobs/api",
+        "notes": "Public jobs API: salary with currency and period, seniority, employment type, location restrictions.",
+    },
+    {
+        "id": "weworkremotely",
+        "name": "We Work Remotely",
+        "level": 1,
+        "zone": "Remote",
+        "ingest": "public_rss",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 5,
+        "url": "https://weworkremotely.com/remote-jobs.rss",
+        "notes": "Public RSS (all jobs + programming category): region, contract type, skills, listing link.",
+    },
+    {
+        "id": "arbeitnow",
+        "name": "Arbeitnow",
+        "level": 1,
+        "zone": "EU",
+        "ingest": "public_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 5,
+        "url": "https://www.arbeitnow.com/api/job-board-api",
+        "notes": "Public job board API (Europe, hourly refresh, no key). Link back to Arbeitnow kept.",
+    },
+    {
+        "id": "hn-hiring",
+        "name": "Hacker News Who is hiring",
+        "level": 1,
+        "zone": "World",
+        "ingest": "public_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 4,
+        "url": "https://hn.algolia.com/api/v1/search_by_date",
+        "notes": "Monthly Ask HN thread read through the public Algolia API. Header line gives company, role, place, remote, pay.",
+    },
+    {
+        "id": "jobopportunities",
+        "name": "Job Opportunities API",
+        "level": 1,
+        "zone": "World",
+        "ingest": "official_api",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 5,
+        "url": "https://www.jobopportunitiesapi.org/docs",
+        "notes": "Employer-direct ledger (ATS, career sites, public services) with per-field provenance. Free key; store JOBOPPORTUNITIES_API_KEY.",
+    },
+    {
         "id": "greenhouse",
         "name": "Greenhouse",
         "level": 2,
@@ -426,12 +514,16 @@ CATALOG: list[dict[str, Any]] = [
         "name": "Free-Work",
         "level": 3,
         "zone": "FR",
-        "ingest": "web_agent",
+        "ingest": "public_listing",
         "auto_search": True,
         "auto_apply": False,
-        "priority": 8,
+        "priority": 9,
         "url": "https://www.free-work.com/",
-        "notes": "IT freelance missions. Discover via Web Job Search. Respect robots.txt before any fetch.",
+        "notes": (
+            "IT freelance missions and jobs, FR and UK. Public search pages read live "
+            "(no login, one request per second, capped per run): TJM, duration, remote "
+            "mode, skills and full description. Generic scrape never touches the host."
+        ),
     },
     {
         "id": "apec",

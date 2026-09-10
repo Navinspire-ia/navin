@@ -70,6 +70,7 @@ def api_key_flags(secrets: dict[str, str] | None = None) -> dict[str, bool]:
         "adzuna": _env("ADZUNA_APP_ID", "ADZUNA_APP_KEY", secrets=secrets),
         "jooble": _env("JOOBLE_API_KEY", secrets=secrets),
         "usajobs": _env("USAJOBS_API_KEY", "USAJOBS_USER_AGENT", secrets=secrets),
+        "jobopportunities": _env("JOBOPPORTUNITIES_API_KEY", secrets=secrets),
     }
 
 
@@ -86,10 +87,37 @@ def connector_status(secrets: dict[str, str] | None = None) -> list[dict[str, An
         },
         {
             "id": "ats",
-            "name": "Greenhouse / Lever / Ashby",
+            "name": "Greenhouse / Lever / Ashby / Workable",
             "live": True,
             "needs_key": False,
             "docs": "https://developers.greenhouse.io/",
+        },
+        {
+            "id": "feeds",
+            "name": "Public job APIs and RSS",
+            "live": True,
+            "needs_key": False,
+            "ingest": "public_api",
+            "docs": "https://github.com/Jobicy/remote-jobs-api/blob/main/README.md",
+            "note": (
+                "Jobicy (geo, industry, tag filters), Remote OK, Himalayas, We Work Remotely, "
+                "Arbeitnow and Hacker News Who is hiring. No key, one hour cache, source credited, "
+                "original listing kept as the apply link. Pay, contract, remote mode, experience and "
+                "currency are normalized per market."
+            ),
+        },
+        {
+            "id": "jsonld",
+            "name": "schema.org JobPosting",
+            "live": True,
+            "needs_key": False,
+            "ingest": "jsonld",
+            "docs": "https://schema.org/JobPosting",
+            "note": (
+                "Structured postings read from pages Navin is allowed to open: employer careers "
+                "pages, open ATS pages and pasted page source. Salary, employment type, remote flag, "
+                "dates and experience come straight from the markup."
+            ),
         },
         {
             "id": "employers",
@@ -150,6 +178,14 @@ def connector_status(secrets: dict[str, str] | None = None) -> list[dict[str, An
             "docs": "https://developer.usajobs.gov/",
         },
         {
+            "id": "jobopportunities",
+            "name": "Job Opportunities API",
+            "live": flags["jobopportunities"],
+            "needs_key": True,
+            "env": "JOBOPPORTUNITIES_API_KEY",
+            "docs": "https://www.jobopportunitiesapi.org/docs",
+        },
+        {
             "id": "linkedin",
             "name": "LinkedIn",
             "live": True,
@@ -160,6 +196,18 @@ def connector_status(secrets: dict[str, str] | None = None) -> list[dict[str, An
             "note": (
                 "Public guest job search, read without login, one request per second, "
                 "capped per run. Saved jobs, inbox and profile need the LinkedIn MCP session."
+            ),
+        },
+        {
+            "id": "free-work",
+            "name": "Free-Work",
+            "live": True,
+            "needs_key": False,
+            "ingest": "public_listing",
+            "docs": "https://www.free-work.com/fr/tech-it/jobs",
+            "note": (
+                "Public search pages for the FR and GB markets, read without login, one request "
+                "per second, capped per run. TJM, duration, remote mode and skills come from the listing."
             ),
         },
         {
@@ -188,6 +236,12 @@ def module_stack(secrets: dict[str, str] | None = None) -> dict[str, Any]:
             "Web Job Search discovers pages; respect robots.txt before any fetch. "
             "LinkedIn public listings come from the guest job search inside "
             "career action=search (no login, rate limited). Never auto Easy Apply. "
+            "Free-Work public listings (FR and GB) come from the public search pages "
+            "inside career action=search (no login, rate limited). "
+            "Public job APIs and RSS (Jobicy, Remote OK, Himalayas, We Work Remotely, Arbeitnow, "
+            "Hacker News Who is hiring) run inside career action=search with a one hour cache; "
+            "keep the source credited and the original listing link. "
+            "API, RSS, JSON-LD JobPosting and ATS feeds come before any HTML reader. "
             "Preferred markets change the match score. "
             "The gateway ticks career action=watch on heartbeat. "
             "The Career desk loop hunts (search then watch) on its saved "

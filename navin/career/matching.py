@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from navin.career.normalize import convert_money
 from navin.career.sources import MARKETS, html_to_text, infer_country_iso, is_listing_hit
 
 
@@ -205,6 +206,13 @@ def score_opportunity(row: dict[str, Any], profile: dict[str, Any]) -> dict[str,
         comp_val = float(comp) if comp not in (None, "") else 0.0
     except (TypeError, ValueError):
         comp_val = 0.0
+    # The offer is posted in its market's currency; the floor is in the profile's.
+    # Compare in one currency (indicative rates), never show the converted figure.
+    row_currency = str(row.get("currency") or "").strip().upper()
+    goal_currency = str(profile.get("currency") or "EUR").strip().upper() or "EUR"
+    if comp_val > 0 and row_currency and row_currency != goal_currency:
+        converted = convert_money(comp_val, row_currency, goal_currency)
+        comp_val = converted if converted is not None else 0.0
     track = str(row.get("track") or profile.get("track") or "jobs")
     floor = min_rate if track == "freelance" else min_salary
     ceiling = max_rate if track == "freelance" else max_salary

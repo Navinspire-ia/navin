@@ -7,7 +7,11 @@ import { openInOsBrowser } from "@/lib/api";
 import { officialCareerHref } from "@/lib/career-api";
 
 export const SPRING = { type: "spring" as const, duration: 0.3, bounce: 0 };
-export const BUTTON_STYLES = { root: { minHeight: 40, cursor: "pointer" as const } };
+/** Buttons keep their label on one line inside the single-row header and toolbar. */
+export const BUTTON_STYLES: IButtonStyles = {
+  root: { minHeight: 40, minWidth: 0, padding: "0 12px", cursor: "pointer", flexShrink: 0 },
+  label: { whiteSpace: "nowrap" },
+};
 export const ICON_BUTTON_STYLES: IButtonStyles = {
   root: {
     width: 40,

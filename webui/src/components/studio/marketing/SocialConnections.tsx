@@ -6,6 +6,7 @@ import { DefaultButton, Dropdown, MessageBar, MessageBarType, PrimaryButton, Tex
 
 import type { SocialConnection } from "@/lib/marketing-api";
 import { channelLabel, formatWhen } from "@/lib/marketing-publish";
+import { ideOauthCallbackUrl } from "@/lib/social-oauth-callback";
 import type { RunAction, Tx } from "./MarketingPublish";
 
 const BUTTON = { root: { minHeight: 36, cursor: "pointer" as const } };
@@ -29,7 +30,10 @@ function SocialConnectionCard({ connection, busy, locale, tx, run }: {
     refresh_required: tx("oauth.renewing", "Authorization will be renewed before the next action"),
     expired: tx("oauth.expired", "Authorization expired: reconnect your account"),
   };
-  const callback = connection.redirect_uri || `${window.location.origin}/api/marketing/oauth/callback`;
+  const callback = ideOauthCallbackUrl(provider, {
+    saved: connection.redirect_uri,
+    suggested: connection.suggested_redirect_uri,
+  });
   const save = async () => {
     const body: Record<string, string> = {
       provider, client_id: draft.client_id ?? connection.client_id,
@@ -85,11 +89,37 @@ function SocialConnectionCard({ connection, busy, locale, tx, run }: {
       {provider === "tiktok" ? <p className="mt-2 text-xs text-muted-foreground">{tx("oauth.tiktokHint", "TikTok decides the available audiences and publishing access for your app. Choose the audience and confirm each post before sending.")}</p> : null}
       <details className="mt-3" open={!configured}>
         <summary className="cursor-pointer text-xs font-medium">{tx("oauth.application", "Application connection settings")}</summary>
-        <p className="my-2 text-xs text-muted-foreground">{tx("oauth.setupHelp", "Register this callback URL in your application on {{provider}}. The client secret stays on the server.", { provider: label })}</p>
+        <p className="my-2 text-xs text-muted-foreground">
+          {provider === "reddit"
+            ? tx(
+                "oauth.setupHelpReddit",
+                "Register this callback in your Reddit app. It is the local IDE gateway, not Vite :5173. Open Navin at this same origin, then Connect.",
+              )
+            : tx(
+                "oauth.setupHelp",
+                "Register this public HTTPS callback in your application on {{provider}}. Vite :5173 and localhost HTTP are not valid for this provider.",
+                { provider: label },
+              )}
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField label={tx("oauth.clientId", "Application client ID")} value={draft.client_id ?? connection.client_id} onChange={(_, value) => setDraft((old) => ({ ...old, client_id: value || "" }))} data-testid={`marketing-oauth-client-${provider}`} />
           <TextField label={tx("oauth.clientSecret", "Application client secret")} type="password" canRevealPassword placeholder={connection.client_secret_set ? tx("oauth.secretSaved", "Secret saved") : ""} value={draft.client_secret ?? ""} onChange={(_, value) => setDraft((old) => ({ ...old, client_secret: value || "" }))} data-testid={`marketing-oauth-secret-${provider}`} />
-          <TextField label={tx("oauth.callback", "Public HTTPS callback URL")} value={draft.redirect_uri ?? callback} onChange={(_, value) => setDraft((old) => ({ ...old, redirect_uri: value || "" }))} styles={{ root: { gridColumn: "1 / -1" } }} data-testid={`marketing-oauth-callback-${provider}`} />
+          <TextField
+            label={
+              provider === "reddit"
+                ? tx("oauth.callbackIde", "IDE gateway callback URL")
+                : tx("oauth.callback", "Public HTTPS callback URL")
+            }
+            value={draft.redirect_uri ?? callback}
+            placeholder={
+              provider === "reddit"
+                ? "http://127.0.0.1:8766/api/marketing/oauth/callback"
+                : "https://ton-domaine/api/marketing/oauth/callback"
+            }
+            onChange={(_, value) => setDraft((old) => ({ ...old, redirect_uri: value || "" }))}
+            styles={{ root: { gridColumn: "1 / -1" } }}
+            data-testid={`marketing-oauth-callback-${provider}`}
+          />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <DefaultButton text={tx("oauth.saveApp", "Save application")} disabled={busy || (!Object.keys(draft).length && configured)} styles={BUTTON} onClick={() => void save()} data-testid={`marketing-oauth-save-${provider}`} />

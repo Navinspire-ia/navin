@@ -10,6 +10,7 @@ from unittest.mock import patch
 from urllib.parse import urlparse
 
 from navin.career.collect import _fetch_remotive, _normalize_ats
+from navin.career.feeds import FEED_IDS
 from navin.career.official import collect_official_apis, fetch_adzuna, fetch_jooble, fetch_usajobs
 from navin.career.sources import (
     CATALOG,
@@ -39,6 +40,13 @@ SOURCE_CONTRACT: dict[str, dict[str, str]] = {
     "france-travail": {"level": "1", "ingest": "partner_api", "host": "francetravail.io", "wire": "open:francetravail.fr"},
     "usajobs": {"level": "1", "ingest": "official_api", "host": "developer.usajobs.gov", "wire": "collector:usajobs"},
     "remotive": {"level": "1", "ingest": "official_api", "host": "remotive.com", "wire": "open:remotive.com"},
+    "jobicy": {"level": "1", "ingest": "public_api", "host": "jobicy.com", "wire": "feed:jobicy"},
+    "remoteok": {"level": "1", "ingest": "public_api", "host": "remoteok.com", "wire": "feed:remoteok"},
+    "himalayas": {"level": "1", "ingest": "public_api", "host": "himalayas.app", "wire": "feed:himalayas"},
+    "weworkremotely": {"level": "1", "ingest": "public_rss", "host": "weworkremotely.com", "wire": "feed:weworkremotely"},
+    "arbeitnow": {"level": "1", "ingest": "public_api", "host": "arbeitnow.com", "wire": "feed:arbeitnow"},
+    "hn-hiring": {"level": "1", "ingest": "public_api", "host": "hn.algolia.com", "wire": "feed:hn-hiring"},
+    "jobopportunities": {"level": "1", "ingest": "official_api", "host": "jobopportunitiesapi.org", "wire": "collector:jobopportunities"},
     "greenhouse": {"level": "2", "ingest": "ats_api", "host": "developers.greenhouse.io", "wire": "open:greenhouse.io"},
     "lever": {"level": "2", "ingest": "ats_api", "host": "github.com", "wire": "open:lever.co"},
     "ashby": {"level": "2", "ingest": "ats_api", "host": "developers.ashbyhq.com", "wire": "open:ashbyhq.com"},
@@ -47,7 +55,7 @@ SOURCE_CONTRACT: dict[str, dict[str, str]] = {
     "linkedin": {"level": "4", "ingest": "public_listing", "host": "linkedin.com", "wire": "linkedin"},
     "web-job-search": {"level": "3", "ingest": "search_snippet", "host": "html.duckduckgo.com", "wire": "websearch"},
     "web-search": {"level": "3", "ingest": "search_snippet", "host": "html.duckduckgo.com", "wire": "websearch"},
-    "free-work": {"level": "3", "ingest": "web_agent", "host": "free-work.com", "wire": "site:free-work.com"},
+    "free-work": {"level": "3", "ingest": "public_listing", "host": "free-work.com", "wire": "freework"},
     "apec": {"level": "3", "ingest": "web_agent", "host": "apec.fr", "wire": "site:apec.fr"},
     "malt": {"level": "4", "ingest": "open_manual", "host": "malt.fr", "wire": "closed:malt.fr"},
     "wttj": {"level": "3", "ingest": "web_agent", "host": "welcometothejungle.com", "wire": "site:welcometothejungle.com"},
@@ -95,6 +103,8 @@ ALLOWED_INGEST = {
     "open_manual",
     "employer_feed",
     "public_listing",
+    "public_api",
+    "public_rss",
 }
 
 
@@ -190,6 +200,21 @@ class CareerCatalogRowTest(unittest.TestCase):
                     self.assertTrue(is_linkedin_url("https://www.linkedin.com/jobs/view/1"))
                     self.assertFalse(is_open_scrape_url("https://www.linkedin.com/jobs/view/1"))
                     self.assertIn("linkedin.com/jobs/search", pack_blob)
+                elif wire == "freework":
+                    # Own public listing reader: live connector, generic scrape stays off,
+                    # no web search slot spent, official board link still in the pack.
+                    self.assertIn("free-work", connectors)
+                    self.assertTrue(is_closed_job_url("https://www.free-work.com/fr/tech-it/job-mission/x/y"))
+                    self.assertFalse(is_open_scrape_url("https://www.free-work.com/fr/tech-it/job-mission/x/y"))
+                    self.assertNotIn("site:free-work.com", query_blob)
+                    self.assertIn("free-work.com/fr/tech-it/jobs", pack_blob)
+                elif wire.startswith("feed:"):
+                    # Public API / RSS engine: one live connector, the feed id known to the
+                    # engine, the host never in the generic scrape or web search slots.
+                    feed_id = wire.split(":", 1)[1]
+                    self.assertIn("feeds", connectors)
+                    self.assertIn(feed_id, FEED_IDS)
+                    self.assertNotIn(f"site:{spec['host']}", query_blob)
                 elif wire == "websearch":
                     self.assertTrue(any(item.get("kind") == "web" for item in queries))
                 elif wire == "partner":
@@ -416,6 +441,10 @@ class CareerConnectorLiveTest(unittest.TestCase):
         # Public guest listings need no key: LinkedIn is live out of the box.
         self.assertTrue(by_id["linkedin"]["live"])
         self.assertEqual(by_id["linkedin"]["ingest"], "public_listing")
+        # Same for the Free-Work public search pages.
+        self.assertTrue(by_id["free-work"]["live"])
+        self.assertFalse(by_id["free-work"]["needs_key"])
+        self.assertEqual(by_id["free-work"]["ingest"], "public_listing")
         self.assertNotIn("france-travail", by_id)
 
 

@@ -3,6 +3,8 @@
 
 import { Network, type LucideIcon } from "lucide-react";
 
+import type { NavinFeatureInfo } from "@/lib/types";
+
 export type ChannelPresentation = {
   displayName: string;
   description: string;
@@ -14,7 +16,7 @@ export type ChannelPresentation = {
   setup?: ChannelSetupPresentation;
 };
 export type ChannelSetupPresentation = {
-  mode?: "webui" | "credentials" | "connect";
+  mode?: "webui" | "credentials" | "connect" | "oauth";
   primaryActionLabel?: string;
   command?: string;
   /** Path relative to the docs root, or an absolute URL for third-party guides. */
@@ -179,6 +181,62 @@ export function channelDocsUrl(
 
 export function isHiddenToolsChannel(name: string): boolean {
   return name === "websocket";
+}
+
+export const SOCIAL_CHANNEL_NAMES = [
+  "reddit",
+  "linkedin",
+  "instagram",
+  "facebook",
+  "tiktok",
+] as const;
+
+export function isSocialChannel(name: string): boolean {
+  return (SOCIAL_CHANNEL_NAMES as readonly string[]).includes(name);
+}
+
+export const CHAT_CHANNEL_NAMES = [
+  "telegram",
+  "discord",
+  "slack",
+  "whatsapp",
+  "signal",
+  "matrix",
+  "mattermost",
+] as const;
+
+export type ChannelFilterTab = "all" | "social" | "chat" | "other";
+
+export function channelFilterTab(name: string): Exclude<ChannelFilterTab, "all"> {
+  if (isSocialChannel(name)) return "social";
+  if ((CHAT_CHANNEL_NAMES as readonly string[]).includes(name)) return "chat";
+  return "other";
+}
+
+export function placeholderSocialFeature(
+  name: (typeof SOCIAL_CHANNEL_NAMES)[number],
+): NavinFeatureInfo {
+  const presentation = CHANNEL_PRESENTATION[name];
+  return {
+    name,
+    display_name: presentation?.displayName ?? name,
+    type: "channel",
+    kind: "social",
+    enabled: false,
+    configured: false,
+    installed: true,
+    ready: false,
+    status: "not_enabled",
+    install_supported: true,
+    requires_restart: false,
+  };
+}
+
+/** Keep Marketing networks on Channels even when the gateway catalog is stale. */
+export function mergeSocialChannelFeatures(features: NavinFeatureInfo[]): NavinFeatureInfo[] {
+  const have = new Set(features.map((row) => row.name));
+  const missing = SOCIAL_CHANNEL_NAMES.filter((name) => !have.has(name)).map(placeholderSocialFeature);
+  return missing.length ? [...features, ...missing] : features;
 }
 
 export const CHANNEL_PRESENTATION: Record<string, ChannelPresentation> = {
@@ -749,6 +807,112 @@ export const CHANNEL_PRESENTATION: Record<string, ChannelPresentation> = {
           placeholder: "Teams user IDs, comma separated",
           optional: true,
         },
+      ],
+    },
+  },
+  reddit: {
+    displayName: "Reddit",
+    description: "Publish to a subreddit. Agents use this once the account is connected and On.",
+    requirements: "Reddit app, OAuth callback, subreddit",
+    initials: "RD",
+    color: "#FF4500",
+    logoUrl: "https://www.reddit.com/favicon.ico",
+    setup: {
+      mode: "oauth",
+      officialUrl: "https://github.com/reddit-archive/reddit/wiki/OAuth2",
+      officialLabel: "Open Reddit OAuth guide",
+      tryIt: "Turn the channel On, then ask the agent to publish a Reddit draft.",
+      summary:
+        "Same OAuth as Marketing. Connect the account, turn it On, then the marketing agent can publish.",
+      steps: [
+        "Create a Reddit app and copy the client ID and secret.",
+        "Register the callback URL in the Reddit app, then save it here.",
+        "Connect the account, set the subreddit, then turn the channel On for agents.",
+      ],
+    },
+  },
+  linkedin: {
+    displayName: "LinkedIn",
+    description: "Publish to the connected LinkedIn profile. Agents use this once On.",
+    requirements: "LinkedIn app, public HTTPS callback",
+    initials: "IN",
+    color: "#0A66C2",
+    logoUrl: "https://www.linkedin.com/favicon.ico",
+    setup: {
+      mode: "oauth",
+      officialUrl: "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow",
+      officialLabel: "Open LinkedIn OAuth guide",
+      tryIt: "Turn the channel On, then ask the agent to publish a LinkedIn draft.",
+      summary:
+        "Same OAuth as Marketing. A public HTTPS callback is required. Connect, then turn On for agents.",
+      steps: [
+        "Create a LinkedIn app and copy the client ID and secret.",
+        "Register the HTTPS callback URL, save it here, then connect the account.",
+        "Turn the channel On so the marketing agent can publish.",
+      ],
+    },
+  },
+  instagram: {
+    displayName: "Instagram",
+    description: "Publish to a professional Instagram account. Agents use this once On.",
+    requirements: "Meta Instagram app, public HTTPS callback",
+    initials: "IG",
+    color: "#E1306C",
+    logoUrl: "https://www.instagram.com/favicon.ico",
+    setup: {
+      mode: "oauth",
+      officialUrl:
+        "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login/",
+      officialLabel: "Open Instagram login guide",
+      tryIt: "Turn the channel On, then ask the agent to publish an Instagram draft.",
+      summary:
+        "Same OAuth as Marketing. Connect a Business or Creator account, then turn On for agents.",
+      steps: [
+        "Create a Meta app with Instagram login and copy the client ID and secret.",
+        "Register the HTTPS callback URL, save it here, then connect the account.",
+        "Turn the channel On so the marketing agent can publish.",
+      ],
+    },
+  },
+  facebook: {
+    displayName: "Facebook",
+    description: "Publish to a Facebook Page. Agents use this once On.",
+    requirements: "Meta app, public HTTPS callback, Page access",
+    initials: "FB",
+    color: "#1877F2",
+    logoUrl: "https://www.facebook.com/favicon.ico",
+    setup: {
+      mode: "oauth",
+      officialUrl: "https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow/",
+      officialLabel: "Open Facebook Login guide",
+      tryIt: "Turn the channel On, then ask the agent to publish a Facebook draft.",
+      summary:
+        "Same OAuth as Marketing. Connect, choose the Page, then turn On for agents.",
+      steps: [
+        "Create a Meta app and copy the client ID and secret.",
+        "Register the HTTPS callback URL, save it here, then connect and pick a Page.",
+        "Turn the channel On so the marketing agent can publish.",
+      ],
+    },
+  },
+  tiktok: {
+    displayName: "TikTok",
+    description: "Publish videos or photos to TikTok. Agents use this once On.",
+    requirements: "TikTok app, public HTTPS callback",
+    initials: "TT",
+    color: "#010101",
+    logoUrl: "https://www.tiktok.com/favicon.ico",
+    setup: {
+      mode: "oauth",
+      officialUrl: "https://developers.tiktok.com/docs/en/login-kit-web",
+      officialLabel: "Open TikTok Login Kit",
+      tryIt: "Turn the channel On, then ask the agent to publish a TikTok draft.",
+      summary:
+        "Same OAuth as Marketing. A public HTTPS callback is required. Connect, then turn On for agents.",
+      steps: [
+        "Create a TikTok app and copy the client key and secret.",
+        "Register the HTTPS callback URL, save it here, then connect the account.",
+        "Turn the channel On so the marketing agent can publish.",
       ],
     },
   },

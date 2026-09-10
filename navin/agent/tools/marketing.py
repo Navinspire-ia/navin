@@ -52,7 +52,7 @@ _CONTENT_OPTIONS = ObjectSchema(
             "harvest fetches a live product URL and fills brand, SEO, social and ads. "
             "produce generates brand images, clips or voice when providers are configured. "
             "approve-content / schedule-content / publish move one post to its channel "
-            "(LinkedIn, X, Facebook, Instagram, TikTok, Reddit, Telegram, email, webhook, blog) with a UTM link; "
+            "(LinkedIn, Facebook, Instagram, TikTok, Reddit from Settings > Channels, plus X, Telegram, email, webhook, blog) with a UTM link; "
             "publish-status follows accepted media processing, creator-info gets current TikTok choices, "
             "and content-capabilities validates the selected media. Never invent TikTok consent or privacy choices. "
             "measure pulls real counters (channel metrics + Plausible/Matomo). "
@@ -159,6 +159,8 @@ class MarketingTool(Tool):
             "brand memory, product understanding, campaigns, content, creatives, "
             "analytics and the growth loop. Use status first. "
             "Drive the loop with start/stop/schedule/tick. "
+            "Social accounts (Reddit, Instagram, Facebook, TikTok, LinkedIn) live in "
+            "Settings > Channels: connect OAuth, turn the channel On, then publish. "
             "Never invent traffic, spend or published posts."
         )
 
@@ -300,12 +302,17 @@ class MarketingTool(Tool):
             kpis = payload.get("kpis") or {}
             loop = payload.get("loop") or {}
             product = payload.get("product") or {}
+            from navin.marketing.social_channels import social_ready_summary
+
+            social = ", ".join(social_ready_summary())
             text = (
                 f"Marketing desk. product={product.get('name') or 'none'} "
                 f"armed={payload.get('armed')} campaigns={kpis.get('campaigns')} "
                 f"content={kpis.get('content')} signups={kpis.get('signups')} "
                 f"loop={loop.get('phase')} {loop.get('last_result') or ''}"
             )
+            if social:
+                text += f" social={social}"
             return ToolResult(text)
         if action in {"publish", "post"}:
             report = payload.get("publish") or {}

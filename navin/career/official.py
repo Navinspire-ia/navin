@@ -14,6 +14,13 @@ from typing import Any
 
 from loguru import logger
 
+from navin.career.normalize import (
+    contracts_track,
+    normalize_contracts,
+    normalize_experience,
+    normalize_remote,
+    pay_from_numbers,
+)
 from navin.career.sources import is_closed_job_url, stable_job_id
 
 _ADZUNA_COUNTRIES = {
@@ -302,6 +309,82 @@ def fetch_usajobs(
     return rows
 
 
+_JOBOPP_URL = "https://api.jobopportunitiesapi.org/v1/jobs"
+_JOBOPP_LIMIT = 50  # include_description=true caps the page at 50
+
+
+def fetch_jobopportunities(
+    query: str,
+    countries: list[str],
+    track: str,
+    *,
+    secrets: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Job Opportunities API (employer-direct ledger, Bearer key). https://www.jobopportunitiesapi.org/docs"""
+    key = _cred("JOBOPPORTUNITIES_API_KEY", secrets)
+    if not key:
+        return []
+    isos = [str(iso).strip().upper() for iso in countries if str(iso).strip() and str(iso).strip().upper() != "REMOTE"][:6]
+    params: dict[str, str] = {"q": query, "limit": str(_JOBOPP_LIMIT), "include_description": "true"}
+    if isos:
+        params["country"] = ",".join(isos)
+    url = f"{_JOBOPP_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        payload = _get_json(url, headers={"Authorization": f"Bearer {key}"})
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        logger.info("career jobopportunities skipped: {}", exc)
+        return []
+    items = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in items[:_JOBOPP_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        iso = str(item.get("country") or "").strip().upper()
+        job = _row(
+            source="jobopportunities",
+            title=str(item.get("title") or ""),
+            company=str(item.get("company") or ""),
+            location=str(item.get("location") or item.get("city") or ""),
+            country=iso if len(iso) == 2 else (isos[0] if len(isos) == 1 else ""),
+            url=str(item.get("apply_url") or item.get("url") or ""),
+            description=str(item.get("description") or ""),
+            track=track,
+            currency=str(item.get("salary_currency") or ""),
+            posted_at=str(item.get("posted_at") or item.get("first_seen_at") or ""),
+        )
+        if not job:
+            continue
+        job.update(
+            pay_from_numbers(
+                item.get("salary_min"),
+                item.get("salary_max"),
+                period=str(item.get("salary_period") or ""),
+                currency=str(item.get("salary_currency") or ""),
+                country=job["country"],
+                track=job["track"],
+            )
+        )
+        kinds = normalize_contracts(item.get("employment_type"), job["title"])
+        if kinds:
+            job["contracts"] = kinds
+            job["employment_type"] = ", ".join(kinds)
+            job["track"] = contracts_track(kinds, track)
+        remote = normalize_remote(str(item.get("remote") or ""))
+        if remote:
+            job["remote"] = remote
+        level, years = normalize_experience(str(item.get("seniority") or ""), job["title"])
+        if level:
+            job["experience_level"] = level
+            job["seniority"] = level
+        if years is not None:
+            job["experience_years_min"] = years
+        job["attribution"] = f"Job Opportunities API ({item.get('source') or 'employer'})"
+        rows.append(job)
+    return rows
+
+
 def collect_official_apis(
     query: str,
     countries: list[str],
@@ -310,7 +393,7 @@ def collect_official_apis(
     sources: list[str] | None = None,
     secrets: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Adzuna / Jooble / USAJOBS when keys are on file (wizard or env). Empty if not configured."""
+    """Adzuna / Jooble / USAJOBS / Job Opportunities API when keys are on file. Empty if not configured."""
     wanted = {str(item).strip().lower() for item in (sources or []) if str(item).strip()}
     if sources is not None and not wanted:
         return []
@@ -321,4 +404,6 @@ def collect_official_apis(
         rows.extend(fetch_jooble(query, countries, track, secrets=secrets))
     if sources is None or "usajobs" in wanted:
         rows.extend(fetch_usajobs(query, countries, track, secrets=secrets))
+    if sources is None or "jobopportunities" in wanted:
+        rows.extend(fetch_jobopportunities(query, countries, track, secrets=secrets))
     return rows

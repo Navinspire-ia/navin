@@ -7,11 +7,9 @@ import { Customizer, DefaultButton, IconButton, MessageBar, MessageBarType, Prim
 import "@/lib/fluent-icons";
 import { useTranslation } from "react-i18next";
 
-import { DeskSkeleton, DossierPane, HomePane, NoticesPane } from "@/components/studio/tenders/TendersDesk";
-import { buildTenderKpis } from "@/components/studio/tenders/TendersKpis";
+import { ActivityPane, DeskSkeleton, DossierPane, FollowUpButton, NoticesPane } from "@/components/studio/tenders/TendersDesk";
 import type { NoticeListView, PipelineFilter } from "@/components/studio/tenders/pipeline";
 import { TendersWizard } from "@/components/studio/tenders/TendersWizard";
-import { TenderAlertDeliveries } from "@/components/studio/tenders/TenderAlertDeliveries";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import {
   BUTTON_STYLES,
@@ -30,7 +28,6 @@ import { fetchTendersDesk, postTenders, type TenderDesk, type TenderLoopSchedule
 import { cn } from "@/lib/utils";
 
 type View = "work" | "setup";
-type DeskPane = "home" | "tenders";
 
 function emptyDesk(): TenderDesk {
   return {
@@ -86,9 +83,6 @@ export function TendersWorkspace({
   const [savedType, setSavedType] = useState(MessageBarType.success);
   const [busy, setBusy] = useState("");
   const [view, setView] = useState<View>("work");
-  const [deskPane, setDeskPane] = useState<DeskPane>(
-    noticeId || pane === "tenders" ? "tenders" : "home",
-  );
   const [bookView, setBookView] = useState<NoticeListView>("pipeline");
   const [bookFilter, setBookFilter] = useState<PipelineFilter | null>("all");
   const [openId, setOpenId] = useState(noticeId || "");
@@ -96,20 +90,11 @@ export function TendersWorkspace({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
 
-  const openHome = useCallback(() => {
-    stayOnSetup.current = false;
-    setOpenId("");
-    setView("work");
-    setDeskPane("home");
-    onPane?.("home");
-  }, [onPane]);
-
   const openBook = useCallback(
     (nextView?: NoticeListView, nextFilter?: PipelineFilter | null) => {
       stayOnSetup.current = false;
       setOpenId("");
       setView("work");
-      setDeskPane("tenders");
       if (nextView) setBookView(nextView);
       if (nextFilter !== undefined) setBookFilter(nextFilter);
       onPane?.("tenders");
@@ -156,28 +141,19 @@ export function TendersWorkspace({
   useEffect(() => {
     const next = (noticeId || "").trim();
     setOpenId(next);
-    if (next && !stayOnSetup.current) {
-      setView("work");
-      setDeskPane("tenders");
-    }
+    if (next && !stayOnSetup.current) setView("work");
   }, [noticeId]);
 
   useEffect(() => {
     if ((noticeId || "").trim() || stayOnSetup.current) return;
-    if (pane === "tenders") {
-      setView("work");
-      setDeskPane("tenders");
-    }
+    if (pane === "tenders") setView("work");
   }, [noticeId, pane]);
 
   const showNotice = useCallback(
     (id: string) => {
       if (id) stayOnSetup.current = false;
       setOpenId(id);
-      if (id) {
-        setView("work");
-        setDeskPane("tenders");
-      }
+      if (id) setView("work");
       onNotice?.(id);
     },
     [onNotice],
@@ -269,25 +245,6 @@ export function TendersWorkspace({
     () => live.tenders.find((row) => row.id === openId) || null,
     [live, openId],
   );
-  const kpis = useMemo(
-    () =>
-      buildTenderKpis({
-        fresh: live.kpis.new || 0,
-        open: live.kpis.open || 0,
-        qualified: live.kpis.qualified || 0,
-        deadline7d: live.kpis.deadline_7d || 0,
-        weighted: live.kpis.weighted_value || 0,
-        labels: {
-          fresh: tx("kpiNew", "New"),
-          open: tx("kpiOpen", "Still in play"),
-          qualified: tx("kpiQualified", "Qualified"),
-          deadline: tx("kpiDeadline", "Due this week"),
-          weighted: tx("kpiWeighted", "Weighted value"),
-        },
-      }),
-    [live, tx],
-  );
-
   useEffect(() => {
     if (connected && !ready && view === "work" && !openId) setView("setup");
   }, [connected, ready, view, openId]);
@@ -318,120 +275,121 @@ export function TendersWorkspace({
           WebkitFontSmoothing: "antialiased",
         }}
       >
-        <header className="flex min-w-0 w-full shrink-0 flex-wrap items-end justify-between gap-3 px-4 py-4 sm:gap-4 sm:px-6 sm:py-5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
-          <div className="min-w-0 max-w-2xl">
-            <h1 className="text-balance text-2xl font-semibold tracking-tight">
+        <header className="flex shrink-0 flex-nowrap items-center gap-x-3 px-5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <h1 className="shrink-0 whitespace-nowrap text-xl font-semibold tracking-tight" data-testid="tenders-title">
               {tx("title", "Tenders")}
             </h1>
             {!showWizard && live.profile.name ? (
-              <p className="mt-1 break-words text-pretty text-sm font-medium">{live.profile.name}</p>
+              <p className="max-w-[12rem] shrink-0 truncate text-sm font-medium text-muted-foreground">{live.profile.name}</p>
             ) : null}
-          </div>
-          <div className="flex min-w-0 w-full flex-1 items-center gap-2">
-            <nav
-              className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:justify-end"
-              aria-label={tx("deskPanesAria", "Desk panes")}
-            >
-              {ready ? (
-                <>
-                  {deskPane === "home" && view === "work" && !openId ? (
-                    <PrimaryButton
-                      text={tx("homeDashboard", "Home dashboard")}
-                      iconProps={{ iconName: "Home" }}
-                      onClick={openHome}
-                      styles={BUTTON_STYLES}
-                    />
-                  ) : (
-                    <DefaultButton
-                      text={tx("homeDashboard", "Home dashboard")}
-                      iconProps={{ iconName: "Home" }}
-                      onClick={openHome}
-                      styles={BUTTON_STYLES}
-                    />
-                  )}
-                  {deskPane === "tenders" && view === "work" ? (
-                    <PrimaryButton
-                      text={tx("tenderBook", "Tender")}
-                      iconProps={{ iconName: "PageList" }}
-                      onClick={() => openBook("pipeline", "all")}
-                      styles={BUTTON_STYLES}
-                    />
-                  ) : (
-                    <DefaultButton
-                      text={tx("tenderBook", "Tender")}
-                      iconProps={{ iconName: "PageList" }}
-                      onClick={() => openBook("pipeline", "all")}
-                      styles={BUTTON_STYLES}
-                    />
-                  )}
-                </>
-              ) : null}
-              <DefaultButton
-                text={showWizard ? tx("wizardKicker", "Company setup") : tx("settings", "Settings")}
-                iconProps={{ iconName: "Settings" }}
-                onClick={() => {
-                  stayOnSetup.current = true;
-                  showNotice("");
-                  setView("setup");
-                }}
-                styles={BUTTON_STYLES}
-              />
-              {showDesk ? (
-                <>
-                  {live.loop?.enabled ? (
-                    <PrimaryButton
-                      text={tx("pause", "Pause loop")}
-                      iconProps={{ iconName: "Pause" }}
-                      onClick={() => void run("stop")}
-                      disabled={Boolean(busy)}
-                      styles={BUTTON_STYLES}
-                      data-testid="tenders-pause-loop"
-                    />
-                  ) : (
-                    <PrimaryButton
-                      text={tx("startLoop", "Start loop")}
-                      iconProps={{ iconName: "Play" }}
-                      onClick={() => {
-                        setScheduleMode("start");
-                        setScheduleOpen(true);
-                      }}
-                      disabled={Boolean(busy)}
-                      styles={BUTTON_STYLES}
-                      data-testid="tenders-start-loop"
-                    />
-                  )}
-                  <DefaultButton
-                    text={tx("cycle", "Run cycle")}
-                    iconProps={{ iconName: "Sync" }}
-                    onClick={() => void run("tick", { force: true })}
+            {ready ? (
+              view === "work" && !openId ? (
+                <PrimaryButton
+                  text={tx("tenderBook", "Tender")}
+                  iconProps={{ iconName: "PageList" }}
+                  onClick={() => openBook("pipeline", "all")}
+                  styles={BUTTON_STYLES}
+                  data-testid="tenders-open-book"
+                />
+              ) : (
+                <DefaultButton
+                  text={tx("tenderBook", "Tender")}
+                  iconProps={{ iconName: "PageList" }}
+                  onClick={() => openBook("pipeline", "all")}
+                  styles={BUTTON_STYLES}
+                  data-testid="tenders-open-book"
+                />
+              )
+            ) : null}
+            {showDesk ? (
+              <>
+                {live.loop?.enabled ? (
+                  <PrimaryButton
+                    text={tx("pause", "Pause loop")}
+                    iconProps={{ iconName: "Pause" }}
+                    onClick={() => void run("stop")}
                     disabled={Boolean(busy)}
                     styles={BUTTON_STYLES}
-                    data-testid="tenders-run-cycle"
+                    data-testid="tenders-pause-loop"
                   />
-                </>
-              ) : null}
-            </nav>
-            <div className="flex shrink-0 items-center gap-2">
-              {onToggleChat ? (
+                ) : (
+                  <PrimaryButton
+                    text={tx("startLoop", "Start loop")}
+                    iconProps={{ iconName: "Play" }}
+                    onClick={() => {
+                      setScheduleMode("start");
+                      setScheduleOpen(true);
+                    }}
+                    disabled={Boolean(busy)}
+                    styles={BUTTON_STYLES}
+                    data-testid="tenders-start-loop"
+                  />
+                )}
                 <DefaultButton
-                  text={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                  iconProps={{ iconName: "Chat" }}
-                  aria-pressed={Boolean(chatOpen)}
-                  onClick={onToggleChat}
+                  text={tx("cycle", "Run cycle")}
+                  iconProps={{ iconName: "Sync" }}
+                  onClick={() => void run("tick", { force: true })}
+                  disabled={Boolean(busy)}
                   styles={BUTTON_STYLES}
-                  data-testid="tenders-chat"
+                  data-testid="tenders-run-cycle"
                 />
-              ) : null}
+                <PrimaryButton
+                  text={tx("collectNow", "Find official notices")}
+                  iconProps={{ iconName: "Search" }}
+                  onClick={() => {
+                    openBook("pipeline", "all");
+                    void run("collect");
+                  }}
+                  disabled={Boolean(busy)}
+                  styles={BUTTON_STYLES}
+                  data-testid="tenders-collect"
+                />
+                <FollowUpButton
+                  desk={live}
+                  tx={tx}
+                  busy={busy}
+                  onFollow={() => void run("follow")}
+                  onOpen={(id) => showNotice(id)}
+                />
+              </>
+            ) : null}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {onToggleChat ? (
               <IconButton
-                iconProps={{ iconName: "Refresh" }}
-                title={tx("refresh", "Refresh")}
-                ariaLabel={tx("refresh", "Refresh")}
-                disabled={Boolean(busy)}
-                onClick={() => void load()}
+                ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
+                title={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
+                iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
+                aria-pressed={Boolean(chatOpen)}
+                checked={Boolean(chatOpen)}
+                onClick={onToggleChat}
                 styles={ICON_BUTTON_STYLES}
-                data-testid="tenders-refresh"
+                data-testid="tenders-chat"
               />
-            </div>
+            ) : null}
+            <IconButton
+              ariaLabel={showWizard ? tx("wizardKicker", "Company setup") : tx("settings", "Settings")}
+              title={showWizard ? tx("wizardKicker", "Company setup") : tx("settings", "Settings")}
+              iconProps={{ iconName: "Settings" }}
+              checked={showWizard}
+              onClick={() => {
+                stayOnSetup.current = true;
+                showNotice("");
+                setView("setup");
+              }}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="tenders-open-setup"
+            />
+            <IconButton
+              iconProps={{ iconName: "Refresh" }}
+              title={tx("refresh", "Refresh")}
+              ariaLabel={tx("refresh", "Refresh")}
+              disabled={Boolean(busy)}
+              onClick={() => void load()}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="tenders-refresh"
+            />
           </div>
         </header>
 
@@ -500,11 +458,6 @@ export function TendersWorkspace({
                 transition={SPRING}
                 className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-8"
               >
-                {showDesk && !openId ? (
-                  <TenderAlertDeliveries desk={live} busy={Boolean(busy)}
-                    onRetry={() => void run("retry-alerts")}
-                    onConfigure={() => { stayOnSetup.current = true; setView("setup"); }} />
-                ) : null}
                 {showWizard ? (
                   <TendersWizard
                     desk={live}
@@ -538,27 +491,7 @@ export function TendersWorkspace({
                     }
                   />
                 ) : null}
-                {showDesk && !openId && deskPane === "home" ? (
-                  <HomePane
-                    desk={live}
-                    kpis={kpis}
-                    tx={tx}
-                    busy={busy}
-                    token={token}
-                    onCollect={() => void run("collect")}
-                    onOpen={(id) => showNotice(id)}
-                    onSetup={() => {
-                      stayOnSetup.current = true;
-                      setView("setup");
-                    }}
-                    onFollow={() => void run("follow")}
-                    onCrmSync={() => void run("crm-sync")}
-                    onDiscoverAccept={(host) => void run("discover-accept", { host })}
-                    onOpenBook={openBook}
-                    locale={i18n.language}
-                  />
-                ) : null}
-                {showDesk && !openId && deskPane === "tenders" ? (
+                {showDesk && !openId ? (
                   <NoticesPane
                     desk={live}
                     tx={tx}
@@ -590,6 +523,17 @@ export function TendersWorkspace({
                       }
                       void run(action, { id });
                     }}
+                  />
+                ) : null}
+                {showDesk && !openId ? (
+                  <ActivityPane
+                    desk={live}
+                    tx={tx}
+                    busy={busy}
+                    token={token}
+                    onCrmSync={() => void run("crm-sync")}
+                    onDiscoverAccept={(host) => void run("discover-accept", { host })}
+                    locale={i18n.language}
                   />
                 ) : null}
                 {showDesk && selected ? (
