@@ -483,6 +483,14 @@ def optional_features_payload(
                 feature["configured_fields"] = configured_fields
         features.append(feature)
 
+    from navin.marketing.social_channels import social_features
+
+    existing = {row["name"] for row in features}
+    try:
+        features.extend(row for row in social_features() if row["name"] not in existing)
+    except Exception:
+        logger.exception("Social channel catalog could not be loaded")
+
     payload = {
         "features": features,
         "enabled_count": sum(1 for feature in features if feature["enabled"]),
@@ -507,6 +515,15 @@ def enable_optional_feature(
     )
     from navin.config.loader import get_config_path
 
+    from navin.marketing.social_channels import is_social_channel, set_social_channel_enabled
+
+    if is_social_channel(name):
+        set_social_channel_enabled(name, True)
+        payload = optional_features_payload(
+            last_action={"ok": True, "message": f"Enabled social channel '{name}'", "enabled": True}
+        )
+        payload["requires_restart"] = False
+        return payload
     if name in _BUNDLED_FEATURE_ALIASES:
         payload = optional_features_payload(
             last_action={
@@ -588,6 +605,15 @@ def disable_optional_feature(
     from navin.channels.registry import discover_channel_names, discover_plugins
     from navin.config.loader import get_config_path
 
+    from navin.marketing.social_channels import is_social_channel, set_social_channel_enabled
+
+    if is_social_channel(name):
+        set_social_channel_enabled(name, False)
+        payload = optional_features_payload(
+            last_action={"ok": True, "message": f"Disabled social channel '{name}'", "enabled": False}
+        )
+        payload["requires_restart"] = False
+        return payload
     config_path = config_path or get_config_path()
     extras = optional_dependency_groups()
     builtin_channels = set(discover_channel_names())

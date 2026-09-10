@@ -258,6 +258,10 @@ class CareerCatalogTest(unittest.TestCase):
         self.assertFalse(linkedin["auto_apply"])
         self.assertEqual(linkedin["ingest"], "public_listing")
         self.assertGreaterEqual(linkedin["priority"], 10)
+        freework = next(row for row in catalog() if row["id"] == "free-work")
+        self.assertFalse(freework["auto_apply"])
+        self.assertTrue(freework["auto_search"])
+        self.assertEqual(freework["ingest"], "public_listing")
         web = next(row for row in catalog() if row["id"] == "web-job-search")
         self.assertEqual(web["name"], "Web Job Search")
         self.assertTrue(web["auto_search"])
@@ -271,7 +275,8 @@ class CareerCatalogTest(unittest.TestCase):
         )
         texts = " ".join(row["query"] for row in queries)
         self.assertIn("site:francetravail.fr", texts)
-        self.assertIn("site:free-work.com", texts)
+        # Free-Work has its own public listing reader: no web search slot spent on it.
+        self.assertNotIn("site:free-work.com", texts)
         self.assertIn("site:bayt.com", texts)
         self.assertIn("usajobs.gov", texts)
         fr_queries = web_search_queries(
@@ -1126,6 +1131,21 @@ class CareerOfficialApiTest(unittest.TestCase):
         self.assertFalse(_want_family({}, "official"))
         self.assertTrue(_want_family({"source_ids": ["adzuna"]}, "official"))
         self.assertTrue(_want_family({"source_ids": ["adzuna"]}, "remotive"))
+        # Free-Work is a live family like Remotive: on by default, a pick narrows to it.
+        self.assertTrue(_want_family({}, "freework"))
+        self.assertTrue(_want_family({"source_ids": ["free-work"]}, "freework"))
+        self.assertTrue(_want_family({"source_ids": ["freework"]}, "freework"))
+        self.assertFalse(_want_family({"source_ids": ["free-work"]}, "remotive"))
+        self.assertFalse(_want_family({"source_ids": ["remotive"]}, "freework"))
+        self.assertFalse(_want_family({"source_ids": ["live-off"]}, "freework"))
+        # Public API / RSS feeds: one family, any feed id (jobicy, remoteok...) narrows to it.
+        self.assertTrue(_want_family({}, "feeds"))
+        self.assertTrue(_want_family({"source_ids": ["jobicy"]}, "feeds"))
+        self.assertTrue(_want_family({"source_ids": ["weworkremotely"]}, "feeds"))
+        self.assertFalse(_want_family({"source_ids": ["jobicy"]}, "remotive"))
+        self.assertFalse(_want_family({"source_ids": ["remotive"]}, "feeds"))
+        self.assertFalse(_want_family({"source_ids": ["live-off"]}, "feeds"))
+        self.assertTrue(_want_official({"source_ids": ["jobopportunities"]}, "jobopportunities"))
         self.assertTrue(_want_official({"source_ids": ["adzuna"]}, "adzuna"))
         self.assertFalse(_want_official({}, "adzuna"))
         self.assertFalse(_want_official({"source_ids": ["jooble"]}, "adzuna"))
@@ -1201,13 +1221,21 @@ class CareerOfficialApiTest(unittest.TestCase):
                                     ) as usajobs, patch(
                                         "navin.career.collect.collect_employers",
                                         return_value={"jobs": [], "checked": 0, "reports": [], "errors": []},
-                                    ):
+                                    ), patch(
+                                        "navin.career.collect.search_freework_jobs",
+                                        return_value={"jobs": [], "walls": [], "requests": 0, "total": 0},
+                                    ) as freework, patch(
+                                        "navin.career.collect.collect_feeds",
+                                        return_value={"jobs": [], "walls": [], "requests": 0, "by_source": {}},
+                                    ) as feeds:
                                         result = asyncio.run(
                                             tool.execute(action="search", brief="Data Engineer")
                                         )
             remotive.assert_called()
             web.assert_called()
             scrape.assert_called()
+            freework.assert_called_once()
+            feeds.assert_called_once()
             jooble.assert_not_called()
             usajobs.assert_not_called()
             self.assertIsInstance(result, dict)
@@ -1219,6 +1247,12 @@ class CareerOfficialApiTest(unittest.TestCase):
             self.assertTrue(families["ats"])
             self.assertTrue(families["official"])
             self.assertTrue(families["linkedin"])
+            self.assertTrue(families["freework"])
+            self.assertEqual(search["freework"], 0)
+            self.assertIn("free-work", search["note"].lower())
+            self.assertTrue(families["feeds"])
+            self.assertEqual(search["feeds"], 0)
+            self.assertIn("jobicy", search["note"].lower())
             self.assertGreaterEqual(search["official"], 1)
             self.assertTrue(any(row.get("kind") == "linkedin" for row in search["portals"]))
             self.assertTrue(any(row.get("kind") == "linkedin_open" for row in search["queries"]))

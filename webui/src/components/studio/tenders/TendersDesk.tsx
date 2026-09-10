@@ -1,13 +1,14 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Callout,
   DefaultButton,
   Dialog,
   DialogFooter,
   DialogType,
+  DirectionalHint,
   Icon,
   IconButton,
   PrimaryButton,
@@ -19,9 +20,6 @@ import { NoticeFilters } from "@/components/studio/tenders/NoticeFilters";
 import { NoticeGoButtons } from "@/components/studio/tenders/NoticeGoButtons";
 import { TenderFactsRow } from "@/components/studio/tenders/TenderFactsRow";
 import { TenderNoticeDialog } from "@/components/studio/tenders/TenderNoticeDialog";
-import { TenderKpiGrid, type TenderKpiItem } from "@/components/studio/tenders/TendersKpis";
-import { TendersScene } from "@/components/studio/tenders/TendersScene";
-import { formatTenderMoney, moneyHeroKind } from "@/components/studio/tenders/money";
 import {
   applyFacetFilter,
   emptyFacetFilter,
@@ -49,14 +47,9 @@ import { retentionDays } from "@/components/studio/tenders/retention";
 import {
   BUTTON_STYLES,
   CHANNELS_HASH,
-  DASH_TILE_CLASS,
-  DASH_TILE_GRID_CLASS,
-  FILL_BUTTON_STYLES,
-  HERO_ACTIONS_CLASS,
   MODELS_HASH,
   NOTICE_ROW_MENU,
   OfficialLink,
-  SPRING,
   Surface,
   asLines,
   chapterTitle,
@@ -74,7 +67,10 @@ import type {
   TenderNotice,
   TenderProfile,
 } from "@/lib/tenders-api";
-import { parseTenderFacts, sourceNameMap, factDisplay } from "@/lib/tender-facts";
+import { countryDisplayName } from "@/lib/country-options";
+import { domainLabel } from "@/components/studio/tenders/domain-label";
+import { noticeDomain, noticeIsoDay } from "@/components/studio/tenders/notice-filters";
+import { parseTenderFacts, sourceNameMap, factDisplay, noticeStatusCode, type TenderFact } from "@/lib/tender-facts";
 import { officialTenderHref, postTenders, triggerTenderDownload } from "@/lib/tenders-api";
 import {
   downloadTendersExport,
@@ -97,23 +93,6 @@ const FILTERS: { id: PipelineFilter; label: string; fallback: string }[] = [
   { id: "nogo", label: "filterNogo", fallback: "No-go" },
 ];
 
-export type NoticeLayout = "list" | "cards";
-
-const LIST_COLUMNS: { key: string; label: string; fallback: string }[] = [
-  { key: "title", label: "colTitle", fallback: "Title" },
-  { key: "score", label: "colScore", fallback: "Score" },
-  { key: "status", label: "factStatus", fallback: "Status" },
-  { key: "deadline", label: "factDeadline", fallback: "Deadline" },
-  { key: "place", label: "factPlace", fallback: "Country / city" },
-  { key: "budget", label: "factBudget", fallback: "Budget" },
-  { key: "duration", label: "factDuration", fallback: "Duration" },
-  { key: "buyer", label: "factBuyer", fallback: "Buyer" },
-];
-
-function listColClass(key: string): string {
-  return `tenders-notice-col tenders-notice-col-${key}`;
-}
-
 function companyLine(profile: TenderProfile): string {
   const bits = [
     profile.name,
@@ -127,7 +106,115 @@ function stageLabel(stage: string, tx: Tx): string {
   return tx(`stage.${stage}`, stage);
 }
 
-function followLine(event: TenderFollowUpEvent, tx: Tx): string {
+/**
+ * Header button for the follow-up digest: a count on the pill, a compact panel
+ * with what needs the user (open a notice in one click) and the single send action.
+ */
+export function FollowUpButton({
+  desk,
+  tx,
+  busy,
+  onFollow,
+  onOpen,
+}: {
+  desk: TenderDesk;
+  tx: Tx;
+  busy: string;
+  onFollow: () => void;
+  onOpen: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLDivElement>(null);
+  const events = desk.follow_up?.events || [];
+  const pending = desk.follow_up?.pending || 0;
+  const label = tx("followKicker", "Follow-up");
+  return (
+    <>
+      <div ref={anchor} className="shrink-0">
+        <DefaultButton
+          text={pending ? `${label} · ${pending}` : label}
+          iconProps={{ iconName: "Send" }}
+          onClick={() => setOpen((value) => !value)}
+          checked={open}
+          styles={BUTTON_STYLES}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          data-testid="tenders-follow-up"
+        />
+      </div>
+      {open ? (
+        <Callout
+          target={anchor.current}
+          isBeakVisible={false}
+          gapSpace={6}
+          directionalHint={DirectionalHint.bottomLeftEdge}
+          preventDismissOnScroll
+          preventDismissOnResize
+          setInitialFocus
+          role="dialog"
+          ariaLabel={label}
+          onDismiss={() => setOpen(false)}
+          styles={{ calloutMain: { borderRadius: 12 } }}
+        >
+          <div className="grid w-[24rem] gap-3 p-4" data-testid="tenders-follow-up-panel">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-200">
+                {label}
+              </p>
+              <h2 className="mt-1 text-balance text-base font-semibold">
+                {pending
+                  ? tx("followTitle", "{{count}} notice(s) need you", { count: pending })
+                  : tx("followEmpty", "Nothing needs you right now.")}
+              </h2>
+              <p className="mt-1 text-pretty text-[12.5px] leading-snug text-muted-foreground">
+                {tx(
+                  "followBody",
+                  "One digest goes to every channel you switched on. Nothing is sent to a buyer without your approval.",
+                )}
+              </p>
+            </div>
+            {events.length ? (
+              <ul className="-mx-1 grid max-h-64 gap-0.5 overflow-y-auto overscroll-contain px-1 [scrollbar-gutter:stable]" data-menu-scroll="">
+                {events.slice(0, 8).map((event) => (
+                  <li key={`${event.id}-${event.key}`}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpen(event.id);
+                      }}
+                      className="grid w-full cursor-pointer gap-0.5 rounded-lg px-2 py-1.5 text-left transition-[background-color,transform] duration-150 hover:bg-black/5 active:scale-[0.99] dark:hover:bg-white/5"
+                    >
+                      <span className="text-[10.5px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                        {followLine(event, tx)}
+                      </span>
+                      <span className="line-clamp-2 text-[13px] leading-snug">{event.title || event.id}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="flex justify-end border-t border-black/10 pt-3 dark:border-white/10">
+              <PrimaryButton
+                text={tx("followSend", "Send the digest now")}
+                iconProps={{ iconName: "Send" }}
+                disabled={Boolean(busy) || !pending}
+                onClick={() => {
+                  setOpen(false);
+                  onFollow();
+                }}
+                styles={BUTTON_STYLES}
+                data-testid="tenders-follow-send"
+              />
+            </div>
+          </div>
+        </Callout>
+      ) : null}
+    </>
+  );
+}
+
+export function followLine(event: TenderFollowUpEvent, tx: Tx): string {
   if (event.kind === "go") return tx("followGo", "GO to confirm");
   if (event.kind === "deadline") {
     return tx("followDeadline", "Due in {{days}} day(s)", { days: event.days ?? 0 });
@@ -193,67 +280,6 @@ export function ModelRouting({ desk, tx }: { desk: TenderDesk; tx: Tx }) {
         </ul>
       </div>
     </details>
-  );
-}
-
-export function FollowUpBanner({
-  desk,
-  tx,
-  busy,
-  onFollow,
-  onOpen,
-}: {
-  desk: TenderDesk;
-  tx: Tx;
-  busy: string;
-  onFollow: () => void;
-  onOpen: (id: string) => void;
-}) {
-  const events = desk.follow_up?.events || [];
-  const pending = desk.follow_up?.pending || 0;
-  if (!pending) return null;
-  return (
-    <Surface className="grid gap-4 bg-amber-500/10 p-6 sm:p-8">
-      <div>
-        <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-amber-800 dark:text-amber-200">
-          {tx("followKicker", "Follow-up")}
-        </p>
-        <h2 className="mt-2 text-balance text-xl font-semibold">
-          {tx("followTitle", "{{count}} notice(s) need you", { count: pending })}
-        </h2>
-        <p className="mt-1 max-w-xl text-pretty text-sm text-muted-foreground">
-          {tx(
-            "followBody",
-            "One digest goes to every channel you switched on. Nothing is sent to a buyer without your approval.",
-          )}
-        </p>
-      </div>
-      <ul className="grid gap-2">
-        {events.slice(0, 6).map((event) => (
-          <li key={`${event.id}-${event.key}`}>
-            <button
-              type="button"
-              onClick={() => onOpen(event.id)}
-              className="flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-xl px-3 text-left text-sm transition-[transform,background-color] duration-150 hover:bg-black/5 active:scale-[0.98] dark:hover:bg-white/5"
-            >
-              <span className="shrink-0 text-[12px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-200">
-                {followLine(event, tx)}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{event.title}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div>
-        <PrimaryButton
-          text={tx("followSend", "Send the digest now")}
-          iconProps={{ iconName: "Send" }}
-          disabled={Boolean(busy)}
-          onClick={onFollow}
-          styles={BUTTON_STYLES}
-        />
-      </div>
-    </Surface>
   );
 }
 
@@ -344,382 +370,124 @@ function DiscoveriesPane({
   );
 }
 
-export function HomePane({
+/** Loop status, CRM push, last collect, discovered hosts, model routing and MCP options: what the old dashboard kept. */
+export function ActivityPane({
   desk,
-  kpis,
   tx,
   busy,
   token,
-  onCollect,
-  onOpen,
-  onSetup,
-  onFollow,
   onCrmSync,
   onDiscoverAccept,
-  onOpenBook,
   locale,
 }: {
   desk: TenderDesk;
-  kpis: TenderKpiItem[];
   tx: Tx;
   busy: string;
   token: string;
-  onCollect: () => void;
-  onOpen: (id: string) => void;
-  onSetup: () => void;
-  onFollow: () => void;
   onCrmSync: () => void;
   onDiscoverAccept: (host: string) => void;
-  onOpenBook: (view?: NoticeListView, filter?: PipelineFilter | null) => void;
   locale?: string;
 }) {
   const notices = desk.tenders || [];
   const live = useMemo(() => activeNotices(notices), [notices]);
-  const favorites = useMemo(() => favoriteNotices(notices), [notices]);
-  const archived = useMemo(() => archivedNotices(notices), [notices]);
   const counts = useMemo(() => pipelineCounts(live), [live]);
-  const company = companyLine(desk.profile);
-  const currency = desk.profile.currency || "EUR";
-  const weighted = Number(desk.kpis.weighted_value || 0);
-  const kind = moneyHeroKind({ collected: live.length, inPlay: counts.play, weighted });
-  const next = live.find(isUrgent) || sortNotices(filterNotices(live, "play"))[0];
-  const preview = useMemo(() => sortNotices(live).slice(0, 5), [live]);
-
-  const figure =
-    kind === "play-money"
-      ? formatTenderMoney(weighted, currency)
-      : kind === "play-count"
-        ? String(counts.play)
-        : "";
-  const headline =
-    kind === "empty"
-      ? tx("heroEmptyTitle", "Public contracts pay. We find yours.")
-      : kind === "screened"
-        ? tx("heroScreenedTitle", "{{count}} notices read. Your time stays on deals you can win.", {
-            count: notices.length,
-          })
-        : kind === "play-money"
-          ? tx("heroMoneyTitle", "{{amount}} still in play", { amount: figure })
-          : tx("heroPlayTitle", "{{count}} notices you can still win", { count: counts.play });
-  const body =
-    kind === "empty"
-      ? tx("heroEmptyBody", "Three moves. Official notices in. Only the fits stay. You approve the send.")
-      : kind === "screened"
-        ? tx(
-            "heroScreenedBody",
-            "None match your crafts today. That is already money saved: no bid on a mismatch.",
-          )
-        : tx("heroPlayBody", "Open the next one. Score, write, send. The desk never posts the bid for you.");
-
-  const tiles: { key: string; label: string; fallback: string; count: number; view: NoticeListView; filter?: PipelineFilter }[] = [
-    { key: "all", label: "filterAll", fallback: "All", count: live.length, view: "pipeline", filter: "all" },
-    { key: "play", label: "filterPlay", fallback: "In play", count: counts.play, view: "pipeline", filter: "play" },
-    { key: "go", label: "filterGo", fallback: "GO", count: counts.go, view: "pipeline", filter: "go" },
-    { key: "urgent", label: "filterUrgent", fallback: "Urgent", count: counts.urgent, view: "pipeline", filter: "urgent" },
-    { key: "draft", label: "filterDraft", fallback: "Drafts", count: counts.draft, view: "pipeline", filter: "draft" },
-    { key: "nogo", label: "filterNogo", fallback: "No-go", count: counts.nogo, view: "pipeline", filter: "nogo" },
-    { key: "fav", label: "openFavorites", fallback: "Favorites", count: favorites.length, view: "favorites" },
-    { key: "arch", label: "openArchive", fallback: "Archive", count: archived.length, view: "archive" },
-  ];
-
   return (
-    <div className="grid min-w-0 gap-8 overflow-x-hidden" data-testid="tenders-home-dashboard">
-      <FollowUpBanner desk={desk} tx={tx} busy={busy} onFollow={onFollow} onOpen={onOpen} />
-
-      <Surface className="grid min-w-0 gap-3 p-5 sm:p-8" data-testid="tenders-loop-card">
-        <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
-                {tx("loop", "Loop")}
-              </p>
-              <span
-                className={cn(
-                  "rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
-                  desk.loop?.enabled
-                    ? "bg-emerald-500/16 text-emerald-800 dark:text-emerald-200"
-                    : "bg-muted text-muted-foreground",
-                )}
-                data-testid="tenders-autopilot-badge"
-              >
-                {desk.loop?.enabled
-                  ? desk.loop?.phase === "hunt"
-                    ? tx("autopilotHunt", "Autopilot collecting")
-                    : tx("autopilotOn", "Autopilot on")
-                  : tx("autopilotOff", "Autopilot paused")}
-              </span>
-            </div>
-            <p className="mt-2 break-words text-sm font-medium tabular-nums">
-              {desk.loop?.enabled
-                ? desk.loop?.phase === "hunt"
-                  ? tx("hunting", "Collecting")
-                  : tx("running", "Running")
-                : tx("paused", "Paused")}
-              {" · "}
-              {desk.loop?.phase || tx("idle", "idle")}
-              {" · "}
-              {tx("cycleN", "cycle {{n}}", { n: desk.loop?.cycle || 0 })}
-            </p>
-            <p className="mt-1 break-words text-pretty text-sm text-muted-foreground">
-              {describeTradingSchedule(normalizeTradingSchedule(desk.loop?.schedule), tx, locale || "en")}
-              {desk.loop?.enabled && formatNextDue(desk.loop.next_due, locale || "en")
-                ? ` · ${tx("scheduleNext", "Next run {{time}}", {
-                    time: formatNextDue(desk.loop.next_due, locale || "en"),
-                  })}`
-                : ""}
-            </p>
-            <p className="mt-2 break-words text-pretty text-sm text-muted-foreground">
-              {desk.loop?.last_result ||
-                tx(
-                  "loopHint",
-                  "Start the loop and the desk hunts official notices on your clock. Heartbeat watches GO and deadlines between hunts. It never posts a bid. Pause or change the schedule whenever you want.",
-                )}
-            </p>
-            <p className="mt-2 break-words text-pretty text-[13px] text-emerald-800 dark:text-emerald-200" data-testid="tenders-heartbeat-lane">
-              {tx(
-                "watchLane",
-                "Heartbeat stays on between hunts: new GO and deadlines reach your channels. The loop never sends a buyer mail.",
-              )}
-            </p>
-            {desk.loop?.enabled || desk.loop?.cycle ? (
-              <p className="mt-2 break-words text-pretty text-sm tabular-nums text-emerald-800 dark:text-emerald-200">
-                {tx("loopStats", "{{added}} new notices · {{alerts}} alerts", {
-                  added: desk.loop?.added || 0,
-                  alerts: desk.loop?.alerts || 0,
-                })}
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {(desk.loop?.alerts || 0) > 0 ? (
-          <p
-            className="break-words rounded-xl bg-emerald-50 px-3 py-2 text-pretty text-sm text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100"
-            data-testid="tenders-loop-banner"
-          >
-            {tx("loopBanner", "{{count}} GO or deadline alerts are ready. Open Tender.", {
-              count: desk.loop?.alerts || 0,
-            })}
-          </p>
-        ) : null}
-        {(desk.journal || []).some((row) => row.kind === "loop") ? (
-          <ol className="grid gap-1.5" data-testid="tenders-loop-journal">
-            {(desk.journal || [])
-              .filter((row) => row.kind === "loop")
-              .slice(-4)
-              .reverse()
-              .map((row, index) => (
-                <li key={`${row.t || 0}-${index}`} className="break-words text-pretty text-[13px] text-muted-foreground">
-                  {row.text || ""}
-                </li>
-              ))}
-          </ol>
-        ) : null}
-      </Surface>
-
-      <Surface className="grid min-w-0 gap-6 p-5 sm:p-8">
-        <div className="min-w-0">
+    <details className="group min-w-0" data-testid="tenders-activity">
+      <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium text-muted-foreground">
+        <Icon iconName="ChevronRight" className="text-[10px] transition-transform duration-150 group-open:rotate-90" aria-hidden />
+        {tx("activityTitle", "Loop, sources and CRM")}
+        <span
+          className={cn(
+            "rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+            desk.loop?.enabled
+              ? "bg-emerald-500/16 text-emerald-800 dark:text-emerald-200"
+              : "bg-muted text-muted-foreground",
+          )}
+          data-testid="tenders-autopilot-badge"
+        >
+          {desk.loop?.enabled
+            ? desk.loop?.phase === "hunt"
+              ? tx("autopilotHunt", "Autopilot collecting")
+              : tx("autopilotOn", "Autopilot on")
+            : tx("autopilotOff", "Autopilot paused")}
+        </span>
+      </summary>
+      <div className="mt-3 grid min-w-0 gap-6">
+        <Surface className="grid min-w-0 gap-3 p-5" data-testid="tenders-loop-card">
           <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
-            {tx("heroKicker", "Win the contract")}
+            {tx("loop", "Loop")}
           </p>
-          <div className="mt-3 grid min-w-0 gap-2">
-            {figure ? (
-              <p className="break-words text-3xl font-semibold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300 sm:text-4xl lg:text-5xl">
-                {figure}
-              </p>
-            ) : null}
-            <h2 className="break-words text-balance text-2xl font-semibold sm:text-3xl">{headline}</h2>
-          </div>
-          <p className="mt-2 max-w-xl break-words text-pretty text-sm text-muted-foreground">{body}</p>
-          {company ? (
-            <p className="mt-2 break-words text-pretty text-[13px] text-muted-foreground">
-              {tx("biddingAs", "Bidding as")} {company}
+          <p className="break-words text-sm font-medium tabular-nums">
+            {desk.loop?.enabled
+              ? desk.loop?.phase === "hunt"
+                ? tx("hunting", "Collecting")
+                : tx("running", "Running")
+              : tx("paused", "Paused")}
+            {" · "}
+            {desk.loop?.phase || tx("idle", "idle")}
+            {" · "}
+            {tx("cycleN", "cycle {{n}}", { n: desk.loop?.cycle || 0 })}
+          </p>
+          <p className="break-words text-pretty text-sm text-muted-foreground">
+            {describeTradingSchedule(normalizeTradingSchedule(desk.loop?.schedule), tx, locale || "en")}
+            {desk.loop?.enabled && formatNextDue(desk.loop.next_due, locale || "en")
+              ? ` · ${tx("scheduleNext", "Next run {{time}}", {
+                  time: formatNextDue(desk.loop.next_due, locale || "en"),
+                })}`
+              : ""}
+          </p>
+          <p className="break-words text-pretty text-sm text-muted-foreground">
+            {desk.loop?.last_result ||
+              tx(
+                "loopHint",
+                "Start the loop and the desk hunts official notices on your clock. Heartbeat watches GO and deadlines between hunts. It never posts a bid. Pause or change the schedule whenever you want.",
+              )}
+          </p>
+          <p className="break-words text-pretty text-[13px] text-emerald-800 dark:text-emerald-200" data-testid="tenders-heartbeat-lane">
+            {tx(
+              "watchLane",
+              "Heartbeat stays on between hunts: new GO and deadlines reach your channels. The loop never sends a buyer mail.",
+            )}
+          </p>
+          {desk.loop?.enabled || desk.loop?.cycle ? (
+            <p className="break-words text-pretty text-sm tabular-nums text-emerald-800 dark:text-emerald-200">
+              {tx("loopStats", "{{added}} new notices · {{alerts}} alerts", {
+                added: desk.loop?.added || 0,
+                alerts: desk.loop?.alerts || 0,
+              })}
             </p>
           ) : null}
-        </div>
-        {kind === "empty" ? (
-          <TendersScene
-            qualifiedRatio={0}
-            active={!busy}
-            label={tx("sceneLabel", "Dossier stack for the live tender pipeline")}
-          />
-        ) : null}
-        <div className={HERO_ACTIONS_CLASS}>
-          <div className="min-w-0">
-            <PrimaryButton
-              text={tx("openTenderBook", "Open the tender list")}
-              iconProps={{ iconName: "PageList" }}
-              onClick={() => onOpenBook("pipeline", "all")}
-              styles={FILL_BUTTON_STYLES}
-            />
-          </div>
-          <div className="min-w-0">
-            {kind === "play-money" || kind === "play-count" ? (
-              <DefaultButton
-                text={tx("openNext", "Open the next notice")}
-                iconProps={{ iconName: "ChevronRight" }}
-                disabled={!next}
-                onClick={() => next && onOpen(next.id)}
-                styles={FILL_BUTTON_STYLES}
-              />
-            ) : (
-              <DefaultButton
-                text={tx("collectNow", "Find official notices")}
-                iconProps={{ iconName: "Download" }}
-                disabled={Boolean(busy)}
-                onClick={onCollect}
-                styles={FILL_BUTTON_STYLES}
-              />
-            )}
-          </div>
-          {kind === "play-money" || kind === "play-count" ? (
-            <div className="min-w-0">
-              <DefaultButton
-                text={tx("collectNow", "Find official notices")}
-                iconProps={{ iconName: "Download" }}
-                disabled={Boolean(busy)}
-                onClick={onCollect}
-                styles={FILL_BUTTON_STYLES}
-              />
-            </div>
+          {(desk.journal || []).some((row) => row.kind === "loop") ? (
+            <ol className="grid gap-1.5" data-testid="tenders-loop-journal">
+              {(desk.journal || [])
+                .filter((row) => row.kind === "loop")
+                .slice(-4)
+                .reverse()
+                .map((row, index) => (
+                  <li key={`${row.t || 0}-${index}`} className="break-words text-pretty text-[13px] text-muted-foreground">
+                    {row.text || ""}
+                  </li>
+                ))}
+            </ol>
           ) : null}
-          {kind === "screened" && counts.nogo ? (
-            <div className="min-w-0">
-              <DefaultButton
-                text={tx("reviewNogo", "Review no-gos")}
-                onClick={() => onOpenBook("pipeline", "nogo")}
-                styles={FILL_BUTTON_STYLES}
-              />
-            </div>
-          ) : null}
-          {counts.play ? (
-            <div className="min-w-0">
+          <div className="flex flex-wrap gap-2">
+            {counts.play ? (
               <DefaultButton
                 text={tx("crmSyncAll", "Push deals to CRM")}
                 iconProps={{ iconName: "ContactCard" }}
                 disabled={Boolean(busy)}
                 onClick={onCrmSync}
-                styles={FILL_BUTTON_STYLES}
+                styles={BUTTON_STYLES}
               />
-            </div>
-          ) : null}
-          <div className="min-w-0">
-            <DefaultButton
-              text={tx("openFavorites", "Favorites")}
-              iconProps={{ iconName: "FavoriteStar" }}
-              onClick={() => onOpenBook("favorites")}
-              styles={FILL_BUTTON_STYLES}
-            />
+            ) : null}
           </div>
-          <div className="min-w-0">
-            <DefaultButton
-              text={tx("openArchive", "Archive")}
-              iconProps={{ iconName: "Archive" }}
-              onClick={() => onOpenBook("archive")}
-              styles={FILL_BUTTON_STYLES}
-            />
-          </div>
-          <div className="min-w-0">
-            <DefaultButton text={tx("settings", "Settings")} onClick={onSetup} styles={FILL_BUTTON_STYLES} />
-          </div>
-        </div>
-        <CollectReport desk={desk} tx={tx} />
-      </Surface>
-
-      {notices.length ? (
-        <Surface className="grid min-w-0 gap-5 p-5 sm:p-8">
-          <div className="min-w-0">
-            <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
-              {tx("dashSnapshot", "Pipeline")}
-            </p>
-            <p className="mt-1 text-pretty text-sm text-muted-foreground">
-              {tx("dashSnapshotBody", "Open a tile to see that list. Filters stay on the Tender page.")}
-            </p>
-          </div>
-          <TenderKpiGrid
-            items={kpis}
-            onPick={(id) => {
-              if (id === "qualified") onOpenBook("pipeline", "go");
-              else if (id === "deadline") onOpenBook("pipeline", "urgent");
-              else if (id === "open" || id === "weighted") onOpenBook("pipeline", "play");
-              else onOpenBook("pipeline", "all");
-            }}
-          />
-          <div className={DASH_TILE_GRID_CLASS} data-testid="tenders-tile-grid">
-            {tiles.map((tile) => (
-              <button
-                key={tile.key}
-                type="button"
-                data-testid={`tenders-dash-${tile.key}`}
-                onClick={() => onOpenBook(tile.view, tile.filter ?? null)}
-                className={DASH_TILE_CLASS}
-              >
-                <span className="block text-2xl font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                  {tile.count}
-                </span>
-                <span className="mt-1 block text-pretty text-[13px] text-muted-foreground">
-                  {tx(tile.label, tile.fallback)}
-                </span>
-              </button>
-            ))}
-          </div>
+          <CollectReport desk={desk} tx={tx} />
         </Surface>
-      ) : null}
-
-      {preview.length ? (
-        <Surface className="grid gap-4 p-6 sm:p-8">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-200">
-                {tx("dashNextTitle", "Next notices")}
-              </p>
-              <p className="mt-1 text-pretty text-sm text-muted-foreground">
-                {tx("dashNextBody", "A short preview. The full book, filters and pages live under Tender.")}
-              </p>
-            </div>
-            <DefaultButton
-              text={tx("tenderBook", "Tender")}
-              iconProps={{ iconName: "PageList" }}
-              onClick={() => onOpenBook("pipeline", "all")}
-              styles={BUTTON_STYLES}
-            />
-          </div>
-          <ul className="grid gap-2">
-            {preview.map((row) => (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpen(row.id)}
-                  className="flex min-h-14 w-full cursor-pointer items-center gap-4 rounded-xl px-3 text-left transition-[transform,background-color] duration-150 hover:bg-muted/40 active:scale-[0.96]"
-                >
-                  <span className={cn("w-10 shrink-0 text-lg font-semibold tabular-nums", scoreTone(row.score))}>
-                    {row.score != null ? Math.round(row.score) : "-"}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{row.title}</span>
-                    <span className="block truncate text-[13px] text-muted-foreground">
-                      {row.country}
-                      {row.buyer ? ` · ${row.buyer}` : ""}
-                      {` · ${stageLabel(String(row.stage), tx)}`}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Surface>
-      ) : null}
-
-      <DiscoveriesPane
-        desk={desk}
-        token={token}
-        tx={tx}
-        busy={busy}
-        onAccept={onDiscoverAccept}
-      />
-
-      <ModelRouting desk={desk} tx={tx} />
-      <TendersMcpOptions desk={desk} tx={tx} />
-    </div>
+        <DiscoveriesPane desk={desk} token={token} tx={tx} busy={busy} onAccept={onDiscoverAccept} />
+        <ModelRouting desk={desk} tx={tx} />
+        <TendersMcpOptions desk={desk} tx={tx} />
+      </div>
+    </details>
   );
 }
 
@@ -905,103 +673,74 @@ export function NoticesPane({
     onRowAction(action, id);
   };
 
+  const chipClass = (active: boolean) =>
+    cn(
+      "min-h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-full px-3 text-xs font-medium outline outline-1 transition-[background-color,color] duration-150",
+      active
+        ? "bg-emerald-800 text-white outline-emerald-800 dark:bg-emerald-300 dark:text-slate-950 dark:outline-emerald-300"
+        : "outline-black/10 hover:bg-muted/50 dark:outline-white/10",
+    );
+  const pickFilter = (id: PipelineFilter) => {
+    openList("pipeline");
+    onPicked(id);
+  };
+  const listTabs = (
+    <div
+      className="flex shrink-0 flex-nowrap items-center gap-1.5"
+      role="tablist"
+      aria-label={tx("listViews", "Notice lists")}
+      data-testid="tenders-notice-chips"
+    >
+      {FILTERS.map((row) => {
+        const active = listView === "pipeline" && filter === row.id;
+        return (
+          <button
+            key={row.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => pickFilter(row.id)}
+            className={chipClass(active)}
+          >
+            {tx(row.label, row.fallback)} · {counts[row.id]}
+          </button>
+        );
+      })}
+      {(
+        [
+          { id: "favorites" as const, label: "openFavorites", fallback: "Favorites", count: favorites.length },
+          { id: "archive" as const, label: "openArchive", fallback: "Archive", count: archived.length },
+        ]
+      ).map((row) => {
+        const active = listView === row.id;
+        return (
+          <button
+            key={row.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => openList(row.id)}
+            className={chipClass(active)}
+          >
+            {tx(row.label, row.fallback)} · {row.count}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
-    <div className="grid gap-6" data-testid="tenders-book">
-      <div
-        className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto pb-1 [scrollbar-gutter:stable]"
-        role="tablist"
-        aria-label={tx("listViews", "Notice lists")}
-        data-testid="tenders-notice-chips"
-      >
-        {(() => {
-          const [allChip, ...statusChips] = FILTERS;
-          const chipClass = (active: boolean) =>
-            cn(
-              "min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full px-4 text-[13px] font-medium transition-[transform,background-color] duration-150 active:scale-[0.96]",
-              active
-                ? "bg-emerald-800 text-white dark:bg-emerald-300 dark:text-slate-950"
-                : "bg-muted/50 text-muted-foreground",
-            );
-          const pickFilter = (id: PipelineFilter) => {
-            openList("pipeline");
-            onPicked(id);
-          };
-          return (
-            <>
-              {allChip ? (
-                <button
-                  key={allChip.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={listView === "pipeline" && filter === allChip.id}
-                  onClick={() => pickFilter(allChip.id)}
-                  className={chipClass(listView === "pipeline" && filter === allChip.id)}
-                >
-                  {tx(allChip.label, allChip.fallback)} · {counts[allChip.id]}
-                </button>
-              ) : null}
-              {(
-                [
-                  { id: "favorites" as const, label: "openFavorites", fallback: "Favorites", count: favorites.length },
-                  { id: "archive" as const, label: "openArchive", fallback: "Archive", count: archived.length },
-                ]
-              ).map((row) => {
-                const active = listView === row.id;
-                return (
-                  <button
-                    key={row.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => openList(row.id)}
-                    className={chipClass(active)}
-                  >
-                    {tx(row.label, row.fallback)} · {row.count}
-                  </button>
-                );
-              })}
-              {statusChips.map((row) => {
-                const active = listView === "pipeline" && filter === row.id;
-                return (
-                  <button
-                    key={row.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => pickFilter(row.id)}
-                    className={chipClass(active)}
-                  >
-                    {tx(row.label, row.fallback)} · {counts[row.id]}
-                  </button>
-                );
-              })}
-            </>
-          );
-        })()}
-      </div>
-      {listView !== "pipeline" ? (
-        <p className="max-w-xl text-pretty text-sm text-muted-foreground">
-          {listView === "favorites"
-            ? tx(
-                "favoritesHint",
-                "Starred notices stay here until you archive or delete them. Auto-archive still runs after {{days}} days.",
-                { days: archiveAfter },
-              )
-            : tx(
-                "archiveHint",
-                "Notices move here after {{archive}} days, or when you archive them. They are deleted after {{purge}} days.",
-                { archive: archiveAfter, purge: deleteAfter },
-              )}
-        </p>
-      ) : null}
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" data-testid="tenders-book">
       <NoticeFilters
         rows={pool}
         crafts={crafts}
         filter={facet}
         query={query}
         tx={tx}
+        locale={locale}
         onChange={setFacet}
         onQuery={setQuery}
+        leading={listTabs}
         extra={
           <>
             <DefaultButton
@@ -1051,11 +790,29 @@ export function NoticesPane({
           </>
         }
       />
+      {listView !== "pipeline" ? (
+        <p className="max-w-xl text-pretty text-sm text-muted-foreground">
+          {listView === "favorites"
+            ? tx(
+                "favoritesHint",
+                "Starred notices stay here until you archive or delete them. Auto-archive still runs after {{days}} days.",
+                { days: archiveAfter },
+              )
+            : tx(
+                "archiveHint",
+                "Notices move here after {{archive}} days, or when you archive them. They are deleted after {{purge}} days.",
+                { archive: archiveAfter, purge: deleteAfter },
+              )}
+        </p>
+      ) : null}
       {listNote ? (
         <p className="text-pretty text-sm text-amber-800 dark:text-amber-200" role="status">
           {listNote}
         </p>
       ) : null}
+      <p className="text-sm text-muted-foreground" data-testid="tenders-result-count">
+        {tx("resultCount", "Your search returns {{count}} results.", { count: visible.length })}
+      </p>
       {visible.length ? (
         <>
           <PipelineList
@@ -1067,6 +824,7 @@ export function NoticesPane({
             downloading={downloading}
             locale={locale}
             sourceNames={sourceNames}
+            crafts={crafts}
             onAction={requestAction}
             onDownload={(id, kind) => void downloadPack(id, kind)}
             onOfficial={openOfficial}
@@ -1274,244 +1032,283 @@ export function TendersMcpOptions({ desk, tx }: { desk: TenderDesk; tx: Tx }) {
   );
 }
 
+const CARD_FACT_ICON: Record<string, string> = {
+  deadline: "Calendar",
+  budget: "Money",
+  duration: "Clock",
+  place: "MapPin",
+  remote: "Home",
+  language: "LocaleLanguage",
+  published: "Calendar",
+};
+
+function buyerInitials(name: string): string {
+  const words = String(name || "").replace(/[^\p{L}\p{N} ]+/gu, " ").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase() || "").join("");
+}
+
+function factKnown(fact: TenderFact | undefined): boolean {
+  return Boolean(fact && (fact.value || fact.valueKey));
+}
+
+/** Board-style notice card: pills, title, tags, buyer excerpt on the left, the facts column on the right. */
+function NoticeCard({
+  row,
+  view,
+  tx,
+  busy,
+  token,
+  downloading,
+  locale,
+  sourceNames,
+  crafts,
+  onAction,
+  onDownload,
+  onOfficial,
+}: {
+  row: TenderNotice;
+  view: NoticeListView;
+  tx: Tx;
+  busy: boolean;
+  token: string;
+  downloading: string;
+  locale: string;
+  sourceNames?: Record<string, string>;
+  crafts: string[];
+  onAction: (action: NoticeRowAction, id: string) => void;
+  onDownload?: (id: string, kind: TenderExportKind) => void;
+  onOfficial?: (id: string) => void;
+}) {
+  const starred = isFavorite(row);
+  const packReady = noticeHasOfferPack(row);
+  const official = officialTenderHref(row.source_url || "");
+  const facts = parseTenderFacts(row, { locale, sourceNames });
+  const byKey = new Map([...facts.card, ...facts.extra].map((item) => [item.key, item]));
+  const status = noticeStatusCode(String(row.status || ""));
+  const goMark = noticeGoMark(row);
+  const urgent = isUrgent(row);
+  const side: TenderFact[] = [];
+  for (const key of ["deadline", "budget", "duration"] as const) {
+    const fact = byKey.get(key);
+    if (factKnown(fact) && fact) side.push(fact);
+  }
+  const city = String(row.city || "").trim();
+  const country = countryDisplayName(String(row.country || ""), locale);
+  const place = [city, country && country !== "INTL" ? country : ""].filter(Boolean).join(", ");
+  if (place) {
+    side.push({ key: "place", labelKey: "factPlace", labelFallback: "Country / city", value: place });
+  }
+  for (const key of ["remote", "language"] as const) {
+    const fact = byKey.get(key);
+    if (factKnown(fact) && fact) side.push(fact);
+  }
+  const domain = domainLabel(noticeDomain(row, crafts), locale);
+  const source = facts.card.find((item) => item.key === "source")?.value || "";
+  const tags = [...new Set([domain, source].map((item) => item.trim()).filter(Boolean))].slice(0, 3);
+  const published = byKey.get("published")?.value || noticeIsoDay(row.publication_date);
+  const excerpt = (facts.need || facts.description).replace(/\s+/g, " ").trim().slice(0, 240);
+  const buyer = String(row.buyer || "").trim() || source;
+  const menuItems = rowMenuItems({
+    view,
+    starred,
+    packReady,
+    hasOfficial: Boolean(official),
+    goMark,
+    tx,
+    onAction: (action) => onAction(action, row.id),
+    onDownload: (kind) => onDownload?.(row.id, kind),
+    onOfficial: () => onOfficial?.(row.id),
+  });
+  const rowBusy = busy || downloading.startsWith(`${row.id}:`);
+  return (
+    <article
+      data-testid="tenders-notice-card"
+      className="grid min-w-0 overflow-hidden rounded-2xl bg-background outline outline-1 outline-black/10 transition-shadow duration-150 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:outline-white/10 md:grid-cols-[minmax(0,1fr)_15.5rem]"
+    >
+      <div className="min-w-0 p-4 sm:p-5">
+        <div className="flex flex-nowrap items-start gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {status ? (
+              <span
+                className={cn(
+                  "rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white",
+                  status === "open" ? "bg-emerald-600" : status === "amended" ? "bg-sky-600" : "bg-slate-500",
+                )}
+              >
+                {tx(`noticeStatus.${status}`, status)}
+              </span>
+            ) : null}
+            {goMark === "go" ? (
+              <span className="rounded-full bg-teal-600 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("filterGo", "GO")}
+              </span>
+            ) : null}
+            {goMark === "nogo" ? (
+              <span className="rounded-full bg-slate-500 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("filterNogo", "No-go")}
+              </span>
+            ) : null}
+            {urgent ? (
+              <span className="rounded-full bg-orange-500 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("filterUrgent", "Urgent")}
+              </span>
+            ) : null}
+            {row.archived ? (
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                {tx("archivedBadge", "Archived")}
+              </span>
+            ) : null}
+          </div>
+          <span
+            className={cn("shrink-0 tabular-nums text-sm font-semibold", scoreTone(row.score))}
+            data-testid="tenders-notice-score"
+          >
+            {row.score != null ? Math.round(row.score) : "-"}%
+          </span>
+          <IconButton
+            ariaLabel={starred ? tx("rowUnfavorite", "Remove favorite") : tx("rowFavorite", "Favorite")}
+            title={starred ? tx("rowUnfavorite", "Remove favorite") : tx("rowFavorite", "Favorite")}
+            iconProps={{ iconName: starred ? "HeartFill" : "Heart" }}
+            disabled={rowBusy}
+            onClick={() => onAction(starred ? "unfavorite" : "favorite", row.id)}
+            styles={{ root: { width: 32, height: 32, color: starred ? "rgb(225 29 72)" : undefined }, rootHovered: { color: "rgb(225 29 72)" } }}
+            data-testid="tenders-notice-favorite"
+          />
+          <IconButton
+            ariaLabel={tx("rowMenu", "Notice actions")}
+            title={tx("rowMenu", "Notice actions")}
+            disabled={rowBusy}
+            iconProps={{ iconName: "MoreVertical" }}
+            menuProps={{ ...NOTICE_ROW_MENU, items: menuItems }}
+            styles={{ root: { width: 32, height: 32, flexShrink: 0 }, menuIcon: { display: "none" } }}
+          />
+        </div>
+        <button
+          type="button"
+          className="mt-2 block w-full text-left"
+          onClick={() => onAction("view", row.id)}
+          data-testid="tenders-notice-open"
+        >
+          <h3 className="text-balance text-lg font-semibold leading-snug hover:underline">{facts.title}</h3>
+        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <span key={tag} className="rounded-md bg-amber-300/30 px-1.5 py-0.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
+              {tag}
+            </span>
+          ))}
+          {published ? <span className="ml-auto text-xs tabular-nums text-muted-foreground">{published}</span> : null}
+        </div>
+        <div className="mt-3 flex gap-3">
+          <div
+            aria-hidden
+            className="grid size-14 shrink-0 place-items-center rounded-xl bg-emerald-500/12 text-base font-bold text-emerald-800 dark:text-emerald-300"
+          >
+            {buyerInitials(buyer)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{buyer}</p>
+            <p className="mt-0.5 line-clamp-3 text-pretty text-sm text-muted-foreground">
+              {excerpt || tx("noDescription", "No published description in the store yet.")}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+          {official && token ? (
+            <OfficialLink
+              href={official}
+              token={token}
+              className="text-[13px] text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
+            >
+              {tx("rowOfficial", "Official notice")}
+            </OfficialLink>
+          ) : null}
+          {packReady ? (
+            <DefaultButton
+              text={tx("rowDownloadWord", "Download offer")}
+              iconProps={{ iconName: "WordDocument" }}
+              disabled={rowBusy}
+              onClick={() => onDownload?.(row.id, "docx")}
+              styles={{ root: { minHeight: 32, height: 32, cursor: "pointer" } }}
+            />
+          ) : null}
+          <button
+            type="button"
+            className="text-sm font-semibold text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-300"
+            onClick={() => onAction("view", row.id)}
+          >
+            {tx("viewNotice", "View this notice")}
+          </button>
+        </div>
+      </div>
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+        <dl className="grid gap-3" data-testid="tenders-facts-row">
+          {side.map((fact) => (
+            <div key={fact.key} data-testid={`tenders-fact-${fact.key}`}>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {tx(fact.labelKey, fact.labelFallback)}
+              </dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 text-sm">
+                <Icon iconName={CARD_FACT_ICON[fact.key] || "Info"} className="text-[13px] text-emerald-700 dark:text-emerald-300" aria-hidden />
+                <span className="min-w-0 break-words">{factDisplay(fact, tx)}</span>
+              </dd>
+            </div>
+          ))}
+          {!side.length ? <p className="text-sm text-muted-foreground">{tx("unknown", "Not specified")}</p> : null}
+        </dl>
+      </aside>
+    </article>
+  );
+}
+
 export function PipelineList({
   rows,
   view,
-  layout = "list",
   tx,
   busy,
   token = "",
   downloading = "",
   locale = "fr-FR",
   sourceNames,
+  crafts = [],
   onAction,
   onDownload,
   onOfficial,
 }: {
   rows: TenderNotice[];
   view: NoticeListView;
-  layout?: NoticeLayout;
   tx: Tx;
   busy: boolean;
   token?: string;
   downloading?: string;
   locale?: string;
   sourceNames?: Record<string, string>;
+  crafts?: string[];
   onAction: (action: NoticeRowAction, id: string) => void;
   onDownload?: (id: string, kind: TenderExportKind) => void;
   onOfficial?: (id: string) => void;
 }) {
-  const renderMenu = (row: TenderNotice, packReady: boolean, official: string | null) => {
-    const starred = isFavorite(row);
-    const items = rowMenuItems({
-      view,
-      starred,
-      packReady,
-      hasOfficial: Boolean(official),
-      goMark: noticeGoMark(row),
-      tx,
-      onAction: (action) => onAction(action, row.id),
-      onDownload: (kind) => onDownload?.(row.id, kind),
-      onOfficial: () => onOfficial?.(row.id),
-    });
-    return (
-      <IconButton
-        ariaLabel={tx("rowMenu", "Notice actions")}
-        title={tx("rowMenu", "Notice actions")}
-        disabled={busy || downloading.startsWith(`${row.id}:`)}
-        iconProps={{ iconName: "MoreVertical" }}
-        menuProps={{ ...NOTICE_ROW_MENU, items }}
-        styles={{
-          root: { width: 44, height: 44, flexShrink: 0 },
-          menuIcon: { display: "none" },
-        }}
-      />
-    );
-  };
-
-  if (layout === "list") {
-    return (
-      <div className="tenders-notice-table min-w-0" data-testid="tenders-notice-list">
-        <table>
-          <thead>
-            <tr className="border-b border-black/10 text-left dark:border-white/10">
-              {LIST_COLUMNS.map((col) => (
-                <th
-                  key={col.key}
-                  scope="col"
-                  className={cn(
-                    "px-2 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:px-3",
-                    listColClass(col.key),
-                  )}
-                >
-                  {tx(col.label, col.fallback)}
-                </th>
-              ))}
-              <th className={cn("px-1 py-2 sm:px-2", listColClass("actions"))}>
-                <span className="sr-only">{tx("rowMenu", "Notice actions")}</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const starred = isFavorite(row);
-              const packReady = noticeHasOfferPack(row);
-              const official = officialTenderHref(row.source_url || "");
-              const facts = parseTenderFacts(row, { locale, sourceNames });
-              const byKey = Object.fromEntries(facts.card.map((item) => [item.key, item]));
-              return (
-                <tr
-                  key={row.id}
-                  className="border-b border-black/5 dark:border-white/10"
-                  data-testid="tenders-notice-row"
-                >
-                  {LIST_COLUMNS.map((col) => {
-                    if (col.key === "title") {
-                      return (
-                        <td key={col.key} className={cn("px-2 py-2 sm:px-3", listColClass(col.key))}>
-                          <button
-                            type="button"
-                            onClick={() => onAction("view", row.id)}
-                            className="flex min-h-11 min-w-0 w-full cursor-pointer items-start gap-2 rounded-lg px-1 text-left hover:bg-muted/30"
-                            data-testid="tenders-notice-open"
-                            title={facts.title}
-                          >
-                            <span className="min-w-0 flex-1 text-pretty break-words font-medium line-clamp-2">
-                              {facts.title}
-                            </span>
-                            {starred ? (
-                              <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                                {tx("favoriteBadge", "Favorite")}
-                              </span>
-                            ) : null}
-                            {row.archived ? (
-                              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                                {tx("archivedBadge", "Archived")}
-                              </span>
-                            ) : null}
-                          </button>
-                        </td>
-                      );
-                    }
-                    if (col.key === "score") {
-                      return (
-                        <td
-                          key={col.key}
-                          className={cn(
-                            "whitespace-nowrap px-2 py-2 tabular-nums font-semibold sm:px-3",
-                            listColClass(col.key),
-                            scoreTone(row.score),
-                          )}
-                          data-testid="tenders-notice-score"
-                        >
-                          {row.score != null ? Math.round(row.score) : "-"}
-                        </td>
-                      );
-                    }
-                    const fact = byKey[col.key];
-                    const value = fact ? factDisplay(fact, tx) : tx("unknown", "non renseigne");
-                    return (
-                      <td
-                        key={col.key}
-                        className={cn(
-                          "min-w-0 truncate px-2 py-2 sm:px-3",
-                          listColClass(col.key),
-                        )}
-                        title={value}
-                      >
-                        {value}
-                      </td>
-                    );
-                  })}
-                  <td className={cn("px-1 py-1 sm:px-2", listColClass("actions"))}>
-                    {renderMenu(row, packReady, official)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-
   return (
-    <ul className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="tenders-notice-grid">
-      <AnimatePresence initial={false}>
-        {rows.map((row, index) => {
-          const starred = isFavorite(row);
-          const packReady = noticeHasOfferPack(row);
-          const official = officialTenderHref(row.source_url || "");
-          const facts = parseTenderFacts(row, { locale, sourceNames });
-          return (
-            <motion.li
-              key={row.id}
-              className="h-full"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ ...SPRING, delay: Math.min(index, 8) * 0.04 }}
-            >
-              <div
-                className="flex h-full min-h-40 flex-col gap-3 rounded-2xl px-3 py-3 shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 dark:outline-white/10 sm:px-5 sm:py-4"
-                data-testid="tenders-notice-card"
-              >
-                <div className="flex min-w-0 flex-nowrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onAction("view", row.id)}
-                    className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-2 text-left transition-[background-color,transform] duration-150 hover:bg-muted/30 active:scale-[0.96]"
-                    data-testid="tenders-notice-open"
-                  >
-                    <span className="min-w-0 flex-1 truncate font-medium" title={facts.title}>
-                      {facts.title}
-                    </span>
-                    {starred ? (
-                      <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                        {tx("favoriteBadge", "Favorite")}
-                      </span>
-                    ) : null}
-                    {row.archived ? (
-                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        {tx("archivedBadge", "Archived")}
-                      </span>
-                    ) : null}
-                    <span
-                      className={cn("shrink-0 tabular-nums text-lg font-semibold", scoreTone(row.score))}
-                      data-testid="tenders-notice-score"
-                    >
-                      {row.score != null ? Math.round(row.score) : "-"}
-                    </span>
-                  </button>
-                  {renderMenu(row, packReady, official)}
-                </div>
-                <TenderFactsRow facts={facts.card} tx={tx} />
-                <div className="flex flex-wrap items-center gap-2 px-2">
-                  {official && token ? (
-                    <OfficialLink
-                      href={official}
-                      token={token}
-                      className="text-[13px] text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
-                    >
-                      {tx("rowOfficial", "Official notice")}
-                    </OfficialLink>
-                  ) : null}
-                  {packReady ? (
-                    <DefaultButton
-                      text={tx("rowDownloadWord", "Download offer")}
-                      iconProps={{ iconName: "WordDocument" }}
-                      disabled={busy || downloading.startsWith(`${row.id}:`)}
-                      onClick={() => onDownload?.(row.id, "docx")}
-                      styles={{ root: { minHeight: 36, height: 36, cursor: "pointer" } }}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </motion.li>
-          );
-        })}
-      </AnimatePresence>
-    </ul>
+    <div className="grid min-w-0 gap-3" data-testid="tenders-notice-list">
+      {rows.map((row) => (
+        <NoticeCard
+          key={row.id}
+          row={row}
+          view={view}
+          tx={tx}
+          busy={busy}
+          token={token}
+          downloading={downloading}
+          locale={locale}
+          sourceNames={sourceNames}
+          crafts={crafts}
+          onAction={onAction}
+          onDownload={onDownload}
+          onOfficial={onOfficial}
+        />
+      ))}
+    </div>
   );
 }
 

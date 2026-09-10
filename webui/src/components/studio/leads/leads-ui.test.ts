@@ -54,11 +54,27 @@ describe("leads catalog URLs leave the IDE", () => {
     expect(desk).toContain('tx("chat", "Chat")');
     expect(desk).not.toContain('text={tx("refresh"');
     expect(desk).toContain("overflow-x-auto");
-    expect(desk).toContain("DeskTab");
-    expect(desk).not.toContain("flex-wrap items-end justify-between");
+    // One-line header like the Tenders desk: no section tabs, no Home dashboard.
+    expect(desk).not.toContain("DeskTab");
+    expect(desk).not.toContain("LeadsDashboard");
+    expect(desk).not.toContain('activePane === "home"');
+    expect(desk).toContain("leads-title");
+    expect(desk).toContain("leads-open-book");
+    expect(desk).toContain("leads-run-sequences");
+    expect(desk).toContain("leads-hunt");
+    expect(desk).toContain("leads-open-setup");
+    expect(desk.indexOf("leads-title")).toBeLessThan(desk.indexOf("leads-open-book"));
+    expect(desk.indexOf("leads-hunt")).toBeLessThan(desk.indexOf("leads-open-setup"));
+    // Cards, buckets and quick filters instead of the table.
     expect(desk).toContain("leads-filter-");
-    expect(desk).toContain("<table");
-    expect(desk).toContain("leads-book-table");
+    expect(desk).not.toContain("<table");
+    expect(desk).not.toContain("leads-book-table");
+    expect(desk).toContain("leads-book-list");
+    expect(desk).toContain('data-testid="leads-card"');
+    expect(desk).toContain("leads-result-count");
+    expect(desk).toContain("<LeadFilters");
+    expect(desk).toContain("<LeadsActivity");
+    expect(desk).toContain("countryDisplayName");
     expect(desk).toContain("leads-row-crm");
     expect(desk).toContain("leads-row-delete");
     expect(desk).toContain("leads-row-menu");
@@ -68,15 +84,30 @@ describe("leads catalog URLs leave the IDE", () => {
     expect(desk).toContain("leads-outreach-hints");
     expect(desk).toContain("TradingLoopSchedulePanel");
     expect(desk).toContain("setInterval");
-    const dash = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "LeadsDashboard.tsx"),
+    const activity = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "LeadsActivity.tsx"),
       "utf8",
     );
-    expect(dash).toContain("leads-home-dashboard");
-    expect(dash).toContain('filter: "email"');
-    expect(dash).toContain("leads-loop-card");
-    expect(dash).toContain("formatNextDue");
-    expect(dash).not.toContain("window.open");
+    expect(activity).toContain("leads-activity");
+    expect(activity).toContain("<details");
+    expect(activity).toContain("leads-loop-card");
+    expect(activity).toContain("leads-rescore");
+    expect(activity).toContain("formatNextDue");
+    expect(activity).toContain("LeadsScene");
+    expect(activity).not.toContain("window.open");
+    const filters = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "LeadFilters.tsx"),
+      "utf8",
+    );
+    expect(filters).toContain("lead-filters-toolbar");
+    expect(filters).toContain("lead-quick-filters");
+    expect(filters).toContain("lead-chip-country");
+    expect(filters).toContain("lead-chip-sector");
+    expect(filters).toContain("lead-chip-source");
+    expect(filters).toContain("lead-chip-stage");
+    expect(filters).toContain("lead-chip-score");
+    expect(filters).toContain("lead-chip-email");
+    expect(filters).toContain("countryDropdownOptions");
     const start = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "LeadsStart.tsx"),
       "utf8",

@@ -146,6 +146,55 @@ def test_invalid_callback_cannot_be_configured(tmp_path, uri):
         oauth.configure_connection(MarketingStore(tmp_path), "tiktok", {"client_id": "app-123", "redirect_uri": uri})
 
 
+class _Websocket:
+    host = "0.0.0.0"
+    port = 8766
+
+
+class _Channels:
+    websocket = _Websocket()
+
+
+class _Config:
+    channels = _Channels()
+
+
+def test_suggested_callback_uses_ide_gateway_not_vite(tmp_path):
+    store = MarketingStore(tmp_path)
+    assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
+        "http://127.0.0.1:8766" + oauth.CALLBACK_PATH
+    )
+    assert oauth.suggested_redirect_uri(store, "instagram", config=_Config()) == ""
+    store.save_settings({"media_base_url": "https://desk.example.com/"})
+    assert oauth.suggested_redirect_uri(store, "instagram", config=_Config()) == (
+        "https://desk.example.com" + oauth.CALLBACK_PATH
+    )
+    assert oauth.suggested_redirect_uri(store, "reddit", config=_Config()) == (
+        "https://desk.example.com" + oauth.CALLBACK_PATH
+    )
+
+
+def test_reddit_connects_without_typing_account_id_or_secret(tmp_path, monkeypatch):
+    store = MarketingStore(tmp_path)
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "env-app-123")
+    start = oauth.start_connection(store, "reddit")
+    assert "env-app-123" in start["authorization_url"]
+    status = oauth.connection_status(store, "reddit")
+    assert status["client_id"] == "env-app-123"
+    assert status["redirect_uri"].endswith(oauth.CALLBACK_PATH)
+    assert ":5173" not in status["redirect_uri"]
+
+
+def test_instagram_still_needs_an_app_secret(tmp_path, monkeypatch):
+    store = MarketingStore(tmp_path)
+    monkeypatch.setenv("INSTAGRAM_CLIENT_ID", "ig-app")
+    monkeypatch.delenv("INSTAGRAM_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("NAVIN_INSTAGRAM_CLIENT_SECRET", raising=False)
+    oauth._update(store, "instagram", {"redirect_uri": "https://desk.example.com" + oauth.CALLBACK_PATH})
+    with pytest.raises(MarketingError, match="CLIENT_ID|secret|Sign in"):
+        oauth.start_connection(store, "instagram")
+
+
 def test_app_rebinding_clears_old_authorization(tmp_path):
     store = configured(tmp_path, "linkedin")
     store.save_secret("linkedin_token", "old-account")

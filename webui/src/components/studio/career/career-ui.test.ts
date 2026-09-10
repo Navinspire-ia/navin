@@ -81,7 +81,7 @@ describe("career IDE hashes stay inside the WebView", () => {
 
 describe("career catalog URLs leave the IDE", () => {
   it("lists only http(s) boards the OS browser can open", () => {
-    expect(catalogUrls.length).toBe(128);
+    expect(catalogUrls.length).toBe(135);
     for (const row of catalogUrls) {
       expect(officialCareerHref(row.url)).toBeTruthy();
       expect(row.url.startsWith("http://") || row.url.startsWith("https://")).toBe(true);
@@ -102,11 +102,14 @@ describe("career catalog URLs leave the IDE", () => {
     expect(desk).toContain("openFavorites");
     expect(desk).toContain("openArchive");
     expect(desk).toContain("OFFER_ROW_MENU");
-    expect(desk).toContain("homeDashboard");
+    // The desk lands on Offers: no dashboard pane, no dashboard button.
+    expect(desk).not.toContain("homeDashboard");
+    expect(desk).not.toContain("<CareerDashboard");
+    expect(desk).not.toContain('pane === "home"');
+    expect(desk).toContain('useState<Pane>("offers")');
     expect(desk).toContain("offerBook");
     expect(desk).not.toContain("offerBookBody");
-    expect(desk).not.toContain("onHome={openHome}");
-    expect(desk).toContain("CareerDashboard");
+    expect(desk).not.toContain("openHome");
     expect(desk).toContain("CareerWizard");
     expect(desk).not.toContain("CareerStart");
     expect(desk).toContain("careerShowsWizard");
@@ -121,14 +124,16 @@ describe("career catalog URLs leave the IDE", () => {
     expect(desk).toContain("refreshDesk");
     expect(desk).toContain('postCareer(token || "", "status"');
     expect(desk).toContain("career-title");
-    expect(desk).toContain("career-tagline");
-    expect(desk).toContain('whiteSpace: "nowrap"');
+    // One header line: title, track toggle, actions, then Settings on the right. No tagline.
+    expect(desk).not.toContain("career-tagline");
+    expect(desk).not.toContain('tx("oneLiner"');
     expect(desk).not.toContain('tx("watchNow"');
     expect(desk).toContain('tx("cycle"');
     expect(desk).not.toContain('tx("schedule", "Schedule")');
-    expect(desk.indexOf("career-open-setup")).toBeLessThan(desk.indexOf('tx("trackFreelance"'));
-    expect(desk.indexOf('tx("trackFreelance"')).toBeLessThan(desk.indexOf('tx("title"'));
-    expect(desk.indexOf('tx("title"')).toBeLessThan(desk.indexOf('tx("oneLiner"'));
+    expect(desk.indexOf('tx("title"')).toBeLessThan(desk.indexOf('tx("trackFreelance"'));
+    expect(desk.indexOf('tx("trackFreelance"')).toBeLessThan(desk.indexOf('tx("offerBook"'));
+    expect(desk.indexOf('tx("findMission"')).toBeLessThan(desk.indexOf("career-open-setup"));
+    expect(desk).toContain('className="ml-auto flex shrink-0 items-center gap-2"');
     expect(desk).toContain("career-offer-panel");
     expect(desk).toContain("career-offer-facts");
     expect(desk).toContain("selectOffer");
@@ -156,7 +161,13 @@ describe("career catalog URLs leave the IDE", () => {
     expect(desk).toContain("career-pane-");
     expect(desk).toContain("max-w-6xl items-stretch justify-end gap-0.5 py-1");
     expect(desk).toContain('role="tablist" aria-label={tx("listViews", "Offer lists")}');
-    expect(desk).toContain("ml-auto flex flex-wrap justify-end gap-2");
+    // Buckets, list tabs, filters and export share one toolbar line; cards print the board facts.
+    expect(desk).not.toContain("briefPlaceholder");
+    expect(desk).not.toContain('tx("rescore", "Rescore")');
+    expect(desk).toContain("leading={listTabs}");
+    expect(desk).toContain("career-offer-card");
+    expect(desk).toContain('tx("viewOffer", "View this offer")');
+    expect(desk).toContain("career-result-count");
     expect(desk).toContain("downloadCareerExport");
     expect(desk).toContain("{{size}}");
     expect(desk).toContain("onDeskPane");

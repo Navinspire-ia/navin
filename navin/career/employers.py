@@ -27,6 +27,7 @@ from typing import Any, Callable
 
 from loguru import logger
 
+from navin.career.jsonld import extract_jobpostings, jobposting_facts
 from navin.career.sources import (
     clean_job_text,
     html_to_text,
@@ -905,7 +906,6 @@ def _feed_workday(employer: dict[str, Any], res: dict[str, Any], fetch: Fetch, q
     return rows
 
 
-_JSONLD_RE = re.compile(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
 _ANCHOR_RE = re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.S | re.I)
 _TITLE_HINT = re.compile(
     r"engineer|developer|d[ée]veloppeur|data|cloud|devops|architect|consultant|analyst|manager|scientist|"
@@ -916,46 +916,51 @@ _TITLE_HINT = re.compile(
 
 
 def _jsonld_jobs(html_text: str) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for blob in _JSONLD_RE.findall(html_text or ""):
-        try:
-            data = json.loads(blob.strip())
-        except json.JSONDecodeError:
-            continue
-        items = data if isinstance(data, list) else [data]
-        for item in items:
-            if isinstance(item, dict) and "@graph" in item and isinstance(item["@graph"], list):
-                items.extend(node for node in item["@graph"] if isinstance(node, dict))
-                continue
-            if not isinstance(item, dict):
-                continue
-            kind = item.get("@type")
-            kinds = kind if isinstance(kind, list) else [kind]
-            if "JobPosting" in [str(k) for k in kinds]:
-                out.append(item)
-    return out
+    """Every schema.org JobPosting in the page (shared reader, @graph aware)."""
+    return extract_jobpostings(html_text)
 
 
 def _jsonld_row(employer: dict[str, Any], item: dict[str, Any], page_url: str) -> dict[str, Any] | None:
-    loc = item.get("jobLocation")
-    if isinstance(loc, list):
-        loc = loc[0] if loc else {}
-    address = (loc or {}).get("address") if isinstance(loc, dict) else {}
-    if not isinstance(address, dict):
-        address = {}
-    place = ", ".join(str(address.get(k) or "") for k in ("addressLocality", "addressRegion", "addressCountry") if address.get(k))
-    return _row(
+    facts = jobposting_facts(item)
+    row = _row(
         employer,
         "careers-page",
-        title=str(item.get("title") or item.get("name") or ""),
+        title=facts["title"],
         url=str(item.get("url") or page_url),
-        location=place,
-        country=str(address.get("addressCountry") or "") if len(str(address.get("addressCountry") or "")) == 2 else "",
-        description=str(item.get("description") or ""),
-        posted_at=str(item.get("datePosted") or ""),
-        employment_type=str(item.get("employmentType") or ""),
-        remote=str((item.get("jobLocationType") or "")).upper() == "TELECOMMUTE",
+        location=facts["location"],
+        country=facts["country"] if len(facts["country"]) == 2 else "",
+        description=facts["description"],
+        posted_at=facts["posted_at"],
+        employment_type=facts["employment_type"],
+        remote=facts["remote"] == "remote",
     )
+    if not row:
+        return None
+    # Structured pay, contracts, experience and dates ride along when the posting has them.
+    for key in (
+        "contracts",
+        "track",
+        "remote",
+        "experience_level",
+        "experience_years_min",
+        "seniority",
+        "duration",
+        "duration_months",
+        "start_date",
+        "valid_through",
+        "daily_rate_min",
+        "daily_rate_max",
+        "salary_min",
+        "salary_max",
+        "compensation",
+        "currency",
+    ):
+        value = facts.get(key)
+        if value not in (None, "", []):
+            row[key] = value
+    if facts.get("stack"):
+        row["stack"] = facts["stack"]
+    return row
 
 
 def _feed_careers_page(employer: dict[str, Any], res: dict[str, Any], fetch: Fetch, query: str) -> list[dict[str, Any]]:

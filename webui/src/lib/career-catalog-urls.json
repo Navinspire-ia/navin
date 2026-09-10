@@ -20,6 +20,34 @@
     "url": "https://remotive.com/remote-jobs/api"
   },
   {
+    "id": "jobicy",
+    "url": "https://jobicy.com/api/v2/remote-jobs"
+  },
+  {
+    "id": "remoteok",
+    "url": "https://remoteok.com/api"
+  },
+  {
+    "id": "himalayas",
+    "url": "https://himalayas.app/jobs/api"
+  },
+  {
+    "id": "weworkremotely",
+    "url": "https://weworkremotely.com/remote-jobs.rss"
+  },
+  {
+    "id": "arbeitnow",
+    "url": "https://www.arbeitnow.com/api/job-board-api"
+  },
+  {
+    "id": "hn-hiring",
+    "url": "https://hn.algolia.com/api/v1/search_by_date"
+  },
+  {
+    "id": "jobopportunities",
+    "url": "https://www.jobopportunitiesapi.org/docs"
+  },
+  {
     "id": "greenhouse",
     "url": "https://developers.greenhouse.io/job-board.html"
   },

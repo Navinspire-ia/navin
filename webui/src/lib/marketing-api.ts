@@ -238,6 +238,7 @@ export interface SocialConnection {
   scope_status: string;
   last_error: string;
   docs_url: string;
+  suggested_redirect_uri?: string;
 }
 
 export interface SocialAuthorization extends Partial<SocialConnection> {

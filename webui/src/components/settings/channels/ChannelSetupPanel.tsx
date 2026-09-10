@@ -39,6 +39,7 @@ import {
   ChannelValidationChecks,
   ChannelValidationDetails,
 } from "@/components/settings/channels/ChannelSetupParts";
+import { SocialOauthSetup } from "@/components/settings/channels/SocialOauthSetup";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -458,7 +459,14 @@ function ChannelSetupSurface({
         />
         <ChannelSetupActions feature={feature} setup={setup} onNotice={setNotice} />
 
-        {mode === "connect" ? (
+        {mode === "oauth" ? (
+          <SocialOauthSetup
+            token={token}
+            feature={feature}
+            setup={setup}
+            onFeaturesUpdate={onFeaturesUpdate}
+          />
+        ) : mode === "connect" ? (
           <>
             <div className="mt-3 flex flex-wrap justify-end gap-2">
               <Button

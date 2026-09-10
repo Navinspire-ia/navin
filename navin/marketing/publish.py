@@ -837,9 +837,15 @@ def _publish_content(
     state = states.get(via)
     if not state or not state.get("configured"):
         missing = ", ".join((state or {}).get("missing") or []) or "connector"
-        raise MarketingError(f"{via} is not configured ({missing})", status=409)
+        raise MarketingError(
+            f"{via} is not connected in Settings > Channels ({missing})",
+            status=409,
+        )
     if via in social_publish.SOCIAL_CHANNELS and not state.get("enabled"):
-        raise MarketingError(f"activate the {via} connector before publishing", status=409)
+        raise MarketingError(
+            f"Turn on {via} in Settings > Channels before publishing",
+            status=409,
+        )
     prepared = resolve_publish_media(store, row, create=False) if via in social_publish.SOCIAL_CHANNELS else row
     if via == "reddit" and prepared.get("reddit_kind") == "link" and not prepared.get("reddit_url"):
         prepared = {**prepared, "reddit_url": link}
@@ -856,7 +862,10 @@ def _publish_content(
             with InterProcessLock(store.path(".oauth.lock"), timeout=5):
                 cfg = _channel_config(store.load_settings(), via)
                 if not cfg.get("enabled"):
-                    raise MarketingError(f"activate the {via} connector before publishing", status=409)
+                    raise MarketingError(
+                        f"Turn on {via} in Settings > Channels before publishing",
+                        status=409,
+                    )
                 prepared = resolve_publish_media(store, row, create=True)
                 if via == "reddit" and prepared.get("reddit_kind") == "link" and not prepared.get("reddit_url"):
                     prepared = {**prepared, "reddit_url": link}

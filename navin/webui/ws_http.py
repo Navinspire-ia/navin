@@ -2813,7 +2813,11 @@ class GatewayHTTPHandler:
                 target = connection_status(MarketingStore(), str(body.get("provider") or ""))["redirect_uri"]
                 host = _safe_host_header(_case_insensitive_header(request.headers, "Host"))
                 if target and urlsplit(target).netloc.lower() != host.lower():
-                    return _http_error(400, "Open Navin at the public callback address before connecting; authorization must finish in the same browser origin")
+                    origin = f"{urlsplit(target).scheme}://{urlsplit(target).netloc}"
+                    return _http_error(
+                        400,
+                        f"Open Navin at {origin} before connecting. Vite :5173 is not the callback origin.",
+                    )
             with request_context(context):
                 payload = await asyncio.to_thread(handle_marketing_action, action, body)
         except MarketingError as exc:
@@ -2838,19 +2842,28 @@ class GatewayHTTPHandler:
 
         query = {key: values[0] for key, values in _parse_query(request.path).items() if values}
         destination = {"pane": "settings"}
+        landing = ""
         try:
             result = await asyncio.to_thread(
                 finish_connection, MarketingStore(), query,
                 _case_insensitive_header(request.headers, "Cookie"),
             )
+            landing = str(result.get("return_to") or "")
             if result.get("session_key"):
                 destination["chat"] = str(result["session_key"])
         except MarketingError as exc:
             destination["oauth_error"] = exc.message
+        location = (
+            "/#/settings?section=channels"
+            if landing == "channels"
+            else "/#/marketing?" + urlencode(destination)
+        )
+        if landing == "channels" and destination.get("oauth_error"):
+            location += "?" + urlencode({"oauth_error": destination["oauth_error"]})
         response = _http_response(
             b"", status=303,
             extra_headers=[
-                ("Location", "/#/marketing?" + urlencode(destination)),
+                ("Location", location),
                 ("Cache-Control", "no-store"), ("Referrer-Policy", "no-referrer"),
             ],
         )

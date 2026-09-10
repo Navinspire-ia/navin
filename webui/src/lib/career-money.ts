@@ -91,6 +91,58 @@ export function careerMoney(
   };
 }
 
+/** "€" for EUR, "£" for GBP, "$" for USD, the code itself when Intl has no short symbol. */
+export function currencySymbol(currency: string, locale = "fr"): string {
+  const code = String(currency || "").trim().toUpperCase();
+  if (!code) return "";
+  try {
+    const parts = new Intl.NumberFormat(locale || "fr", {
+      style: "currency",
+      currency: code,
+      currencyDisplay: "narrowSymbol",
+      maximumFractionDigits: 0,
+    }).formatToParts(1);
+    const symbol = parts.find((part) => part.type === "currency")?.value || code;
+    return symbol.trim();
+  } catch {
+    return code;
+  }
+}
+
+function compactAmount(value: number, unit: "day" | "year"): string {
+  if (unit === "year" && value >= 1000) {
+    const thousands = value / 1000;
+    const text = Number.isInteger(thousands) ? String(thousands) : thousands.toFixed(1).replace(/\.0$/, "");
+    return `${text}k`;
+  }
+  return String(Math.round(value));
+}
+
+/**
+ * The posted range the way the boards print it: "400-600 €/j", "40k-45k €/an",
+ * "350-450 £/day". Currency is the offer's own; the suffix comes from the copy.
+ */
+export function formatPayRange(
+  min: number | null | undefined,
+  max: number | null | undefined,
+  currency: string,
+  unit: "day" | "year",
+  suffix: string,
+  locale = "fr",
+): string {
+  const low = Number(min);
+  const high = Number(max);
+  const hasLow = Number.isFinite(low) && low > 0;
+  const hasHigh = Number.isFinite(high) && high > 0;
+  if (!hasLow && !hasHigh) return "";
+  const parts: string[] = [];
+  if (hasLow) parts.push(compactAmount(low, unit));
+  if (hasHigh && (!hasLow || Math.round(high) !== Math.round(low))) parts.push(compactAmount(high, unit));
+  const symbol = currencySymbol(currency, locale);
+  const range = parts.join("-");
+  return `${range}${symbol ? ` ${symbol}` : ""}${suffix}`.trim();
+}
+
 export function formatMoney(value: number, currency: string, locale: string): string {
   if (!Number.isFinite(value) || value <= 0) return "";
   try {

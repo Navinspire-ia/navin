@@ -7,13 +7,17 @@ import { type IContextualMenuProps } from "@fluentui/react";
 
 export const SPRING = { type: "spring" as const, duration: 0.3, bounce: 0 };
 export const LEADS_PAGE_SIZE = 20;
-export const BUTTON_STYLES = { root: { minHeight: 40, minWidth: 0, maxWidth: "100%", cursor: "pointer" as const } };
+export const BUTTON_STYLES = {
+  root: { minHeight: 40, minWidth: 0, padding: "0 12px", cursor: "pointer" as const, flexShrink: 0 },
+  label: { whiteSpace: "nowrap" as const },
+};
 export const ICON_BUTTON_STYLES = {
   root: {
     height: 40,
     minHeight: 40,
     width: 40,
     minWidth: 40,
+    flexShrink: 0,
     cursor: "pointer" as const,
   },
 };

@@ -29,6 +29,7 @@ CAREER_SECRET_NAMES = frozenset(
         "JOOBLE_API_KEY",
         "USAJOBS_API_KEY",
         "USAJOBS_USER_AGENT",
+        "JOBOPPORTUNITIES_API_KEY",
         "CAREER_SMTP_PASSWORD",
         "CAREER_IMAP_PASSWORD",
     }

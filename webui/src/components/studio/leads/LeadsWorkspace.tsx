@@ -23,20 +23,32 @@ import {
 import "@/lib/fluent-icons";
 import { useTranslation } from "react-i18next";
 
-import { LeadsDashboard } from "@/components/studio/leads/LeadsDashboard";
+import { LeadFilters } from "@/components/studio/leads/LeadFilters";
+import { LeadsActivity } from "@/components/studio/leads/LeadsActivity";
 import { LeadsStart } from "@/components/studio/leads/LeadsStart";
+import { sectorLabel } from "@/components/studio/leads/sector-label";
+import {
+  LEAD_BUCKETS,
+  applyLeadFilter,
+  bucketCounts,
+  bucketRows,
+  emptyLeadFilter,
+  isLiveLead,
+  type LeadBucket,
+  type LeadFacetFilter,
+} from "@/components/studio/leads/lead-filters";
 import {
   BUTTON_STYLES,
   ICON_BUTTON_STYLES,
   LEAD_ROW_MENU,
   LEADS_PAGE_SIZE,
-  ROW_ICON_BUTTON_STYLES,
   SPRING,
   SURFACE,
   openOfficialLeadUrl,
   scoreTone,
   type Tx,
 } from "@/components/studio/leads/leads-ui";
+import { countryDisplayName } from "@/lib/country-options";
 import { usePagedRows } from "@/lib/crm-list";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import { browserTimeZone } from "@/lib/trading-loop-schedule";
@@ -73,8 +85,8 @@ import { readLastDevContext } from "@/lib/last-dev-context";
 import { cn } from "@/lib/utils";
 
 type View = "work" | "setup";
+/** Kept for the router: the desk always lands on the book now. */
 type DeskPane = "home" | "book";
-type BookFilter = "all" | "strong" | "email" | "verified" | "pipeline" | "due" | "signals";
 
 function useDeskWidth(ref: RefObject<HTMLElement | null>, fallback = 640): number {
   const [width, setWidth] = useState(fallback);
@@ -89,51 +101,6 @@ function useDeskWidth(ref: RefObject<HTMLElement | null>, fallback = 640): numbe
     return () => observer.disconnect();
   }, [ref]);
   return width;
-}
-
-function DeskTab({
-  icon,
-  label,
-  selected,
-  disabled,
-  onClick,
-  testId,
-  title,
-  ariaLabel,
-}: {
-  icon: string;
-  label: string;
-  selected?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  testId?: string;
-  title?: string;
-  ariaLabel?: string;
-}) {
-  const reduceMotion = useReducedMotion();
-  const name = ariaLabel || title || label;
-  return (
-    <motion.button
-      type="button"
-      whileTap={reduceMotion || disabled ? undefined : { scale: 0.96 }}
-      onClick={onClick}
-      disabled={disabled}
-      title={title || label}
-      aria-label={name}
-      aria-pressed={Boolean(selected)}
-      data-testid={testId}
-      className={cn(
-        "relative inline-flex min-h-12 min-w-[4.25rem] shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl px-2.5 py-1.5 text-center transition-[background-color,color,box-shadow,transform] duration-150",
-        selected
-          ? "bg-indigo-500/16 font-medium text-foreground shadow-[0_6px_16px_rgba(15,23,42,0.08)]"
-          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
-      )}
-    >
-      <Icon iconName={icon} className="text-[18px] text-indigo-500" aria-hidden />
-      <span className="max-w-[5.5rem] truncate text-[11px] leading-none tracking-wide">{label}</span>
-    </motion.button>
-  );
 }
 
 function useLeadsTheme(mode: "light" | "dark") {
@@ -196,26 +163,10 @@ function useLeadsTheme(mode: "light" | "dark") {
   );
 }
 
-function isLiveLead(row: LeadRow): boolean {
-  return !row.archived && !row.extra?.archived;
-}
-
-function filterRows(rows: LeadRow[], filter: BookFilter): LeadRow[] {
-  const live = rows.filter(isLiveLead);
-  if (filter === "strong") return live.filter((row) => (row.score || 0) >= 80);
-  if (filter === "email") return live.filter((row) => Boolean(row.email));
-  if (filter === "verified") return live.filter((row) => row.email_status === "verified");
-  if (filter === "due") return live.filter((row) => leadHasDueStep(row));
-  if (filter === "signals") return live.filter((row) => leadHasBuyingSignal(row));
-  if (filter === "pipeline") return live.filter((row) => leadInOutreach(row));
-  return live;
-}
-
 export function LeadsWorkspace({
   chatOpen,
   onToggleChat,
   onSeed,
-  deskPane: deskPaneProp,
   leadId,
   projectPath,
   recentProjects,
@@ -240,10 +191,9 @@ export function LeadsWorkspace({
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState("");
   const [view, setView] = useState<View>("work");
-  const [deskPane, setDeskPane] = useState<DeskPane>(() =>
-    deskPaneProp === "book" || leadId ? "book" : "home",
-  );
-  const [bookFilter, setBookFilter] = useState<BookFilter>("all");
+  const [bookFilter, setBookFilter] = useState<LeadBucket>("all");
+  const [facet, setFacet] = useState<LeadFacetFilter>(emptyLeadFilter);
+  const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(() => leadId || "");
   const [confirmSequence, setConfirmSequence] = useState(false);
   const [confirmOptout, setConfirmOptout] = useState(false);
@@ -293,11 +243,11 @@ export function LeadsWorkspace({
     return () => window.clearInterval(id);
   }, [token, desk?.loop?.enabled, desk?.loop?.phase, load]);
 
-  const goPane = useCallback(
-    (pane: DeskPane, lead = "") => {
+  /** The book is the only pane: with a lead id it opens the dossier, without it the list. */
+  const goBook = useCallback(
+    (lead = "") => {
       setOpenId(lead);
-      setDeskPane(lead ? "book" : pane);
-      onDeskPane?.(lead ? "book" : pane, lead || undefined);
+      onDeskPane?.("book", lead || undefined);
     },
     [onDeskPane],
   );
@@ -314,7 +264,7 @@ export function LeadsWorkspace({
         if (action === "hunt") {
           setProvidersOpen(false);
           setView("work");
-          goPane("book");
+          goBook();
         }
         if (action === "lookalike") {
           const added = Number(next.lookalike?.added || 0);
@@ -346,7 +296,7 @@ export function LeadsWorkspace({
         setBusy("");
       }
     },
-    [token, tx, goPane],
+    [token, tx, goBook],
   );
 
   const submitSchedule = async (schedule: LeadLoopSchedule, runNow: boolean) => {
@@ -364,25 +314,16 @@ export function LeadsWorkspace({
 
   useEffect(() => {
     const lead = (leadId || "").trim();
-    if (lead && desk) {
-      const exists = desk.leads.some((item) => item.id === lead && isLiveLead(item));
-      if (exists) {
-        setOpenId(lead);
-        setDeskPane("book");
-        return;
-      }
+    if (!lead) {
       setOpenId("");
-      setDeskPane("book");
       return;
     }
-    if (lead && !desk) {
+    if (!desk) {
       setOpenId(lead);
-      setDeskPane("book");
       return;
     }
-    setOpenId("");
-    setDeskPane(deskPaneProp === "book" ? "book" : "home");
-  }, [desk, deskPaneProp, leadId]);
+    setOpenId(desk.leads.some((item) => item.id === lead && isLiveLead(item)) ? lead : "");
+  }, [desk, leadId]);
 
   useEffect(() => {
     setConfirmSequence(false);
@@ -441,7 +382,6 @@ export function LeadsWorkspace({
   const ready = Boolean(live.wizard_ready || live.profile.wizard_ready);
   const selected = live.leads.find((row) => row.id === openId && isLiveLead(row)) || null;
   const missingLead = Boolean((leadId || "").trim()) && connected && !selected;
-  const book = filterRows(live.leads, bookFilter);
 
   useEffect(() => {
     if (connected && !ready && !busy && view === "work" && !openId && !providersOpen) {
@@ -451,18 +391,15 @@ export function LeadsWorkspace({
 
   const showDesk = connected && view === "work";
   const showWizard = (connected && view === "setup") || (!connected && Boolean(error));
-  const activePane: DeskPane = selected ? "book" : deskPane;
 
   const launchHunt = (body: Record<string, unknown>) => {
     setProvidersOpen(false);
     setView("work");
-    goPane("book");
+    goBook();
     void run("hunt", body, tx("saved.hunt", "Hunt finished. Review the book."));
   };
 
-  const providersSelected = showWizard;
-  const homeSelected = showDesk && activePane === "home";
-  const bookSelected = showDesk && activePane === "book";
+  const bookSelected = showDesk && !selected;
   const autonomous = live.profile.execution_mode === "autonomous";
   const sequencesHint = autonomous
     ? tx("sequencesSendHint", "Autonomous mode: due emails go out now, within the daily cap and the opt-out list.")
@@ -483,68 +420,107 @@ export function LeadsWorkspace({
         }}
         data-compact={compact ? "1" : "0"}
       >
-        <header className="flex min-w-0 shrink-0 items-center gap-3 px-4 py-2.5 sm:px-5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              {tx("kicker", "Studio")}
-            </p>
-            <div className={cn("flex min-w-0", compact ? "flex-col" : "items-baseline gap-2")}>
-              <h1 className="shrink-0 whitespace-nowrap text-xl font-semibold tracking-tight">
+        <header className="flex shrink-0 flex-nowrap items-center gap-x-3 px-5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex shrink-0 items-baseline gap-2 pr-1">
+              <h1 className="whitespace-nowrap text-xl font-semibold tracking-tight" data-testid="leads-title">
                 {tx("title", "Leads")}
               </h1>
               {live.profile.icp_name ? (
-                <p className="min-w-0 truncate text-sm text-muted-foreground" title={live.profile.icp_name}>
+                <p className="max-w-[14rem] truncate text-sm text-muted-foreground" title={live.profile.icp_name}>
                   {live.profile.icp_name}
                 </p>
               ) : null}
             </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
             {ready ? (
-              live.loop?.enabled ? (
-                <PrimaryButton
-                  text={loopLabel}
-                  iconProps={{ iconName: "Pause" }}
-                  title={loopLabel}
-                  ariaLabel={loopLabel}
-                  onClick={() => void run("stop", {}, tx("saved.pause", "Loop paused."))}
-                  disabled={Boolean(busy)}
-                  styles={BUTTON_STYLES}
-                  data-testid="leads-pause-loop"
-                />
-              ) : (
-                <PrimaryButton
-                  text={loopLabel}
-                  iconProps={{ iconName: "Play" }}
-                  title={loopLabel}
-                  ariaLabel={loopLabel}
+              <>
+                <DefaultButton
+                  text={tx("book", "Book")}
+                  iconProps={{ iconName: "PageList" }}
+                  checked={bookSelected}
                   onClick={() => {
-                    setScheduleMode("start");
-                    setScheduleOpen(true);
+                    setProvidersOpen(false);
+                    setView("work");
+                    goBook();
                   }}
-                  disabled={Boolean(busy)}
                   styles={BUTTON_STYLES}
-                  data-testid="leads-start-loop"
+                  data-testid="leads-open-book"
                 />
-              )
+                {live.loop?.enabled ? (
+                  <PrimaryButton
+                    text={loopLabel}
+                    iconProps={{ iconName: "Pause" }}
+                    title={loopLabel}
+                    ariaLabel={loopLabel}
+                    onClick={() => void run("stop", {}, tx("saved.pause", "Loop paused."))}
+                    disabled={Boolean(busy)}
+                    styles={BUTTON_STYLES}
+                    data-testid="leads-pause-loop"
+                  />
+                ) : (
+                  <PrimaryButton
+                    text={loopLabel}
+                    iconProps={{ iconName: "Play" }}
+                    title={loopLabel}
+                    ariaLabel={loopLabel}
+                    onClick={() => {
+                      setScheduleMode("start");
+                      setScheduleOpen(true);
+                    }}
+                    disabled={Boolean(busy)}
+                    styles={BUTTON_STYLES}
+                    data-testid="leads-start-loop"
+                  />
+                )}
+                <DefaultButton
+                  text={tx("cycle", "Run cycle")}
+                  iconProps={{ iconName: "Sync" }}
+                  disabled={Boolean(busy)}
+                  onClick={() => void run("tick", { force: true }, tx("saved.cycle", "Cycle finished."))}
+                  styles={BUTTON_STYLES}
+                  data-testid="leads-run-cycle"
+                />
+                <DefaultButton
+                  text={autonomous ? tx("sequencesSend", "Send due steps") : tx("sequencesDraft", "Draft due steps")}
+                  iconProps={{ iconName: autonomous ? "Send" : "Edit" }}
+                  title={sequencesHint}
+                  disabled={Boolean(busy)}
+                  onClick={() => void run("sequences")}
+                  styles={BUTTON_STYLES}
+                  data-testid="leads-run-sequences"
+                />
+                <PrimaryButton
+                  text={tx("home.hunt", "Hunt companies")}
+                  iconProps={{ iconName: "Search" }}
+                  disabled={Boolean(busy)}
+                  onClick={() => launchHunt({})}
+                  styles={BUTTON_STYLES}
+                  data-testid="leads-hunt"
+                />
+              </>
             ) : null}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {onToggleChat ? (
-              <DefaultButton
-                text={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                iconProps={{ iconName: "Chat" }}
+              <IconButton
+                iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
                 title={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
                 ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                aria-pressed={Boolean(chatOpen)}
+                checked={Boolean(chatOpen)}
                 onClick={onToggleChat}
-                styles={{
-                  root: {
-                    ...BUTTON_STYLES.root,
-                    background: chatOpen ? "rgba(99, 102, 241, 0.16)" : undefined,
-                  },
-                }}
+                styles={ICON_BUTTON_STYLES}
                 data-testid="leads-chat"
               />
             ) : null}
+            <IconButton
+              iconProps={{ iconName: "Settings" }}
+              title={tx("settings", "Providers")}
+              ariaLabel={tx("settings", "Providers")}
+              checked={showWizard}
+              onClick={openProviders}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="leads-open-setup"
+            />
             <IconButton
               iconProps={{ iconName: "Refresh" }}
               title={tx("refresh", "Refresh")}
@@ -556,78 +532,6 @@ export function LeadsWorkspace({
             />
           </div>
         </header>
-        <nav
-          className="shrink-0 overflow-x-auto overscroll-x-contain px-2 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.08)]"
-          aria-label={tx("panesAria", "Leads desk sections")}
-        >
-          <div className="flex min-w-max items-stretch gap-0.5 py-1">
-            {ready ? (
-              <>
-                <DeskTab
-                  icon="Home"
-                  label={tx("pane.home", "Home")}
-                  title={tx("homeDashboard", "Home")}
-                  selected={homeSelected}
-                  onClick={() => {
-                    setView("work");
-                    goPane("home");
-                  }}
-                />
-                <DeskTab
-                  icon="PageList"
-                  label={tx("pane.book", "Book")}
-                  title={tx("book", "Book")}
-                  selected={bookSelected}
-                  onClick={() => {
-                    setView("work");
-                    goPane("book");
-                  }}
-                />
-              </>
-            ) : null}
-            <DeskTab
-              icon="Settings"
-              label={tx("pane.providers", "Providers")}
-              title={tx("settings", "Providers")}
-              selected={providersSelected}
-              onClick={openProviders}
-            />
-            {ready ? (
-              <>
-                <span className="mx-1 w-px self-stretch bg-black/10 dark:bg-white/10" aria-hidden />
-                <DeskTab
-                  icon="Sync"
-                  label={tx("pane.cycle", "Cycle")}
-                  title={tx("cycle", "Run cycle")}
-                  disabled={Boolean(busy)}
-                  onClick={() => void run("tick", { force: true }, tx("saved.cycle", "Cycle finished."))}
-                  testId="leads-run-cycle"
-                />
-                <DeskTab
-                  icon={autonomous ? "Send" : "Edit"}
-                  label={autonomous ? tx("pane.send", "Send") : tx("pane.draft", "Draft")}
-                  title={sequencesHint}
-                  ariaLabel={
-                    autonomous
-                      ? tx("sequencesSend", "Send due steps")
-                      : tx("sequencesDraft", "Draft due steps")
-                  }
-                  disabled={Boolean(busy)}
-                  onClick={() => void run("sequences")}
-                  testId="leads-run-sequences"
-                />
-                <DeskTab
-                  icon="Download"
-                  label={tx("pane.export", "CSV")}
-                  title={tx("exportCsv", "Export CSV")}
-                  disabled={Boolean(busy) || !(live.kpis.total || 0)}
-                  onClick={() => void exportCsv()}
-                  testId="leads-export"
-                />
-              </>
-            ) : null}
-          </div>
-        </nav>
         {busy ? <ProgressIndicator barHeight={3} /> : null}
         <div className="min-h-0 min-w-0 flex-1 overflow-auto overflow-x-hidden px-4 py-4 sm:px-5 sm:py-5">
           {error ? (
@@ -698,7 +602,7 @@ export function LeadsWorkspace({
                             void run("profile", body, tx("saved.profile", "ICP saved. The next hunt uses it.")).then((ok) => {
                               if (ok) {
                                 setView("work");
-                                goPane("home");
+                                goBook();
                               }
                             });
                           }
@@ -708,7 +612,7 @@ export function LeadsWorkspace({
                       ready
                         ? () => {
                             setView("work");
-                            goPane("home");
+                            goBook();
                           }
                         : undefined
                     }
@@ -716,34 +620,7 @@ export function LeadsWorkspace({
                 )}
               </motion.div>
             ) : null}
-            {showDesk && activePane === "home" ? (
-              <motion.div key="home" initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
-                <LeadsDashboard
-                  tx={tx}
-                  compact={compact}
-                  headline={live.kpis.headline}
-                  rows={live.leads}
-                  providers={live.providers}
-                  busy={Boolean(busy)}
-                  onOpenBook={(filter) => {
-                    setBookFilter((filter as BookFilter) || "all");
-                    goPane("book");
-                  }}
-                  onHunt={() => void run("hunt", {}, tx("saved.hunt", "Hunt finished. Review the book."))}
-                  onRescore={() => void run("rescore", {}, tx("saved.rescore", "Book rescored with BANT-F."))}
-                  onOpenLead={(id) => goPane("book", id)}
-                  onProviders={openProviders}
-                  loop={live.loop}
-                  locale={i18n.language}
-                  profile={live.profile}
-                  onEditProfile={() => {
-                    setProvidersOpen(false);
-                    setView("setup");
-                  }}
-                />
-              </motion.div>
-            ) : null}
-            {showDesk && activePane === "book" ? (
+            {showDesk ? (
               <motion.div key="book" initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
                 {selected ? (
                   <LeadDossier
@@ -753,7 +630,7 @@ export function LeadsWorkspace({
                     row={selected}
                     busy={Boolean(busy)}
                     channelReady={live.channels?.ready || {}}
-                    onBack={() => goPane("book")}
+                    onBack={() => goBook()}
                     onStage={(stage) => void run("stage", { id: selected.id, stage })}
                     onEnrich={() => void run("enrich", { id: selected.id }, tx("saved.enrich", "Enrichment applied."))}
                     crmProjectName={crmName}
@@ -796,29 +673,54 @@ export function LeadsWorkspace({
                     onSeed={onSeed}
                   />
                 ) : (
-                  <LeadBook
-                    tx={tx}
-                    rows={book}
-                    filter={bookFilter}
-                    busy={Boolean(busy)}
-                    crmProjectName={crmName}
-                    onFilter={setBookFilter}
-                    onOpen={(id) => goPane("book", id)}
-                    onCrm={(id) => pushLeadToCrm(id)}
-                    onEnrich={(id) => void run("enrich", { id }, tx("saved.enrich", "Enrichment applied."))}
-                    onSequence={(id) =>
-                      void run("sequence", { id }, tx("saved.sequence", "Cold sequence started (j0 / j3 / j7)."))
-                    }
-                    onLookalike={(id) => void run("lookalike", { id }, tx("saved.lookalike", "Lookalikes added to the book."))}
-                    onOptout={(value) =>
-                      void run("optout", { value }, tx("saved.optout", "Contact opted out. Sequences stopped, never re-added."))
-                    }
-                    onDelete={(id) => {
-                      void run("delete", { id }, tx("saved.delete", "Lead removed from the book.")).then((ok) => {
-                        if (ok && openId === id) goPane("book");
-                      });
-                    }}
-                  />
+                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
+                    <LeadBook
+                      tx={tx}
+                      token={token || ""}
+                      rows={live.leads}
+                      bucket={bookFilter}
+                      facet={facet}
+                      query={query}
+                      busy={Boolean(busy)}
+                      exportBusy={busy === "export"}
+                      locale={i18n.language}
+                      crmProjectName={crmName}
+                      onBucket={setBookFilter}
+                      onFacet={setFacet}
+                      onQuery={setQuery}
+                      onExport={() => void exportCsv()}
+                      onOpen={(id) => goBook(id)}
+                      onCrm={(id) => pushLeadToCrm(id)}
+                      onEnrich={(id) => void run("enrich", { id }, tx("saved.enrich", "Enrichment applied."))}
+                      onSequence={(id) =>
+                        void run("sequence", { id }, tx("saved.sequence", "Cold sequence started (j0 / j3 / j7)."))
+                      }
+                      onLookalike={(id) => void run("lookalike", { id }, tx("saved.lookalike", "Lookalikes added to the book."))}
+                      onOptout={(value) =>
+                        void run("optout", { value }, tx("saved.optout", "Contact opted out. Sequences stopped, never re-added."))
+                      }
+                      onDelete={(id) => {
+                        void run("delete", { id }, tx("saved.delete", "Lead removed from the book.")).then((ok) => {
+                          if (ok && openId === id) goBook();
+                        });
+                      }}
+                    />
+                    <LeadsActivity
+                      tx={tx}
+                      rows={live.leads}
+                      providers={live.providers}
+                      busy={Boolean(busy)}
+                      loop={live.loop}
+                      locale={i18n.language}
+                      profile={live.profile}
+                      onRescore={() => void run("rescore", {}, tx("saved.rescore", "Book rescored with BANT-F."))}
+                      onProviders={openProviders}
+                      onEditProfile={() => {
+                        setProvidersOpen(false);
+                        setView("setup");
+                      }}
+                    />
+                  </div>
                 )}
               </motion.div>
             ) : null}
@@ -841,17 +743,6 @@ export function LeadsWorkspace({
     </Customizer>
   );
 }
-
-const BOOK_COLUMNS: { key: string; label: string; fallback: string }[] = [
-  { key: "company", label: "col.company", fallback: "Company" },
-  { key: "contact", label: "col.contact", fallback: "Contact" },
-  { key: "email", label: "col.email", fallback: "Email" },
-  { key: "country", label: "col.country", fallback: "Country" },
-  { key: "score", label: "col.score", fallback: "Score" },
-  { key: "stage", label: "col.stage", fallback: "Stage" },
-  { key: "source", label: "col.source", fallback: "Source" },
-  { key: "next", label: "col.next", fallback: "Next action" },
-];
 
 type LeadRowKind = "view" | "crm" | "enrich" | "sequence" | "lookalike" | "optout" | "delete";
 
@@ -914,13 +805,40 @@ function leadMenuItems(
   ];
 }
 
+const BUCKET_FALLBACK: Record<LeadBucket, string> = {
+  all: "All",
+  strong: "80+",
+  email: "Email",
+  verified: "Verified",
+  due: "Due",
+  signals: "Signals",
+  pipeline: "Outreach",
+};
+
+function bucketChipClass(active: boolean): string {
+  return cn(
+    "inline-flex h-[34px] shrink-0 cursor-pointer items-center whitespace-nowrap rounded-full px-3.5 text-[13px] font-medium outline outline-1 transition-colors duration-150",
+    active
+      ? "bg-indigo-600 text-white outline-indigo-600"
+      : "bg-background text-foreground outline-black/15 hover:bg-muted/50 dark:outline-white/15",
+  );
+}
+
 function LeadBook({
   tx,
+  token,
   rows,
-  filter,
+  bucket,
+  facet,
+  query,
   busy,
+  exportBusy,
+  locale,
   crmProjectName,
-  onFilter,
+  onBucket,
+  onFacet,
+  onQuery,
+  onExport,
   onOpen,
   onCrm,
   onEnrich,
@@ -930,11 +848,19 @@ function LeadBook({
   onDelete,
 }: {
   tx: Tx;
+  token: string;
   rows: LeadRow[];
-  filter: BookFilter;
+  bucket: LeadBucket;
+  facet: LeadFacetFilter;
+  query: string;
   busy: boolean;
+  exportBusy: boolean;
+  locale: string;
   crmProjectName?: string;
-  onFilter: (value: BookFilter) => void;
+  onBucket: (value: LeadBucket) => void;
+  onFacet: (value: LeadFacetFilter) => void;
+  onQuery: (value: string) => void;
+  onExport: () => void;
   onOpen: (id: string) => void;
   onCrm: (id: string) => void;
   onEnrich: (id: string) => void;
@@ -943,11 +869,14 @@ function LeadBook({
   onOptout: (value: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const { page, setPage, slice, totalPages, pageSize } = usePagedRows(rows, LEADS_PAGE_SIZE);
+  const counts = bucketCounts(rows);
+  const pool = bucketRows(rows, bucket);
+  const shown = applyLeadFilter(pool, facet, query);
+  const { page, setPage, slice, totalPages, pageSize } = usePagedRows(shown, LEADS_PAGE_SIZE);
   const [pending, setPending] = useState<{ kind: "delete" | "optout"; row: LeadRow } | null>(null);
   useEffect(() => {
     setPage(1);
-  }, [filter, setPage]);
+  }, [bucket, facet, query, setPage]);
 
   const crmLabel = crmProjectName
     ? tx("dossier.crmNamed", "Add to CRM · {{project}}", { project: crmProjectName })
@@ -963,141 +892,78 @@ function LeadBook({
     else if (kind === "delete") setPending({ kind: "delete", row });
   };
 
-  const filters: { id: BookFilter; label: string }[] = [
-    { id: "all", label: tx("filter.all", "All") },
-    { id: "strong", label: tx("filter.strong", "80+") },
-    { id: "email", label: tx("filter.email", "Email") },
-    { id: "verified", label: tx("filter.verified", "Verified") },
-    { id: "due", label: tx("filter.due", "Due") },
-    { id: "signals", label: tx("filter.signals", "Signals") },
-    { id: "pipeline", label: tx("filter.pipeline", "Outreach") },
-  ];
+  const listTabs = (
+    <div
+      className="flex shrink-0 flex-nowrap items-center gap-1.5"
+      role="tablist"
+      aria-label={tx("bucketsAria", "Lead lists")}
+      data-testid="leads-buckets"
+    >
+      {LEAD_BUCKETS.map((id) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={bucket === id}
+          data-testid={`leads-filter-${id}`}
+          onClick={() => onBucket(id)}
+          className={bucketChipClass(bucket === id)}
+        >
+          {tx(`filter.${id}`, BUCKET_FALLBACK[id])} · {counts[id]}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
-    <div className="grid gap-4" data-testid="leads-book">
-      <div className="flex flex-wrap gap-2">
-        {filters.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            data-testid={`leads-filter-${item.id}`}
-            onClick={() => onFilter(item.id)}
-            className={cn(
-              "min-h-10 cursor-pointer rounded-full px-4 text-sm font-medium outline outline-1",
-              filter === item.id
-                ? "bg-indigo-600 text-white outline-indigo-600"
-                : "bg-background outline-black/10 dark:outline-white/10",
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-      {rows.length === 0 ? (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" data-testid="leads-book">
+      <LeadFilters
+        rows={pool}
+        filter={facet}
+        query={query}
+        tx={tx}
+        locale={locale}
+        onChange={onFacet}
+        onQuery={onQuery}
+        leading={listTabs}
+        extra={
+          <DefaultButton
+            text={tx("exportCsv", "Export CSV")}
+            iconProps={{ iconName: "Download" }}
+            disabled={busy || exportBusy || rows.length === 0}
+            onClick={onExport}
+            styles={BUTTON_STYLES}
+            data-testid="leads-export"
+          />
+        }
+      />
+      <p className="text-sm text-muted-foreground" data-testid="leads-result-count">
+        {tx("resultCount", "Your search returns {{count}} results.", { count: shown.length })}
+      </p>
+      {shown.length === 0 ? (
         <p className={cn(SURFACE, "p-6 text-sm text-muted-foreground")}>
           {tx("bookEmpty", "No leads in this view. Hunt companies or change the filter.")}
         </p>
       ) : (
         <>
-          <div className={cn(SURFACE, "overflow-hidden")}>
-            <div className="min-w-0 overflow-x-auto" data-testid="leads-book-table">
-              <table className="w-full min-w-[64rem] border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-black/10 text-left dark:border-white/10">
-                    {BOOK_COLUMNS.map((col) => (
-                      <th
-                        key={col.key}
-                        className="whitespace-nowrap px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-                      >
-                        {tx(col.label, col.fallback)}
-                      </th>
-                    ))}
-                    <th className="px-2 py-2">
-                      <span className="sr-only">{tx("rowMenu", "Lead actions")}</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slice.map((row) => {
-                    const contact = [row.person, row.role].filter(Boolean).join(" · ");
-                    return (
-                      <tr
-                        key={row.id}
-                        className="border-b border-black/5 dark:border-white/10"
-                        data-testid="leads-book-row"
-                      >
-                        <td className="max-w-[16rem] px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => onOpen(row.id)}
-                            className="flex min-h-11 min-w-0 max-w-full cursor-pointer items-center rounded-lg px-1 text-left hover:bg-muted/30"
-                            title={row.company}
-                            data-testid="leads-book-open"
-                          >
-                            <span className="min-w-0 truncate font-medium">{row.company}</span>
-                          </button>
-                        </td>
-                        <td className="max-w-[12rem] truncate px-3 py-2" title={contact}>
-                          {contact || "-"}
-                        </td>
-                        <td className="max-w-[14rem] truncate px-3 py-2" title={row.email || ""}>
-                          {row.email || tx("bookNoEmail", "no email yet")}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2">{row.country || "-"}</td>
-                        <td className={cn("whitespace-nowrap px-3 py-2 tabular-nums font-semibold", scoreTone(row.score))}>
-                          {row.score ?? 0}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 uppercase text-muted-foreground">
-                          {row.stage || "new"}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2">
-                          {row.source ? <SourceBadge source={row.source} /> : "-"}
-                        </td>
-                        <td className="max-w-[14rem] truncate px-3 py-2 text-muted-foreground" title={row.next_action || ""}>
-                          {row.next_action || "-"}
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-1">
-                          <div className="flex flex-nowrap items-center justify-end gap-1">
-                            <DefaultButton
-                              text={tx("rowCrm", "Add to CRM")}
-                              title={crmLabel}
-                              ariaLabel={crmLabel}
-                              iconProps={{ iconName: "AddFriend" }}
-                              disabled={busy}
-                              onClick={() => onCrm(row.id)}
-                              styles={{ root: { minHeight: 40, minWidth: 0, cursor: "pointer" } }}
-                              data-testid="leads-row-crm"
-                            />
-                            <IconButton
-                              iconProps={{ iconName: "Delete" }}
-                              title={tx("rowDelete", "Delete")}
-                              ariaLabel={tx("rowDelete", "Delete")}
-                              disabled={busy}
-                              onClick={() => setPending({ kind: "delete", row })}
-                              styles={ROW_ICON_BUTTON_STYLES}
-                              data-testid="leads-row-delete"
-                            />
-                            <IconButton
-                              iconProps={{ iconName: "MoreVertical" }}
-                              title={tx("rowMenu", "Lead actions")}
-                              ariaLabel={tx("rowMenu", "Lead actions")}
-                              disabled={busy}
-                              menuProps={{ ...LEAD_ROW_MENU, items: leadMenuItems(row, tx, (kind) => runRow(kind, row)) }}
-                              styles={ROW_ICON_BUTTON_STYLES}
-                              data-testid="leads-row-menu"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <div className="grid min-w-0 gap-3" data-testid="leads-book-list">
+            {slice.map((row) => (
+              <LeadCard
+                key={row.id}
+                row={row}
+                tx={tx}
+                token={token}
+                busy={busy}
+                locale={locale}
+                crmLabel={crmLabel}
+                onAction={(kind) => runRow(kind, row)}
+              />
+            ))}
           </div>
           <LeadPager
             page={page}
             pages={totalPages}
-            count={rows.length}
+            count={shown.length}
             pageSize={pageSize}
             tx={tx}
             onPage={setPage}
@@ -1145,6 +1011,233 @@ function LeadBook({
         </DialogFooter>
       </Dialog>
     </div>
+  );
+}
+
+const CARD_FACT_ICON: Record<string, string> = {
+  country: "MapPin",
+  email: "Mail",
+  phone: "Phone",
+  next: "Forward",
+  sequence: "Timeline",
+  signals: "Lightbulb",
+};
+
+function companyInitials(name: string): string {
+  const words = String(name || "").replace(/[^\p{L}\p{N} ]+/gu, " ").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase() || "").join("");
+}
+
+function addedLabel(row: LeadRow, locale: string): string {
+  const stamp = Number(row.created_at || row.updated_at || 0);
+  if (!stamp) return "";
+  try {
+    return new Date(stamp * 1000).toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return new Date(stamp * 1000).toISOString().slice(0, 10);
+  }
+}
+
+function sentence(text: string): string {
+  const raw = String(text || "").trim();
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "";
+}
+
+/** Board-style lead card: pills, company, tags, contact and evidence on the left, the facts column on the right. */
+function LeadCard({
+  row,
+  tx,
+  token,
+  busy,
+  locale,
+  crmLabel,
+  onAction,
+}: {
+  row: LeadRow;
+  tx: Tx;
+  token: string;
+  busy: boolean;
+  locale: string;
+  crmLabel: string;
+  onAction: (kind: LeadRowKind) => void;
+}) {
+  const stage = String(row.stage || "new").toLowerCase();
+  const due = leadHasDueStep(row);
+  const signal = leadHasBuyingSignal(row);
+  const outreach = leadInOutreach(row);
+  const nextStep = leadNextStep(row);
+  const contact = [row.person, row.role].filter(Boolean).join(" · ");
+  const evidence = (row.why || []).filter(Boolean).join(" · ") || row.signal || "";
+  const tags = [sectorLabel(row.sector || "", locale), row.size ? tx("card.size", "{{size}} employees", { size: row.size }) : ""].filter(Boolean);
+  const website = String(row.website || row.domain || "").trim();
+  const country = countryDisplayName(String(row.country || ""), locale);
+  const facts: { key: string; label: string; value: string }[] = [];
+  if (country) facts.push({ key: "country", label: tx("col.country", "Country"), value: country });
+  facts.push({
+    key: "email",
+    label: tx("col.email", "Email"),
+    value: row.email
+      ? `${row.email}${row.email_status === "verified" ? ` · ${tx("emailVerifiedShort", "verified")}` : ""}`
+      : tx("bookNoEmail", "no email yet"),
+  });
+  if (row.phone) facts.push({ key: "phone", label: tx("card.phone", "Phone"), value: row.phone });
+  if (row.next_action) facts.push({ key: "next", label: tx("col.next", "Next action"), value: sentence(row.next_action) });
+  if (nextStep) {
+    facts.push({
+      key: "sequence",
+      label: tx("card.sequence", "Sequence"),
+      value: due
+        ? tx("card.stepDue", "Step {{n}} is due", { n: Number(nextStep.n || 0) })
+        : tx("card.stepNext", "Step {{n}} next", { n: Number(nextStep.n || 0) }),
+    });
+  }
+  if (row.signals?.length) {
+    facts.push({ key: "signals", label: tx("kpi.signals", "Buying signals"), value: String(row.signals.length) });
+  }
+  return (
+    <article
+      data-testid="leads-card"
+      className={cn(SURFACE, "grid min-w-0 overflow-hidden transition-shadow duration-150 hover:shadow-[0_8px_24px_rgba(15,23,42,0.1)] md:grid-cols-[minmax(0,1fr)_15.5rem]")}
+    >
+      <div className="min-w-0 p-4 sm:p-5">
+        <div className="flex flex-nowrap items-start gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+              {tx(`stage.${stage}`, sentence(stage))}
+            </span>
+            {(row.score || 0) >= 80 ? (
+              <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("kpi.strong", "Tier A")}
+              </span>
+            ) : null}
+            {due ? (
+              <span className="rounded-full bg-orange-500 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("home.queueDue", "Follow-up is due")}
+              </span>
+            ) : null}
+            {signal ? (
+              <span className="rounded-full bg-sky-600 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white">
+                {tx("filter.signals", "Signals")}
+              </span>
+            ) : null}
+            {outreach && !due ? (
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                {tx("kpi.pipeline", "In outreach")}
+              </span>
+            ) : null}
+          </div>
+          <span
+            className={cn("shrink-0 tabular-nums text-sm font-semibold", scoreTone(row.score))}
+            title={tx("col.score", "Score")}
+            data-testid="leads-card-score"
+          >
+            {row.score ?? 0}
+          </span>
+          <IconButton
+            iconProps={{ iconName: "AddFriend" }}
+            title={crmLabel}
+            ariaLabel={crmLabel}
+            disabled={busy}
+            onClick={() => onAction("crm")}
+            styles={{ root: { width: 32, height: 32, flexShrink: 0 } }}
+            data-testid="leads-row-crm"
+          />
+          <IconButton
+            iconProps={{ iconName: "Delete" }}
+            title={tx("rowDelete", "Delete")}
+            ariaLabel={tx("rowDelete", "Delete")}
+            disabled={busy}
+            onClick={() => onAction("delete")}
+            styles={{ root: { width: 32, height: 32, flexShrink: 0 } }}
+            data-testid="leads-row-delete"
+          />
+          <IconButton
+            iconProps={{ iconName: "MoreVertical" }}
+            title={tx("rowMenu", "Lead actions")}
+            ariaLabel={tx("rowMenu", "Lead actions")}
+            disabled={busy}
+            menuProps={{ ...LEAD_ROW_MENU, items: leadMenuItems(row, tx, onAction) }}
+            styles={{ root: { width: 32, height: 32, flexShrink: 0 }, menuIcon: { display: "none" } }}
+            data-testid="leads-row-menu"
+          />
+        </div>
+        <button
+          type="button"
+          className="mt-2 block w-full cursor-pointer text-left"
+          onClick={() => onAction("view")}
+          data-testid="leads-book-open"
+        >
+          <h3 className="text-balance text-lg font-semibold leading-snug hover:underline">{row.company}</h3>
+        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <span key={tag} className="rounded-md bg-indigo-300/25 px-1.5 py-0.5 text-[11px] font-medium text-indigo-900 dark:text-indigo-200">
+              {tag}
+            </span>
+          ))}
+          {row.source ? <SourceBadge source={row.source} /> : null}
+          {addedLabel(row, locale) ? (
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{addedLabel(row, locale)}</span>
+          ) : null}
+        </div>
+        <div className="mt-3 flex gap-3">
+          <div
+            aria-hidden
+            className="grid size-14 shrink-0 place-items-center rounded-xl bg-indigo-500/12 text-base font-bold text-indigo-800 dark:text-indigo-300"
+          >
+            {companyInitials(row.company)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{contact || tx("card.noContact", "No contact yet")}</p>
+            <p className="mt-0.5 line-clamp-3 text-pretty text-sm text-muted-foreground">
+              {evidence || tx("card.noEvidence", "Not scored yet. Rescore BANT-F or enrich the missing fields.")}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+          {website && token ? (
+            <button
+              type="button"
+              className="cursor-pointer text-[13px] text-indigo-700 underline underline-offset-2 dark:text-indigo-300"
+              onClick={() => openOfficialLeadUrl(token, website)}
+            >
+              {tx("card.website", "Website")}
+            </button>
+          ) : null}
+          {row.linkedin_url && token ? (
+            <button
+              type="button"
+              className="cursor-pointer text-[13px] text-indigo-700 underline underline-offset-2 dark:text-indigo-300"
+              onClick={() => openOfficialLeadUrl(token, row.linkedin_url || "")}
+            >
+              LinkedIn
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="cursor-pointer text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
+            onClick={() => onAction("view")}
+            data-testid="leads-card-view"
+          >
+            {tx("viewLead", "View this lead")}
+          </button>
+        </div>
+      </div>
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+        <dl className="grid gap-3" data-testid="leads-facts">
+          {facts.map((fact) => (
+            <div key={fact.key} data-testid={`leads-fact-${fact.key}`}>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{fact.label}</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 text-sm">
+                <Icon iconName={CARD_FACT_ICON[fact.key] || "Info"} className="text-[13px] text-indigo-700 dark:text-indigo-300" aria-hidden />
+                <span className="min-w-0 break-words">{fact.value}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </aside>
+    </article>
   );
 }
 

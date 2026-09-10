@@ -22,25 +22,24 @@ import {
 import "@/lib/fluent-icons";
 import { useTranslation } from "react-i18next";
 
-import { CareerDashboard, type OfferDeskOpen } from "@/components/studio/career/CareerDashboard";
+import type { OfferDeskOpen } from "@/components/studio/career/CareerDashboard";
 import { CvPreview, DossierPreview } from "@/components/studio/DossierPreview";
 import { DocumentGenerationNotice } from "@/components/studio/DocumentGenerationNotice";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import type { CareerLoopSchedule } from "@/lib/career-api";
 import { browserTimeZone } from "@/lib/trading-loop-schedule";
 import { CareerFilters } from "@/components/studio/career/CareerFilters";
-import { type CareerMoneyBarProps } from "@/components/studio/career/CareerKpis";
 import { CareerWizard } from "@/components/studio/career/CareerWizard";
 import {
   CareerMailAccountSummary, CareerMailCompose, CareerMailReceiptView, CareerMailSettings, careerMailError,
 } from "@/components/studio/career/CareerMailPanel";
 import {
   DEFAULT_SEARCH_COUNTRIES,
+  BUTTON_STYLES,
   ICON_BUTTON_STYLES,
   OFFER_ROW_MENU,
   careerDeskHash,
   careerHashJob,
-  careerHashPane,
   careerShowsDesk,
   careerShowsWizard,
   expandSearchCountries,
@@ -77,7 +76,6 @@ import {
 import { CareerEmployers } from "@/components/studio/career/CareerEmployers";
 import {
   classifyReply,
-  computeCareerKpis,
   dedupeApplications,
   draftFollowup,
   jobIsRelevant,
@@ -85,7 +83,6 @@ import {
   scoreOpportunity,
   stripHtml,
 } from "@/lib/career-match";
-import { BILLABLE_DAYS, careerMoney, formatMoney } from "@/lib/career-money";
 import {
   applicationStatusKey,
   followupDue,
@@ -93,10 +90,12 @@ import {
   listTrackedApplications,
   type ApplicationView,
 } from "@/lib/career-apps";
-import { offerFacts, type OfferFact, type OfferFactCopy } from "@/lib/career-facts";
+import { contractLabel, offerContracts, offerFacts, type OfferFact, type OfferFactCopy } from "@/lib/career-facts";
 import {
   applyOfferFilter,
   emptyOfferFilter,
+  offerDomain,
+  offerIsoDay,
   type OfferFacetFilter,
 } from "@/lib/career-filters";
 import { downloadCareerExport } from "@/lib/career-export";
@@ -117,7 +116,6 @@ import { fetchWebSearchOpportunities, isJobListingPage } from "@/lib/career-web"
 import { cn } from "@/lib/utils";
 
 const SPRING = { type: "spring" as const, duration: 0.3, bounce: 0 };
-const BUTTON_STYLES = { root: { minHeight: 40, cursor: "pointer" as const } };
 const SURFACE =
   "rounded-2xl shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 dark:outline-white/10";
 const STAGE_FLOW = [
@@ -145,7 +143,8 @@ const JOBS_PANES = [
   { id: "profile", icon: "Contact" },
 ] as const;
 
-type Pane = "home" | "offers" | "applications" | "inbox" | "pipeline" | "interviews" | "profile";
+/** The desk lands on Offers: there is no dashboard pane any more. */
+type Pane = "offers" | "applications" | "inbox" | "pipeline" | "interviews" | "profile";
 type Tx = (key: string, fallback: string, values?: Record<string, string | number>) => string;
 
 function useCareerTheme(mode: "light" | "dark") {
@@ -286,8 +285,59 @@ function factsCopy(tx: Tx): OfferFactCopy {
     workRemote: tx("workRemote", "Full remote"),
     workHybrid: tx("workHybrid", "Hybrid"),
     workOnsite: tx("workOnsite", "On site"),
-    perDay: tx("factPerDay", "/ day"),
+    perDay: tx("factPerDay", "/day"),
+    perYear: tx("factPerYear", "/yr"),
+    dayRate: tx("factDayRate", "Day rate"),
+    salary: tx("factSalary", "Salary"),
+    contract: tx("factContract", "Contract"),
+    experience: tx("factExperience", "Experience"),
+    start: tx("factStart", "Start"),
+    startAsap: tx("factStartAsap", "As soon as possible"),
+    contracts: {
+      contractor: tx("contract_contractor", "Freelance"),
+      permanent: tx("contract_permanent", "Permanent"),
+      "fixed-term": tx("contract_fixed_term", "Fixed-term"),
+      "part-time": tx("contract_part_time", "Part-time"),
+      temporary: tx("contract_temporary", "Temporary"),
+      internship: tx("contract_internship", "Internship"),
+      apprenticeship: tx("contract_apprenticeship", "Apprenticeship"),
+    },
+    experiences: {
+      junior: tx("experience_junior", "Junior (0-2 years)"),
+      mid: tx("experience_mid", "Confirmed (3-5 years)"),
+      senior: tx("experience_senior", "Senior (6-10 years)"),
+      expert: tx("experience_expert", "Expert (10+ years)"),
+    },
   };
+}
+
+/** Free-Work palette: green freelance, orange permanent, blue fixed-term. */
+const BADGE_TONE: Record<string, string> = {
+  contractor: "bg-emerald-600",
+  permanent: "bg-orange-500",
+  "fixed-term": "bg-sky-600",
+  "part-time": "bg-violet-600",
+  temporary: "bg-amber-600",
+  internship: "bg-slate-500",
+  apprenticeship: "bg-slate-500",
+};
+
+/** Contract pills the way the boards print them (Freelance, CDI, CDD...). */
+function OfferBadges({ row, copy }: { row: CareerOpportunity; copy: OfferFactCopy }) {
+  const kinds = offerContracts(row);
+  if (!kinds.length) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1" data-testid="career-offer-badges">
+      {kinds.map((kind) => (
+        <span
+          key={kind}
+          className={cn("rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-white", BADGE_TONE[kind] || "bg-slate-500")}
+        >
+          {contractLabel(kind, copy)}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 export function CareerWorkspace({
@@ -317,9 +367,7 @@ export function CareerWorkspace({
   const [linkedinMcpOn, setLinkedinMcpOn] = useState(false);
   const [busy, setBusy] = useState("");
   const [track, setTrack] = useState<CareerTrack>("freelance");
-  const [pane, setPane] = useState<Pane>(() =>
-    deskPane === "offers" || jobId || careerHashPane() === "offers" ? "offers" : "home",
-  );
+  const [pane, setPane] = useState<Pane>("offers");
   const [offerListView, setOfferListView] = useState<OfferListView>("inbox");
   const [selectedId, setSelectedId] = useState(() => jobId || careerHashJob());
   const [titles, setTitles] = useState("");
@@ -332,7 +380,6 @@ export function CareerWorkspace({
   const [available, setAvailable] = useState("");
   const [languages, setLanguages] = useState("fr, en");
   const [workMode, setWorkMode] = useState("remote");
-  const [brief, setBrief] = useState("");
   const [inboxText, setInboxText] = useState("");
   const [localApps, setLocalApps] = useState<CareerApplication[]>([]);
   const [localRows, setLocalRows] = useState<CareerOpportunity[]>([]);
@@ -603,7 +650,7 @@ export function CareerWorkspace({
       if (!stayOnSetup.current) setView("work");
       return;
     }
-    setPane(deskPane === "offers" ? "offers" : "home");
+    setPane("offers");
     if (deskPane === "offers" && !stayOnSetup.current) setView("work");
   }, [deskPane, jobId]);
 
@@ -618,7 +665,6 @@ export function CareerWorkspace({
     return [...extra, ...remote];
   }, [desk.inbox, localInbox]);
   const followupBody = localFollowup || desk.followup?.body || "";
-  const liveKpis = useMemo(() => computeCareerKpis(activeScored, apps, inbox), [activeScored, apps, inbox]);
 
   /** Same gate as Tenders: configuration stepper first, desk after wizard_complete. */
   const wizardComplete = Boolean(desk.profile?.wizard_complete);
@@ -633,17 +679,14 @@ export function CareerWorkspace({
   }, [deskReady, hasOffers, jobId, view, wizardComplete]);
 
   const panes = track === "freelance" ? FREELANCE_PANES : JOBS_PANES;
-  const query = brief.trim() || titles;
+  // The brief now comes from the profile titles (the dashboard prompt box is gone).
+  const query = titles;
   const marketIsos = expandSearchCountries(
     [...primary.split(","), ...secondary.split(",")],
     excluded.split(","),
   );
   const portals = authorizedPortals(query, marketIsos.length ? marketIsos : [...DEFAULT_SEARCH_COUNTRIES], track, workMode);
   const lang = (i18n.language || "fr").slice(0, 2);
-  const money = useMemo(
-    () => careerMoney(profileForScore, activeScored, track),
-    [profileForScore, activeScored, track],
-  );
   const domainHints = useMemo(
     () =>
       [...(profileForScore.stack || []), ...(profileForScore.titles || [])]
@@ -651,66 +694,6 @@ export function CareerWorkspace({
         .filter(Boolean),
     [profileForScore.stack, profileForScore.titles],
   );
-  const moneyBar = useMemo<CareerMoneyBarProps>(
-    () => ({
-      amount: formatMoney(money.monthly, money.currency, lang),
-      basis:
-        money.goal > 0 && track === "freelance"
-          ? tx("money.basisRate", "{{rate}} {{currency}} / day x {{days}} days", {
-              rate: money.goal,
-              currency: money.currency,
-              days: BILLABLE_DAYS,
-            })
-          : money.goal > 0
-            ? tx("money.basisSalary", "{{amount}} a year", {
-                amount: formatMoney(money.yearly, money.currency, lang),
-              })
-            : "",
-      facts: [
-        {
-          id: "found",
-          label: tx("kpiOpportunities", "Opportunities"),
-          value: String(scoredRows.length),
-        },
-        { id: "strong", label: tx("kpiStrong", "Strong matches"), value: String(money.strong) },
-        {
-          id: "above",
-          label:
-            track === "freelance"
-              ? tx("money.aboveRate", "Offers at your rate")
-              : tx("money.aboveSalary", "Offers at your salary"),
-          value: money.withPay ? `${money.atOrAboveGoal}/${money.withPay}` : "-",
-        },
-        { id: "inflight", label: tx("money.inFlight", "In progress"), value: String(money.inFlight) },
-      ],
-      goalField:
-        Number(desk.profile?.[track === "freelance" ? "min_rate" : "min_salary"] || 0) > 0
-          ? undefined
-          : {
-              label:
-                track === "freelance"
-                  ? tx("start.rate", "Your daily rate")
-                  : tx("start.salary", "Salary you want"),
-              value: track === "freelance" ? minRate : minSalary,
-              suffix: track === "freelance" ? `${money.currency} / ${tx("start.day", "day")}` : money.currency,
-              saveLabel: tx("saveRate", "Save rate"),
-              onChange: (value) => (track === "freelance" ? setMinRate(value) : setMinSalary(value)),
-              onSave: () => {
-                const raw = Number((track === "freelance" ? minRate : minSalary).replace(/[^\d.]/g, "")) || 0;
-                if (raw <= 0) return;
-                void run(
-                  "profile",
-                  track === "freelance" ? { min_rate: raw } : { min_salary: raw },
-                );
-              },
-            },
-    }),
-    [desk.profile, lang, minRate, minSalary, money, scoredRows.length, track, tx, run],
-  );
-
-  const matchRatio = rows.length
-    ? rows.filter((row) => (row.match_score || 0) >= 80).length / rows.length
-    : 0;
   const mergeRows = (found: CareerOpportunity[]) => {
     setLocalRows((current) => {
       const byKey = new Map(current.map((row) => [opportunityKey(row), row]));
@@ -994,13 +977,13 @@ export function CareerWorkspace({
     return 0;
   };
 
-  const goDesk = (next: "home" | "offers", job?: string) => {
+  const goDesk = (job?: string) => {
     stayOnSetup.current = false;
     setView("work");
-    setPane(next);
-    setSelectedId(next === "offers" ? (job || "").trim() : "");
-    if (onDeskPane) onDeskPane(next, job);
-    else replaceCareerHash(careerDeskHash({ pane: next, job }));
+    setPane("offers");
+    setSelectedId((job || "").trim());
+    if (onDeskPane) onDeskPane("offers", job);
+    else replaceCareerHash(careerDeskHash({ pane: "offers", job }));
   };
 
   const selectOffer = (id: string) => {
@@ -1017,11 +1000,7 @@ export function CareerWorkspace({
     } else if (next?.bucket) {
       setBucketFilter(next.bucket);
     }
-    goDesk("offers", next?.id);
-  };
-
-  const openHome = () => {
-    goDesk("home");
+    goDesk(next?.id);
   };
 
   const openSetup = () => {
@@ -1049,31 +1028,21 @@ export function CareerWorkspace({
         )}
         style={{ paddingRight: NOTIFICATION_GUTTER, WebkitFontSmoothing: "antialiased" }}
       >
-        <header className="flex shrink-0 flex-col gap-2 px-5 py-3 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {showWizard ? (
-              <PrimaryButton
-                text={tx("settings", "Settings")}
-                ariaLabel={tx("settings", "Settings")}
-                title={tx("profileConfig", "Profile setup")}
-                iconProps={{ iconName: "Settings" }}
-                onClick={openSetup}
-                styles={BUTTON_STYLES}
-                data-testid="career-open-setup"
-              />
-            ) : (
-              <DefaultButton
-                text={tx("settings", "Settings")}
-                ariaLabel={tx("settings", "Settings")}
-                title={tx("profileConfig", "Profile setup")}
-                iconProps={{ iconName: "Settings" }}
-                onClick={openSetup}
-                styles={BUTTON_STYLES}
-                data-testid="career-open-setup"
-              />
-            )}
+        <header className="flex shrink-0 flex-nowrap items-center gap-x-3 px-5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <h1
+              className="shrink-0 whitespace-nowrap text-xl font-semibold tracking-tight"
+              data-testid="career-title"
+            >
+              {tx("title", "Navin Career")}
+            </h1>
+            {!showWizard && desk.profile?.display_name ? (
+              <p className="max-w-[10rem] shrink-0 truncate text-sm font-medium text-muted-foreground">
+                {desk.profile.display_name}
+              </p>
+            ) : null}
             <div
-              className="flex shrink-0 items-center gap-2"
+              className="flex shrink-0 items-center gap-1.5"
               role="tablist"
               aria-label={tx("tracksAria", "Career tracks")}
             >
@@ -1085,7 +1054,7 @@ export function CareerWorkspace({
                   aria-selected={track === id}
                   whileTap={reduceMotion ? undefined : { scale: 0.96 }}
                   className={cn(
-                    "min-h-10 cursor-pointer rounded-full px-4 text-sm font-medium outline outline-1 transition-[background-color,color] duration-150",
+                    "min-h-9 cursor-pointer rounded-full px-3.5 text-sm font-medium outline outline-1 transition-[background-color,color] duration-150",
                     track === id
                       ? "bg-indigo-600 text-white outline-indigo-600"
                       : "bg-background text-foreground outline-black/10 hover:bg-muted/50 dark:outline-white/10",
@@ -1105,47 +1074,6 @@ export function CareerWorkspace({
                 </motion.button>
               ))}
             </div>
-            <h1
-              className="shrink-0 whitespace-nowrap text-xl font-semibold tracking-tight"
-              data-testid="career-title"
-            >
-              {tx("title", "Navin Career")}
-            </h1>
-            {!showWizard && desk.profile?.display_name ? (
-              <p className="min-w-0 truncate text-sm font-medium">{desk.profile.display_name}</p>
-            ) : null}
-          </div>
-          <p
-            className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-muted-foreground"
-            style={{ whiteSpace: "nowrap" }}
-            data-testid="career-tagline"
-            title={tx("oneLiner", "Navin finds missions, scores them, and prepares your CV. LinkedIn: you open, you paste.")}
-          >
-            {tx("oneLiner", "Navin finds missions, scores them, and prepares your CV. LinkedIn: you open, you paste.")}
-          </p>
-          <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            {/* Back to the dashboard from the setup wizard as soon as a desk
-                exists to return to (offers present or wizard already done). */}
-            {hasOffers || showDesk || wizardComplete ? (
-              pane === "home" && view === "work" ? (
-                <PrimaryButton
-                  text={tx("homeDashboard", "Dashboard")}
-                  iconProps={{ iconName: "Home" }}
-                  onClick={openHome}
-                  styles={BUTTON_STYLES}
-                  data-testid="career-open-dashboard"
-                />
-              ) : (
-                <DefaultButton
-                  text={tx("homeDashboard", "Dashboard")}
-                  iconProps={{ iconName: "Home" }}
-                  onClick={openHome}
-                  styles={BUTTON_STYLES}
-                  data-testid="career-open-dashboard"
-                />
-              )
-            ) : null}
             {showDesk ? (
               pane === "offers" && view === "work" ? (
                 <PrimaryButton
@@ -1203,9 +1131,7 @@ export function CareerWorkspace({
                 iconProps={{ iconName: "Search" }}
                 disabled={Boolean(busy)}
                 onClick={() => {
-                  const text =
-                    brief.trim() ||
-                    `${titles} ${track} ${primary} ${workMode} ${minRate ? `${minRate}/day` : ""} ${stack}`;
+                  const text = `${titles} ${track} ${primary} ${workMode} ${minRate ? `${minRate}/day` : ""} ${stack}`;
                   void searchLive(text, "find");
                   onSeed?.(
                     `/career Find missions for: ${text}. Call career action=status first (full local book). Then career action=find with this brief. Ingest LinkedIn MCP search_jobs hits (never scrape). Do not invent offers or experience.\n\n`,
@@ -1215,25 +1141,38 @@ export function CareerWorkspace({
                 styles={BUTTON_STYLES}
               />
             ) : null}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {onToggleChat ? (
-              <DefaultButton
-                text={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                iconProps={{ iconName: "Chat" }}
+              <IconButton
+                ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
+                title={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
+                iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
                 onClick={onToggleChat}
                 aria-pressed={Boolean(chatOpen)}
-                styles={BUTTON_STYLES}
+                checked={Boolean(chatOpen)}
+                styles={ICON_BUTTON_STYLES}
+                data-testid="career-toggle-chat"
               />
             ) : null}
-          </div>
-          <IconButton
-            ariaLabel={tx("refresh", "Refresh")}
-            title={tx("refresh", "Refresh")}
-            iconProps={{ iconName: "Refresh" }}
-            disabled={Boolean(busy)}
-            onClick={() => void refreshDesk()}
-            styles={ICON_BUTTON_STYLES}
-            data-testid="career-refresh"
-          />
+            <IconButton
+              ariaLabel={tx("settings", "Settings")}
+              title={tx("profileConfig", "Profile setup")}
+              iconProps={{ iconName: "Settings" }}
+              onClick={openSetup}
+              checked={showWizard}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="career-open-setup"
+            />
+            <IconButton
+              ariaLabel={tx("refresh", "Refresh")}
+              title={tx("refresh", "Refresh")}
+              iconProps={{ iconName: "Refresh" }}
+              disabled={Boolean(busy)}
+              onClick={() => void refreshDesk()}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="career-refresh"
+            />
           </div>
         </header>
 
@@ -1336,61 +1275,9 @@ export function CareerWorkspace({
                   onSecret={async (name, value) => Boolean(await run("secret", { name, value }))}
                 />
               ) : null}
-              {showDesk && pane === "home" ? (
-                <CareerDashboard
-                  tx={tx}
-                  money={moneyBar}
-                  matchRatio={matchRatio}
-                  busy={Boolean(busy)}
-                  headline={liveKpis.headline}
-                  live={activeScored}
-                  allRows={scoredRows}
-                  applications={apps.length}
-                  interviews={activeScored.filter((row) => row.stage === "interview").length}
-                  searchNote={searchNote || desk.search?.note}
-                  onOpenOffers={openOffers}
-                  onOpenPane={(next) => {
-                    if (next === "interviews" && track === "freelance") setPane("pipeline");
-                    else setPane(next);
-                  }}
-                  onSearch={() => {
-                    openOffers({ view: "inbox", bucket: "all" });
-                    void searchLive(brief || titles);
-                  }}
-                  onFind={() => {
-                    const text =
-                      brief.trim() ||
-                      `${titles} ${track} ${primary} ${workMode} ${minRate ? `${minRate}/day` : ""} ${stack}`;
-                    openOffers({ view: "inbox", bucket: "all" });
-                    void searchLive(text, "find");
-                  }}
-                  onOpenProfile={() => setPane("profile")}
-                  loop={desk.loop}
-                  journal={desk.journal}
-                  locale={i18n.language}
-                  sources={
-                    <CareerSourcesBlock
-                      tx={tx}
-                      catalog={desk.catalog || []}
-                      mcp={desk.stack?.mcp || []}
-                      linkedinMcpOn={linkedinMcpOn}
-                      portals={portals}
-                      token={token || ""}
-                      onImport={importPasted}
-                      employers={desk.employers}
-                      userEmployers={desk.profile?.employers || []}
-                      hiddenEmployers={desk.profile?.employers_hidden || []}
-                      busy={Boolean(busy)}
-                      onSaveProfile={(patch) => void saveWizard(patch)}
-                    />
-                  }
-                />
-              ) : null}
               {showDesk && pane === "offers" ? (
                 <OffersPane
                   tx={tx}
-                  brief={brief}
-                  setBrief={setBrief}
                   rows={rows}
                   allRows={scoredRows}
                   domainHints={domainHints}
@@ -1416,15 +1303,7 @@ export function CareerWorkspace({
                   onBucket={setBucketFilter}
                   listView={offerListView}
                   onListView={setOfferListView}
-                  onSearch={() => void searchLive(brief || titles)}
-                  onMatch={() => {
-                    setLocalRows((current) =>
-                      current.map((row) =>
-                        scoreOpportunity({ ...row, description: stripHtml(row.description || "") }, profileForScore),
-                      ),
-                    );
-                    void run("match");
-                  }}
+                  onSearch={() => void searchLive(titles)}
                   onPrepare={() => void prepareSelected()}
                   onApply={() => void applySelected()}
                   onEmail={() => selected && void openMail(selected.id)}
@@ -1520,6 +1399,20 @@ export function CareerWorkspace({
                   onReopen={openSetup}
                   busy={Boolean(busy)}
                   onAiAssist={(enabled) => void run("profile", { ai_assist: enabled })}
+                />
+                <CareerSourcesBlock
+                  tx={tx}
+                  catalog={desk.catalog || []}
+                  mcp={desk.stack?.mcp || []}
+                  linkedinMcpOn={linkedinMcpOn}
+                  portals={portals}
+                  token={token || ""}
+                  onImport={importPasted}
+                  employers={desk.employers}
+                  userEmployers={desk.profile?.employers || []}
+                  hiddenEmployers={desk.profile?.employers_hidden || []}
+                  busy={Boolean(busy)}
+                  onSaveProfile={(patch) => void saveWizard(patch)}
                 />
                 </>
               ) : null}
@@ -1628,9 +1521,12 @@ function OfferDetail({
   const description = stripHtml(row.description || "");
   return (
     <div className="grid gap-4" data-testid="career-offer-panel">
-      <p className="text-pretty text-sm text-muted-foreground">
-        {[row.company, row.source].filter(Boolean).join(" · ")}
-      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-pretty text-sm text-muted-foreground">
+          {[row.company, row.source].filter(Boolean).join(" · ")}
+        </p>
+        <OfferBadges row={row} copy={copy} />
+      </div>
       <OfferFactsRow facts={offerFacts(row, copy, locale, track)} />
       <p className="max-h-64 overflow-auto whitespace-pre-wrap text-pretty text-sm leading-relaxed">
         {description || tx("noDescription", "No description stored. Open the original URL.")}
@@ -1954,10 +1850,184 @@ function DeskSkeleton() {
   );
 }
 
+const CARD_FACT_ICON: Record<string, string> = {
+  start: "Calendar",
+  duration: "Clock",
+  salary: "Money",
+  dayrate: "Money",
+  pay: "Money",
+  remote: "Home",
+  place: "MapPin",
+  experience: "Contact",
+};
+
+function regionName(code: string, locale: string): string {
+  const iso = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(iso)) return code;
+  try {
+    return new Intl.DisplayNames([locale], { type: "region" }).of(iso) || iso;
+  } catch {
+    return iso;
+  }
+}
+
+function postedLabel(value: string | undefined, locale: string): string {
+  const day = offerIsoDay(value);
+  if (!day) return "";
+  try {
+    return new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${day}T12:00:00Z`));
+  } catch {
+    return day;
+  }
+}
+
+function companyInitials(name: string): string {
+  const words = String(name || "").replace(/[^\p{L}\p{N} ]+/gu, " ").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase() || "").join("");
+}
+
+/** Board-style offer card: pills, title, tags, company excerpt on the left, the facts column on the right. */
+function OfferCard({
+  row,
+  tx,
+  copy,
+  locale,
+  track,
+  hints,
+  open,
+  listView,
+  onSelect,
+  onOfferAction,
+}: {
+  row: CareerOpportunity;
+  tx: Tx;
+  copy: OfferFactCopy;
+  locale: string;
+  track: CareerTrack;
+  hints: string[];
+  open: boolean;
+  listView: OfferListView;
+  onSelect: (id: string) => void;
+  onOfferAction: (id: string, action: OfferRowAction) => void;
+}) {
+  const starred = Boolean(row.favorite) && !row.archived;
+  const facts = offerFacts(row, copy, locale, track);
+  const byId = new Map(facts.map((fact) => [fact.id, fact]));
+  const known = (id: string) => {
+    const fact = byId.get(id);
+    return fact && fact.value !== copy.unknown ? fact : null;
+  };
+  const side: { id: string; label: string; value: string }[] = [];
+  for (const id of ["start", "duration", "salary", "dayrate", "pay", "remote"]) {
+    const fact = known(id);
+    if (fact) side.push(fact);
+  }
+  const city = known("city")?.value || "";
+  const country = known("country")?.value || "";
+  const place = [city, country ? regionName(country, locale) : ""].filter(Boolean).join(", ");
+  if (place) side.push({ id: "place", label: tx("factPlace", "Location"), value: place });
+  const experience = known("experience");
+  if (experience) side.push(experience);
+  const domain = offerDomain(row, hints);
+  const tags = [...new Set([domain, ...(row.stack || []).map((item) => String(item).trim())].filter(Boolean))].slice(0, 3);
+  const posted = postedLabel(row.posted_at, locale);
+  const excerpt = stripHtml(row.description || "").replace(/\s+/g, " ").trim().slice(0, 240);
+  const company = row.company || row.source || "";
+  return (
+    <article
+      data-testid="career-offer-card"
+      className={cn(
+        "grid overflow-hidden rounded-2xl bg-background outline outline-1 outline-black/10 transition-shadow duration-150 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)] dark:outline-white/10 md:grid-cols-[minmax(0,1fr)_15.5rem]",
+        open && "outline-indigo-500/70 ring-2 ring-indigo-500/20",
+      )}
+    >
+      <div className="min-w-0 p-4 sm:p-5">
+        <div className="flex items-start gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            <OfferBadges row={row} copy={copy} />
+            {row.archived ? (
+              <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-[11px] font-medium">{tx("archivedBadge", "Archived")}</span>
+            ) : null}
+          </div>
+          <span
+            className={cn("shrink-0 tabular-nums text-sm font-semibold", scoreTone(row.match_score))}
+            title={tx("filterBucket", "Match")}
+          >
+            {row.match_score ?? "-"}%
+          </span>
+          <IconButton
+            ariaLabel={starred ? tx("unfavorite", "Remove favorite") : tx("favorite", "Favorite")}
+            title={starred ? tx("unfavorite", "Remove favorite") : tx("favorite", "Favorite")}
+            iconProps={{ iconName: starred ? "HeartFill" : "Heart" }}
+            onClick={() => onOfferAction(row.id, starred ? "unfavorite" : "favorite")}
+            styles={{ root: { width: 32, height: 32, color: starred ? "rgb(225 29 72)" : undefined }, rootHovered: { color: "rgb(225 29 72)" } }}
+            data-testid="career-offer-favorite"
+          />
+          <IconButton
+            ariaLabel={tx("rowMenu", "Offer actions")}
+            title={tx("rowMenu", "Offer actions")}
+            iconProps={{ iconName: "MoreVertical" }}
+            menuProps={{ ...OFFER_ROW_MENU, items: offerMenuItems(listView, starred, tx, (action) => onOfferAction(row.id, action)) }}
+            styles={{ root: { width: 32, height: 32 }, menuIcon: { display: "none" } }}
+          />
+        </div>
+        <button type="button" className="mt-2 block w-full text-left" onClick={() => onSelect(row.id)}>
+          <h3 className="text-balance text-lg font-semibold leading-snug hover:underline">{row.title}</h3>
+        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <span key={tag} className="rounded-md bg-amber-300/30 px-1.5 py-0.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
+              {tag}
+            </span>
+          ))}
+          {posted ? <span className="ml-auto text-xs tabular-nums text-muted-foreground">{posted}</span> : null}
+        </div>
+        <div className="mt-3 flex gap-3">
+          <div
+            aria-hidden
+            className="grid size-14 shrink-0 place-items-center rounded-xl bg-indigo-500/12 text-base font-bold text-indigo-700 dark:text-indigo-300"
+          >
+            {companyInitials(company)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{company}</p>
+            <p className="mt-0.5 line-clamp-3 text-pretty text-sm text-muted-foreground">
+              {excerpt || tx("noDescription", "No description stored. Open the original URL.")}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline dark:text-indigo-300"
+            onClick={() => onSelect(row.id)}
+            data-testid="career-offer-open"
+          >
+            {tx("viewOffer", "View this offer")}
+          </button>
+        </div>
+      </div>
+      <aside className="border-t border-black/10 bg-muted/30 p-4 dark:border-white/10 md:border-l md:border-t-0">
+        <dl className="grid gap-3" data-testid="career-offer-facts">
+          {side.map((fact) => (
+            <div key={fact.id}>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{fact.label}</dt>
+              <dd className="mt-0.5 flex items-center gap-1.5 text-sm">
+                <Icon iconName={CARD_FACT_ICON[fact.id] || "Info"} className="text-[13px] text-indigo-600 dark:text-indigo-300" aria-hidden />
+                <span className="min-w-0 break-words">{fact.value}</span>
+              </dd>
+            </div>
+          ))}
+          {!side.length ? <p className="text-sm text-muted-foreground">{copy.unknown}</p> : null}
+        </dl>
+      </aside>
+    </article>
+  );
+}
+
 function OffersPane({
   tx,
-  brief,
-  setBrief,
   rows,
   allRows,
   domainHints,
@@ -1970,7 +2040,6 @@ function OffersPane({
   token,
   busy,
   onSearch,
-  onMatch,
   onPrepare,
   onApply,
   onEmail,
@@ -1987,8 +2056,6 @@ function OffersPane({
   track = "freelance",
 }: {
   tx: Tx;
-  brief: string;
-  setBrief: (value: string) => void;
   rows: CareerOpportunity[];
   allRows: CareerOpportunity[];
   domainHints: string[];
@@ -2001,7 +2068,6 @@ function OffersPane({
   token: string;
   busy: boolean;
   onSearch: () => void;
-  onMatch: () => void;
   onPrepare: () => void;
   onApply: () => void;
   onEmail: () => void;
@@ -2040,67 +2106,65 @@ function OffersPane({
     setPage(1);
   };
 
-  return (
-    <div className="grid gap-8" data-testid="career-offers">
-      <Surface className="space-y-5 p-6">
-        <TextField
-          label={tx("briefLabel", "Find me a mission")}
-          multiline
-          rows={2}
-          value={brief}
-          onChange={(_, value) => setBrief(value || "")}
-          placeholder={tx(
-            "briefPlaceholder",
-            "Senior Data Engineer freelance, France + UAE, remote, 650+/day, Python Spark Databricks",
-          )}
-        />
-        <div className="flex flex-wrap gap-3">
-          <PrimaryButton
-            styles={BUTTON_STYLES}
-            iconProps={{ iconName: "Search" }}
-            text={busy ? tx("searching", "Searching...") : tx("search", "Search offers")}
-            disabled={busy}
-            onClick={onSearch}
-          />
-          <DefaultButton
-            styles={BUTTON_STYLES}
-            iconProps={{ iconName: "Equalizer" }}
-            text={tx("rescore", "Rescore")}
-            disabled={busy}
-            onClick={onMatch}
-          />
-          <DefaultButton
-            styles={BUTTON_STYLES}
-            iconProps={{ iconName: "FavoriteStar" }}
-            text={tx("openFavorites", "Favorites")}
-            onClick={() => openList(listView === "favorites" ? "inbox" : "favorites")}
-          />
-          <DefaultButton
-            styles={BUTTON_STYLES}
-            iconProps={{ iconName: "Archive" }}
-            text={tx("openArchive", "Archive")}
-            onClick={() => openList(listView === "archive" ? "inbox" : "archive")}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2" role="group" aria-label={tx("bucketAria", "Match filters")}>
-          {(["all", "perfect", "good", "skip"] as const).map((id) => (
+  const copy = factsCopy(tx);
+  const listTabs = (
+    <div className="flex shrink-0 flex-nowrap items-center gap-2">
+      <div className="flex flex-nowrap gap-1.5" role="group" aria-label={tx("bucketAria", "Match filters")}>
+        {(["all", "perfect", "good", "skip"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={cn(
+              "min-h-8 rounded-full px-3 text-xs font-medium outline outline-1 transition-[background-color,color] duration-150",
+              bucket === id
+                ? "bg-indigo-600 text-white outline-indigo-600"
+                : "outline-black/10 hover:bg-muted/50 dark:outline-white/10",
+            )}
+            onClick={() => onBucket(id)}
+          >
+            {tx(`bucket.${id}`, id)}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-nowrap gap-1.5" role="tablist" aria-label={tx("listViews", "Offer lists")}>
+        {(
+          [
+            { id: "inbox" as const, label: "resultsTitle", fallback: "Offers", count: rows.length },
+            { id: "favorites" as const, label: "openFavorites", fallback: "Favorites", count: favorites.length },
+            { id: "archive" as const, label: "openArchive", fallback: "Archive", count: archived.length },
+          ]
+        ).map((item) => {
+          const active = listView === item.id;
+          return (
             <button
-              key={id}
+              key={item.id}
               type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => openList(item.id)}
               className={cn(
-                "min-h-9 rounded-full px-3 text-xs font-medium outline outline-1 transition-[background-color,color] duration-150",
-                bucket === id
+                "min-h-8 cursor-pointer rounded-full px-3 text-xs font-medium outline outline-1 transition-[background-color,color] duration-150",
+                active
                   ? "bg-indigo-600 text-white outline-indigo-600"
                   : "outline-black/10 hover:bg-muted/50 dark:outline-white/10",
               )}
-              onClick={() => onBucket(id)}
             >
-              {tx(`bucket.${id}`, id)}
+              {tx(item.label, item.fallback)} · {item.count}
             </button>
-          ))}
-        </div>
-        {searchNote ? <p className="text-pretty text-sm text-muted-foreground">{searchNote}</p> : null}
-      </Surface>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5" data-testid="career-offers">
+      {searchNote ? (
+        <details className="text-sm text-muted-foreground">
+          <summary className="cursor-pointer select-none text-xs font-medium">{tx("searchNoteTitle", "Sources of this run")}</summary>
+          <p className="mt-2 text-pretty">{searchNote}</p>
+        </details>
+      ) : null}
 
       {pool.length === 0 ? (
         <Surface className="space-y-4 p-6">
@@ -2122,7 +2186,7 @@ function OffersPane({
                   )
                 : tx(
                     "emptyOffers",
-                    "No offers yet. Search above, or import a paste from the dashboard.",
+                    "No offers yet. Use Find me a mission, or paste an offer from the Profile pane.",
                   )}
           </p>
           {listView === "inbox" ? (
@@ -2141,65 +2205,16 @@ function OffersPane({
           )}
         </Surface>
       ) : (
-        <div className="grid gap-6">
-          <div className="flex w-full flex-wrap items-center gap-3">
-            {listView !== "inbox" ? (
-              <h3 className="mr-auto text-lg font-semibold">
-                {listView === "favorites"
-                  ? tx("openFavorites", "Favorites")
-                  : tx("openArchive", "Archive")}
-              </h3>
-            ) : null}
-            <div className="ml-auto flex flex-wrap justify-end gap-2" role="tablist" aria-label={tx("listViews", "Offer lists")}>
-              {(
-                [
-                  { id: "inbox" as const, label: "resultsTitle", fallback: "Offers", count: rows.length },
-                  { id: "favorites" as const, label: "openFavorites", fallback: "Favorites", count: favorites.length },
-                  { id: "archive" as const, label: "openArchive", fallback: "Archive", count: archived.length },
-                ]
-              ).map((item) => {
-                const active = listView === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => openList(item.id)}
-                    className={cn(
-                      "min-h-9 cursor-pointer rounded-full px-3 text-xs font-medium outline outline-1 transition-[background-color,color] duration-150",
-                      active
-                        ? "bg-indigo-600 text-white outline-indigo-600"
-                        : "outline-black/10 hover:bg-muted/50 dark:outline-white/10",
-                    )}
-                  >
-                    {tx(item.label, item.fallback)} · {item.count}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          {listView !== "inbox" ? (
-            <p className="max-w-xl text-pretty text-sm text-muted-foreground">
-              {listView === "favorites"
-                ? tx(
-                    "favoritesHint",
-                    "Starred offers stay here until you archive or delete them. Auto-archive still runs after {{days}} days.",
-                    { days: archiveAfterDays },
-                  )
-                : tx(
-                    "archiveHint",
-                    "Offers move here after {{archive}} days, or when you archive them. They are deleted after {{purge}} days.",
-                    { archive: archiveAfterDays, purge: deleteAfterDays },
-                  )}
-            </p>
-          ) : null}
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
           <CareerFilters
             rows={pool}
             hints={domainHints}
             filter={facet}
             tx={tx}
+            track={track}
+            locale={locale}
             onChange={setFacet}
+            leading={listTabs}
             trailing={
               <DefaultButton
                 text={tx("export", "Export")}
@@ -2234,6 +2249,24 @@ function OffersPane({
               />
             }
           />
+          {listView !== "inbox" ? (
+            <p className="max-w-xl text-pretty text-sm text-muted-foreground">
+              {listView === "favorites"
+                ? tx(
+                    "favoritesHint",
+                    "Starred offers stay here until you archive or delete them. Auto-archive still runs after {{days}} days.",
+                    { days: archiveAfterDays },
+                  )
+                : tx(
+                    "archiveHint",
+                    "Offers move here after {{archive}} days, or when you archive them. They are deleted after {{purge}} days.",
+                    { archive: archiveAfterDays, purge: deleteAfterDays },
+                  )}
+            </p>
+          ) : null}
+          <p className="text-sm text-muted-foreground" data-testid="career-result-count">
+            {tx("resultCount", "Your search returns {{count}} results.", { count: filtered.length })}
+          </p>
           {filtered.length === 0 ? (
             <Surface className="space-y-3 p-6">
               <h3 className="text-balance text-lg font-semibold">
@@ -2249,45 +2282,22 @@ function OffersPane({
               />
             </Surface>
           ) : null}
-          <div className="overflow-x-auto" data-testid="career-offer-grid">
-          {pageRows.map((row) => {
-            const open = selected?.id === row.id;
-            const starred = Boolean(row.favorite) && !row.archived;
-            return (
-              <div
+          <div className="grid gap-3" data-testid="career-offer-grid">
+            {pageRows.map((row) => (
+              <OfferCard
                 key={row.id}
-                className={cn(
-                  "flex items-start gap-2 border-b border-black/10 py-3 dark:border-white/10",
-                  open && "bg-indigo-500/8",
-                )}
-              >
-                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onSelect(row.id)}>
-                  <div className="flex items-center gap-3">
-                    <p className="min-w-0 flex-1 truncate text-base font-semibold">{row.title}</p>
-                    <span className={cn("shrink-0 tabular-nums text-base font-semibold", scoreTone(row.match_score))}>
-                      {row.match_score ?? "-"}%
-                    </span>
-                  </div>
-                  <p className="mt-0.5 truncate text-sm text-muted-foreground">
-                    {[row.company, row.source].filter(Boolean).join(" · ")}
-                    {starred ? ` · ${tx("favoriteBadge", "Favorite")}` : ""}
-                    {row.archived ? ` · ${tx("archivedBadge", "Archived")}` : ""}
-                  </p>
-                  <OfferFactsRow facts={offerFacts(row, factsCopy(tx), locale, track)} />
-                </button>
-                <IconButton
-                  ariaLabel={tx("rowMenu", "Offer actions")}
-                  title={tx("rowMenu", "Offer actions")}
-                  iconProps={{ iconName: "MoreVertical" }}
-                  menuProps={{ ...OFFER_ROW_MENU, items: offerMenuItems(listView, starred, tx, (action) => onOfferAction(row.id, action)) }}
-                  styles={{
-                    root: { width: 40, height: 40 },
-                    menuIcon: { display: "none" },
-                  }}
-                />
-              </div>
-            );
-          })}
+                row={row}
+                tx={tx}
+                copy={copy}
+                locale={locale}
+                track={track}
+                hints={domainHints}
+                open={selected?.id === row.id}
+                listView={listView}
+                onSelect={onSelect}
+                onOfferAction={onOfferAction}
+              />
+            ))}
           </div>
           <Panel
             isOpen={Boolean(selected)}

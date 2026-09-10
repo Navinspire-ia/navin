@@ -29,7 +29,7 @@ function notice(partial: Partial<TenderNotice> = {}): TenderNotice {
 }
 
 describe("tender notice cards", () => {
-  it("keeps title, score and menu on one row and shows a labeled facts table", () => {
+  it("prints a board card: pills, title, buyer, excerpt and a facts column without unknown values", () => {
     const html = renderToStaticMarkup(
       createElement(PipelineList, {
         rows: [
@@ -41,43 +41,40 @@ describe("tender notice cards", () => {
           }),
         ],
         view: "pipeline",
-        layout: "cards",
         tx,
         busy: false,
         token: "tok",
         onAction: () => {},
       }),
     );
+    expect(html).toContain('data-testid="tenders-notice-card"');
     expect(html).toContain("flex-nowrap");
-    expect(html).toContain("truncate");
     expect(html).toContain('data-testid="tenders-facts-row"');
-    expect(html).toContain("Status");
     expect(html).toContain("Ouvert");
     expect(html).toContain("DINUM");
-    expect(html).toContain("non renseigne");
-    expect(html).not.toContain("<p>");
+    expect(html).toContain("Deadline");
+    expect(html).toContain("France");
+    expect(html).toContain("View this notice");
+    expect(html).toContain("77%");
+    expect(html).toContain('data-testid="tenders-notice-favorite"');
+    // Empty facts stay off the card: no Budget / Duration placeholders.
+    expect(html).not.toContain("non renseigne");
+    expect(html).not.toContain("Budget");
+    expect(html).toContain("Are you a talented Senior Data Engineer");
+    expect(html).not.toContain("<p>Are you");
     expect(html).not.toContain("fr manquant");
-    expect(html).not.toContain("en OK");
     expect(html).not.toContain("match_reasons");
-    expect(html).not.toContain("Are you a talented");
     expect(html).not.toContain("\u2014");
     expect(html).not.toContain("\u2013");
     expect(html).not.toContain('data-testid="tenders-notice-go"');
     expect(html).not.toContain('data-testid="tenders-notice-nogo"');
   });
 
-  it("renders a compact table when layout is list", () => {
+  it("no longer renders a table: the list is a stack of cards", () => {
     const html = renderToStaticMarkup(
       createElement(PipelineList, {
-        rows: [
-          notice({
-            status: "open",
-            buyer: "DINUM",
-            deadline: "2026-09-15",
-          }),
-        ],
+        rows: [notice({ status: "open", buyer: "DINUM", deadline: "2026-09-15" })],
         view: "pipeline",
-        layout: "list",
         tx,
         busy: false,
         token: "tok",
@@ -85,17 +82,10 @@ describe("tender notice cards", () => {
       }),
     );
     expect(html).toContain('data-testid="tenders-notice-list"');
-    expect(html).toContain("tenders-notice-table");
-    expect(html).toContain("<table");
-    expect(html).toContain("Title");
-    expect(html).toContain("DINUM");
-    expect(html).not.toContain("Language");
-    expect(html).not.toContain("Source");
+    expect(html).not.toContain("<table");
+    expect(html).not.toContain("tenders-notice-table");
     expect(html).not.toContain("min-w-[72rem]");
-    expect(html).not.toContain("overflow-x-auto");
     expect(html).not.toContain('data-testid="tenders-notice-grid"');
-    expect(html).not.toContain('data-testid="tenders-notice-go"');
-    expect(html).not.toContain('data-testid="tenders-notice-nogo"');
   });
 
   it("opens a cleaned detail surface without raw HTML", () => {

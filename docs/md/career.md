@@ -6,7 +6,7 @@ Store : `~/.navin/career`. Route : `#/career`.
 
 Tant que `enabled` et que `next_due` est atteint, le supervisor execute :
 
-1. `collect` (Remotive, ATS, APIs officielles, web ouvert)
+1. `collect` (flux publics Remotive / Jobicy / Remote OK / Himalayas / We Work Remotely / Arbeitnow / HN, ATS, JSON-LD JobPosting, APIs officielles, web ouvert)
 2. `watch` (alertes Perfect/Good et follow-ups J3/J7)
 
 Jamais d'apply. Jamais de scrape LinkedIn.

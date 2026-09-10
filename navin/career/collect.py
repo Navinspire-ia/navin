@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Collect job sources: Remotive, ATS boards, LinkedIn public listings, keyed APIs, web, scrape."""
+"""Collect job sources: Remotive, ATS boards, LinkedIn and Free-Work public listings, keyed APIs, web, scrape."""
 
 from __future__ import annotations
 
@@ -15,8 +15,11 @@ from typing import Any
 from loguru import logger
 
 from navin.career.employers import collect_employers
+from navin.career.feeds import FEED_IDS, collect_feeds
+from navin.career.freework import search_freework_jobs
 from navin.career.linkedin import search_linkedin_jobs
 from navin.career.matching import job_is_relevant, score_opportunity
+from navin.career.normalize import contracts_track, enrich_facts
 from navin.career.official import collect_official_apis
 from navin.career.scrape_net import scrape_open_net
 from navin.career.sources import (
@@ -59,14 +62,13 @@ _NOISE_HOSTS = (
 )
 
 _REMOTIVE = "https://remotive.com/api/remote-jobs"
-# Boards that only open in the browser or take a pasted import. LinkedIn is
-# not in this set any more: its public guest listing is read live.
+# Boards that only open in the browser or take a pasted import. LinkedIn and
+# Free-Work are not in this set: their public listings are read live.
 _KEYED_ONLY = {
     "malt",
     "indeed",
     "welcometothejungle",
     "apec",
-    "free-work",
     "chooseyourboss",
 }
 _LIVE_OFF = "live-off"
@@ -74,11 +76,12 @@ _OFFICIAL_IDS = {
     "adzuna",
     "jooble",
     "usajobs",
+    "jobopportunities",
     "francetravail",
     "france-travail",
     "official",
 }
-_OFFICIAL_APIS = ("adzuna", "jooble", "usajobs")
+_OFFICIAL_APIS = ("adzuna", "jooble", "usajobs", "jobopportunities")
 _LIVE_FAMILIES = {
     "remotive": {"remotive"},
     "ats": {"greenhouse", "lever", "ashby", "ats"},
@@ -86,6 +89,8 @@ _LIVE_FAMILIES = {
     "web": {"web-job-search", "web-search", "web"},
     "scrape": {"scrape", "web-job-search"},
     "linkedin": {"linkedin", "linkedin-public"},
+    "freework": {"free-work", "freework"},
+    "feeds": {"feeds", *FEED_IDS},
     "employers": {"employers", "esn", "company-pages"},
 }
 
@@ -138,6 +143,8 @@ def _search_families(
         "scrape": _want_family(profile, "scrape"),
         "official": bool(official_wanted),
         "linkedin": _want_family(profile, "linkedin"),
+        "freework": _want_family(profile, "freework"),
+        "feeds": _want_family(profile, "feeds"),
         "employers": profile.get("employer_watch", True) is not False and _want_family(profile, "employers"),
     }
 
@@ -157,7 +164,14 @@ def _search_note(families: dict[str, bool], official_wanted: list[str]) -> str:
         "Web search includes company career pages and public ATS boards. "
         "Scrape fetches open hosts only (never Indeed, Bayt). "
         "LinkedIn public listings are read from the guest job search "
-        "(no login, one request per second, capped per run). Never Easy Apply."
+        "(no login, one request per second, capped per run). Never Easy Apply. "
+        "Free-Work public listings are read from the public search pages for the "
+        "FR and GB markets (no login, one request per second, capped per run): "
+        "TJM, duration, remote mode and skills come straight from the listing. "
+        "Public job APIs and RSS feeds (Jobicy, Remote OK, Himalayas, We Work Remotely, "
+        "Arbeitnow, Hacker News Who is hiring) are read with a one hour cache; the source "
+        "stays credited and the original listing is the apply link. Pay, contract, remote "
+        "mode, experience and currency are normalized per market for every source."
     )
     parts.append(f"Keyed APIs on this run: {keyed_on}. Keyed APIs off: {keyed_off}.")
     parts.append(
@@ -236,7 +250,7 @@ def _fetch_json(url: str) -> Any:
 
 
 def _fetch_ats_boards(slugs: list[str]) -> list[dict[str, Any]]:
-    """Published Greenhouse / Lever / Ashby job boards only. Never a closed site."""
+    """Published Greenhouse / Lever / Ashby / Workable job boards only. Never a closed site."""
     rows: list[dict[str, Any]] = []
     for slug in [str(item).strip().lower() for item in slugs if str(item).strip()][:8]:
         if not slug.isalnum() and "-" not in slug and "_" not in slug:
@@ -245,6 +259,7 @@ def _fetch_ats_boards(slugs: list[str]) -> list[dict[str, Any]]:
             (f"https://boards-api.greenhouse.io/v1/boards/{urllib.parse.quote(slug)}/jobs?content=true", "greenhouse"),
             (f"https://api.lever.co/v0/postings/{urllib.parse.quote(slug)}?mode=json", "lever"),
             (f"https://api.ashbyhq.com/posting-api/job-board/{urllib.parse.quote(slug)}", "ashby"),
+            (f"https://apply.workable.com/api/v1/widget/accounts/{urllib.parse.quote(slug)}?details=true", "workable"),
         )
         for url, source in endpoints:
             try:
@@ -283,6 +298,12 @@ def _normalize_ats(source: str, slug: str, payload: Any) -> list[dict[str, Any]]
             loc = str(cats.get("location") or "")
             link = str(item.get("hostedUrl") or item.get("applyUrl") or "").strip()
             desc = str(item.get("descriptionPlain") or item.get("description") or "")
+        elif source == "workable":
+            title = str(item.get("title") or "").strip()
+            loc_obj = item.get("location") if isinstance(item.get("location"), dict) else {}
+            loc = ", ".join(str(loc_obj.get(key) or "") for key in ("city", "country") if loc_obj.get(key))
+            link = str(item.get("url") or item.get("shortlink") or "").strip()
+            desc = str(item.get("description") or "")
         else:
             title = str(item.get("title") or "").strip()
             loc = str(item.get("location") or "")
@@ -522,6 +543,34 @@ def collect(
             linkedin_net = {"jobs": [], "walls": [f"LinkedIn error: {exc}"], "requests": 0}
     linkedin_rows = list(linkedin_net.get("jobs") or [])
     rows.extend(linkedin_rows)
+    freework_net: dict[str, Any] = {"jobs": [], "walls": [], "requests": 0}
+    if _want_family(profile, "freework"):
+        try:
+            freework_net = search_freework_jobs(
+                titles=score_profile["titles"] or [search_title],
+                countries=markets,
+                track=wanted_track,
+            )
+        except Exception as exc:  # noqa: BLE001 - Free-Work must never break the other families
+            logger.warning("career free-work collect failed: {}", exc)
+            freework_net = {"jobs": [], "walls": [f"Free-Work error: {exc}"], "requests": 0}
+    freework_rows = list(freework_net.get("jobs") or [])
+    rows.extend(freework_rows)
+    feeds_net: dict[str, Any] = {"jobs": [], "walls": [], "requests": 0, "by_source": {}}
+    if _want_family(profile, "feeds"):
+        picked_feeds = [sid for sid in FEED_IDS if sid in _source_ids(profile)]
+        try:
+            feeds_net = collect_feeds(
+                titles=score_profile["titles"] or [search_title],
+                countries=markets,
+                track=wanted_track,
+                sources=picked_feeds or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - a feed must never break the other families
+            logger.warning("career feeds collect failed: {}", exc)
+            feeds_net = {"jobs": [], "walls": [f"Feeds error: {exc}"], "requests": 0, "by_source": {}}
+    feed_rows = list(feeds_net.get("jobs") or [])
+    rows.extend(feed_rows)
     employer_net: dict[str, Any] = {"jobs": [], "checked": 0, "reports": [], "errors": []}
     if profile.get("employer_watch", True) is not False and _want_family(profile, "employers"):
         state = store.load_employer_state()
@@ -565,14 +614,16 @@ def collect(
     for row in rows:
         url = str(row.get("url") or "")
         source = str(row.get("source") or "")
-        if is_closed_job_url(url) and source not in {"web", "linkedin", "import"}:
+        if is_closed_job_url(url) and source not in {"web", "linkedin", "free-work", "import"}:
             continue
         if is_listing_hit(str(row.get("title") or ""), url):
             continue
         if not job_is_relevant(row, score_profile):
             continue
-        row["track"] = _guess_track(row.get("title") or "", wanted_track)
         row["description"] = html_to_text(str(row.get("description") or ""))[:4000]
+        enrich_facts(row, track=wanted_track)
+        kinds = list(row.get("contracts") or [])
+        row["track"] = contracts_track(kinds, wanted_track) if kinds else _guess_track(row.get("title") or "", wanted_track)
         scored = score_opportunity(row, score_profile)
         row.update(scored)
         kept.append(row)
@@ -610,6 +661,8 @@ def collect(
             "official": len(keyed_rows),
             "scrape": len(scrape_rows),
             "linkedin": len(linkedin_rows),
+            "freework": len(freework_rows),
+            "feeds": len(feed_rows),
             "employers": len(employer_rows),
             "employers_checked": int(employer_net.get("checked") or 0),
             "families": dict(families),
@@ -624,6 +677,12 @@ def collect(
         "scrape": len(scrape_rows),
         "linkedin": len(linkedin_rows),
         "linkedin_requests": int(linkedin_net.get("requests") or 0),
+        "freework": len(freework_rows),
+        "freework_requests": int(freework_net.get("requests") or 0),
+        "freework_total": int(freework_net.get("total") or 0),
+        "feeds": len(feed_rows),
+        "feeds_requests": int(feeds_net.get("requests") or 0),
+        "feeds_by_source": dict(feeds_net.get("by_source") or {}),
         "employers": len(employer_rows),
         "employers_checked": int(employer_net.get("checked") or 0),
         "employer_reports": list(employer_net.get("reports") or [])[:60],
@@ -632,6 +691,9 @@ def collect(
         "portals": portals,
         "families": families,
         "connectors": connectors,
-        "walls": list(scrape_net.get("walls") or []) + list(linkedin_net.get("walls") or []),
+        "walls": list(scrape_net.get("walls") or [])
+        + list(linkedin_net.get("walls") or [])
+        + list(freework_net.get("walls") or [])
+        + list(feeds_net.get("walls") or []),
         "note": _search_note(families, official_wanted),
     }

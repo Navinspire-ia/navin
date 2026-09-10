@@ -143,7 +143,12 @@ def handle_marketing_action(action: str, body: dict[str, Any] | None = None) -> 
             result = configure_connection(store, provider, body)
         elif act == "oauth-connect":
             context = current_request_context()
-            result = start_connection(store, provider, session_key=context.session_key if context else "")
+            result = start_connection(
+                store,
+                provider,
+                session_key=context.session_key if context else "",
+                return_to=str(body.get("return_to") or ""),
+            )
         elif act == "oauth-disconnect":
             result = disconnect(store, provider)
         else:
