@@ -230,18 +230,42 @@ def tool_verb(name: str) -> str:
     return base.replace("_", " ")
 
 
-def tool_target(arguments: dict | None, *, limit: int = 36) -> str:
-    """File name or short query. Never a JSON blob or a home path dump."""
-    args = arguments if isinstance(arguments, dict) else {}
-    for key in ("path", "file_path", "file", "filename"):
+def _path_name(value: str) -> str:
+    cleaned = value.replace("\\", "/").strip()
+    return Path(cleaned).name or cleaned
+
+
+def _first_path(args: dict[str, Any]) -> str:
+    for key in ("path", "file_path", "file", "filename", "paths"):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
-            return Path(val.replace("\\", "/")).name or val.strip()
-        if isinstance(val, list) and val:
-            first = val[0]
-            if isinstance(first, str) and first.strip():
-                return Path(first.replace("\\", "/")).name
-    for key in ("pattern", "query", "command", "cmd", "url", "name"):
+            return val.strip()
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
+    edits = args.get("edits")
+    if isinstance(edits, list):
+        for item in edits:
+            if isinstance(item, dict):
+                for key in ("path", "file_path", "file"):
+                    val = item.get(key)
+                    if isinstance(val, str) and val.strip():
+                        return val.strip()
+    return ""
+
+
+def tool_target(arguments: dict | None, *, limit: int = 48) -> str:
+    """Short action target: file name, command, or query. No JSON."""
+    args = arguments if isinstance(arguments, dict) else {}
+    command = args.get("command") or args.get("cmd")
+    if isinstance(command, str) and command.strip():
+        text = humanize_shell_command(command, max_len=limit)
+        return text if text != "shell" else ""
+    path = _first_path(args)
+    if path:
+        return _path_name(path)
+    for key in ("pattern", "query", "url", "name", "action", "task"):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
             text = " ".join(val.split())
@@ -253,14 +277,96 @@ def describe_tool_line(
     name: str,
     arguments: dict | None,
     *,
-    done: bool,
+    done: bool = False,
+    added: int = 0,
+    removed: int = 0,
 ) -> str:
-    """Running: ``read  foo.py``. Done: ``read``. No args dump."""
+    """``edit  foo.py  +38 -14`` on one line."""
+    del done
     verb = tool_verb(name)
-    if done:
-        return verb
     target = tool_target(arguments)
-    return f"{verb}  {target}" if target else verb
+    line = f"{verb}  {target}" if target else verb
+    suffix = format_diff_suffix(added, removed)
+    return f"{line}  {suffix}" if suffix else line
+
+
+def format_diff_suffix(added: int, removed: int) -> str:
+    """``+38 -14`` for edit/create rows. Empty when both are zero."""
+    try:
+        plus = max(0, int(added or 0))
+        minus = max(0, int(removed or 0))
+    except (TypeError, ValueError):
+        return ""
+    if plus == 0 and minus == 0:
+        return ""
+    return f"+{plus} -{minus}"
+
+
+_DIFF_IN_TEXT_RE = re.compile(r"\(\+(\d+)/-(\d+)\)")
+
+
+def extract_line_diff(result: Any) -> tuple[int, int]:
+    """Pull + / - counts from a tool result or ``(+12/-3)`` text."""
+    if isinstance(result, dict):
+        added = result.get("added", result.get("lines_added"))
+        removed = result.get("removed", result.get("deleted", result.get("lines_removed")))
+        try:
+            plus = int(added or 0)
+            minus = int(removed or 0)
+        except (TypeError, ValueError):
+            plus, minus = 0, 0
+        if plus or minus:
+            return max(0, plus), max(0, minus)
+        for key in ("output", "content", "text", "message", "summary"):
+            val = result.get(key)
+            if isinstance(val, str):
+                found = extract_line_diff(val)
+                if found != (0, 0):
+                    return found
+        return 0, 0
+    if isinstance(result, str):
+        plus = minus = 0
+        for match in _DIFF_IN_TEXT_RE.finditer(result):
+            plus += int(match.group(1))
+            minus += int(match.group(2))
+        return plus, minus
+    return 0, 0
+
+
+def format_turn_summary(
+    rows: list[tuple[str, int, int]],
+) -> str:
+    """``Edited 4 files, explored 1 file, ran 1 command +38 -14``."""
+    edited = 0
+    explored = 0
+    ran = 0
+    added = 0
+    removed = 0
+    for name, plus, minus in rows:
+        verb = tool_verb(name)
+        if verb in {"edit", "create"}:
+            edited += 1
+            added += max(0, plus)
+            removed += max(0, minus)
+        elif verb == "run":
+            ran += 1
+        elif verb in {"read", "grep", "find", "list"}:
+            explored += 1
+        elif verb == "check":
+            ran += 1
+    bits: list[str] = []
+    if edited:
+        bits.append(f"Edited {edited} file{'s' if edited != 1 else ''}")
+    if explored:
+        bits.append(f"explored {explored} file{'s' if explored != 1 else ''}")
+    if ran:
+        bits.append(f"ran {ran} command{'s' if ran != 1 else ''}")
+    if not bits:
+        return f"{len(rows)} tool{'s' if len(rows) != 1 else ''}"
+    bits[0] = bits[0][0].upper() + bits[0][1:]
+    text = ", ".join(bits)
+    diff = format_diff_suffix(added, removed)
+    return f"{text} {diff}" if diff else text
 
 
 def format_tool_detail(
@@ -271,65 +377,109 @@ def format_tool_detail(
     error: str | None = None,
     output_lines: list[str] | None = None,
 ) -> str:
-    """Click-to-expand text. Sentences and paths, never a JSON dump."""
+    """Full click-to-expand text: path, command, live output, result."""
     args = arguments if isinstance(arguments, dict) else {}
     lines: list[str] = []
-    path = ""
-    for key in ("path", "file_path", "file", "filename"):
-        val = args.get(key)
-        if isinstance(val, str) and val.strip():
-            path = val.strip()
-            break
-        if isinstance(val, list) and val and isinstance(val[0], str):
-            path = val[0].strip()
-            break
+    path = _first_path(args)
     if path:
-        lines.append(abbreviate_path(path, max_len=72))
+        lines.append(abbreviate_path(path, max_len=120))
+    for key in ("offset", "limit", "line", "start", "end"):
+        val = args.get(key)
+        if val not in (None, "", 0, "0"):
+            lines.append(f"{key} {val}")
     pattern = args.get("pattern") or args.get("query")
     if isinstance(pattern, str) and pattern.strip():
         lines.append(pattern.strip())
     command = args.get("command") or args.get("cmd")
     if isinstance(command, str) and command.strip():
         flags = exec_flags(args)
-        pretty = humanize_shell_command(command, max_len=88)
+        pretty = humanize_shell_command(command, max_len=100)
         lines.append(f"{pretty} · {flags}" if flags else pretty)
+        raw = " ".join(command.split())
+        if raw and raw != pretty:
+            lines.append(raw)
     url = args.get("url")
     if isinstance(url, str) and url.strip():
         lines.append(url.strip())
+    action = args.get("action")
+    if isinstance(action, str) and action.strip() and action not in {path, pattern}:
+        lines.append(action.strip())
     question = args.get("question")
     if isinstance(question, str) and question.strip():
         lines.append(" ".join(question.split()))
+    edits = args.get("edits")
+    if isinstance(edits, list) and edits:
+        lines.append(f"{len(edits)} edit{'s' if len(edits) != 1 else ''}")
     if error:
-        lines.append(error.splitlines()[0][:240])
-    elif output_lines:
-        snippet = [line for line in output_lines[-8:] if line.strip()]
-        lines.extend(snippet[:6])
-    else:
-        preview = _human_result(result)
-        if preview:
-            lines.append(preview)
+        lines.extend(line.rstrip() for line in error.replace("\r\n", "\n").splitlines() if line.strip())
+    live = [line.rstrip() for line in (output_lines or []) if line.strip()]
+    if live:
+        lines.extend(live[-80:])
+    preview = _human_result(result, limit=8000)
+    if preview:
+        for line in preview.splitlines():
+            if line.strip() and line not in lines:
+                lines.append(line)
+    if not lines:
+        label = describe_tool_line(name, args)
+        if label:
+            lines.append(label)
     return "\n".join(lines).strip()
 
 
-def _human_result(result: Any, limit: int = 240) -> str:
+def _human_result(result: Any, limit: int = 8000) -> str:
     if result is None:
         return ""
+    if isinstance(result, bool):
+        return "ok" if result else "failed"
+    if isinstance(result, (int, float)) and not isinstance(result, bool):
+        return str(result)
     if isinstance(result, str):
-        text = result.strip()
+        text = result.replace("\r\n", "\n").strip()
         if not text:
             return ""
-        first = text.splitlines()[0].strip()
-        if len(text.splitlines()) > 1:
-            first = first[: max(limit - 2, 8)] + " …"
-        return first if len(first) <= limit else first[: limit - 1] + "…"
+        kept = [line.rstrip() for line in text.splitlines() if line.strip()][:120]
+        blob = "\n".join(kept)
+        if len(blob) > limit:
+            return blob[: limit - 1].rstrip() + "…"
+        return blob
     if isinstance(result, dict):
-        for key in ("output", "content", "text", "message", "error"):
+        bits: list[str] = []
+        code = result.get("returncode")
+        if isinstance(code, int):
+            bits.append("ok" if code == 0 else f"exit {code}")
+        if result.get("ok") is True and "ok" not in bits:
+            bits.append("ok")
+        for key in (
+            "output",
+            "stdout",
+            "stderr",
+            "content",
+            "text",
+            "message",
+            "error",
+            "summary",
+            "diff",
+            "result",
+            "status",
+        ):
             val = result.get(key)
             if isinstance(val, str) and val.strip():
-                return _human_result(val, limit)
-        return ""
+                chunk = _human_result(val, limit=max(80, limit // 2))
+                if chunk:
+                    bits.append(chunk)
+        added = result.get("added")
+        removed = result.get("removed")
+        if isinstance(added, int) or isinstance(removed, int):
+            bits.append(f"+{added or 0}  -{removed or 0}")
+        blob = "\n".join(bits)
+        return blob if len(blob) <= limit else blob[: limit - 1].rstrip() + "…"
     if isinstance(result, list):
-        return f"{len(result)} items" if result else ""
+        if not result:
+            return ""
+        if all(isinstance(item, str) for item in result[:8]):
+            return _human_result("\n".join(str(item) for item in result[:8]), limit)
+        return f"{len(result)} items"
     return ""
 
 

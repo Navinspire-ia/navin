@@ -10,9 +10,11 @@ from navin.utils.tool_hints import (
     describe_tool_headline,
     describe_tool_line,
     exec_flags,
+    extract_line_diff,
     format_seconds,
     format_tool_detail,
     format_tool_hints,
+    format_turn_summary,
     humanize_shell_command,
     tool_verb,
 )
@@ -91,7 +93,7 @@ class DescribeHeadlineTests(unittest.TestCase):
 
 
 class QuietToolLineTests(unittest.TestCase):
-    def test_done_row_is_just_the_verb(self) -> None:
+    def test_done_row_keeps_the_file_on_the_same_line(self) -> None:
         self.assertEqual(tool_verb("read_file"), "read")
         self.assertEqual(tool_verb("edit_file"), "edit")
         self.assertEqual(tool_verb("write_file"), "create")
@@ -101,7 +103,7 @@ class QuietToolLineTests(unittest.TestCase):
                 {"path": "~/projects/deploy7/db-migration/migrate_main_to_rel_v2.py"},
                 done=True,
             ),
-            "read",
+            "read  migrate_main_to_rel_v2.py",
         )
 
     def test_running_row_keeps_the_file_name_only(self) -> None:
@@ -135,6 +137,56 @@ class QuietToolLineTests(unittest.TestCase):
         self.assertIn("migrate_main_to_rel_v2.py", grep)
         self.assertIn("TODO", grep)
         self.assertNotIn("{", grep)
+
+        run = describe_tool_line(
+            "exec",
+            {"command": "cd ~/projects/deploy7/db-migration && python migrate.py"},
+        )
+        self.assertTrue(run.startswith("run  "))
+        self.assertIn("python migrate.py", run)
+
+        detail = format_tool_detail(
+            "exec",
+            {"command": "pytest -q"},
+            result="PASS - no lint errors, tests green\n2 passed",
+        )
+        self.assertIn("pytest", detail)
+        self.assertIn("PASS", detail)
+        self.assertIn("2 passed", detail)
+
+        long_out = "\n".join(f"line {i} ALTER TABLE users" for i in range(40))
+        full = format_tool_detail(
+            "exec",
+            {"command": "psql -f migrate.sql"},
+            result=long_out,
+        )
+        self.assertIn("line 0 ALTER TABLE users", full)
+        self.assertIn("line 39 ALTER TABLE users", full)
+        self.assertIn("psql -f migrate.sql", full)
+
+    def test_edit_line_shows_plus_and_minus(self) -> None:
+        line = describe_tool_line(
+            "edit_file",
+            {"path": "migrate_main_to_rel_v2.py"},
+            added=38,
+            removed=14,
+        )
+        self.assertEqual(line, "edit  migrate_main_to_rel_v2.py  +38 -14")
+        self.assertEqual(extract_line_diff(" - replace foo.py (+38/-14)"), (38, 14))
+        self.assertEqual(extract_line_diff({"added": 12, "deleted": 3}), (12, 3))
+        self.assertEqual(
+            format_turn_summary(
+                [
+                    ("edit_file", 38, 14),
+                    ("edit_file", 0, 0),
+                    ("write_file", 0, 0),
+                    ("apply_patch", 0, 0),
+                    ("read_file", 0, 0),
+                    ("exec", 0, 0),
+                ]
+            ),
+            "Edited 4 files, explored 1 file, ran 1 command +38 -14",
+        )
 
 
 if __name__ == "__main__":

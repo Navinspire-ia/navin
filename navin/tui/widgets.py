@@ -10,6 +10,7 @@ import contextlib
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from rich.markup import escape
@@ -26,7 +27,15 @@ from navin.tui.brand import MARK, tide_text, wave_frame
 from navin.tui.markdown import install_path_styles
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
-from navin.utils.tool_hints import CARD_ONLY_TOOLS, describe_tool_line, format_tool_detail
+from navin.utils.tool_hints import (
+    CARD_ONLY_TOOLS,
+    describe_tool_line,
+    extract_line_diff,
+    format_tool_detail,
+    format_turn_summary,
+    tool_target,
+    tool_verb,
+)
 
 install_path_styles()
 
@@ -420,16 +429,14 @@ class ToolCall(Vertical):
         text-style: none;
     }
     ToolCall > .tool-body {
-        display: none;
         padding: 0 0 0 5;
-        color: #9A9A9A;
-        max-height: 12;
+        color: #C8C8C8;
+        max-height: 32;
         overflow-y: auto;
         border-left: vkey #3A3A3A;
         background: $background;
         text-style: none;
     }
-    ToolCall.-open > .tool-body { display: block; }
     """
 
     SPINNER_STEPS = 12
@@ -443,12 +450,14 @@ class ToolCall(Vertical):
         self.result: Any = None
         self.error: str | None = None
         self.output_lines: list[str] = []
+        self.added = 0
+        self.removed = 0
         self._spin = 0
         self._open = False
         self.add_class("-running")
 
     def compose(self) -> ComposeResult:
-        yield Static(self._head_text(), classes="tool-head", markup=True)
+        yield Static(self._plain_head(), classes="tool-head", markup=False)
         yield Static("", classes="tool-body", markup=False)
 
     def on_mount(self) -> None:
@@ -460,7 +469,7 @@ class ToolCall(Vertical):
         if not self.is_mounted:
             return
         try:
-            self.query_one(".tool-head", Static).update(self._head_text())
+            self.query_one(".tool-head", Static).update(self._plain_head())
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
 
@@ -477,23 +486,28 @@ class ToolCall(Vertical):
             return " ✗ "
         return " ✓ "
 
-    def _head_text(self) -> str:
-        done = self.phase in {"end", "error"}
-        label = describe_tool_line(self.tool_name, self.arguments, done=done)
-        ink = "$error" if self.phase == "error" else tool_color(self.tool_name)
-        title = f"[{ink}]{_markup_escape(label)}[/]"
+    def _plain_head(self) -> str:
+        label = describe_tool_line(
+            self.tool_name,
+            self.arguments,
+            added=self.added,
+            removed=self.removed,
+        )
+        if self.phase == "error":
+            mark = "x "
+        elif self.phase in {"start", "output"}:
+            mark = f"{self._status_glyph().strip()} "
+        else:
+            mark = "* "
         tail = ""
         if self.phase == "error" and self.error:
             err = self.error.splitlines()[0]
             short = "timed out" if "timed out" in err.lower() else err[:40]
-            tail = f"  [#FF3B30]{_markup_escape(short)}[/]"
-        if self.phase == "error":
-            mark = "[#FF3B30] x [/]"
-        elif self.phase in {"start", "output"}:
-            mark = f"[{ink}]{self._status_glyph()}[/]"
-        else:
-            mark = "[#8A8A8A] * [/]"
-        return f"{mark}{title}{tail}"
+            tail = f"  {short}"
+        return f"{mark}{label}{tail}"
+
+    def _head_text(self) -> str:
+        return self._plain_head()
 
     def apply(
         self, *, phase: str, result: Any = None, error: str | None = None, output: str | None = None
@@ -507,12 +521,14 @@ class ToolCall(Vertical):
             self.phase = phase
             self.result = result
             self.error = error
+            plus, minus = extract_line_diff(result)
+            if plus or minus:
+                self.set_diff(plus, minus)
             self.remove_class("-running")
             self.add_class("-ok" if phase == "end" else "-error")
             self.collapse()
         self._refresh_head()
-        if self._open:
-            self._refresh_body()
+        self._refresh_body()
 
     def _refresh_body(self) -> None:
         if not self.is_mounted:
@@ -525,23 +541,31 @@ class ToolCall(Vertical):
             output_lines=self.output_lines,
         )
         try:
-            self.query_one(".tool-body", Static).update(text)
+            body = self.query_one(".tool-body", Static)
+            body.update(text)
+            body.display = self._open
         except Exception:  # noqa: BLE001
             pass
+
+    def set_diff(self, added: int, removed: int) -> None:
+        self.added = max(0, int(added or 0))
+        self.removed = max(0, int(removed or 0))
+        self._refresh_head()
 
     def collapse(self) -> None:
         self._open = False
         self.remove_class("-open")
         self._refresh_head()
+        self._refresh_body()
 
     def toggle(self) -> None:
         self._open = not self._open
         self.set_class(self._open, "-open")
-        if self._open:
-            self._refresh_body()
+        self._refresh_body()
 
-    def on_click(self) -> None:
+    def on_click(self, event: events.Click) -> None:
         self.toggle()
+        event.stop()
 
 
 class ProgressLine(Static):
@@ -688,9 +712,10 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-foot {
         margin: 0 0 1 0;
         padding: 0;
-        color: $text-muted;
+        color: #9A9A9A;
         display: none;
         background: $background;
+        text-style: none;
     }
     AssistantMessage > ReasoningBlock,
     AssistantMessage > ToolCall,
@@ -817,6 +842,27 @@ class AssistantMessage(Vertical):
             if phase == "start":
                 return
         widget.apply(phase=phase, result=result, error=error, output=output)
+
+    def note_file_edit(self, path: str, added: int, removed: int) -> None:
+        name = Path(path).name if path else ""
+        raw = path.replace("\\", "/")
+        match: ToolCall | None = None
+        for tool in self._tools.values():
+            if tool_verb(tool.tool_name) not in {"edit", "create"}:
+                continue
+            args = tool.arguments if isinstance(tool.arguments, dict) else {}
+            blob = " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
+            target = tool_target(args)
+            if (name and target == name) or (raw and raw in blob.replace("\\", "/")):
+                match = tool
+                break
+        if match is None:
+            for tool in reversed(list(self._tools.values())):
+                if tool_verb(tool.tool_name) in {"edit", "create"} and not (tool.added or tool.removed):
+                    match = tool
+                    break
+        if match is not None:
+            match.set_diff(added, removed)
 
     async def progress(self, text: str) -> None:
         preview = await self._ready_preview()
@@ -999,8 +1045,10 @@ class AssistantMessage(Vertical):
                 tool.collapse()
         foot = self.query_one(".assistant-foot", Static)
         if self._tools:
-            n = len(self._tools)
-            foot.update(f"{n} tool call{'s' if n != 1 else ''}")
+            summary = format_turn_summary(
+                [(tool.tool_name, tool.added, tool.removed) for tool in self._tools.values()]
+            )
+            foot.update(summary)
             foot.add_class("-visible")
         else:
             foot.update("")
