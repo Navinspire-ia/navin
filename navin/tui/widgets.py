@@ -1592,6 +1592,9 @@ class Composer(TextArea):
         )
         self.menu_open = False
         self.shortcut_keys: set[str] = set()
+        self._eat_enter = 0
+        self._last_paste = ""
+        self._last_paste_at = 0.0
 
     def _shell(self) -> ComposerShell | None:
         parent = self.parent
@@ -1612,8 +1615,35 @@ class Composer(TextArea):
         text = self.text
         return text.startswith("/") and "\n" not in text and " " not in text
 
+    def _insert_paste(self, text: str, *, trailing_newline: bool = False) -> None:
+        """Insert a paste once. A WT confirm + Ctrl+V must not double it."""
+        from navin.utils.tool_hints import clip_transcript
+
+        payload = clip_transcript(text)
+        if not payload:
+            return
+        now = time.monotonic()
+        if payload == self._last_paste and now - self._last_paste_at < 1.5:
+            return
+        self._last_paste = payload
+        self._last_paste_at = now
+        if trailing_newline or "\n" in payload:
+            self._eat_enter += 1
+        self.insert(payload)
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        raw = event.text or ""
+        event.prevent_default()
+        event.stop()
+        self._insert_paste(raw, trailing_newline=raw.endswith("\n") or raw.endswith("\r"))
+
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
+            if self._eat_enter:
+                self._eat_enter -= 1
+                event.prevent_default()
+                event.stop()
+                return
             event.prevent_default()
             event.stop()
             self.post_message(self.Submitted(self.text))
@@ -1658,11 +1688,10 @@ class Composer(TextArea):
 
     def action_paste_any(self) -> None:
         """Paste OS clipboard (Windows / WSL) or the in-app clipboard."""
-        from navin.tui.clipboard import read_clipboard
+        from navin.tui.clipboard import pick_paste_text, read_clipboard
 
-        text = (self.app.clipboard or "").strip("\x00") or read_clipboard()
-        if text:
-            self.insert(text)
+        text = pick_paste_text(self.app.clipboard, read_clipboard())
+        self._insert_paste(text, trailing_newline="\n" in text)
 
     def action_find(self) -> None:
         self.post_message(self.FindRequested())

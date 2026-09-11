@@ -810,7 +810,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
 | `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit). Selecting text or right-click also copies it. |
-| `Ctrl+V` / `Cmd+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (OS clipboard via pbcopy / clip / wl-copy) |
+| `Ctrl+V` / `Cmd+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (up to 5000 lines). Windows Terminal may ask above 5 KiB: Paste anyway, then Enter to send |
 | `Ctrl+A` | Select all in the prompt |
 | `Ctrl+F` | Find in the conversation (Enter next, Esc close) |
 | `PageUp` / `PageDown` / `Ctrl+Up` / `Ctrl+Down` | Scroll the conversation |
