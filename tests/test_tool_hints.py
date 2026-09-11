@@ -7,8 +7,10 @@ import unittest
 from types import SimpleNamespace
 
 from navin.utils.tool_hints import (
+    clip_transcript,
     describe_tool_headline,
     describe_tool_line,
+    edit_group_key,
     exec_flags,
     extract_line_diff,
     format_seconds,
@@ -16,6 +18,7 @@ from navin.utils.tool_hints import (
     format_tool_hints,
     format_turn_summary,
     humanize_shell_command,
+    tool_target,
     tool_verb,
 )
 
@@ -179,7 +182,7 @@ class QuietToolLineTests(unittest.TestCase):
             added=38,
             removed=14,
         )
-        self.assertEqual(line, "edit  migrate_main_to_rel_v2.py  +38 -14")
+        self.assertEqual(line, "edit  +38 -14  migrate_main_to_rel_v2.py")
         self.assertEqual(extract_line_diff(" - replace foo.py (+38/-14)"), (38, 14))
         self.assertEqual(extract_line_diff({"added": 12, "deleted": 3}), (12, 3))
         self.assertEqual(
@@ -195,6 +198,39 @@ class QuietToolLineTests(unittest.TestCase):
             ),
             "Edited 4 files, explored 1 file, ran 1 command +38 -14",
         )
+
+    def test_run_keeps_the_real_command(self) -> None:
+        line = describe_tool_line(
+            "exec",
+            {
+                "command": (
+                    'grep -n "pg_restore: error" "$LOGFILE" | grep -v already '
+                    "| tail -20"
+                )
+            },
+        )
+        self.assertTrue(line.startswith("run  "))
+        self.assertIn("pg_restore: error", line)
+        self.assertIn("$LOGFILE", line)
+        self.assertNotEqual(line.strip(), 'run  "')
+
+    def test_same_file_edits_share_one_key(self) -> None:
+        first = edit_group_key("edit_file", {"path": "migrate_main_to_rel_v2.py"})
+        other = edit_group_key("read_file", {"path": "migrate_main_to_rel_v2.py"})
+        self.assertTrue(first)
+        self.assertEqual(
+            first,
+            edit_group_key("edit", {"file_path": "./migrate_main_to_rel_v2.py"}),
+        )
+        self.assertNotEqual(first, other)
+
+    def test_clip_keeps_5000_lines_then_stops(self) -> None:
+        blob = "\n".join(f"line {i}" for i in range(5200))
+        out = clip_transcript(blob)
+        self.assertIn("line 0", out)
+        self.assertIn("line 4999", out)
+        self.assertNotIn("line 5199", out)
+        self.assertIn("200 more lines", out)
 
 
 if __name__ == "__main__":
