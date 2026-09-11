@@ -802,42 +802,22 @@ class TuiRuntime:
             if apply_provisional_title(session, first_user_text(session.messages)):
                 loop.sessions.save(session)
 
-    def history(self, limit: int = 200) -> list[dict[str, Any]]:
+    def history(self, limit: int = 0) -> tuple[list[dict[str, Any]], int]:
+        """Visible user/assistant turns for the transcript.
+
+        Returns ``(rows, older_count)``. ``older_count`` is how many visible
+        turns sit before this window (0 unless a cap dropped them).
+        """
         loop = self.agent_loop
         if loop is None:
-            return []
+            return [], 0
         try:
             session = loop.sessions.get_or_create(self.session_key)
         except Exception:  # noqa: BLE001
-            return []
-        from navin.cognition.episodes import strip_runtime_context
-        from navin.runtime_context import public_history_message
+            return [], 0
+        from navin.tui.history import visible_chat_rows
 
-        out: list[dict[str, Any]] = []
-        for msg in session.messages[-limit:]:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role")
-            if role not in {"user", "assistant"} or msg.get("injected_event"):
-                continue
-            # What the user typed, without the runtime-context block the loop
-            # appends for the model (project map, date, channel...).
-            shown = public_history_message(msg)
-            content = shown.get("content")
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(part.get("text") or "")
-                    for part in content
-                    if isinstance(part, dict) and part.get("type") == "text"
-                )
-            if not isinstance(content, str):
-                continue
-            if role == "user":
-                content = strip_runtime_context(content)
-            if not content.strip():
-                continue
-            out.append({"role": role, "content": content.rstrip(), "metadata": msg})
-        return out
+        return visible_chat_rows(session.messages, limit=limit)
 
     def slash_commands(self) -> list[dict[str, Any]]:
         from navin.command.builtin import BUILTIN_COMMAND_SPECS

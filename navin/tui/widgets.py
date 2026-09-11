@@ -29,8 +29,12 @@ from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
 from navin.utils.tool_hints import (
     CARD_ONLY_TOOLS,
+    MAX_TRANSCRIPT_LINES,
+    clip_transcript,
     describe_tool_line,
+    edit_group_key,
     extract_line_diff,
+    format_diff_suffix,
     format_tool_detail,
     format_turn_summary,
     tool_target,
@@ -360,19 +364,36 @@ class UserMessage(Vertical):
         background: $background;
     }
     UserMessage > .user-body {
+        height: auto;
+        min-height: 1;
         color: $foreground;
         padding: 0;
         background: $background;
+        text-wrap: wrap;
     }
     """
 
+    _BODY_CHUNK_LINES = 80
+
     def __init__(self, text: str) -> None:
         super().__init__()
-        self.raw_text = display_user_text(text)
+        self.raw_text = clip_transcript(display_user_text(text))
 
     def compose(self) -> ComposeResult:
         yield Static("you", classes="user-head")
-        yield Static(self.raw_text, classes="user-body", markup=False)
+        text = self.raw_text
+        lines = text.splitlines(keepends=True) or ([text] if text else [""])
+        if len(lines) <= self._BODY_CHUNK_LINES:
+            yield Static(text, classes="user-body", markup=False)
+            return
+        # Several Static children report height reliably. One huge Static is
+        # often clipped on Windows Terminal, so the start of a paste vanishes.
+        step = self._BODY_CHUNK_LINES
+        for index in range(0, len(lines), step):
+            yield Static("".join(lines[index : index + step]), classes="user-body", markup=False)
+
+    def copy_text(self) -> str:
+        return clip_transcript(self.raw_text)
 
 
 class ReasoningBlock(Vertical):
@@ -461,7 +482,7 @@ class ToolCall(Vertical):
     ToolCall > .tool-body {
         padding: 0 0 0 5;
         color: #C8C8C8;
-        max-height: 32;
+        max-height: 80;
         overflow-y: auto;
         border-left: vkey #3A3A3A;
         background: $background;
@@ -469,19 +490,23 @@ class ToolCall(Vertical):
     }
     """
 
+    ALLOW_SELECT = True
     SPINNER_STEPS = 12
 
     def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
         super().__init__()
         self.call_id = call_id
+        self.call_ids = [call_id] if call_id else []
         self.tool_name = name
-        self.arguments = arguments
+        self.arguments = arguments if isinstance(arguments, dict) else {}
+        self.group_key = edit_group_key(name, self.arguments)
         self.phase = "start"
         self.result: Any = None
         self.error: str | None = None
         self.output_lines: list[str] = []
         self.added = 0
         self.removed = 0
+        self.edit_count = 1
         self._spin = 0
         self._open = False
         self.add_class("-running")
@@ -545,32 +570,61 @@ class ToolCall(Vertical):
     ) -> None:
         if output:
             self.output_lines.extend(output.splitlines())
-            self.output_lines = self.output_lines[-400:]
+            self.output_lines = self.output_lines[-MAX_TRANSCRIPT_LINES:]
         if phase == "output":
             self.phase = "output"
         elif phase in {"end", "error"}:
             self.phase = phase
             self.result = result
             self.error = error
-            plus, minus = extract_line_diff(result)
-            if plus or minus:
-                self.set_diff(plus, minus)
+            # Live +/- for edits come from UiFileEdit so we do not double-count.
+            if tool_verb(self.tool_name) not in {"edit", "create"}:
+                plus, minus = extract_line_diff(result)
+                if plus or minus:
+                    self.set_diff(plus, minus)
             self.remove_class("-running")
             self.add_class("-ok" if phase == "end" else "-error")
             self.collapse()
         self._refresh_head()
         self._refresh_body()
 
+    def adopt(self, call_id: str, arguments: dict[str, Any] | None) -> None:
+        """Fold another edit of the same file into this row."""
+        if call_id and call_id not in self.call_ids:
+            self.call_ids.append(call_id)
+            self.edit_count = len(self.call_ids)
+        self.call_id = call_id or self.call_id
+        if isinstance(arguments, dict) and arguments:
+            merged = dict(self.arguments) if isinstance(self.arguments, dict) else {}
+            merged.update(arguments)
+            self.arguments = merged
+        self.add_class("-running")
+        self.remove_class("-ok")
+        self.phase = "start"
+
+    def copy_text(self) -> str:
+        prefix = ""
+        if self.edit_count > 1:
+            diff = format_diff_suffix(self.added, self.removed)
+            prefix = f"{self.edit_count} edits"
+            if diff:
+                prefix = f"{prefix}  {diff}"
+            prefix += "\n"
+        return clip_transcript(
+            prefix
+            + format_tool_detail(
+                self.tool_name,
+                self.arguments if isinstance(self.arguments, dict) else {},
+                result=self.result,
+                error=self.error,
+                output_lines=self.output_lines,
+            )
+        )
+
     def _refresh_body(self) -> None:
         if not self.is_mounted:
             return
-        text = format_tool_detail(
-            self.tool_name,
-            self.arguments if isinstance(self.arguments, dict) else {},
-            result=self.result,
-            error=self.error,
-            output_lines=self.output_lines,
-        )
+        text = self.copy_text()
         try:
             body = self.query_one(".tool-body", Static)
             body.update(text)
@@ -582,6 +636,12 @@ class ToolCall(Vertical):
         self.added = max(0, int(added or 0))
         self.removed = max(0, int(removed or 0))
         self._refresh_head()
+
+    def add_diff(self, added: int, removed: int) -> None:
+        self.added += max(0, int(added or 0))
+        self.removed += max(0, int(removed or 0))
+        self._refresh_head()
+        self._refresh_body()
 
     def collapse(self) -> None:
         self._open = False
@@ -704,6 +764,8 @@ class SubagentCard(Static):
 
 class AssistantMessage(Vertical):
     """An assistant turn: reasoning, activity (tools), streamed Markdown body."""
+
+    ALLOW_SELECT = True
 
     DEFAULT_CSS = """
     AssistantMessage {
@@ -866,6 +928,11 @@ class AssistantMessage(Vertical):
         preview = await self._ready_preview()
         key = call_id or f"{name}:{len(self._tools)}"
         widget = self._tools.get(key)
+        group = edit_group_key(name, arguments if isinstance(arguments, dict) else {})
+        if widget is None and group:
+            widget = next((row for row in self._tools.values() if row.group_key == group), None)
+            if widget is not None:
+                widget.adopt(key, arguments if isinstance(arguments, dict) else {})
         if widget is None:
             widget = ToolCall(key, name, arguments)
             self._tools[key] = widget
@@ -877,23 +944,34 @@ class AssistantMessage(Vertical):
     def note_file_edit(self, path: str, added: int, removed: int) -> None:
         name = Path(path).name if path else ""
         raw = path.replace("\\", "/")
+        group = edit_group_key("edit_file", {"path": path})
         match: ToolCall | None = None
-        for tool in self._tools.values():
-            if tool_verb(tool.tool_name) not in {"edit", "create"}:
-                continue
-            args = tool.arguments if isinstance(tool.arguments, dict) else {}
-            blob = " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
-            target = tool_target(args)
-            if (name and target == name) or (raw and raw in blob.replace("\\", "/")):
-                match = tool
-                break
+        if group:
+            match = next((tool for tool in self._tools.values() if tool.group_key == group), None)
         if match is None:
-            for tool in reversed(list(self._tools.values())):
-                if tool_verb(tool.tool_name) in {"edit", "create"} and not (tool.added or tool.removed):
+            for tool in self._tools.values():
+                if tool_verb(tool.tool_name) not in {"edit", "create"}:
+                    continue
+                args = tool.arguments if isinstance(tool.arguments, dict) else {}
+                blob = " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
+                target = tool_target(args)
+                if (name and target == name) or (raw and raw in blob.replace("\\", "/")):
                     match = tool
                     break
-        if match is not None:
-            match.set_diff(added, removed)
+        if match is None:
+            for tool in reversed(list(self._tools.values())):
+                if tool_verb(tool.tool_name) in {"edit", "create"}:
+                    match = tool
+                    break
+        if match is None:
+            return
+        plus, minus = max(0, int(added or 0)), max(0, int(removed or 0))
+        if plus == 0 and minus == 0:
+            return
+        if match.added == 0 and match.removed == 0:
+            match.set_diff(plus, minus)
+            return
+        match.add_diff(plus, minus)
 
     async def progress(self, text: str) -> None:
         preview = await self._ready_preview()
@@ -1088,6 +1166,14 @@ class AssistantMessage(Vertical):
     @property
     def text(self) -> str:
         return "".join(self._buffer)
+
+    def copy_text(self) -> str:
+        parts = [self.text.strip()]
+        for tool in self._tools.values():
+            detail = tool.copy_text()
+            if detail:
+                parts.append(detail)
+        return clip_transcript("\n\n".join(part for part in parts if part))
 
 
 # ---------------------------------------------------------------------------
@@ -1444,8 +1530,10 @@ class Composer(TextArea):
         Binding("shift+insert", "paste_any", "Paste", show=False),
         Binding("ctrl+f", "find", "Find", show=False),
         Binding("super+f", "find", "Find", show=False),
-        Binding("pageup", "page_chat", "Page up", show=False),
-        Binding("pagedown", "page_chat_down", "Page down", show=False),
+        Binding("pageup", "page_chat", "Page up", show=False, priority=True),
+        Binding("pagedown", "page_chat_down", "Page down", show=False, priority=True),
+        Binding("ctrl+up", "page_chat", "Page up", show=False, priority=True),
+        Binding("ctrl+down", "page_chat_down", "Page down", show=False, priority=True),
     ]
 
     class FindRequested(Message):
@@ -1579,18 +1667,25 @@ class Composer(TextArea):
     def action_find(self) -> None:
         self.post_message(self.FindRequested())
 
+    def _scroll_chat(self, direction: int) -> None:
+        action = getattr(self.app, "action_page_transcript", None)
+        if callable(action):
+            action(direction)
+            return
+        self.post_message(self.PageChat(direction))
+
     def action_page_chat(self) -> None:
-        self.post_message(self.PageChat(-1))
+        self._scroll_chat(-1)
 
     def action_page_chat_down(self) -> None:
-        self.post_message(self.PageChat(1))
+        self._scroll_chat(1)
 
     def action_cursor_page_up(self) -> None:
         """TextArea also binds PageUp; send it to the transcript, not the prompt."""
-        self.post_message(self.PageChat(-1))
+        self._scroll_chat(-1)
 
     def action_cursor_page_down(self) -> None:
-        self.post_message(self.PageChat(1))
+        self._scroll_chat(1)
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         if self.max_scroll_y > 0 and self.scroll_y > 0:
@@ -1746,6 +1841,8 @@ class FindBar(Horizontal):
 
 
 class Transcript(VerticalScroll):
+    can_focus = True
+
     DEFAULT_CSS = """
     Transcript {
         height: 1fr;

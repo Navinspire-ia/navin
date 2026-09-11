@@ -82,7 +82,7 @@ def _write_windows_clipboard(text: str) -> bool:
                 [clip],
                 input=text.encode("utf-16-le"),
                 capture_output=True,
-                timeout=2,
+                timeout=8 if len(text) > 8000 else 3,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -195,7 +195,7 @@ def write_clipboard(text: str) -> bool:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=2,
+                timeout=8 if len(payload) > 8000 else 3,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):

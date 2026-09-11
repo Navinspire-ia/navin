@@ -46,6 +46,7 @@ from navin.tui.hubs import (
     tool_rows,
 )
 from navin.tui.modes import MODES, display_user_text, get_mode, route_text
+from navin.utils.tool_hints import extract_line_diff
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
     TuiRuntime,
@@ -364,6 +365,8 @@ class NavinApp(App[None]):
         Binding("super+shift+c", "copy_reply", "Copy reply", show=False),
         Binding("ctrl+f", "find", "Find", show=False),
         Binding("super+f", "find", "Find", show=False),
+        Binding("ctrl+up", "page_transcript(-1)", show=False),
+        Binding("ctrl+down", "page_transcript(1)", show=False),
         Binding("ctrl+v", "paste_composer", "Paste", show=False),
         Binding("super+v", "paste_composer", "Paste", show=False),
         Binding("super+shift+v", "paste_composer", "Paste", show=False),
@@ -683,25 +686,50 @@ class NavinApp(App[None]):
         return self._current
 
     async def _render_history(self) -> None:
-        rows = self.runtime.history(limit=200)
+        rows, older = self.runtime.history()
+        if older:
+            await self._note(
+                f"{older} older messages not shown. PageUp / Ctrl+Up scrolls this chat.",
+                "quiet",
+            )
         if not rows:
             return
-        await self._note(f"{len(rows)} earlier messages from this session", "quiet")
+        show_tools = self.prefs.show_tools
         for row in rows:
             if row["role"] == "user":
                 await self.transcript.add(UserMessage(row["content"]))
-            else:
-                meta = row.get("metadata") or {}
-                block = AssistantMessage(
-                    self._model_label(str(meta.get("model") or "") or None)
+                continue
+            meta = row.get("metadata") or {}
+            block = AssistantMessage(
+                self._model_label(str(meta.get("model") or "") or None)
+            )
+            await self.transcript.add(block)
+            await block.set_text(row.get("content") or "")
+            for tool in row.get("tools") or []:
+                result = tool.get("result")
+                name = str(tool.get("name") or "tool")
+                args = tool.get("arguments") or {}
+                await block.tool_event(
+                    str(tool.get("id") or name),
+                    name,
+                    "end",
+                    args,
+                    result,
+                    None,
+                    result if isinstance(result, str) else None,
+                    visible=show_tools,
                 )
-                await self.transcript.add(block)
-                await block.set_text(row["content"])
-                await block.finish(
-                    latency_ms=meta.get("latency_ms"),
-                    model=meta.get("model"),
-                    preset=meta.get("model_preset"),
-                )
+                plus, minus = extract_line_diff(result)
+                if plus or minus:
+                    path = ""
+                    if isinstance(args, dict):
+                        path = str(args.get("path") or args.get("file_path") or "")
+                    block.note_file_edit(path, plus, minus)
+            await block.finish(
+                latency_ms=meta.get("latency_ms"),
+                model=meta.get("model"),
+                preset=meta.get("model_preset"),
+            )
         self.transcript.scroll_end(animate=False)
 
     # -- composer ---------------------------------------------------------
@@ -1136,9 +1164,19 @@ class NavinApp(App[None]):
         self._refresh_side()
 
     async def action_clear_transcript(self) -> None:
+        had_chat = any(
+            isinstance(widget, (UserMessage, AssistantMessage))
+            for widget in self.transcript.children
+        )
         await self.transcript.remove_children()
         self._current = None
-        await self._note("[dim]transcript cleared (session history kept)[/dim]")
+        if had_chat:
+            await self._note(
+                "Screen cleared. Ctrl+L again reloads this chat.",
+                "quiet",
+            )
+            return
+        await self._render_history()
 
     def action_toggle_sidebar(self) -> None:
         self.prefs.sidebar = not self.prefs.sidebar
@@ -1343,24 +1381,29 @@ class NavinApp(App[None]):
     def _composer_find(self) -> None:
         self.action_find()
 
+    def action_page_transcript(self, direction: int = -1) -> None:
+        """Page the conversation. Works while the prompt has focus."""
+        self.transcript.page(int(direction))
+
     @on(Composer.PageChat)
     def _page_chat(self, event: Composer.PageChat) -> None:
-        self.transcript.page(event.direction)
+        self.action_page_transcript(event.direction)
 
     @on(Composer.ChatScroll)
     def _chat_scroll(self, event: Composer.ChatScroll) -> None:
         self.transcript.nudge(event.delta)
 
     def copy_to_clipboard(self, text: str) -> None:
-        """OSC 52 plus the OS clipboard (pbcopy / clip / wl-copy).
-
-        Apple Terminal ignores OSC 52, so the in-app clipboard alone is not
-        enough for Ctrl+C or copy-on-select.
-        """
-        super().copy_to_clipboard(text)
+        """OS clipboard first. OSC 52 only for short text (WT drops big pastes)."""
         from navin.tui.clipboard import write_clipboard
+        from navin.utils.tool_hints import clip_transcript
 
-        write_clipboard(text)
+        payload = clip_transcript(text)
+        if not payload:
+            return
+        write_clipboard(payload)
+        if payload.count("\n") < 80 and len(payload) <= 4000:
+            super().copy_to_clipboard(payload)
 
     def _selected_text(self) -> str:
         selected = ""
@@ -1376,9 +1419,22 @@ class NavinApp(App[None]):
         last: AssistantMessage | None = None
         with contextlib.suppress(Exception):
             for widget in self.transcript.children:
-                if isinstance(widget, AssistantMessage) and widget.text.strip():
+                if isinstance(widget, AssistantMessage):
                     last = widget
-        return last.text if last is not None else ""
+        if last is None:
+            return ""
+        return last.copy_text()
+
+    def _last_copyable_text(self) -> str:
+        last = ""
+        with contextlib.suppress(Exception):
+            for widget in self.transcript.children:
+                copy = getattr(widget, "copy_text", None)
+                if callable(copy):
+                    text = copy()
+                    if text.strip():
+                        last = text
+        return last
 
     def action_copy_selection(self) -> None:
         """Copy the mouse selection, or the focused input selection."""
@@ -1398,23 +1454,23 @@ class NavinApp(App[None]):
         """Right-click: copy the selection, or the last assistant reply."""
         from navin.tui.clipboard import pointer_copy_text
 
-        text = pointer_copy_text(self._selected_text(), self._last_assistant_text())
+        text = pointer_copy_text(self._selected_text(), self._last_copyable_text())
         if text:
             self.copy_to_clipboard(text)
 
     def action_copy_reply(self) -> None:
-        """Copy selected text, or the last assistant reply if nothing is selected."""
+        """Copy selected text, or the last message (up to 5000 lines)."""
         selected = self._selected_text()
         if selected:
             self.copy_to_clipboard(selected)
             self.notify("Copied", timeout=1.2)
             return
-        last = self._last_assistant_text()
+        last = self._last_copyable_text() or self._last_assistant_text()
         if not last.strip():
             self.notify("Nothing to copy", severity="warning", timeout=1.5)
             return
         self.copy_to_clipboard(last)
-        self.notify("Reply copied", timeout=1.2)
+        self.notify("Copied", timeout=1.2)
 
     async def action_export_transcript(self) -> None:
         lines: list[str] = [f"# Navin session {self.runtime.session_key}", ""]

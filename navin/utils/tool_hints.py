@@ -61,6 +61,12 @@ _TOOL_VERBS: dict[str, str] = {
 # These already have a dedicated card (choice / composer). A tool row is noise.
 CARD_ONLY_TOOLS = frozenset({"ask_user", "message"})
 
+# How much of a tool/message we keep on screen and on the clipboard.
+MAX_TRANSCRIPT_LINES = 5000
+MAX_TRANSCRIPT_CHARS = 400_000
+# One TUI row: long enough for a real grep/run, short enough for WT.
+TOOL_LINE_LIMIT = 160
+
 # Matches file paths embedded in shell commands, including quoted paths with spaces.
 _PATH_IN_CMD_RE = re.compile(
     r'"(?P<double>(?:[A-Za-z]:[/\\]|~/|/)[^"]+)"'
@@ -264,11 +270,42 @@ def _usable_shell_label(text: str) -> bool:
     return True
 
 
-def _command_label(command: str, limit: int = 56) -> str:
-    """Never an empty ``run  "``. Always keep a readable command stub."""
-    pretty = humanize_shell_command(command, max_len=max(limit, 40))
-    if _usable_shell_label(pretty):
-        return pretty if len(pretty) <= limit else pretty[: limit - 1] + "…"
+def clip_transcript(
+    text: str,
+    *,
+    max_lines: int = MAX_TRANSCRIPT_LINES,
+    max_chars: int = MAX_TRANSCRIPT_CHARS,
+) -> str:
+    """Keep a copyable / displayable blob: up to 5000 lines, not a 80-line stub."""
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not raw:
+        return ""
+    lines = raw.splitlines()
+    extra_lines = 0
+    if len(lines) > max_lines:
+        extra_lines = len(lines) - max_lines
+        lines = lines[:max_lines]
+    blob = "\n".join(line.rstrip() for line in lines)
+    extra_chars = 0
+    if len(blob) > max_chars:
+        extra_chars = len(blob) - max_chars
+        blob = blob[:max_chars].rstrip()
+    if extra_lines or extra_chars:
+        more = extra_lines or extra_chars
+        unit = "lines" if extra_lines else "chars"
+        blob = f"{blob.rstrip()}\n… ({more} more {unit})"
+    return blob
+
+
+def _looks_broken_command_head(text: str) -> bool:
+    """True when abbreviation ate the verb and left a quoted tail / pipe."""
+    stripped = (text or "").lstrip()
+    if not stripped:
+        return True
+    return stripped.startswith(('"', "'", "|", "2>&1"))
+
+
+def _raw_command_stub(command: str) -> str:
     raw = " ".join((command or "").split())
     chunks = [chunk.strip() for chunk in _SHELL_SPLIT_RE.split(raw) if chunk.strip()]
     kept: list[str] = []
@@ -279,13 +316,25 @@ def _command_label(command: str, limit: int = 56) -> str:
             continue
         kept.append(_PYTHON_BIN_RE.sub("python", chunk))
     raw = " && ".join(kept) if kept else raw
-    raw = raw.strip().strip("'\"") or "command"
-    if len(raw) <= limit:
-        return raw
-    return raw[: limit - 1] + "…"
+    return raw.strip() or "command"
 
 
-def tool_target(arguments: dict | None, *, limit: int = 56) -> str:
+def _command_label(command: str, limit: int = TOOL_LINE_LIMIT) -> str:
+    """Never an empty ``run  "``. Keep the real command, not a 56-char stub."""
+    pretty = humanize_shell_command(command, max_len=max(limit, 80))
+    if _usable_shell_label(pretty) and not _looks_broken_command_head(pretty):
+        text = pretty
+    else:
+        text = _raw_command_stub(command)
+        if _looks_broken_command_head(text) or not _usable_shell_label(text):
+            fallback = " ".join((command or "").split())
+            text = fallback if _usable_shell_label(fallback) else "command"
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def tool_target(arguments: dict | None, *, limit: int = TOOL_LINE_LIMIT) -> str:
     """Short action target: file name, command, or query. No JSON. Never blank."""
     args = arguments if isinstance(arguments, dict) else {}
     command = args.get("command") or args.get("cmd")
@@ -311,13 +360,26 @@ def describe_tool_line(
     added: int = 0,
     removed: int = 0,
 ) -> str:
-    """``edit  foo.py  +38 -14`` on one line."""
+    """``edit  +38 -14  foo.py`` on one line."""
     del done
     verb = tool_verb(name)
-    target = tool_target(arguments)
-    line = f"{verb}  {target}" if target else verb
+    target = tool_target(arguments, limit=TOOL_LINE_LIMIT)
     suffix = format_diff_suffix(added, removed)
-    return f"{line}  {suffix}" if suffix else line
+    if target and suffix:
+        return f"{verb}  {suffix}  {target}"
+    if suffix:
+        return f"{verb}  {suffix}"
+    return f"{verb}  {target}" if target else verb
+
+
+def edit_group_key(name: str, arguments: dict | None) -> str:
+    """Same file + same verb (edit/create) collapse to one TUI row."""
+    if tool_verb(name) not in {"edit", "create"}:
+        return ""
+    path = _first_path(arguments if isinstance(arguments, dict) else {})
+    if not path:
+        return ""
+    return f"{tool_verb(name)}:{Path(path).name.lower()}"
 
 
 def format_diff_suffix(added: int, removed: int) -> str:
@@ -442,10 +504,10 @@ def format_tool_detail(
         lines.append(f"{len(edits)} edit{'s' if len(edits) != 1 else ''}")
     if error:
         lines.extend(line.rstrip() for line in error.replace("\r\n", "\n").splitlines() if line.strip())
-    live = [line.rstrip() for line in (output_lines or []) if line.strip()]
+    live = [line.rstrip() for line in (output_lines or []) if line]
     if live:
-        lines.extend(live[-80:])
-    preview = _human_result(result, limit=8000)
+        lines.extend(live[:MAX_TRANSCRIPT_LINES])
+    preview = _human_result(result, limit=MAX_TRANSCRIPT_CHARS)
     if preview:
         for line in preview.splitlines():
             if line.strip() and line not in lines:
@@ -454,10 +516,10 @@ def format_tool_detail(
         label = describe_tool_line(name, args)
         if label:
             lines.append(label)
-    return "\n".join(lines).strip()
+    return clip_transcript("\n".join(lines).strip())
 
 
-def _human_result(result: Any, limit: int = 8000) -> str:
+def _human_result(result: Any, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
     if result is None:
         return ""
     if isinstance(result, bool):
@@ -468,11 +530,7 @@ def _human_result(result: Any, limit: int = 8000) -> str:
         text = result.replace("\r\n", "\n").strip()
         if not text:
             return ""
-        kept = [line.rstrip() for line in text.splitlines() if line.strip()][:120]
-        blob = "\n".join(kept)
-        if len(blob) > limit:
-            return blob[: limit - 1].rstrip() + "…"
-        return blob
+        return clip_transcript(text, max_chars=limit)
     if isinstance(result, dict):
         bits: list[str] = []
         code = result.get("returncode")
@@ -507,8 +565,10 @@ def _human_result(result: Any, limit: int = 8000) -> str:
     if isinstance(result, list):
         if not result:
             return ""
-        if all(isinstance(item, str) for item in result[:8]):
-            return _human_result("\n".join(str(item) for item in result[:8]), limit)
+        if all(isinstance(item, str) for item in result[:20]):
+            return _human_result(
+                "\n".join(str(item) for item in result[:MAX_TRANSCRIPT_LINES]), limit
+            )
         return f"{len(result)} items"
     return ""
 
