@@ -12,6 +12,8 @@ from textual.content import Content, Span
 
 from navin.tui.clipboard import (
     decode_windows_clipboard_bytes,
+    osc52_allowed,
+    pick_paste_text,
     pointer_copy_text,
     read_clipboard,
     write_clipboard,
@@ -76,6 +78,13 @@ class MarkdownPathStyleTests(unittest.TestCase):
 
 
 class ClipboardTests(unittest.TestCase):
+    def test_paste_prefers_the_longer_os_clipboard(self) -> None:
+        self.assertEqual(pick_paste_text("old", "a much longer os paste"), "a much longer os paste")
+        self.assertEqual(pick_paste_text("kept", ""), "kept")
+        self.assertEqual(pick_paste_text("", "os"), "os")
+        self.assertFalse(osc52_allowed("x" * 5000))
+        self.assertTrue(osc52_allowed("short"))
+
     def test_right_click_prefers_selection(self) -> None:
         self.assertEqual(pointer_copy_text("sel", "reply"), "sel")
         self.assertEqual(pointer_copy_text("", "reply"), "reply")
