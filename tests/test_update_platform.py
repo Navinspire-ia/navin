@@ -74,7 +74,7 @@ class PlatformScopedUpdateTest(unittest.TestCase):
         self.assertTrue(info["supported"])
         self.assertEqual(info["latestVersion"], "1.0.1")
 
-    def test_source_checkout_is_not_notified(self):
+    def test_source_checkout_is_told_but_not_auto_installed(self):
         with (
             mock.patch.object(service, "__version__", "1.0.0"),
             mock.patch.object(service, "_install_kind", return_value="source"),
@@ -84,4 +84,8 @@ class PlatformScopedUpdateTest(unittest.TestCase):
                 base_url="https://updates.navin.live",
                 skipped_version="",
             )
-        self.assertIsNone(info)
+        self.assertIsNotNone(info)
+        assert info is not None
+        self.assertTrue(info["available"])
+        self.assertFalse(info["supported"])
+        self.assertIn("navin update", str(info.get("reason") or ""))

@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
+import time
 from typing import Any
 
 from rich.markup import escape
@@ -24,6 +26,7 @@ from navin.tui.brand import MARK, tide_text, wave_frame
 from navin.tui.markdown import install_path_styles
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
+from navin.utils.tool_hints import CARD_ONLY_TOOLS, describe_tool_line, format_tool_detail
 
 install_path_styles()
 
@@ -205,6 +208,62 @@ def _short(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+_SENTENCE_BREAK_RE = re.compile(r"([.!?])\s+(?=[A-ZÉÈÀÂÊÎÔÛÇ«\"'])")
+
+
+PREVIEW_CHARS = 140
+
+_CLIENT_PROMPT_RE = re.compile(
+    r"(?is)"
+    r"("
+    r"\b(choisis|choose|which option|quelle option|expliques?-moi|tell me|dis-moi|"
+    r"que veux-tu|what do you (?:want|prefer)|pick one)\b"
+    r"|^\s*(?:[1-9][.)]\s+\S.+\n\s*[2-9][.)]\s+\S)"
+    r"|^\s*[-*]\s+\S.+\n\s*[-*]\s+\S"
+    r")"
+)
+
+
+def looks_like_client_prompt(text: str) -> bool:
+    """True when the model is asking the user (question, choices), not thinking."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _CLIENT_PROMPT_RE.search(raw):
+        return True
+    if raw.endswith("?") and len(raw) <= 400 and raw.count("?") <= 3:
+        return True
+    return False
+
+
+def assistant_preview(text: str, limit: int = PREVIEW_CHARS) -> str:
+    """One short line for the folded reflection view."""
+    compact = " ".join((text or "").split())
+    if not compact:
+        return ""
+    match = re.match(r"^(.+?[.!?])(?:\s|$)", compact)
+    if match and 12 <= len(match.group(1)) <= limit:
+        return match.group(1)
+    if len(compact) <= limit:
+        return compact
+    cut = compact[: max(limit - 1, 1)]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut + "…"
+
+
+def readable_assistant_markdown(text: str) -> str:
+    """Keep real markdown. Break a single huge line into paragraphs."""
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not raw.strip():
+        return raw
+    if "\n" in raw.strip():
+        return raw
+    if len(raw) < 220:
+        return raw
+    return _SENTENCE_BREAK_RE.sub(r"\1\n\n", raw)
+
+
 def render_result(result: Any, limit: int = 4000) -> str:
     if result is None:
         return ""
@@ -261,13 +320,12 @@ class UserMessage(Vertical):
         height: auto;
         margin: 1 2 0 2;
         padding: 0 1 0 1;
-        border-left: tall $secondary;
+        border-left: vkey $secondary;
         background: $background;
     }
     UserMessage > .user-head {
         height: 1;
         color: $text-muted;
-        text-style: bold;
         background: $background;
     }
     UserMessage > .user-body {
@@ -359,16 +417,17 @@ class ToolCall(Vertical):
     ToolCall > .tool-head {
         color: $foreground;
         background: $background;
-        text-style: bold;
+        text-style: none;
     }
     ToolCall > .tool-body {
         display: none;
         padding: 0 0 0 5;
-        color: $text-muted;
-        max-height: 24;
+        color: #9A9A9A;
+        max-height: 12;
         overflow-y: auto;
-        border-left: tall $border;
+        border-left: vkey #3A3A3A;
         background: $background;
+        text-style: none;
     }
     ToolCall.-open > .tool-body { display: block; }
     """
@@ -419,25 +478,22 @@ class ToolCall(Vertical):
         return " ✓ "
 
     def _head_text(self) -> str:
-        args_md = tool_args_markup(self.arguments)
-        args_md = f"  {args_md}" if args_md else ""
+        done = self.phase in {"end", "error"}
+        label = describe_tool_line(self.tool_name, self.arguments, done=done)
+        ink = "$error" if self.phase == "error" else tool_color(self.tool_name)
+        title = f"[{ink}]{_markup_escape(label)}[/]"
         tail = ""
-        if self.phase == "output" and self.output_lines:
-            tail = f"  [$text-muted]{_markup_escape(self.output_lines[-1][:60])}[/]"
-        elif self.phase == "error" and self.error:
-            tail = f"  [$error]{_markup_escape(self.error.splitlines()[0][:80])}[/]"
-        ink = tool_color(self.tool_name)
-        icon = f"[{ink}]{tool_icon(self.tool_name)}[/]"
+        if self.phase == "error" and self.error:
+            err = self.error.splitlines()[0]
+            short = "timed out" if "timed out" in err.lower() else err[:40]
+            tail = f"  [#FF3B30]{_markup_escape(short)}[/]"
         if self.phase == "error":
-            name = f"[b $error]{_markup_escape(self.tool_name)}[/]"
-            mark = "[$error] ✗ [/]"
+            mark = "[#FF3B30] x [/]"
         elif self.phase in {"start", "output"}:
-            name = f"[b {ink}]{_markup_escape(self.tool_name)}[/]"
             mark = f"[{ink}]{self._status_glyph()}[/]"
         else:
-            name = f"[b {ink}]{_markup_escape(self.tool_name)}[/]"
-            mark = "[$text-muted] ✓ [/]"
-        return f"{mark} {icon} {name}{args_md}{tail}"
+            mark = "[#8A8A8A] * [/]"
+        return f"{mark}{title}{tail}"
 
     def apply(
         self, *, phase: str, result: Any = None, error: str | None = None, output: str | None = None
@@ -453,25 +509,30 @@ class ToolCall(Vertical):
             self.error = error
             self.remove_class("-running")
             self.add_class("-ok" if phase == "end" else "-error")
+            self.collapse()
         self._refresh_head()
-        self._refresh_body()
+        if self._open:
+            self._refresh_body()
 
     def _refresh_body(self) -> None:
         if not self.is_mounted:
             return
-        chunks: list[str] = []
-        if self.arguments:
-            chunks.append("args: " + render_result(self.arguments, 1200))
-        if self.output_lines:
-            chunks.append("\n".join(self.output_lines[-120:]))
-        if self.error:
-            chunks.append("error: " + self.error)
-        elif self.result is not None:
-            chunks.append(render_result(self.result))
+        text = format_tool_detail(
+            self.tool_name,
+            self.arguments if isinstance(self.arguments, dict) else {},
+            result=self.result,
+            error=self.error,
+            output_lines=self.output_lines,
+        )
         try:
-            self.query_one(".tool-body", Static).update("\n".join(chunks))
+            self.query_one(".tool-body", Static).update(text)
         except Exception:  # noqa: BLE001
             pass
+
+    def collapse(self) -> None:
+        self._open = False
+        self.remove_class("-open")
+        self._refresh_head()
 
     def toggle(self) -> None:
         self._open = not self._open
@@ -495,6 +556,34 @@ class ProgressLine(Static):
 
     def __init__(self, text: str) -> None:
         super().__init__(f"· {escape(text)}", markup=True)
+
+
+class UpdateOffer(Static):
+    """Persistent Codex-style line: a newer navin exists, /update installs it."""
+
+    DEFAULT_CSS = """
+    UpdateOffer {
+        margin: 1 2 0 2;
+        padding: 0 1;
+        color: $accent;
+        text-style: italic;
+        border-left: tall $accent;
+        background: $background;
+    }
+    UpdateOffer:hover { color: $foreground; text-style: none; }
+    """
+
+    def __init__(self, latest: str, detail: str) -> None:
+        super().__init__("", markup=True)
+        self.latest = latest
+        self.detail = detail
+        self.update(
+            f"[$accent]◌[/] navin [b]{escape(latest)}[/] is available  "
+            f"[$text-muted]/update to install · clic[/]"
+        )
+
+    def on_click(self) -> None:
+        self.app.call_later(self.app.run_action, "update")
 
 
 class SystemNote(Static):
@@ -566,7 +655,7 @@ class AssistantMessage(Vertical):
         height: auto;
         margin: 1 2 0 2;
         padding: 0 1 0 1;
-        border-left: tall $primary;
+        border-left: vkey $primary;
         background: $background;
     }
     AssistantMessage > .assistant-head {
@@ -574,14 +663,27 @@ class AssistantMessage(Vertical):
         margin: 0;
         padding: 0;
         color: $primary;
-        text-style: bold;
+        background: $background;
+    }
+    AssistantMessage > .assistant-preview {
+        margin: 0 0 1 0;
+        padding: 0;
+        color: $accent;
         background: $background;
     }
     AssistantMessage > .assistant-body {
         margin: 0;
         padding: 0;
         height: auto;
+        overflow: hidden;
+        display: none;
         background: $background;
+    }
+    AssistantMessage.-open > .assistant-preview {
+        display: none;
+    }
+    AssistantMessage.-open > .assistant-body {
+        display: block;
     }
     AssistantMessage > .assistant-foot {
         margin: 0 0 1 0;
@@ -634,19 +736,22 @@ class AssistantMessage(Vertical):
         icon = (bot_icon or "").strip()
         self.bot_icon = "" if icon in {"≈", "~"} else icon
         self._stream: Any = None
+        self._last_body_paint = 0.0
         self._buffer: list[str] = []
         self._tools: dict[str, ToolCall] = {}
         self._subagents: dict[str, SubagentCard] = {}
         self._reasoning: ReasoningBlock | None = None
         self.streamed = False
         self.finished = False
+        self._open = False
         self._composed = asyncio.Event()
 
     def compose(self) -> ComposeResult:
-        head = escape(self.bot_name.lower())
+        head = self.bot_name.lower()
         if self.bot_icon:
-            head = f"{escape(self.bot_icon)} {head}"
-        yield Static(head, classes="assistant-head", markup=True)
+            head = f"{self.bot_icon} {head}"
+        yield Static(head, classes="assistant-head", markup=False)
+        yield Static("", classes="assistant-preview", markup=True)
         yield Markdown("", classes="assistant-body")
         yield Static("", classes="assistant-foot", markup=True)
 
@@ -657,12 +762,16 @@ class AssistantMessage(Vertical):
         await self._composed.wait()
         return self.query_one(".assistant-body", Markdown)
 
+    async def _ready_preview(self) -> Static:
+        await self._composed.wait()
+        return self.query_one(".assistant-preview", Static)
+
     # -- reasoning --------------------------------------------------------
 
     async def reasoning(self, text: str, *, end: bool = False, visible: bool = True) -> None:
         if not visible:
             return
-        body = await self._ready_body()
+        preview = await self._ready_preview()
         if end:
             if self._reasoning is not None:
                 self._reasoning.finish()
@@ -670,7 +779,7 @@ class AssistantMessage(Vertical):
         if self._reasoning is None or self._reasoning._done:
             block = ReasoningBlock()
             self._reasoning = block
-            await self.mount(block, before=body)
+            await self.mount(block, before=preview)
             block.append(text)
             return
         self._reasoning.append(text)
@@ -678,6 +787,8 @@ class AssistantMessage(Vertical):
     def toggle_reasoning(self) -> None:
         if self._reasoning is not None:
             self._reasoning.toggle()
+            return
+        self.toggle_body()
 
     # -- activity ---------------------------------------------------------
 
@@ -694,20 +805,22 @@ class AssistantMessage(Vertical):
     ) -> None:
         if not visible:
             return
-        body = await self._ready_body()
+        if (name or "").lower() in CARD_ONLY_TOOLS:
+            return
+        preview = await self._ready_preview()
         key = call_id or f"{name}:{len(self._tools)}"
         widget = self._tools.get(key)
         if widget is None:
             widget = ToolCall(key, name, arguments)
             self._tools[key] = widget
-            await self.mount(widget, before=body)
+            await self.mount(widget, before=preview)
             if phase == "start":
                 return
         widget.apply(phase=phase, result=result, error=error, output=output)
 
     async def progress(self, text: str) -> None:
-        body = await self._ready_body()
-        await self.mount(ProgressLine(text), before=body)
+        preview = await self._ready_preview()
+        await self.mount(ProgressLine(text), before=preview)
 
     async def subagent(
         self,
@@ -720,15 +833,99 @@ class AssistantMessage(Vertical):
         done: bool,
         error: str | None,
     ) -> None:
-        body = await self._ready_body()
+        preview = await self._ready_preview()
         card = self._subagents.get(task_id)
         if card is None:
             card = SubagentCard(task_id)
             self._subagents[task_id] = card
-            await self.mount(card, before=body)
+            await self.mount(card, before=preview)
         card.apply(label, phase, status_line, model, iteration, done, error)
 
     # -- body -------------------------------------------------------------
+
+    def _folded(self) -> bool:
+        """Fold only live reflection. Finished answers and user prompts stay open."""
+        if self.finished or looks_like_client_prompt(self.text):
+            return False
+        raw = self.text.strip()
+        return len(raw) > PREVIEW_CHARS or len(raw.split()) > 28
+
+    def _sync_layers(self) -> None:
+        """Keep preview and body from painting on the same cells (Windows Terminal)."""
+        if not self.is_mounted:
+            return
+        try:
+            preview = self.query_one(".assistant-preview", Static)
+            body = self.query_one(".assistant-body", Markdown)
+        except Exception:  # noqa: BLE001
+            return
+        preview.display = not self._open
+        body.display = self._open
+        if self._open:
+            preview.update("")
+
+    async def reveal(self) -> None:
+        """Show the full answer (end of turn, or a question to the user)."""
+        self._open = True
+        self.set_class(True, "-open")
+        self._sync_layers()
+        await self._paint_body(force=True)
+
+    def _preview_markup(self) -> str:
+        raw = self.text.strip()
+        if not raw:
+            mark = "◌" if not self.finished else "✓"
+            return f"[$accent]{mark}[/] [dim]…[/dim]"
+        preview = assistant_preview(raw)
+        mark = "◌" if not self.finished else "✓"
+        line = f"[$accent]{mark}[/] {_markup_escape(preview)}"
+        if not self._folded():
+            return line
+        extra = max(len(raw.split()) - len(preview.split()), 0)
+        hint = f"+{extra} mots · clic" if extra else "clic"
+        return f"{line}  [$text-muted]{hint}[/]"
+
+    def _refresh_preview(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            preview = self.query_one(".assistant-preview", Static)
+        except Exception:  # noqa: BLE001
+            return
+        if self._open:
+            preview.update("")
+            preview.display = False
+            return
+        preview.display = True
+        preview.update(self._preview_markup())
+
+    def toggle_body(self) -> None:
+        self._open = not self._open
+        self.set_class(self._open, "-open")
+        self._sync_layers()
+        if self._open and self.text.strip():
+            self.run_worker(self._paint_body(force=True), exclusive=True, group="assistant-body")
+
+    def on_click(self, event: events.Click) -> None:
+        target = event.widget
+        if target is None:
+            return
+        classes = set(getattr(target, "classes", ()) or ())
+        if "assistant-preview" in classes or "assistant-head" in classes or target is self:
+            self.toggle_body()
+            event.stop()
+
+    async def _paint_body(self, *, force: bool = False) -> None:
+        """Preview always. Full markdown only when open or forced at end."""
+        self._refresh_preview()
+        if not self._open and not force:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_body_paint < 0.07:
+            return
+        self._last_body_paint = now
+        body = await self._ready_body()
+        await body.update(readable_assistant_markdown(self.text))
 
     async def delta(self, text: str) -> None:
         if not text:
@@ -736,22 +933,47 @@ class AssistantMessage(Vertical):
         self.finished = False
         self.streamed = True
         self._buffer.append(text)
-        body = await self._ready_body()
-        if self._stream is None:
-            self._stream = Markdown.get_stream(body)
-            already = "".join(self._buffer[:-1])
-            if already:
-                await self._stream.write(already)
-        await self._stream.write(text)
+        if self._stream is not None:
+            with contextlib.suppress(Exception):
+                await self._stream.stop()
+            self._stream = None
+        if looks_like_client_prompt(self.text):
+            await self.reveal()
+            return
+        await self._paint_body(force=False)
 
     async def stream_end(self) -> None:
         if self._stream is not None:
-            await self._stream.stop()
+            with contextlib.suppress(Exception):
+                await self._stream.stop()
             self._stream = None
+        if looks_like_client_prompt(self.text):
+            await self.reveal()
+            return
+        if self._buffer:
+            await self._paint_body(force=self._open)
 
     async def set_text(self, text: str, *, render_as: str = "markdown") -> None:
         await self.stream_end()
         self._buffer = [text]
+        if self.finished or looks_like_client_prompt(text):
+            body = await self._ready_body()
+            if render_as == "text":
+                text = (
+                    "```text\n" + text + "\n```"
+                    if "\n" in text and not text.lstrip().startswith("#")
+                    else text
+                )
+                self._open = True
+                self.set_class(True, "-open")
+                self._sync_layers()
+                await body.update(text)
+                return
+            await self.reveal()
+            return
+        self._refresh_preview()
+        if not self._open:
+            return
         body = await self._ready_body()
         if render_as == "text":
             text = (
@@ -759,7 +981,9 @@ class AssistantMessage(Vertical):
                 if "\n" in text and not text.lstrip().startswith("#")
                 else text
             )
-        await body.update(text)
+            await body.update(text)
+            return
+        await body.update(readable_assistant_markdown(text))
 
     async def finish(
         self, *, latency_ms: int | None, model: str | None, preset: str | None
@@ -767,9 +991,12 @@ class AssistantMessage(Vertical):
         await self._composed.wait()
         await self.stream_end()
         self.finished = True
+        await self.reveal()
         for tool in self._tools.values():
             if tool.phase in {"start", "output"}:
                 tool.apply(phase="end")
+            else:
+                tool.collapse()
         foot = self.query_one(".assistant-foot", Static)
         if self._tools:
             n = len(self._tools)
@@ -1968,8 +2195,14 @@ class Sidebar(Vertical):
         label = f"navin  v{self._version}" if self._version else "navin"
         text = f"[$text-muted]{escape(label)}[/]"
         if self._latest and self._latest != self._version:
-            text += f"  [$warning]v{escape(self._latest)} available[/]"
+            text += f"  [$warning]v{escape(self._latest)} · /update[/]"
         self.query_one("#side-version", Static).update(text)
+
+    def on_click(self, event: events.Click) -> None:
+        target = event.widget
+        if target is not None and getattr(target, "id", None) == "side-version" and self._latest:
+            self.app.call_later(self.app.run_action, "update")
+            event.stop()
 
     def set_agi(self, text: str) -> None:
         self.query_one("#side-agi", SideCard).set_body(text)

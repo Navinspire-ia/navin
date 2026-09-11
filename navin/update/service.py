@@ -391,10 +391,11 @@ def _release_info(
     except InvalidVersion as exc:
         raise UpdateError("Update manifest minimum version is invalid", status=503) from exc
     kind = _install_kind()
-    if kind in {"source", "unsupported"}:
-        # Source checkouts are not updated by the signed installer pipeline.
+    if kind == "unsupported":
         return None
-    if kind in _MANAGED_KINDS:
+    if kind == "source" or kind in _MANAGED_KINDS:
+        # Tell the user a release exists. Do not offer a button that cannot
+        # replace a git tree or a package-manager install.
         # There is a newer version and the user deserves to hear about it, but
         # these files belong to the package manager. Naming where the update
         # comes from is better than a button that cannot honour its promise.
@@ -406,7 +407,11 @@ def _release_info(
             "installKind": kind,
             "notes": str(manifest.get("notes", "")),
             "mandatory": mandatory,
-            "reason": "Navin was installed from a system package. Update it with your package manager.",
+            "reason": (
+                "This session is a source checkout. Upgrade the packaged CLI with: navin update"
+                if kind == "source"
+                else "Navin was installed from a system package. Update it with your package manager."
+            ),
         }
     artifacts = manifest.get("artifacts") or {}
     artifact = None

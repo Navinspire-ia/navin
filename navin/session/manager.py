@@ -104,6 +104,10 @@ def _message_preview_text(message: dict[str, Any]) -> str:
     content: Any = message.get("content")
     if message.get("injected_event") == "subagent_result" and isinstance(content, str):
         content = scrub_subagent_announce_body(content)
+    if isinstance(content, str):
+        from navin.cognition.episodes import strip_runtime_context
+
+        content = strip_runtime_context(content)
     if isinstance(content, str) and content.lstrip().startswith("["):
         # Expanded workflow briefs must not become the sidebar label.
         from navin.session.webui_turns import title_source_from_user_text
@@ -662,6 +666,27 @@ class SessionManager:
             "metadata": session.metadata,
             "messages": session.messages,
         }
+
+    def set_title(self, key: str, title: str) -> str:
+        """Persist a human chat name. Later auto-titles will not overwrite it."""
+        from navin.session.webui_turns import (
+            WEBUI_TITLE_METADATA_KEY,
+            WEBUI_TITLE_PROVISIONAL_METADATA_KEY,
+            WEBUI_TITLE_USER_EDITED_METADATA_KEY,
+        )
+
+        cleaned = " ".join((title or "").split())
+        if not cleaned:
+            raise ValueError("title is empty")
+        if len(cleaned) > 80:
+            cleaned = cleaned[:79].rstrip() + "…"
+        session = self.get_or_create(key)
+        session.metadata[WEBUI_TITLE_METADATA_KEY] = cleaned
+        session.metadata[WEBUI_TITLE_USER_EDITED_METADATA_KEY] = True
+        session.metadata.pop(WEBUI_TITLE_PROVISIONAL_METADATA_KEY, None)
+        session.updated_at = datetime.now()
+        self.save(session)
+        return cleaned
 
     def save(self, session: Session, *, fsync: bool = False) -> None:
         """Save a session to disk atomically.

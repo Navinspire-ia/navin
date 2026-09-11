@@ -775,6 +775,33 @@ class TuiRuntime:
             return []
         return [r for r in rows if isinstance(r, dict)]
 
+    def set_session_title(self, key: str, title: str) -> str:
+        loop = self.agent_loop
+        if loop is None:
+            raise RuntimeError("engine not ready")
+        return loop.sessions.set_title(key, title)
+
+    def ensure_session_titles(self) -> None:
+        """Fill missing names from the first user line and persist them."""
+        loop = self.agent_loop
+        if loop is None:
+            return
+        from navin.cognition.episodes import first_user_text
+        from navin.session.webui_turns import apply_provisional_title
+        from navin.tui.session_labels import session_display_title
+
+        for row in self.session_rows():
+            if session_display_title(row) != "Untitled chat":
+                continue
+            key = str(row.get("key") or "")
+            if not key:
+                continue
+            session = loop.sessions.peek(key)
+            if session is None:
+                continue
+            if apply_provisional_title(session, first_user_text(session.messages)):
+                loop.sessions.save(session)
+
     def history(self, limit: int = 200) -> list[dict[str, Any]]:
         loop = self.agent_loop
         if loop is None:
@@ -853,6 +880,16 @@ class TuiRuntime:
         self._streamed_this_turn = False
         self._turn_started_at = time.monotonic()
         await self._emit(UiTurnStarted(text))
+        try:
+            from navin.session.webui_turns import apply_provisional_title
+
+            loop = self.agent_loop
+            if loop is not None:
+                session = loop.sessions.get_or_create(self.session_key)
+                if apply_provisional_title(session, text):
+                    loop.sessions.save(session)
+        except Exception:  # noqa: BLE001
+            pass
         await self.bus.publish_inbound(
             InboundMessage(
                 channel=self.channel,
