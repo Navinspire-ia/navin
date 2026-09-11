@@ -193,8 +193,15 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             tool.apply(phase="error", error="boom")
             await _pilot.pause()
             self.assertIn("list", tool._head_text())
+            self.assertIn("list  .", tool._head_text())
             self.assertNotIn("args:", tool._head_text())
             self.assertNotIn("{", tool._head_text())
+            tool.apply(phase="end", result="PASS - no lint errors\n2 passed")
+            await _pilot.pause()
+            tool.toggle()
+            await _pilot.pause()
+            self.assertTrue(tool._open)
+            self.assertTrue(tool.query_one(".tool-body").display)
 
 
 class ToolColorTests(unittest.TestCase):
@@ -253,6 +260,7 @@ class ToolColorTests(unittest.TestCase):
             result={"ok": True},
         )
         self.assertNotIn("{", body)
+        self.assertTrue(body)
         self.assertNotIn("args:", body)
 
 

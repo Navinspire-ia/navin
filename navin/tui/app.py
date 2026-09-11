@@ -941,9 +941,11 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiFileEdit):
+            if self._current is not None:
+                self._current.note_file_edit(event.path, event.added, event.removed)
             if event.path:
                 self._activity_push(
-                    f"✎ {escape(Path(event.path).name)} [dim]+{event.added} -{event.removed}[/dim]"
+                    f"edit {escape(Path(event.path).name)} +{event.added} -{event.removed}"
                 )
             return
         if isinstance(event, UiProgress):
