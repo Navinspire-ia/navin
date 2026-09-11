@@ -4415,6 +4415,7 @@
       "account": "Account",
       "advanced": "Security",
       "appearance": "Appearance",
+      "studio": "Studio",
       "apps": "Mcp",
       "automations": "Loop",
       "browser": "Web",
@@ -4515,7 +4516,10 @@
       "videoGeneration": "Video generation",
       "voiceInput": "Voice input",
       "webSearch": "Web search",
-      "workspace": "Workspace"
+      "workspace": "Workspace",
+      "studio": "Studio sidebar",
+      "studioValue": "Order and visibility",
+      "studioCaption": "Reorder Studio modules and hide the ones you do not use."
     },
     "plugins": {
       "chooseFolder": "Choose folder",
@@ -4694,6 +4698,7 @@
       "imageGeneration": "Image generation",
       "interface": "Interface",
       "localPreferences": "Local preferences",
+      "studioModules": "Studio modules",
       "mcp": "MCP services",
       "music": "Music",
       "nativeHost": "Native host",
@@ -4711,6 +4716,18 @@
     "sidebar": {
       "ariaLabel": "Settings sections",
       "title": "Settings"
+    },
+    "studio": {
+      "hint": "Press a row and slide it to reorder the Studio sidebar. Turn a module off to hide it. Hidden modules stay here so you can turn them back on.",
+      "reset": "Reset order",
+      "visibleCount": "{{visible}} visible / {{total}}",
+      "drag": "Press and slide the row to reorder",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "show": "Show in sidebar",
+      "hide": "Hide from sidebar",
+      "visible": "Shown in the sidebar",
+      "hidden": "Hidden in the sidebar"
     },
     "skills": {
       "addCustom": "Add skill",
@@ -5308,6 +5325,12 @@
     "notes": "Notes",
     "opsStudio": "Ops",
     "otherApps": "Studio",
+    "studioEmpty": "Choose modules",
+    "studioConfig": "Studio settings",
+    "studioHidden": "Hidden",
+    "studioHiddenCount": "Hidden ({{count}})",
+    "hideStudioModule": "Hide {{label}}",
+    "showStudioModule": "Show {{label}}",
     "projectHome": "Project",
     "recent": "Recent",
     "risklensStudio": "RiskLens",

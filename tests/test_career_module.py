@@ -161,16 +161,18 @@ class CareerProductModuleTest(unittest.TestCase):
         desk = (ROOT / "webui/src/components/studio/career/CareerWorkspace.tsx").read_text(
             encoding="utf-8"
         )
-        self.assertIn('type Pane = "home" | "offers"', desk)
-        self.assertIn('pane === "home"', desk)
+        self.assertIn(
+            'type Pane = "offers" | "applications" | "inbox" | "pipeline" | "interviews" | "profile"',
+            desk,
+        )
+        self.assertIn('useState<Pane>("offers")', desk)
+        self.assertNotIn('pane === "home"', desk)
         self.assertIn("career-start-loop", desk)
         self.assertIn("career-pause-loop", desk)
         self.assertNotIn('data-testid="career-run-cycle"', desk)
         self.assertIn('run("stop")', desk)
         self.assertIn("CareerWizard", desk)
         self.assertIn("wizard_complete", desk)
-        self.assertIn("CareerMoneyBar", desk)
-        self.assertIn("careerMoney", desk)
         self.assertIn("Find me a mission", desk)
         self.assertIn("career-linkedin-mcp-status", desk)
         self.assertIn("mcpEnabled", desk)
@@ -216,12 +218,14 @@ class CareerProductModuleTest(unittest.TestCase):
         self.assertIn("filterCareers", skills_catalog)
         portals = (ROOT / "webui/src/lib/career-portals.ts").read_text(encoding="utf-8")
         self.assertIn("linkedin.com/jobs/search", portals)
+        self.assertIn("collective.work/jobs/fr", portals)
         self.assertIn("parsePastedOffer", portals)
         self.assertNotIn("Easy Apply", desk)
         self.assertIn("ImportOfferForm", desk)
         kpis = (ROOT / "webui/src/components/studio/career/CareerKpis.tsx").read_text(
             encoding="utf-8"
         )
+        self.assertIn("CareerMoneyBar", kpis)
         self.assertIn('data-testid="career-money-bar"', kpis)
         self.assertIn("tabular-nums", kpis)
         self.assertNotIn("motion.", kpis)
@@ -247,6 +251,7 @@ class CareerCatalogTest(unittest.TestCase):
             "web-search",
             "web-job-search",
             "free-work",
+            "collective",
             "jobserve",
             "dice",
             "ictjob",
@@ -262,6 +267,10 @@ class CareerCatalogTest(unittest.TestCase):
         self.assertFalse(freework["auto_apply"])
         self.assertTrue(freework["auto_search"])
         self.assertEqual(freework["ingest"], "public_listing")
+        collective = next(row for row in catalog() if row["id"] == "collective")
+        self.assertFalse(collective["auto_apply"])
+        self.assertTrue(collective["auto_search"])
+        self.assertEqual(collective["ingest"], "public_listing")
         web = next(row for row in catalog() if row["id"] == "web-job-search")
         self.assertEqual(web["name"], "Web Job Search")
         self.assertTrue(web["auto_search"])
@@ -277,6 +286,7 @@ class CareerCatalogTest(unittest.TestCase):
         self.assertIn("site:francetravail.fr", texts)
         # Free-Work has its own public listing reader: no web search slot spent on it.
         self.assertNotIn("site:free-work.com", texts)
+        self.assertNotIn("site:collective.work", texts)
         self.assertIn("site:bayt.com", texts)
         self.assertIn("usajobs.gov", texts)
         fr_queries = web_search_queries(
@@ -352,6 +362,7 @@ class CareerCatalogTest(unittest.TestCase):
         core = official_search_pack("Data Engineer", ["FR", "BE", "CH", "GB", "US", "CA"], track="freelance")
         urls = " ".join(row["url"] for row in core)
         self.assertIn("free-work.com", urls)
+        self.assertIn("collective.work", urls)
         self.assertIn("ictjob.be", urls)
         self.assertIn("jobs.ch", urls)
         self.assertIn("jobserve.com", urls)
@@ -1138,6 +1149,12 @@ class CareerOfficialApiTest(unittest.TestCase):
         self.assertFalse(_want_family({"source_ids": ["free-work"]}, "remotive"))
         self.assertFalse(_want_family({"source_ids": ["remotive"]}, "freework"))
         self.assertFalse(_want_family({"source_ids": ["live-off"]}, "freework"))
+        self.assertTrue(_want_family({}, "collective"))
+        self.assertTrue(_want_family({"source_ids": ["collective"]}, "collective"))
+        self.assertTrue(_want_family({"source_ids": ["collective.work"]}, "collective"))
+        self.assertFalse(_want_family({"source_ids": ["collective"]}, "remotive"))
+        self.assertFalse(_want_family({"source_ids": ["remotive"]}, "collective"))
+        self.assertFalse(_want_family({"source_ids": ["live-off"]}, "collective"))
         # Public API / RSS feeds: one family, any feed id (jobicy, remoteok...) narrows to it.
         self.assertTrue(_want_family({}, "feeds"))
         self.assertTrue(_want_family({"source_ids": ["jobicy"]}, "feeds"))
@@ -1225,6 +1242,9 @@ class CareerOfficialApiTest(unittest.TestCase):
                                         "navin.career.collect.search_freework_jobs",
                                         return_value={"jobs": [], "walls": [], "requests": 0, "total": 0},
                                     ) as freework, patch(
+                                        "navin.career.collect.search_collective_jobs",
+                                        return_value={"jobs": [], "walls": [], "requests": 0, "total": 0},
+                                    ) as collective, patch(
                                         "navin.career.collect.collect_feeds",
                                         return_value={"jobs": [], "walls": [], "requests": 0, "by_source": {}},
                                     ) as feeds:
@@ -1235,6 +1255,7 @@ class CareerOfficialApiTest(unittest.TestCase):
             web.assert_called()
             scrape.assert_called()
             freework.assert_called_once()
+            collective.assert_called_once()
             feeds.assert_called_once()
             jooble.assert_not_called()
             usajobs.assert_not_called()
@@ -1250,6 +1271,9 @@ class CareerOfficialApiTest(unittest.TestCase):
             self.assertTrue(families["freework"])
             self.assertEqual(search["freework"], 0)
             self.assertIn("free-work", search["note"].lower())
+            self.assertTrue(families["collective"])
+            self.assertEqual(search["collective"], 0)
+            self.assertIn("collective.work", search["note"].lower())
             self.assertTrue(families["feeds"])
             self.assertEqual(search["feeds"], 0)
             self.assertIn("jobicy", search["note"].lower())
