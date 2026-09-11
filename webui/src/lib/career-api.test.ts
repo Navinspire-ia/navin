@@ -31,6 +31,9 @@ describe("career sources fallback", () => {
     expect(FALLBACK_STACK.mcp.map((row) => row.id)).toEqual(["linkedin", "notion", "github", "exa"]);
     expect(FALLBACK_STACK.mcp[0]?.recommended).toBe(true);
     expect(FALLBACK_STACK.connectors.find((row) => row.id === "linkedin")?.ingest).toBe("public_listing");
+    expect(ids).toContain("collective");
+    expect(FALLBACK_STACK.connectors.find((row) => row.id === "collective")?.ingest).toBe("public_listing");
+    expect(FALLBACK_STACK.connectors.find((row) => row.id === "collective")?.live).toBe(true);
     expect(FALLBACK_STACK.connectors.find((row) => row.id === "employers")?.live).toBe(true);
     expect(ids).toContain("employers");
     expect(officialCareerHref("#/career")).toBeNull();

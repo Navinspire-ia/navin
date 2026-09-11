@@ -36,7 +36,7 @@ INBOX_CLASSES = (
 
 # Preferred markets: languages, cities, freelance aliases, public board domains.
 # Web Job Search uses langs + aliases. LinkedIn is always opened, never fetched.
-# Free-Work has its own public listing reader, so it takes no web search slot.
+# Free-Work and Collective.work have their own public listing readers, so they take no web search slot.
 MARKETS: dict[str, dict[str, Any]] = {
     "FR": {
         "label": "France",
@@ -523,6 +523,22 @@ CATALOG: list[dict[str, Any]] = [
             "IT freelance missions and jobs, FR and UK. Public search pages read live "
             "(no login, one request per second, capped per run): TJM, duration, remote "
             "mode, skills and full description. Generic scrape never touches the host."
+        ),
+    },
+    {
+        "id": "collective",
+        "name": "Collective.work",
+        "level": 3,
+        "zone": "FR EU",
+        "ingest": "public_listing",
+        "auto_search": True,
+        "auto_apply": False,
+        "priority": 9,
+        "url": "https://www.collective.work/",
+        "notes": (
+            "IT freelance missions and jobs, FR and neighbouring markets. Public search "
+            "pages read live (no login, one request per second, capped per run): TJM, "
+            "remote mode, skills and full description. Generic scrape never touches the host."
         ),
     },
     {
@@ -1030,6 +1046,7 @@ CLOSED_FETCH_HOSTS = (
     "malt.fr",
     "malt.com",
     "free-work.com",
+    "collective.work",
     "chooseyourboss.com",
     "gulftalent.com",
     "naukrigulf.com",
@@ -1396,6 +1413,7 @@ def _country_boards(country: str, q: str) -> list[dict[str, str]]:
     boards: dict[str, list[dict[str, str]]] = {
         "FR": [
             {"id": "fr-freework", "label": "Free-Work", "url": f"https://www.free-work.com/fr/tech-it/jobs?query={enc}", "country": "FR", "kind": "board"},
+            {"id": "fr-collective", "label": "Collective.work", "url": f"https://www.collective.work/jobs/fr?search={enc}", "country": "FR", "kind": "board"},
             {"id": "fr-ft", "label": "France Travail", "url": france_travail_search_url(q), "country": "FR", "kind": "api"},
             {"id": "fr-apec", "label": "APEC", "url": f"https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles={enc}", "country": "FR", "kind": "board"},
             {"id": "fr-wttj", "label": "Welcome to the Jungle", "url": f"https://www.welcometothejungle.com/fr/jobs?query={enc}", "country": "FR", "kind": "board"},
@@ -1405,6 +1423,7 @@ def _country_boards(country: str, q: str) -> list[dict[str, str]]:
         ],
         "BE": [
             {"id": "be-ict", "label": "ICTjob", "url": f"https://www.ictjob.be/fr/search?q={enc}", "country": "BE", "kind": "board"},
+            {"id": "be-collective", "label": "Collective.work", "url": f"https://www.collective.work/jobs/fr?search={enc}", "country": "BE", "kind": "board"},
             {"id": "be-vdab", "label": "VDAB", "url": f"https://www.vdab.be/vindeenjob/vacatures?trefwoord={enc}", "country": "BE", "kind": "board"},
             {"id": "be-forem", "label": "Le Forem", "url": f"https://www.leforem.be/chercher-un-emploi.html?q={enc}", "country": "BE", "kind": "board"},
             {"id": "be-actiris", "label": "Actiris", "url": f"https://www.actiris.brussels/fr/citoyens/offres-d-emploi/?q={enc}", "country": "BE", "kind": "board"},

@@ -31,7 +31,7 @@ const MARKET: Record<string, { label: string; domains: string[]; langs: string[]
     langs: ["fr", "en"],
     aliases: ["freelance", "mission", "TJM"],
     cities: ["Paris"],
-    // free-work.com has its own public listing reader (backend): no web search slot spent on it.
+    // free-work.com and collective.work have their own public listing readers: no web search slot spent on them.
     domains: ["francetravail.fr", "apec.fr", "welcometothejungle.com", "malt.fr", "chooseyourboss.com"],
   },
   BE: {

@@ -84,6 +84,10 @@
     "url": "https://www.free-work.com/"
   },
   {
+    "id": "collective",
+    "url": "https://www.collective.work/"
+  },
+  {
     "id": "apec",
     "url": "https://www.apec.fr/"
   },
@@ -232,6 +236,10 @@
     "url": "https://www.free-work.com/fr/tech-it/jobs?query=Data+Engineer"
   },
   {
+    "id": "fr-collective",
+    "url": "https://www.collective.work/jobs/fr?search=Data+Engineer"
+  },
+  {
     "id": "fr-ft",
     "url": "https://candidat.francetravail.fr/offres/recherche?motsCles=Data+Engineer&offresPartenaires=true"
   },
@@ -262,6 +270,10 @@
   {
     "id": "be-ict",
     "url": "https://www.ictjob.be/fr/search?q=Data+Engineer"
+  },
+  {
+    "id": "be-collective",
+    "url": "https://www.collective.work/jobs/fr?search=Data+Engineer"
   },
   {
     "id": "be-vdab",

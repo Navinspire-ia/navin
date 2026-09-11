@@ -57,6 +57,7 @@ function countryBoards(country: string, q: string): OfficialPortal[] {
   const map: Record<string, OfficialPortal[]> = {
     FR: [
       { id: "fr-freework", label: "Free-Work", url: `https://www.free-work.com/fr/tech-it/jobs?query=${q}`, country: "FR", kind: "board" },
+      { id: "fr-collective", label: "Collective.work", url: `https://www.collective.work/jobs/fr?search=${q}`, country: "FR", kind: "board" },
       { id: "fr-ft", label: "France Travail", url: `https://candidat.francetravail.fr/offres/recherche?motsCles=${q}&offresPartenaires=true`, country: "FR", kind: "api" },
       { id: "fr-apec", label: "APEC", url: `https://www.apec.fr/candidat/recherche-emploi.html/emploi?motsCles=${q}`, country: "FR", kind: "board" },
       { id: "fr-wttj", label: "Welcome to the Jungle", url: `https://www.welcometothejungle.com/fr/jobs?query=${q}`, country: "FR", kind: "board" },
@@ -83,6 +84,7 @@ function countryBoards(country: string, q: string): OfficialPortal[] {
     ],
     BE: [
       { id: "be-ict", label: "ICTjob", url: `https://www.ictjob.be/fr/search?q=${q}`, country: "BE", kind: "board" },
+      { id: "be-collective", label: "Collective.work", url: `https://www.collective.work/jobs/fr?search=${q}`, country: "BE", kind: "board" },
       { id: "be-vdab", label: "VDAB", url: `https://www.vdab.be/vindeenjob/vacatures?trefwoord=${q}`, country: "BE", kind: "board" },
       { id: "be-forem", label: "Le Forem", url: `https://www.leforem.be/chercher-un-emploi.html?q=${q}`, country: "BE", kind: "board" },
       { id: "be-actiris", label: "Actiris", url: `https://www.actiris.brussels/fr/citoyens/offres-d-emploi/?q=${q}`, country: "BE", kind: "board" },
@@ -206,6 +208,7 @@ const CLOSED_HOSTS = [
   "malt.fr",
   "malt.com",
   "free-work.com",
+  "collective.work",
   "chooseyourboss.com",
   "gulftalent.com",
   "naukrigulf.com",

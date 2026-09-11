@@ -58,6 +58,7 @@ def _empty_collectors():
         "navin.career.collect.scrape_open_net": {"jobs": [], "walls": [], "refused": []},
         "navin.career.collect.search_linkedin_jobs": {"jobs": [], "walls": [], "requests": 0},
         "navin.career.collect.search_freework_jobs": {"jobs": [], "walls": [], "requests": 0, "total": 0},
+        "navin.career.collect.search_collective_jobs": {"jobs": [], "walls": [], "requests": 0, "total": 0},
         "navin.career.collect.collect_feeds": {"jobs": [], "walls": [], "requests": 0, "by_source": {}},
         "navin.career.collect.collect_employers": {"jobs": [], "checked": 0, "reports": [], "errors": []},
     }
@@ -77,6 +78,7 @@ class CareerSourceContractTest(unittest.TestCase):
         self.assertEqual(levels["ashby"], 2)
         self.assertEqual(levels["web-job-search"], 3)
         self.assertEqual(levels["free-work"], 3)
+        self.assertEqual(levels["collective"], 3)
         self.assertEqual(levels["jobserve"], 3)
         self.assertEqual(levels["dice"], 3)
         self.assertEqual(levels["linkedin"], 4)
@@ -91,6 +93,7 @@ class CareerSourceContractTest(unittest.TestCase):
         for host in (
             "linkedin.com",
             "free-work.com",
+            "collective.work",
             "jobserve.com",
             "dice.com",
             "ictjob.be",
@@ -128,6 +131,7 @@ class CareerSourceContractTest(unittest.TestCase):
             self.assertIn("linkedin.com/jobs", first["url"])
         urls = " ".join(row["url"] for row in pack)
         self.assertIn("free-work.com", urls)
+        self.assertIn("collective.work", urls)
         self.assertIn("ictjob.be", urls)
         self.assertIn("jobs.ch", urls)
         self.assertIn("jobserve.com", urls)
@@ -155,6 +159,7 @@ class CareerSourceContractTest(unittest.TestCase):
         self.assertIn("1099", blob)
         self.assertIn("contractuel", blob)
         self.assertNotIn("site:free-work.com", blob)
+        self.assertNotIn("site:collective.work", blob)
         self.assertIn("site:francetravail.fr", blob)
         self.assertIn("site:jobserve.com", blob)
         self.assertTrue(any(row.get("kind") == "linkedin_open" for row in queries))

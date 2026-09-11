@@ -4413,6 +4413,7 @@
       "account": "Account",
       "advanced": "Sécurité",
       "appearance": "Apparence",
+      "studio": "Studio",
       "apps": "Plugins",
       "automations": "Loop",
       "browser": "Internet",
@@ -4513,7 +4514,10 @@
       "videoGeneration": "Génération de vidéos",
       "voiceInput": "Saisie vocale",
       "webSearch": "Recherche web",
-      "workspace": "Espace de travail"
+      "workspace": "Espace de travail",
+      "studio": "Barre Studio",
+      "studioValue": "Ordre et visibilité",
+      "studioCaption": "Réordonnez les modules Studio et masquez ceux que vous n'utilisez pas."
     },
     "plugins": {
       "chooseFolder": "Choose folder",
@@ -4692,6 +4696,7 @@
       "imageGeneration": "Génération d’images",
       "interface": "Interface utilisateur",
       "localPreferences": "Préférences locales",
+      "studioModules": "Modules Studio",
       "mcp": "Services MCP",
       "music": "Musique",
       "nativeHost": "Hôte natif",
@@ -4709,6 +4714,18 @@
     "sidebar": {
       "ariaLabel": "Sections des réglages",
       "title": "Réglages"
+    },
+    "studio": {
+      "hint": "Restez appuyé sur une ligne et faites-la glisser pour réordonner le menu Studio. Désactivez un module pour le masquer. Les modules masqués restent ici pour les réafficher.",
+      "reset": "Ordre d'origine",
+      "visibleCount": "{{visible}} visibles / {{total}}",
+      "drag": "Rester appuyé et glisser la ligne",
+      "moveUp": "Monter",
+      "moveDown": "Descendre",
+      "show": "Afficher dans la barre",
+      "hide": "Masquer de la barre",
+      "visible": "Affiché dans la barre",
+      "hidden": "Masqué dans la barre"
     },
     "skills": {
       "addCustom": "Ajouter",
@@ -5306,6 +5323,12 @@
     "notes": "Notes",
     "opsStudio": "Ops",
     "otherApps": "Studio",
+    "studioEmpty": "Choisir les modules",
+    "studioConfig": "Réglages Studio",
+    "studioHidden": "Masqués",
+    "studioHiddenCount": "Masqués ({{count}})",
+    "hideStudioModule": "Masquer {{label}}",
+    "showStudioModule": "Afficher {{label}}",
     "projectHome": "Project",
     "recent": "Récentes",
     "risklensStudio": "RiskLens",
