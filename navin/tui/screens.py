@@ -809,12 +809,12 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
-| `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit). Selecting text or right-click also copies it. |
-| `Ctrl+V` / `Cmd+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (up to 5000 lines). Windows Terminal may ask above 5 KiB: Paste anyway, then Enter to send |
+| `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit) |
+| `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
+| `Ctrl+V` / `Cmd+V` | Paste |
 | `Ctrl+A` | Select all in the prompt |
 | `Ctrl+F` | Find in the conversation (Enter next, Esc close) |
 | `PageUp` / `PageDown` / `Ctrl+Up` / `Ctrl+Down` | Scroll the conversation |
-| `Ctrl+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
 | Zoom | Terminal zoom: `Ctrl++` / `Ctrl+-` (Windows Terminal / the host) |
 | `Ctrl+Q` | Quit |
 

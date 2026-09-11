@@ -17,6 +17,7 @@ from navin.tui.clipboard import (
     pointer_copy_text,
     read_clipboard,
     write_clipboard,
+    write_os_clipboard,
 )
 from navin.tui.markdown import restyle_inline_code
 from navin.tui.paths import PATH_INK, looks_like_path
@@ -84,6 +85,26 @@ class ClipboardTests(unittest.TestCase):
         self.assertEqual(pick_paste_text("", "os"), "os")
         self.assertFalse(osc52_allowed("x" * 5000))
         self.assertTrue(osc52_allowed("short"))
+
+    def test_windows_keeps_large_copies_in_app(self) -> None:
+        large = "x" * 5000
+        with (
+            patch("navin.tui.clipboard.sys.platform", "linux"),
+            patch("navin.tui.clipboard.write_clipboard") as write,
+        ):
+            self.assertFalse(write_os_clipboard(large))
+            write.assert_not_called()
+            self.assertTrue(write_os_clipboard("short"))
+            write.assert_called_once_with("short")
+
+    def test_macos_writes_large_copies_to_pbcopy(self) -> None:
+        large = "x" * 5000
+        with (
+            patch("navin.tui.clipboard.sys.platform", "darwin"),
+            patch("navin.tui.clipboard.write_clipboard", return_value=True) as write,
+        ):
+            self.assertTrue(write_os_clipboard(large))
+            write.assert_called_once_with(large)
 
     def test_right_click_prefers_selection(self) -> None:
         self.assertEqual(pointer_copy_text("sel", "reply"), "sel")
@@ -165,9 +186,9 @@ class MacosBindingsTests(unittest.TestCase):
 
         app_keys = {binding.key for binding in NavinApp.BINDINGS}
         composer_keys = {binding.key for binding in Composer.BINDINGS}
-        for key in ("super+c", "super+v", "super+shift+c", "super+f"):
+        for key in ("super+c", "super+v", "super+shift+c", "super+f", "super+alt+v"):
             self.assertIn(key, app_keys, key)
-        for key in ("super+c", "super+v", "super+a", "super+f"):
+        for key in ("super+c", "super+v", "super+a", "super+f", "super+alt+v"):
             self.assertIn(key, composer_keys, key)
 
 

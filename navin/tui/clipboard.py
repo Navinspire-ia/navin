@@ -94,6 +94,21 @@ def osc52_allowed(text: str) -> bool:
     return len((text or "").encode("utf-8", errors="replace")) < OSC52_MAX_BYTES
 
 
+def write_os_clipboard(text: str) -> bool:
+    """Write to the host clipboard when it will not trip a terminal paste guard.
+
+    Windows Terminal intercepts Ctrl+V above 5 KiB. Large copies therefore stay
+    in-app on Windows / WSL so Ctrl+V remains a normal paste. macOS pbcopy has
+    no such limit; large copies go to the OS clipboard there.
+    """
+    payload = text or ""
+    if not payload:
+        return False
+    if osc52_allowed(payload) or sys.platform == "darwin":
+        return write_clipboard(payload)
+    return False
+
+
 def _win_temp_dir() -> str:
     global _win_temp_cache
     if _win_temp_cache:
