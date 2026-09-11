@@ -37,6 +37,56 @@ class RouteTextTests(unittest.TestCase):
         self.assertEqual(payload, "/forge fais un petit test de grep")
 
 
+class AssistantPreviewTests(unittest.TestCase):
+    def test_keeps_the_first_sentence(self) -> None:
+        from navin.tui.widgets import assistant_preview
+
+        text = "Le script n'ecrit plus dans COPY. " + ("suite " * 80)
+        self.assertEqual(assistant_preview(text), "Le script n'ecrit plus dans COPY.")
+
+    def test_truncates_a_long_line(self) -> None:
+        from navin.tui.widgets import assistant_preview
+
+        text = "mot " * 80
+        out = assistant_preview(text, limit=40)
+        self.assertLessEqual(len(out), 42)
+        self.assertTrue(out.endswith("…"))
+
+    def test_detects_a_question_to_the_user(self) -> None:
+        from navin.tui.widgets import looks_like_client_prompt
+
+        self.assertTrue(looks_like_client_prompt("Quelle option veux-tu ?"))
+        self.assertTrue(
+            looks_like_client_prompt("Choisis :\n1. continuer\n2. arreter")
+        )
+        self.assertFalse(
+            looks_like_client_prompt(
+                "Le script n'ecrit plus dans COPY. " + ("Verification ensuite. " * 20)
+            )
+        )
+
+
+class ReadableAssistantMarkdownTests(unittest.TestCase):
+    def test_breaks_a_wall_of_sentences(self) -> None:
+        from navin.tui.widgets import readable_assistant_markdown
+
+        wall = (
+            "Le script n'ecrit plus dans COPY. "
+            "Je verifie le CHECKPOINT ensuite. "
+            "Le drop a ete recree. "
+        ) * 4
+        out = readable_assistant_markdown(wall)
+        self.assertIn("\n\n", out)
+        self.assertTrue(out.startswith("Le script"))
+        self.assertIn("Le drop", out)
+
+    def test_keeps_real_markdown_blocks(self) -> None:
+        from navin.tui.widgets import readable_assistant_markdown
+
+        md = "# Titre\n\nUn paragraphe."
+        self.assertEqual(readable_assistant_markdown(md), md)
+
+
 class DisplayUserTextTests(unittest.TestCase):
     def test_hides_forge_and_keeps_prompt(self) -> None:
         self.assertEqual(display_user_text("/forge salut ca va ?"), "salut ca va ?")
@@ -88,6 +138,41 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
                 "glm-5.3-flash",
             )
 
+    async def test_thinking_stays_folded_until_done(self) -> None:
+        from textual.app import App, ComposeResult
+        from textual.widgets import Static
+
+        from navin.tui.theme import NAVIN_DARK
+        from navin.tui.widgets import AssistantMessage
+
+        block = AssistantMessage()
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield block
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        long = "Le script n'ecrit plus dans COPY. " + ("Verification ensuite. " * 40)
+        async with app.run_test(size=(80, 16)) as _pilot:
+            await block.delta(long)
+            preview = str(block.query_one(".assistant-preview", Static).content)
+            self.assertIn("Le script", preview)
+            self.assertIn("clic", preview)
+            self.assertFalse(block._open)
+            self.assertFalse(block.finished)
+
+            await block.finish(latency_ms=12, model="glm", preset=None)
+            self.assertTrue(block.finished)
+            self.assertTrue(block._open)
+            preview = block.query_one(".assistant-preview", Static)
+            self.assertFalse(preview.display)
+            self.assertEqual(str(preview.content).strip(), "")
+
+            await block.set_text("Quelle option veux-tu ?")
+            self.assertTrue(block._open)
+
     async def test_tool_head_markup_stays_valid(self) -> None:
         from textual.app import App, ComposeResult
 
@@ -107,7 +192,9 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             await _pilot.pause()
             tool.apply(phase="error", error="boom")
             await _pilot.pause()
-            self.assertIn("list_dir", tool._head_text())
+            self.assertIn("list", tool._head_text())
+            self.assertNotIn("args:", tool._head_text())
+            self.assertNotIn("{", tool._head_text())
 
 
 class ToolColorTests(unittest.TestCase):
@@ -147,6 +234,7 @@ class ToolColorTests(unittest.TestCase):
 
     def test_json_args_do_not_leak_markup(self) -> None:
         from navin.tui.widgets import ToolCall
+        from navin.utils.tool_hints import format_tool_detail
 
         tool = ToolCall(
             "c1",
@@ -156,7 +244,159 @@ class ToolColorTests(unittest.TestCase):
         tool.phase = "end"
         head = tool._head_text()
         self.assertNotIn("[/dim]", head)
-        self.assertIn("apply_patch", head)
+        self.assertIn("edit", head)
+        self.assertNotIn("apply_patch", head)
+        self.assertNotIn("{", head)
+        body = format_tool_detail(
+            "apply_patch",
+            {"edits": [{"action": "add", "new_text": "hello"}]},
+            result={"ok": True},
+        )
+        self.assertNotIn("{", body)
+        self.assertNotIn("args:", body)
+
+
+class UpdateOfferTests(unittest.IsolatedAsyncioTestCase):
+    def test_slash_and_palette_expose_update(self) -> None:
+        from navin.tui.app import _TUI_SLASH
+
+        self.assertTrue(any(row["command"] == "/update" for row in _TUI_SLASH))
+
+    async def test_offer_names_the_version(self) -> None:
+        from textual.app import App, ComposeResult
+        from textual.widgets import Static
+
+        from navin.tui.theme import NAVIN_DARK
+        from navin.tui.widgets import UpdateOffer
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield UpdateOffer("2.0.3", "navin 2.0.3 is available")
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 8)) as _pilot:
+            card = app.query_one(UpdateOffer)
+            shown = str(card.content) if isinstance(card, Static) else str(card)
+            self.assertIn("2.0.3", shown)
+            self.assertIn("/update", shown)
+
+
+class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
+    def test_clips_long_session_titles(self) -> None:
+        from navin.tui.screens import PickerScreen
+
+        long = "Scope reminder: the request names these targets: ~/projects/deploy7/db"
+        self.assertLessEqual(len(PickerScreen._clip(long, 44)), 44)
+        self.assertTrue(PickerScreen._clip(long, 44).endswith("…"))
+
+    async def test_long_list_can_scroll(self) -> None:
+        from textual.app import App
+        from textual.widgets import OptionList
+
+        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.theme import NAVIN_DARK
+
+        items = [
+            PickItem(f"cli:{i}", f"Session {i} with a longer title", f"cli:{i}", "2026-09-11")
+            for i in range(24)
+        ]
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(PickerScreen("Sessions", items, hint="Enter opens."))
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as _pilot:
+            options = app.screen.query_one("#options", OptionList)
+            self.assertGreaterEqual(len(options.options), 24)
+            self.assertGreater(options.max_scroll_y, 0)
+            before = options.scroll_y
+            options.scroll_relative(y=4, animate=False)
+            self.assertGreater(options.scroll_y, before)
+
+    async def test_filter_keeps_matching_titles(self) -> None:
+        from textual.app import App
+        from textual.widgets import OptionList
+
+        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.theme import NAVIN_DARK
+
+        items = [
+            PickItem("cli:1", "Migration v2", "This window", "9 Sep 15:00"),
+            PickItem("sdk:e2e", "Untitled chat", "SDK", "4 Sep 17:11"),
+        ]
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(PickerScreen("Sessions", items, hint="Type to search."))
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as _pilot:
+            screen = app.screen
+            assert isinstance(screen, PickerScreen)
+            screen._apply_filter("migr")
+            options = screen.query_one("#options", OptionList)
+            self.assertEqual(len(options.options), 1)
+
+    async def test_f2_asks_to_rename_the_highlighted_chat(self) -> None:
+        from textual.app import App
+
+        from navin.tui.screens import RENAME_PREFIX, PickItem, PickerScreen
+        from navin.tui.theme import NAVIN_DARK
+
+        items = [
+            PickItem("__new__", "New session"),
+            PickItem("cli:1", "Migration v2", "This window", "9 Sep"),
+        ]
+        chosen: list[str | None] = []
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(
+                    PickerScreen("Sessions", items, current="cli:1", renamable=True),
+                    chosen.append,
+                )
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.press("f2")
+            await pilot.press("enter")
+        self.assertEqual(chosen, [f"{RENAME_PREFIX}cli:1\nMigration v2"])
+
+    async def test_typed_search_is_visible(self) -> None:
+        from textual.app import App
+        from textual.widgets import OptionList
+
+        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.theme import NAVIN_DARK
+
+        items = [
+            PickItem("cli:1", "Migration v2"),
+            PickItem("sdk:e2e", "Untitled chat"),
+        ]
+
+        class Host(App):
+            async def on_mount(self) -> None:
+                await self.push_screen(PickerScreen("Sessions", items))
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as _pilot:
+            screen = app.screen
+            assert isinstance(screen, PickerScreen)
+            screen._apply_filter("migr")
+            self.assertEqual(screen._query, "migr")
+            options = screen.query_one("#options", OptionList)
+            self.assertEqual(len(options.options), 1)
 
 
 if __name__ == "__main__":

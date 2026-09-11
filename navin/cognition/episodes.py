@@ -88,6 +88,22 @@ def strip_runtime_context(text: str) -> str:
     return text if cut < 0 else text[:cut]
 
 
+def first_user_text(messages: list[dict[str, Any]] | None) -> str:
+    """First user line, without the runtime-context suffix."""
+    if not messages:
+        return ""
+    from navin.runtime_context import public_history_message
+
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        shown = public_history_message(message)
+        text = strip_runtime_context(_text_of(shown.get("content")))
+        if text.strip():
+            return text
+    return ""
+
+
 def last_user_text(messages: list[dict[str, Any]] | None) -> str:
     """Text of the most recent ``user`` message, scanning from the end.
 

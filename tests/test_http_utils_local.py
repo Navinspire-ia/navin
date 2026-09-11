@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from navin.webui.http_utils import (
+    is_local_browser_request,
     is_localhost,
+    is_loopback_host,
     is_same_machine_client,
 )
 
@@ -42,6 +44,33 @@ class LocalClientTests(unittest.TestCase):
             self.assertFalse(
                 is_same_machine_client(
                     SimpleNamespace(remote_address=("192.168.1.40", 44332))
+                )
+            )
+
+    def test_tauri_webview_host_is_loopback(self) -> None:
+        self.assertTrue(is_loopback_host("tauri.localhost"))
+        self.assertTrue(is_loopback_host("tauri.localhost:443"))
+        self.assertTrue(is_local_browser_request(
+            SimpleNamespace(remote_address=("127.0.0.1", 9)),
+            {"Host": "tauri.localhost"},
+        ))
+
+    def test_wsl_host_can_install_updates(self) -> None:
+        nets = [ipaddress.ip_network("172.29.208.0/20")]
+        with patch(
+            "navin.webui.http_utils._iter_local_ipv4_networks",
+            return_value=nets,
+        ):
+            self.assertTrue(
+                is_local_browser_request(
+                    SimpleNamespace(remote_address=("172.29.208.1", 44332)),
+                    {"Host": "172.29.208.80:8766"},
+                )
+            )
+            self.assertFalse(
+                is_local_browser_request(
+                    SimpleNamespace(remote_address=("8.8.8.8", 9)),
+                    {"Host": "172.29.208.80:8766"},
                 )
             )
 

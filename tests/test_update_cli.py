@@ -396,13 +396,28 @@ class StartupNoticeTest(unittest.TestCase):
         self.assertIn("Settings > Updates", text)
         self.assertNotIn("navin update", text)
 
-    def test_source_checkout_never_asks_the_server(self):
+    def test_source_checkout_still_names_the_release(self):
         with (
             mock.patch.object(service, "_install_kind", return_value="source"),
-            mock.patch.object(service, "check_for_update") as check,
+            mock.patch.object(service, "updates_configured", return_value=True),
+            mock.patch.object(
+                service,
+                "check_for_update",
+                return_value={
+                    "available": True,
+                    "supported": False,
+                    "installKind": "source",
+                    "latestVersion": "9.9.9",
+                    "reason": "This session is a source checkout. Upgrade the packaged CLI with: navin update",
+                },
+            ) as check,
         ):
-            self.assertIsNone(notice.update_notice())
-        check.assert_not_called()
+            text = notice.update_notice()
+        self.assertIsNotNone(text)
+        assert text is not None
+        self.assertIn("9.9.9", text)
+        self.assertIn("navin update", text)
+        check.assert_called_once()
 
     def test_a_server_error_is_silent(self):
         with (
