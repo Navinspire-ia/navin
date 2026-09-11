@@ -255,13 +255,42 @@ def _first_path(args: dict[str, Any]) -> str:
     return ""
 
 
-def tool_target(arguments: dict | None, *, limit: int = 48) -> str:
-    """Short action target: file name, command, or query. No JSON."""
+def _usable_shell_label(text: str) -> bool:
+    stripped = (text or "").strip().strip("'\"`·- ")
+    if len(stripped) < 2:
+        return False
+    if stripped.lower() in {"shell", "command", "true", ":", "."}:
+        return False
+    return True
+
+
+def _command_label(command: str, limit: int = 56) -> str:
+    """Never an empty ``run  "``. Always keep a readable command stub."""
+    pretty = humanize_shell_command(command, max_len=max(limit, 40))
+    if _usable_shell_label(pretty):
+        return pretty if len(pretty) <= limit else pretty[: limit - 1] + "…"
+    raw = " ".join((command or "").split())
+    chunks = [chunk.strip() for chunk in _SHELL_SPLIT_RE.split(raw) if chunk.strip()]
+    kept: list[str] = []
+    for index, chunk in enumerate(chunks):
+        if _CD_RE.match(chunk) and index < len(chunks) - 1:
+            continue
+        if _SLEEP_RE.match(chunk):
+            continue
+        kept.append(_PYTHON_BIN_RE.sub("python", chunk))
+    raw = " && ".join(kept) if kept else raw
+    raw = raw.strip().strip("'\"") or "command"
+    if len(raw) <= limit:
+        return raw
+    return raw[: limit - 1] + "…"
+
+
+def tool_target(arguments: dict | None, *, limit: int = 56) -> str:
+    """Short action target: file name, command, or query. No JSON. Never blank."""
     args = arguments if isinstance(arguments, dict) else {}
     command = args.get("command") or args.get("cmd")
     if isinstance(command, str) and command.strip():
-        text = humanize_shell_command(command, max_len=limit)
-        return text if text != "shell" else ""
+        return _command_label(command, limit)
     path = _first_path(args)
     if path:
         return _path_name(path)
@@ -269,7 +298,8 @@ def tool_target(arguments: dict | None, *, limit: int = 48) -> str:
         val = args.get(key)
         if isinstance(val, str) and val.strip():
             text = " ".join(val.split())
-            return text if len(text) <= limit else text[: limit - 1] + "…"
+            if _usable_shell_label(text):
+                return text if len(text) <= limit else text[: limit - 1] + "…"
     return ""
 
 

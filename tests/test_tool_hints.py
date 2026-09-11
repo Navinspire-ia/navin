@@ -144,6 +144,14 @@ class QuietToolLineTests(unittest.TestCase):
         )
         self.assertTrue(run.startswith("run  "))
         self.assertIn("python migrate.py", run)
+        self.assertNotEqual(describe_tool_line("exec", {"command": ""}), "run  \"")
+        self.assertNotEqual(describe_tool_line("exec", {"command": "\""}), "run  \"")
+        empty = describe_tool_line("exec", {"command": "   "})
+        self.assertTrue(empty.startswith("run"))
+        self.assertNotIn('run  "', empty)
+        quoted = describe_tool_line("exec", {"command": "cd ~/db-migration && :"})
+        self.assertIn("run", quoted)
+        self.assertGreater(len(quoted), 4)
 
         detail = format_tool_detail(
             "exec",

@@ -108,6 +108,28 @@ def tool_icon(name: str) -> str:
     return "•"
 
 
+def tool_ink_class(name: str) -> str:
+    """CSS class for the tool family color (no Rich markup, so no double paint)."""
+    verb = tool_verb(name)
+    return {
+        "read": "-ink-read",
+        "list": "-ink-read",
+        "grep": "-ink-search",
+        "find": "-ink-search",
+        "run": "-ink-run",
+        "edit": "-ink-edit",
+        "create": "-ink-edit",
+        "check": "-ink-check",
+        "search": "-ink-web",
+        "fetch": "-ink-web",
+        "browse": "-ink-web",
+        "board": "-ink-board",
+        "todo": "-ink-board",
+        "git": "-ink-git",
+        "ask": "-ink-ask",
+    }.get(verb, "-ink-run")
+
+
 def tool_color(name: str) -> str:
     """Hex ink for a tool family (not the same blue for every call)."""
     base = (name or "").lower()
@@ -424,10 +446,18 @@ class ToolCall(Vertical):
         background: $background;
     }
     ToolCall > .tool-head {
-        color: $foreground;
         background: $background;
         text-style: none;
     }
+    ToolCall.-ink-read > .tool-head { color: #FF6B2C; }
+    ToolCall.-ink-search > .tool-head { color: #FF2E93; }
+    ToolCall.-ink-run > .tool-head { color: #FFB000; }
+    ToolCall.-ink-edit > .tool-head { color: #FF3B30; }
+    ToolCall.-ink-check > .tool-head { color: #00C853; }
+    ToolCall.-ink-web > .tool-head { color: #E040FB; }
+    ToolCall.-ink-board > .tool-head { color: #7C4DFF; }
+    ToolCall.-ink-git > .tool-head { color: #00C853; }
+    ToolCall.-ink-ask > .tool-head { color: #FF4081; }
     ToolCall > .tool-body {
         padding: 0 0 0 5;
         color: #C8C8C8;
@@ -455,6 +485,7 @@ class ToolCall(Vertical):
         self._spin = 0
         self._open = False
         self.add_class("-running")
+        self.add_class(tool_ink_class(name))
 
     def compose(self) -> ComposeResult:
         yield Static(self._plain_head(), classes="tool-head", markup=False)
