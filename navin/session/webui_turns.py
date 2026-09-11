@@ -326,10 +326,8 @@ def _fallback_title_from_user_text(user_text: str) -> str:
     return title
 
 
-def apply_provisional_webui_title(session: Session, user_text: str | None) -> bool:
+def apply_provisional_title(session: Session, user_text: str | None) -> bool:
     """Set metadata.title from the user message when the chat is still untitled."""
-    if session.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True:
-        return False
     if session.metadata.get(WEBUI_TITLE_USER_EDITED_METADATA_KEY) is True:
         return False
     current = session.metadata.get(WEBUI_TITLE_METADATA_KEY)
@@ -354,6 +352,13 @@ def apply_provisional_webui_title(session: Session, user_text: str | None) -> bo
     session.metadata[WEBUI_TITLE_METADATA_KEY] = title
     session.metadata[WEBUI_TITLE_PROVISIONAL_METADATA_KEY] = True
     return True
+
+
+def apply_provisional_webui_title(session: Session, user_text: str | None) -> bool:
+    """WebUI-owned chats only. CLI uses ``apply_provisional_title`` directly."""
+    if session.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True:
+        return False
+    return apply_provisional_title(session, user_text)
 
 
 def _title_inputs(session: Session) -> tuple[str, str]:
@@ -602,14 +607,14 @@ class WebuiTurnCoordinator:
         return ctx.channel == "websocket"
 
     async def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
-        if not self._is_websocket_event(event.context):
-            return
         session = self.sessions.get_or_create(event.context.session_key)
-        marked = mark_webui_session(session, event.context.metadata)
-        titled = apply_provisional_webui_title(session, event.user_text)
+        marked = False
+        if self._is_websocket_event(event.context):
+            marked = mark_webui_session(session, event.context.metadata)
+        titled = apply_provisional_title(session, event.user_text)
         if marked or titled:
             self.sessions.save(session)
-        if titled:
+        if titled and self._is_websocket_event(event.context):
             await self._publish_session_metadata_updated(
                 channel=event.context.channel,
                 chat_id=event.context.chat_id,

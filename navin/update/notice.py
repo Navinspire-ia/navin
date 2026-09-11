@@ -65,13 +65,13 @@ def _write_cache(info: dict[str, Any]) -> None:
 def latest_update_info(*, force: bool = False) -> dict[str, Any] | None:
     """The updater's answer for this install, from the daily cache or the server.
 
-    ``None`` when this build is not updated by the signed pipeline (source
-    checkout), has no update server, or the server could not be reached.
+    ``None`` when this build has no update server, or the server could not
+    be reached. A source checkout still reports a newer packaged release.
     """
     from navin.update import service
 
     kind = service._install_kind()
-    if kind in {"source", "unsupported"}:
+    if kind == "unsupported":
         return None
     if not force:
         cached = _read_cache()
@@ -100,7 +100,7 @@ def update_notice(*, force: bool = False) -> str | None:
         reason = str(info.get("reason") or "").strip()
         return f"{head} {reason}".strip()
     if info.get("installKind") == "cli":
-        return f"{head} Update with: navin update"
+        return f"{head} Update with: navin update  (or /update here)"
     # A desktop install: its own window carries the Install button.
     return f"{head} Open Navin and use Settings > Updates to install it."
 

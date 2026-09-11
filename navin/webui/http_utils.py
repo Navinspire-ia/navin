@@ -265,7 +265,8 @@ def is_loopback_host(value: str) -> bool:
     if host.startswith("::ffff:"):
         host = host[7:]
     host = host.rstrip(".").lower()
-    if host == "localhost":
+    if host == "localhost" or host.endswith(".localhost"):
+        # RFC 6761: *.localhost is loopback. Tauri's WebView uses tauri.localhost.
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
@@ -301,11 +302,28 @@ def _all_forwarded_values_are_loopback(headers: Any) -> bool:
 
 
 def is_local_browser_request(connection: Any, headers: Any) -> bool:
-    """Return True only for a local TCP peer presenting a local browser origin."""
-    if not is_localhost(connection):
+    """True for a browser on this machine (loopback, Tauri, or the WSL host).
+
+    Install and other privileged routes used ``is_localhost`` only. Under WSL2
+    the Windows window talks to the WSL IP, and Tauri sends Host
+    ``tauri.localhost``. Both are this machine; rejecting them made Install Now
+    fail with no useful explanation.
+    """
+    if not is_same_machine_client(connection):
         return False
     host = case_insensitive_header(headers, "Host")
-    if not is_loopback_host(host):
+    if not host:
+        return True
+    if is_loopback_host(host):
+        return _all_forwarded_values_are_loopback(headers)
+    # Windows browser → WSL: Host is the WSL address, not 127.0.0.1.
+    try:
+        remote = ipaddress.ip_address(_host_without_port(host))
+    except ValueError:
+        return False
+    if remote.version != 4 or not remote.is_private:
+        return False
+    if not any(remote in net for net in _iter_local_ipv4_networks()):
         return False
     return _all_forwarded_values_are_loopback(headers)
 

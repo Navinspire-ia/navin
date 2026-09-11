@@ -9307,9 +9307,11 @@
     "cardBody": "A new version is ready. Install now to get the latest fixes and features.",
     "cardTitle": "Navin {{version}} is available",
     "installNow": "Install Now",
+    "installFailed": "Install failed: {{error}}",
     "installRestart": "Install and restart",
     "installing": "Installing…",
     "later": "Later",
+    "retry": "Retry",
     "skip": "Skip"
   },
   "workspace": {

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from rich.markup import escape
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -33,6 +34,8 @@ from textual.widgets.tree import TreeNode
 # Generic filterable picker
 # ---------------------------------------------------------------------------
 
+RENAME_PREFIX = "__rename__:"
+
 
 @dataclass(frozen=True)
 class PickItem:
@@ -47,44 +50,109 @@ class PickerScreen(ModalScreen[str | None]):
 
     DEFAULT_CSS = """
     PickerScreen { align: center middle; }
+    PickerScreen * { text-style: none; }
     PickerScreen > Vertical {
         width: 76;
         max-width: 96%;
-        height: auto;
-        max-height: 80%;
-        border: round $primary;
+        height: 80%;
+        max-height: 28;
+        min-height: 14;
+        border: solid #5A7A9A;
         background: $surface;
         padding: 1 2;
+        overflow: hidden;
     }
-    PickerScreen .picker-title { text-style: bold; color: $primary; }
-    PickerScreen .picker-hint { color: $text-muted; margin: 0 0 1 0; }
-    PickerScreen Input { margin: 0 0 1 0; }
-    PickerScreen OptionList { height: auto; max-height: 20; background: transparent; }
+    PickerScreen .picker-title { height: 1; color: $foreground; text-style: none; }
+    PickerScreen .picker-hint { height: 1; color: #9A9A9A; text-style: none; margin: 0 0 1 0; }
+    PickerScreen #filter {
+        height: 1;
+        margin: 0 0 1 0;
+        background: #2A2A2A;
+        color: $foreground;
+        padding: 0 1;
+        text-style: none;
+    }
+    PickerScreen OptionList {
+        height: 1fr;
+        min-height: 8;
+        border: none;
+        background: transparent;
+        scrollbar-size-vertical: 1;
+        text-style: none;
+    }
+    PickerScreen OptionList > .option-list--option,
+    PickerScreen OptionList > .option-list--option-highlighted {
+        text-style: none;
+    }
     """
 
-    BINDINGS = [Binding("escape", "cancel", "Close")]
+    BINDINGS = [
+        Binding("escape", "cancel", "Close", priority=True),
+        Binding("f2", "rename", "Rename", priority=True),
+        Binding("enter", "confirm", "Open", priority=True),
+    ]
 
     def __init__(
-        self, title: str, items: list[PickItem], *, hint: str = "", current: str | None = None
+        self,
+        title: str,
+        items: list[PickItem],
+        *,
+        hint: str = "",
+        current: str | None = None,
+        renamable: bool = False,
     ) -> None:
         super().__init__()
         self._title = title
         self._items = items
         self._hint = hint
         self._current = current
+        self._renamable = renamable
         self._filtered: list[PickItem] = items
+        self._query = ""
+        self._mode = "search"
+        self._rename_key: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(self._title, classes="picker-title")
+            yield Static(self._title, classes="picker-title", markup=False)
             if self._hint:
-                yield Static(self._hint, classes="picker-hint")
-            yield Input(placeholder="Type to filter…", id="filter")
+                yield Static(self._hint, classes="picker-hint", markup=False)
+            yield Static("Search  name or date", id="filter", markup=False)
             yield OptionList(id="options")
 
     def on_mount(self) -> None:
         self._fill(self._items)
-        self.query_one("#filter", Input).focus()
+        self.query_one("#options", OptionList).focus()
+
+    def _paint_field(self) -> None:
+        if not self.is_mounted:
+            return
+        label = "Rename" if self._mode == "rename" else "Search"
+        shown = self._query if self._query else ("type a name" if self._mode == "rename" else "name or date")
+        caret = "_" if self._query else ""
+        try:
+            self.query_one("#filter", Static).update(f"{label}  {shown}{caret}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
+    def _clip(text: str, limit: int) -> str:
+        compact = " ".join((text or "").split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: max(limit - 1, 1)] + "…"
+
+    def _option_line(self, item: PickItem, mark: str) -> Text:
+        # Plain Rich Text: bold / dim / wide glyphs paint twice on Windows Terminal.
+        title = self._clip(item.title, 44)
+        badge = self._clip(item.badge, 14) if item.badge else ""
+        extra = self._clip(item.subtitle, 18) if item.subtitle else ""
+        tail = "  ".join(part for part in (extra, badge) if part)
+        line = Text()
+        line.append(f"{mark} {title}")
+        if tail:
+            line.append(f"  {tail}", style="#9A9A9A")
+        return line
 
     def _fill(self, items: list[PickItem]) -> None:
         self._filtered = items
@@ -92,20 +160,22 @@ class PickerScreen(ModalScreen[str | None]):
         options.clear_options()
         highlight = 0
         for idx, item in enumerate(items):
-            mark = "●" if item.id == self._current else "○"
+            mark = ">" if item.id == self._current else "-"
             if item.id == self._current:
                 highlight = idx
-            badge = f"  [dim]{escape(item.badge)}[/dim]" if item.badge else ""
-            line = f"{mark} [b]{escape(item.title)}[/b]{badge}"
-            if item.subtitle:
-                line += f"\n   [dim]{escape(item.subtitle)}[/dim]"
-            options.add_option(Option(line, id=f"{idx}"))
+            options.add_option(Option(self._option_line(item, mark), id=f"{idx}"))
         if items:
             options.highlighted = highlight
 
-    @on(Input.Changed, "#filter")
-    def _filter(self, event: Input.Changed) -> None:
-        needle = event.value.strip().lower()
+    def _apply_filter(self, raw: str) -> None:
+        self._query = raw
+        self._sync_query()
+
+    def _sync_query(self) -> None:
+        self._paint_field()
+        if self._mode == "rename":
+            return
+        needle = self._query.strip().lower()
         if not needle:
             self._fill(self._items)
             return
@@ -119,8 +189,14 @@ class PickerScreen(ModalScreen[str | None]):
         ]
         self._fill(matched)
 
-    @on(Input.Submitted, "#filter")
+    def action_confirm(self) -> None:
+        self._submit()
+
     def _submit(self) -> None:
+        if self._mode == "rename" and self._rename_key:
+            title = " ".join(self._query.split())
+            self.dismiss(f"{RENAME_PREFIX}{self._rename_key}\n{title}")
+            return
         options = self.query_one("#options", OptionList)
         idx = options.highlighted
         if idx is None and self._filtered:
@@ -130,6 +206,8 @@ class PickerScreen(ModalScreen[str | None]):
 
     @on(OptionList.OptionSelected, "#options")
     def _selected(self, event: OptionList.OptionSelected) -> None:
+        if self._mode == "rename":
+            return
         try:
             idx = int(event.option.id or "0")
         except ValueError:
@@ -137,8 +215,26 @@ class PickerScreen(ModalScreen[str | None]):
         if 0 <= idx < len(self._filtered):
             self.dismiss(self._filtered[idx].id)
 
+    def _highlighted_item(self) -> PickItem | None:
+        options = self.query_one("#options", OptionList)
+        idx = options.highlighted
+        if idx is None or not (0 <= idx < len(self._filtered)):
+            return None
+        return self._filtered[idx]
+
+    def action_rename(self) -> None:
+        if not self._renamable:
+            return
+        item = self._highlighted_item()
+        if item is None or item.id.startswith("__"):
+            return
+        self._mode = "rename"
+        self._rename_key = item.id
+        self._query = "" if item.title == "Untitled chat" else item.title
+        self._paint_field()
+
     def on_key(self, event) -> None:  # type: ignore[no-untyped-def]
-        if event.key in {"down", "up"} and self.query_one("#filter", Input).has_focus:
+        if event.key in {"up", "down"}:
             options = self.query_one("#options", OptionList)
             options.focus()
             if event.key == "down":
@@ -146,8 +242,27 @@ class PickerScreen(ModalScreen[str | None]):
             else:
                 options.action_cursor_up()
             event.stop()
+            return
+        if event.key == "backspace":
+            self._query = self._query[:-1]
+            self._sync_query()
+            event.stop()
+            event.prevent_default()
+            return
+        char = getattr(event, "character", None)
+        if char and char.isprintable() and len(char) == 1 and event.key not in {"enter"}:
+            self._query += char
+            self._sync_query()
+            event.stop()
+            event.prevent_default()
 
     def action_cancel(self) -> None:
+        if self._mode == "rename":
+            self._mode = "search"
+            self._rename_key = None
+            self._query = ""
+            self._sync_query()
+            return
         self.dismiss(None)
 
 
@@ -187,12 +302,20 @@ class FormScreen(ModalScreen[dict[str, str] | None]):
         background: $surface;
         padding: 1 2;
     }
-    FormScreen .picker-title { text-style: bold; color: $primary; }
+    FormScreen .picker-title { text-style: none; color: $foreground; }
     FormScreen .picker-hint { color: $text-muted; margin: 0 0 1 0; }
     FormScreen .field-label { margin: 1 0 0 0; }
     FormScreen .field-help { color: $text-muted; }
-    FormScreen Input { border: none; height: 1; padding: 0 1; background: $panel; }
-    FormScreen Input:focus { border: none; background: $primary 20%; }
+    FormScreen Input {
+        border: none;
+        height: 1;
+        padding: 0 1;
+        background: #2A2A2A;
+        color: $foreground;
+        text-style: none;
+    }
+    FormScreen Input:focus { border: none; background: #2F3A4A; }
+    FormScreen Input > .input--placeholder { color: #8A8A8A; text-style: none; }
     FormScreen Select { margin: 0; height: auto; }
     FormScreen Select > SelectCurrent { border: none; height: 1; padding: 0 1; background: $panel; }
     FormScreen Select:focus > SelectCurrent { border: none; background: $primary 20%; }
@@ -246,6 +369,7 @@ class FormScreen(ModalScreen[dict[str, str] | None]):
                             placeholder=field.placeholder,
                             password=field.secret,
                             id=fid,
+                            compact=True,
                         )
                 if field.help:
                     yield Static(field.help, classes="field-help", markup=True)
@@ -675,7 +799,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+I` | Provider settings |
 | `Ctrl+O` | Model list |
 | `Ctrl+T` | Mode list (default: agent) |
-| `Ctrl+S` | Sessions |
+| `Ctrl+S` | Sessions (F2 renames, type to search) |
 | `Ctrl+W` | Workspace / project folder |
 | `Ctrl+D` | Account (navin.live) |
 | `Ctrl+B` | Show / hide the right panel |
@@ -711,7 +835,7 @@ desktop composer. `/mode <name>` switches without opening the list.
 ## Slash commands
 
 Type `/` to get inline completion. Every builtin command of Navin is available:
-`/new`, `/stop`, `/restart`, `/status`, `/model`, `/history`, `/goal`,
+`/new`, `/stop`, `/restart`, `/status`, `/update`, `/title`, `/model`, `/history`, `/goal`,
 `/trigger`, `/skill`, `/pack`, `/checkpoint`, `/dream`, `/dream-log`,
 `/board`, `/pilot`, `/pairing`, workflows (`/forge`, `/blueprint`, `/cruise`,
 `/inspect`, `/fortify`, `/debug`, `/ask`, `/ops`, `/pulse`, ...) and more.

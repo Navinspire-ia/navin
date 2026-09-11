@@ -73,6 +73,7 @@ from navin.tui.runtime import (
 )
 from navin.tui.screens import (
     HELP_MARKDOWN,
+    RENAME_PREFIX,
     FormField,
     FormScreen,
     MarkdownScreen,
@@ -97,6 +98,7 @@ from navin.tui.widgets import (
     SystemNote,
     TideRule,
     Transcript,
+    UpdateOffer,
     UserMessage,
     account_side_text,
     split_model_slug,
@@ -146,6 +148,18 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "arg_hint": "[mode]",
     },
     {"command": "/theme", "title": "Theme", "description": "Color theme"},
+    {
+        "command": "/title",
+        "title": "Rename chat",
+        "description": "Set the name of this conversation",
+        "accepts_args": True,
+        "arg_hint": "<name>",
+    },
+    {
+        "command": "/update",
+        "title": "Update",
+        "description": "Install the latest signed navin release",
+    },
     {"command": "/graph", "title": "Graph", "description": "Project dependency graph (F2)"},
     {
         "command": "/evolve",
@@ -173,6 +187,7 @@ class NavinActions(Provider):
             ("Model", "Pick the model for the next turns (ctrl+o)", "pick_model"),
             ("Mode", "chat / ask / plan / agent / review / security / debug (ctrl+t)", "pick_mode"),
             ("Sessions", "Open or resume another session (ctrl+s)", "pick_session"),
+            ("Rename chat", "Change the name of this conversation (/title)", "rename_chat"),
             ("Project folder", "Change the project analysed by Graph and Evolve (ctrl+w)", "pick_project"),
             (
                 "Settings",
@@ -201,6 +216,7 @@ class NavinActions(Provider):
             ("Copy last reply", "Copy the last assistant message (ctrl+shift+c)", "copy_reply"),
             ("Clear transcript", "Clear the screen, keep the session", "clear_transcript"),
             ("Help", "Keys, modes and slash commands", "show_help"),
+            ("Update Navin", "Install the latest signed release (/update)", "update"),
             ("Quit", "Exit navin-cli (ctrl+q)", "quit"),
         ]
         # Domains that live in Settings are reached through "Settings"; only the
@@ -377,6 +393,7 @@ class NavinApp(App[None]):
         self._history_index: int | None = None
         self._history_draft = ""
         self._engine_ready = False
+        self._update_info: dict[str, Any] = {}
         self._engine_error: str | None = None
         self._spin = 0
         self._find_hits: list[Any] = []
@@ -458,12 +475,24 @@ class NavinApp(App[None]):
         except Exception:  # noqa: BLE001 - a hint, never an error
             return
         if text:
-            self.call_from_thread(self._show_update_notice, text, str(info.get("latestVersion") or ""))
+            self.call_from_thread(
+                self._show_update_notice,
+                text,
+                str(info.get("latestVersion") or ""),
+                info,
+            )
 
-    def _show_update_notice(self, text: str, latest: str) -> None:
-        self.notify(text, title="Update available", severity="information", timeout=15)
+    def _show_update_notice(self, text: str, latest: str, info: dict[str, Any] | None = None) -> None:
+        self._update_info = dict(info or {})
+        self.notify(text, title="Update available", severity="information", timeout=12)
         with contextlib.suppress(Exception):
             self.query_one(Sidebar).set_update_available(latest)
+        self.call_later(self._mount_update_offer, latest, text)
+
+    async def _mount_update_offer(self, latest: str, detail: str) -> None:
+        if not latest:
+            return
+        await self.transcript.add(UpdateOffer(latest, detail))
 
     async def on_unmount(self) -> None:
         self.prefs.last_session = self.runtime.session_key
@@ -736,7 +765,8 @@ class NavinApp(App[None]):
         """Slash commands handled by the TUI itself (screens), not by the engine."""
         head, _, arg = text.partition(" ")
         head = head.lower()
-        arg = arg.strip().lower()
+        raw_arg = arg.strip()
+        arg = raw_arg.lower()
         if head == "/settings":
             await self.action_open_settings(arg)
             return True
@@ -766,6 +796,15 @@ class NavinApp(App[None]):
             return True
         if head == "/agi":
             await self.action_open_agi()
+            return True
+        if head == "/update":
+            await self.action_update()
+            return True
+        if head == "/title":
+            if not raw_arg:
+                await self._note("Usage: /title New chat name")
+                return True
+            await self._save_session_title(self.runtime.session_key, raw_arg)
             return True
         return False
 
@@ -1019,6 +1058,8 @@ class NavinApp(App[None]):
             self._set_status()
             return
         if isinstance(event, UiChoiceRequested):
+            if self._current is not None:
+                await self._current.reveal()
             card = ChoiceCard(
                 event.request_id,
                 event.question,
@@ -1176,6 +1217,61 @@ class NavinApp(App[None]):
 
     async def action_engine_status(self) -> None:
         await self.submit_text("/status")
+
+    async def action_update(self) -> None:
+        """Install the signed release, or say why this tree cannot."""
+        from navin.update import notice, service
+
+        info = dict(self._update_info)
+        if not info.get("available"):
+            try:
+                info = notice.latest_update_info(force=True) or {}
+            except Exception:  # noqa: BLE001
+                info = {}
+            self._update_info = dict(info)
+        latest = str(info.get("latestVersion") or "").strip()
+        if not info.get("available") or not latest:
+            await self._note("navin is up to date.")
+            return
+        kind = str(info.get("installKind") or "")
+        if not info.get("supported"):
+            reason = str(info.get("reason") or "").strip()
+            await self._note(
+                reason
+                or (
+                    "This session is a source checkout. "
+                    "Upgrade the packaged CLI with [b]navin update[/b]."
+                ),
+                "warning",
+            )
+            return
+        if kind != "cli":
+            await self._note(
+                f"navin {escape(latest)} is available. "
+                "Open the Navin window and click Install Now, or Settings > Updates.",
+                "warning",
+            )
+            return
+        await self._note(f"Installing navin [b]{escape(latest)}[/b]…")
+        try:
+            result = await asyncio.to_thread(service.apply_cli_update)
+        except service.UpdateError as exc:
+            await self._note(f"[$error]Update failed:[/] {escape(str(exc))}", "error")
+            return
+        except Exception as exc:  # noqa: BLE001
+            await self._note(f"[$error]Update failed:[/] {escape(str(exc))}", "error")
+            return
+        if result.get("deferred"):
+            await self._note(
+                f"navin {escape(latest)} is ready. Quit this session, wait a few seconds, "
+                "then run [b]navin --version[/b].",
+                "success",
+            )
+            return
+        await self._note(
+            f"Updated to navin [b]{escape(latest)}[/b]. Restart the CLI to use it.",
+            "success",
+        )
 
     def action_find(self) -> None:
         seed = ""
@@ -1349,6 +1445,9 @@ class NavinApp(App[None]):
     def action_pick_session(self) -> None:
         self._spawn(self._pick_session())
 
+    def action_rename_chat(self) -> None:
+        self._spawn(self._rename_session(self.runtime.session_key))
+
     async def _pick_model(self) -> None:
         if not self._engine_ready:
             return
@@ -1413,33 +1512,97 @@ class NavinApp(App[None]):
             self.prefs.theme_explicit = True
             self.prefs.save()
 
-    async def _pick_session(self) -> None:
-        if not self._engine_ready:
-            return
-        rows = self.runtime.session_rows()
-        items = [PickItem("__new__", "New session", "Start a fresh cli session id", "+")]
-        for row in rows:
+    def _session_pick_items(self) -> list[PickItem]:
+        from navin.tui.session_labels import (
+            format_session_when,
+            session_display_title,
+            session_origin,
+        )
+
+        self.runtime.ensure_session_titles()
+        items = [PickItem("__new__", "New session", "", "")]
+        for row in self.runtime.session_rows():
             key = str(row.get("key") or "")
             if not key:
                 continue
-            title = str(row.get("title") or row.get("preview") or key)[:70]
-            updated = str(row.get("updated_at") or "")[:16].replace("T", " ")
-            items.append(PickItem(key, title, key, updated))
-        chosen = await self.push_screen_wait(
-            PickerScreen(
-                "Sessions",
-                items,
-                hint="Enter opens the session in this window.",
-                current=self.runtime.session_key,
+            items.append(
+                PickItem(
+                    key,
+                    session_display_title(row),
+                    session_origin(key),
+                    format_session_when(str(row.get("updated_at") or "")),
+                )
+            )
+        return items
+
+    async def _pick_session(self) -> None:
+        if not self._engine_ready:
+            return
+        while True:
+            chosen = await self.push_screen_wait(
+                PickerScreen(
+                    "Sessions",
+                    self._session_pick_items(),
+                    hint="Type to search. F2 renames. Enter opens.",
+                    current=self.runtime.session_key,
+                    renamable=True,
+                )
+            )
+            if not chosen:
+                return
+            if chosen.startswith(RENAME_PREFIX):
+                rest = chosen.removeprefix(RENAME_PREFIX)
+                key, sep, title = rest.partition("\n")
+                if sep:
+                    if title.strip():
+                        await self._save_session_title(key, title.strip())
+                elif key:
+                    await self._rename_session(key)
+                continue
+            if chosen == "__new__":
+                import time as _time
+
+                chosen = f"cli:{int(_time.time())}"
+            await self._switch_session(chosen)
+            return
+
+    async def _rename_session(self, key: str) -> None:
+        if not key or key.startswith("__"):
+            return
+        from navin.tui.session_labels import session_display_title
+
+        current = ""
+        for row in self.runtime.session_rows():
+            if str(row.get("key") or "") == key:
+                current = session_display_title(row)
+                break
+        values = await self.push_screen_wait(
+            FormScreen(
+                "Rename chat",
+                [
+                    FormField(
+                        "title",
+                        "Name",
+                        value=current,
+                        placeholder="Chat name",
+                    )
+                ],
+                hint="This name stays until you change it again.",
+                submit_label="Save",
             )
         )
-        if not chosen:
+        if not values:
             return
-        if chosen == "__new__":
-            import time as _time
+        await self._save_session_title(key, values.get("title") or "")
 
-            chosen = f"cli:{int(_time.time())}"
-        await self._switch_session(chosen)
+    async def _save_session_title(self, key: str, title: str) -> None:
+        try:
+            name = self.runtime.set_session_title(key, title)
+        except Exception as exc:  # noqa: BLE001
+            await self._note(f"[$error]{escape(str(exc))}[/]", "error")
+            return
+        self._refresh_side()
+        await self._note(f"chat name -> {escape(name)}", "success")
 
     async def _switch_session(self, key: str) -> None:
         await self.runtime.switch_session(key)
@@ -1814,6 +1977,7 @@ class NavinApp(App[None]):
     def get_system_commands(self, screen: Screen):  # type: ignore[override]
         yield from super().get_system_commands(screen)
         yield SystemCommand("Navin help", "Keys, modes and slash commands", self.action_show_help)
+        yield SystemCommand("Update Navin", "Install the latest signed release", self.action_update)
         yield SystemCommand("AGI", "Skills evolution, world model, policy, transfer, memory", self.action_open_agi)
 
 

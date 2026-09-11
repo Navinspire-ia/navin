@@ -9304,10 +9304,12 @@
     "banner": "Navin v{{version}} est prête à être installée.",
     "cardBody": "A new version is ready. Install now to get the latest fixes and features.",
     "cardTitle": "Navin {{version}} is available",
-    "installNow": "Install Now",
+    "installNow": "Installer",
+    "installFailed": "L'installation a échoué : {{error}}",
     "installRestart": "Installer et redémarrer",
     "installing": "Installation…",
     "later": "Plus tard",
+    "retry": "Réessayer",
     "skip": "Ignorer"
   },
   "workspace": {

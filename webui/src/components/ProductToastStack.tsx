@@ -95,6 +95,7 @@ const cardEnter =
 export function ProductToastStack({
   availableUpdate,
   updateBusy,
+  updateError,
   onInstallUpdate,
   onDismissUpdate,
   onSkipUpdate,
@@ -104,6 +105,7 @@ export function ProductToastStack({
 }: {
   availableUpdate: UpdateInfo | null;
   updateBusy: boolean;
+  updateError?: string | null;
   onInstallUpdate: () => void;
   onDismissUpdate: () => void;
   onSkipUpdate: () => void;
@@ -286,6 +288,14 @@ export function ProductToastStack({
                   })}
                 </p>
               )}
+              {updateError ? (
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-red-400">
+                  {t("updates.installFailed", {
+                    defaultValue: "Install failed: {{error}}",
+                    error: updateError,
+                  })}
+                </p>
+              ) : null}
             </div>
             <button
               type="button"
@@ -314,7 +324,9 @@ export function ProductToastStack({
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
                 {updateBusy
                   ? t("updates.installing", { defaultValue: "Installing…" })
-                  : t("updates.installNow", { defaultValue: "Install Now" })}
+                  : updateError
+                    ? t("updates.retry", { defaultValue: "Retry" })
+                    : t("updates.installNow", { defaultValue: "Install Now" })}
               </button>
             ) : (
               <button

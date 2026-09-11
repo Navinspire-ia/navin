@@ -1646,6 +1646,7 @@ function Shell({
   const accountSyncKeyRef = useRef<string | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   // Update + navin.live announcements land in the notification center. The
   // installer is reached through a ref because the notification outlives the
   // render that raised it, and is defined further down with the update state.
@@ -2129,22 +2130,23 @@ function Shell({
 
   const installAvailableUpdate = useCallback(async (fallbackUrl?: string) => {
     setUpdateBusy(true);
+    setUpdateError(null);
     try {
       await downloadUpdate(token);
       await installUpdate(token);
-    } catch {
+    } catch (error) {
       setUpdateBusy(false);
+      const message = error instanceof Error ? error.message : String(error);
+      setUpdateError(message);
       if (fallbackUrl) {
         try {
           await openProductUrl(fallbackUrl);
-          return;
         } catch {
-          // last resort below
+          // The card now names the failure. Do not hide it behind Settings.
         }
       }
-      navigate({ view: "settings", settingsSection: "overview", activeKey });
     }
-  }, [activeKey, navigate, openProductUrl, token]);
+  }, [openProductUrl, token]);
   installAvailableUpdateRef.current = () => installAvailableUpdate();
 
   const handleAnnouncementOpen = useCallback(
@@ -2181,6 +2183,7 @@ function Shell({
 
   const skipAvailableUpdate = useCallback(async () => {
     const version = availableUpdate?.latestVersion;
+    setUpdateError(null);
     setAvailableUpdate(null);
     if (!version) return;
     try {
@@ -4959,8 +4962,12 @@ function Shell({
         <ProductToastStack
           availableUpdate={availableUpdate}
           updateBusy={updateBusy}
+          updateError={updateError}
           onInstallUpdate={() => void installAvailableUpdate()}
-          onDismissUpdate={() => setAvailableUpdate(null)}
+          onDismissUpdate={() => {
+            setAvailableUpdate(null);
+            setUpdateError(null);
+          }}
           onSkipUpdate={() => void skipAvailableUpdate()}
           onOpenAnnouncement={(item) => void handleAnnouncementOpen(item)}
           onReload={onRestart}
