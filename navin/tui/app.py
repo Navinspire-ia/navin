@@ -1394,15 +1394,16 @@ class NavinApp(App[None]):
         self.transcript.nudge(event.delta)
 
     def copy_to_clipboard(self, text: str) -> None:
-        """OS clipboard first. OSC 52 only for short text (WT drops big pastes)."""
-        from navin.tui.clipboard import write_clipboard
+        """Always keep the in-app clipboard. OSC 52 only under WT's 5 KiB cap."""
+        from navin.tui.clipboard import osc52_allowed, write_clipboard
         from navin.utils.tool_hints import clip_transcript
 
         payload = clip_transcript(text)
         if not payload:
             return
+        self._clipboard = payload
         write_clipboard(payload)
-        if payload.count("\n") < 80 and len(payload) <= 4000:
+        if osc52_allowed(payload):
             super().copy_to_clipboard(payload)
 
     def _selected_text(self) -> str:

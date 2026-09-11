@@ -14,9 +14,16 @@ WSL ``clip.exe`` treats UTF-8 stdin as the OEM code page (accents become
 from __future__ import annotations
 
 import base64
+import os
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
+from pathlib import Path
+
+# Windows Terminal warns (and often drops OSC 52) above 5 KiB.
+OSC52_MAX_BYTES = 4000
+_win_temp_cache: str | None = None
 
 
 def _read_commands() -> list[list[str]]:
@@ -73,8 +80,102 @@ def decode_windows_clipboard_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def pick_paste_text(app_text: str, os_text: str) -> str:
+    """Prefer the longer payload so a stale in-app clipboard cannot win."""
+    app = (app_text or "").replace("\x00", "")
+    os_clip = os_text or ""
+    if len(os_clip) > len(app):
+        return os_clip
+    return app or os_clip
+
+
+def osc52_allowed(text: str) -> bool:
+    """True when OSC 52 is small enough for Windows Terminal to accept."""
+    return len((text or "").encode("utf-8", errors="replace")) < OSC52_MAX_BYTES
+
+
+def _win_temp_dir() -> str:
+    global _win_temp_cache
+    if _win_temp_cache:
+        return _win_temp_cache
+    powershell = shutil.which("powershell.exe")
+    if not powershell:
+        return ""
+    try:
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", "Write-Output $env:TEMP"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    raw = (result.stdout or b"").decode("utf-8", errors="replace").strip()
+    _win_temp_cache = raw.splitlines()[0].strip() if raw else ""
+    return _win_temp_cache
+
+
+def _win_to_wsl(win_path: str) -> str:
+    if not win_path:
+        return ""
+    wslpath = shutil.which("wslpath")
+    if wslpath:
+        try:
+            result = subprocess.run(
+                [wslpath, "-u", win_path],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None and result.returncode == 0:
+            return (result.stdout or "").strip()
+    path = win_path.replace("\\", "/")
+    if len(path) >= 2 and path[1] == ":":
+        return f"/mnt/{path[0].lower()}{path[2:]}"
+    return path
+
+
+def _write_windows_clipboard_file(text: str) -> bool:
+    """Set-Clipboard from a UTF-8 file. Survives the 7k PowerShell -Command cap."""
+    powershell = shutil.which("powershell.exe")
+    temp_dir = _win_temp_dir()
+    if not powershell or not temp_dir:
+        return False
+    name = f"navin-clip-w-{os.getpid()}.txt"
+    win_file = temp_dir.rstrip("\\/") + "\\" + name
+    wsl_file = _win_to_wsl(win_file)
+    if not wsl_file:
+        return False
+    try:
+        Path(wsl_file).write_text(text, encoding="utf-8")
+    except OSError:
+        return False
+    quoted = win_file.replace("'", "''")
+    command = (
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+        f"Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '{quoted}')"
+    )
+    try:
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    with suppress(OSError):
+        Path(wsl_file).unlink(missing_ok=True)
+    return result is not None and result.returncode == 0
+
+
 def _write_windows_clipboard(text: str) -> bool:
     """Copy Unicode text to the Windows clipboard (native or WSL)."""
+    if not osc52_allowed(text) and _write_windows_clipboard_file(text):
+        return True
     clip = shutil.which("clip.exe")
     if clip:
         try:
@@ -101,7 +202,7 @@ def _write_windows_clipboard(text: str) -> bool:
         "Set-Clipboard -Value $t"
     )
     if len(command) > 7000:
-        return False
+        return _write_windows_clipboard_file(text)
     try:
         result = subprocess.run(
             [
@@ -139,7 +240,7 @@ def _read_windows_clipboard() -> str:
                 command,
             ],
             capture_output=True,
-            timeout=5,
+            timeout=20,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
