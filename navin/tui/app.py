@@ -157,6 +157,11 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "arg_hint": "<name>",
     },
     {
+        "command": "/paste",
+        "title": "Paste",
+        "description": "Paste into the prompt (ctrl+v / cmd+v)",
+    },
+    {
         "command": "/update",
         "title": "Update",
         "description": "Install the latest signed navin release",
@@ -215,6 +220,7 @@ class NavinActions(Provider):
             ),
             ("Find in conversation", "Search the transcript (ctrl+f)", "find"),
             ("Copy last reply", "Copy the last assistant message (ctrl+shift+c)", "copy_reply"),
+            ("Paste", "Paste into the prompt (ctrl+v / cmd+v)", "paste_composer"),
             ("Clear transcript", "Clear the screen, keep the session", "clear_transcript"),
             ("Help", "Keys, modes and slash commands", "show_help"),
             ("Update Navin", "Install the latest signed release (/update)", "update"),
@@ -367,9 +373,11 @@ class NavinApp(App[None]):
         Binding("super+f", "find", "Find", show=False),
         Binding("ctrl+up", "page_transcript(-1)", show=False),
         Binding("ctrl+down", "page_transcript(1)", show=False),
-        Binding("ctrl+v", "paste_composer", "Paste", show=False),
-        Binding("super+v", "paste_composer", "Paste", show=False),
+        Binding("ctrl+v", "paste_composer", "Paste", show=False, priority=True),
+        Binding("super+v", "paste_composer", "Paste", show=False, priority=True),
         Binding("super+shift+v", "paste_composer", "Paste", show=False),
+        Binding("ctrl+alt+v", "paste_composer", "Paste", show=False),
+        Binding("super+alt+v", "paste_composer", "Paste", show=False),
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
@@ -833,6 +841,9 @@ class NavinApp(App[None]):
                 await self._note("Usage: /title New chat name")
                 return True
             await self._save_session_title(self.runtime.session_key, raw_arg)
+            return True
+        if head == "/paste":
+            self.action_paste_composer()
             return True
         return False
 
@@ -1393,18 +1404,38 @@ class NavinApp(App[None]):
     def _chat_scroll(self, event: Composer.ChatScroll) -> None:
         self.transcript.nudge(event.delta)
 
-    def copy_to_clipboard(self, text: str) -> None:
-        """Always keep the in-app clipboard. OSC 52 only under WT's 5 KiB cap."""
-        from navin.tui.clipboard import osc52_allowed, write_clipboard
+    def _write_last_copy(self, text: str) -> str:
+        root = Path(getattr(self.runtime.status, "workspace", "") or self.project_root)
+        path = root / ".navin" / "last-copy.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            return ""
+        return str(path)
+
+    def copy_to_clipboard(self, text: str, *, to_os: bool = True, quiet: bool = False) -> bool:
+        """Keep the in-app copy always. Paste with Ctrl+V / Cmd+V."""
+        from navin.tui.clipboard import osc52_allowed, write_os_clipboard
         from navin.utils.tool_hints import clip_transcript
 
         payload = clip_transcript(text)
         if not payload:
-            return
+            return False
         self._clipboard = payload
-        write_clipboard(payload)
-        if osc52_allowed(payload):
+        large = not osc52_allowed(payload)
+        os_ok = write_os_clipboard(payload) if to_os else False
+        if to_os and not large:
             super().copy_to_clipboard(payload)
+        if large:
+            self._write_last_copy(payload)
+        if not quiet:
+            if large:
+                kb = max(1, len(payload.encode("utf-8")) // 1024)
+                self.notify(f"Copied {kb} KB", timeout=2)
+            elif to_os and not os_ok:
+                self.notify("Copied", timeout=1.5)
+        return True
 
     def _selected_text(self) -> str:
         selected = ""
@@ -1447,31 +1478,34 @@ class NavinApp(App[None]):
 
     @on(events.TextSelected)
     def _copy_on_select(self, _event: events.TextSelected) -> None:
+        from navin.tui.clipboard import osc52_allowed
+
         selected = self._selected_text()
-        if selected:
-            self.copy_to_clipboard(selected)
+        # A large auto-copy fills the OS clipboard; WT right-click / Ctrl+V
+        # then opens the 5 KiB paste warning. Keep short selections only.
+        if selected and osc52_allowed(selected):
+            self.copy_to_clipboard(selected, quiet=True)
 
     def copy_from_pointer(self) -> None:
-        """Right-click: copy the selection, or the last assistant reply."""
+        """Right-click: copy the selection or the last message."""
         from navin.tui.clipboard import pointer_copy_text
 
         text = pointer_copy_text(self._selected_text(), self._last_copyable_text())
-        if text:
-            self.copy_to_clipboard(text)
+        if not text:
+            return
+        self.copy_to_clipboard(text)
 
     def action_copy_reply(self) -> None:
         """Copy selected text, or the last message (up to 5000 lines)."""
         selected = self._selected_text()
         if selected:
             self.copy_to_clipboard(selected)
-            self.notify("Copied", timeout=1.2)
             return
         last = self._last_copyable_text() or self._last_assistant_text()
         if not last.strip():
             self.notify("Nothing to copy", severity="warning", timeout=1.5)
             return
         self.copy_to_clipboard(last)
-        self.notify("Copied", timeout=1.2)
 
     async def action_export_transcript(self) -> None:
         lines: list[str] = [f"# Navin session {self.runtime.session_key}", ""]

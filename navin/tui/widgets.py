@@ -1521,13 +1521,15 @@ class Composer(TextArea):
         Binding("alt+enter", "newline", "Newline", show=False),
         Binding("ctrl+a", "select_all", "Select all", show=False),
         Binding("super+a", "select_all", "Select all", show=False),
-        Binding("ctrl+v", "paste_any", "Paste", show=False),
-        Binding("super+v", "paste_any", "Paste", show=False),
+        Binding("ctrl+v", "paste_any", "Paste", show=False, priority=True),
+        Binding("super+v", "paste_any", "Paste", show=False, priority=True),
         Binding("ctrl+c", "copy_any", "Copy", show=False),
         Binding("super+c", "copy_any", "Copy", show=False),
         Binding("ctrl+shift+v", "paste_any", "Paste", show=False),
         Binding("super+shift+v", "paste_any", "Paste", show=False),
         Binding("shift+insert", "paste_any", "Paste", show=False),
+        Binding("ctrl+alt+v", "paste_any", "Paste", show=False),
+        Binding("super+alt+v", "paste_any", "Paste", show=False),
         Binding("ctrl+f", "find", "Find", show=False),
         Binding("super+f", "find", "Find", show=False),
         Binding("pageup", "page_chat", "Page up", show=False, priority=True),
@@ -1629,13 +1631,24 @@ class Composer(TextArea):
         self._last_paste_at = now
         if trailing_newline or "\n" in payload:
             self._eat_enter += 1
+        if not self.text.strip():
+            self.load_text(payload)
+            self.move_cursor(self.document.end)
+            return
         self.insert(payload)
 
     async def _on_paste(self, event: events.Paste) -> None:
-        raw = event.text or ""
+        from navin.tui.clipboard import pick_paste_text
+
+        # WT "Paste anyway" can send a truncated blob. Prefer our full copy.
+        raw = pick_paste_text(self.app.clipboard, event.text or "")
         event.prevent_default()
         event.stop()
-        self._insert_paste(raw, trailing_newline=raw.endswith("\n") or raw.endswith("\r"))
+        self._insert_paste(
+            raw,
+            trailing_newline=(event.text or "").endswith("\n")
+            or (event.text or "").endswith("\r"),
+        )
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
