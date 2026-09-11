@@ -211,6 +211,18 @@ def connector_status(secrets: dict[str, str] | None = None) -> list[dict[str, An
             ),
         },
         {
+            "id": "collective",
+            "name": "Collective.work",
+            "live": True,
+            "needs_key": False,
+            "ingest": "public_listing",
+            "docs": "https://www.collective.work/jobs/fr",
+            "note": (
+                "Public job board for the FR and neighbouring markets, read without login, one "
+                "request per second, capped per run. TJM, remote mode and skills come from the listing."
+            ),
+        },
+        {
             "id": "malt",
             "name": "Malt",
             "live": False,

@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Collect job sources: Remotive, ATS boards, LinkedIn and Free-Work public listings, keyed APIs, web, scrape."""
+"""Collect job sources: Remotive, ATS boards, LinkedIn, Free-Work and Collective.work public listings, keyed APIs, web, scrape."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from loguru import logger
 
 from navin.career.employers import collect_employers
 from navin.career.feeds import FEED_IDS, collect_feeds
+from navin.career.collective import search_collective_jobs
 from navin.career.freework import search_freework_jobs
 from navin.career.linkedin import search_linkedin_jobs
 from navin.career.matching import job_is_relevant, score_opportunity
@@ -90,6 +91,7 @@ _LIVE_FAMILIES = {
     "scrape": {"scrape", "web-job-search"},
     "linkedin": {"linkedin", "linkedin-public"},
     "freework": {"free-work", "freework"},
+    "collective": {"collective", "collective-work", "collective.work"},
     "feeds": {"feeds", *FEED_IDS},
     "employers": {"employers", "esn", "company-pages"},
 }
@@ -144,6 +146,7 @@ def _search_families(
         "official": bool(official_wanted),
         "linkedin": _want_family(profile, "linkedin"),
         "freework": _want_family(profile, "freework"),
+        "collective": _want_family(profile, "collective"),
         "feeds": _want_family(profile, "feeds"),
         "employers": profile.get("employer_watch", True) is not False and _want_family(profile, "employers"),
     }
@@ -168,6 +171,8 @@ def _search_note(families: dict[str, bool], official_wanted: list[str]) -> str:
         "Free-Work public listings are read from the public search pages for the "
         "FR and GB markets (no login, one request per second, capped per run): "
         "TJM, duration, remote mode and skills come straight from the listing. "
+        "Collective.work public listings are read from the public job board for the "
+        "FR and neighbouring markets (no login, one request per second, capped per run). "
         "Public job APIs and RSS feeds (Jobicy, Remote OK, Himalayas, We Work Remotely, "
         "Arbeitnow, Hacker News Who is hiring) are read with a one hour cache; the source "
         "stays credited and the original listing is the apply link. Pay, contract, remote "
@@ -556,6 +561,19 @@ def collect(
             freework_net = {"jobs": [], "walls": [f"Free-Work error: {exc}"], "requests": 0}
     freework_rows = list(freework_net.get("jobs") or [])
     rows.extend(freework_rows)
+    collective_net: dict[str, Any] = {"jobs": [], "walls": [], "requests": 0}
+    if _want_family(profile, "collective"):
+        try:
+            collective_net = search_collective_jobs(
+                titles=score_profile["titles"] or [search_title],
+                countries=markets,
+                track=wanted_track,
+            )
+        except Exception as exc:  # noqa: BLE001 - Collective.work must never break the other families
+            logger.warning("career collective.work collect failed: {}", exc)
+            collective_net = {"jobs": [], "walls": [f"Collective.work error: {exc}"], "requests": 0}
+    collective_rows = list(collective_net.get("jobs") or [])
+    rows.extend(collective_rows)
     feeds_net: dict[str, Any] = {"jobs": [], "walls": [], "requests": 0, "by_source": {}}
     if _want_family(profile, "feeds"):
         picked_feeds = [sid for sid in FEED_IDS if sid in _source_ids(profile)]
@@ -614,7 +632,7 @@ def collect(
     for row in rows:
         url = str(row.get("url") or "")
         source = str(row.get("source") or "")
-        if is_closed_job_url(url) and source not in {"web", "linkedin", "free-work", "import"}:
+        if is_closed_job_url(url) and source not in {"web", "linkedin", "free-work", "collective", "import"}:
             continue
         if is_listing_hit(str(row.get("title") or ""), url):
             continue
@@ -662,6 +680,7 @@ def collect(
             "scrape": len(scrape_rows),
             "linkedin": len(linkedin_rows),
             "freework": len(freework_rows),
+            "collective": len(collective_rows),
             "feeds": len(feed_rows),
             "employers": len(employer_rows),
             "employers_checked": int(employer_net.get("checked") or 0),
@@ -680,6 +699,9 @@ def collect(
         "freework": len(freework_rows),
         "freework_requests": int(freework_net.get("requests") or 0),
         "freework_total": int(freework_net.get("total") or 0),
+        "collective": len(collective_rows),
+        "collective_requests": int(collective_net.get("requests") or 0),
+        "collective_total": int(collective_net.get("total") or 0),
         "feeds": len(feed_rows),
         "feeds_requests": int(feeds_net.get("requests") or 0),
         "feeds_by_source": dict(feeds_net.get("by_source") or {}),
@@ -694,6 +716,7 @@ def collect(
         "walls": list(scrape_net.get("walls") or [])
         + list(linkedin_net.get("walls") or [])
         + list(freework_net.get("walls") or [])
+        + list(collective_net.get("walls") or [])
         + list(feeds_net.get("walls") or []),
         "note": _search_note(families, official_wanted),
     }

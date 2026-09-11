@@ -79,6 +79,7 @@ def _empty_collectors():
         "navin.career.collect.scrape_open_net": {"jobs": [], "walls": [], "refused": []},
         "navin.career.collect.search_linkedin_jobs": {"jobs": [], "walls": [], "requests": 0},
         "navin.career.collect.search_freework_jobs": {"jobs": [], "walls": [], "requests": 0, "total": 0},
+        "navin.career.collect.search_collective_jobs": {"jobs": [], "walls": [], "requests": 0, "total": 0},
         "navin.career.collect.collect_feeds": {"jobs": [], "walls": [], "requests": 0, "by_source": {}},
         "navin.career.collect.collect_employers": {"jobs": [], "checked": 0, "reports": [], "errors": []},
     }

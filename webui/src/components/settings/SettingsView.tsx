@@ -43,6 +43,7 @@ import {
   Info,
   KeyRound,
   Layers,
+  LayoutGrid,
   Loader2,
   Mic,
   Monitor,
@@ -83,6 +84,7 @@ import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettin
 import { ModelTokenUsageTable } from "@/components/settings/ModelTokenUsageTable";
 import { TokenUsageHeatmap } from "@/components/settings/TokenUsageHeatmap";
 import { ExecPolicySettings } from "@/components/settings/ExecPolicySettings";
+import { StudioSettings } from "@/components/settings/StudioSettings";
 import { ToggleButton } from "@/components/settings/ToggleButton";
 import {
   channelFilterTab,
@@ -165,6 +167,8 @@ import {
 import { notifyCliAppsChanged } from "@/lib/cli-app-events";
 import { copyTextOrNotify, copyTextToClipboard } from "@/lib/clipboard";
 import {
+  LOCAL_PREFS_CHANGED_EVENT,
+  localPreferencesEqual,
   readLocalPreferences,
   writeLocalPreferences,
   type FileEditDisplayMode,
@@ -238,6 +242,7 @@ export type SettingsSectionKey =
   | "overview"
   | "account"
   | "appearance"
+  | "studio"
   | "providers"
   | "models"
   | "image"
@@ -1292,8 +1297,19 @@ export function SettingsView({
   }, [activeSection, token]);
 
   useEffect(() => {
-    writeLocalPreferences(localPrefs);
+    if (!localPreferencesEqual(readLocalPreferences(), localPrefs)) {
+      writeLocalPreferences(localPrefs);
+    }
   }, [localPrefs]);
+
+  useEffect(() => {
+    const refresh = () => {
+      const stored = readLocalPreferences();
+      setLocalPrefs((prev) => (localPreferencesEqual(prev, stored) ? prev : stored));
+    };
+    window.addEventListener(LOCAL_PREFS_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(LOCAL_PREFS_CHANGED_EVENT, refresh);
+  }, []);
 
   useEffect(() => {
     if (!settings) return;
@@ -2363,6 +2379,14 @@ export function SettingsView({
   };
 
   const renderSection = () => {
+    if (activeSection === "studio") {
+      return (
+        <StudioSettings
+          localPrefs={localPrefs}
+          onChangeLocalPrefs={setLocalPrefs}
+        />
+      );
+    }
     if (!settings) return null;
     switch (activeSection) {
       case "overview":
@@ -3039,6 +3063,7 @@ const SETTINGS_NAV_ITEMS: Array<{
   { key: "overview", icon: Activity, fallback: "Overview" },
   { key: "account", icon: CircleUserRound, fallback: "Account" },
   { key: "appearance", icon: Palette, fallback: "Appearance" },
+  { key: "studio", icon: LayoutGrid, fallback: "Studio" },
   { key: "providers", icon: KeyRound, fallback: "Providers" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "computer", icon: Monitor, fallback: "Computer" },
@@ -3298,6 +3323,22 @@ function OverviewSettings({
             caption={voiceCaption}
             showBrandLogos={showBrandLogos}
             onClick={() => onSelectSection("voice")}
+          />
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.studioModules", "Studio modules")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <OverviewListRow
+            icon={LayoutGrid}
+            title={tx("settings.overview.studio", "Studio sidebar")}
+            value={tx("settings.overview.studioValue", "Order and visibility")}
+            caption={tx(
+              "settings.overview.studioCaption",
+              "Reorder Studio modules and hide the ones you do not use.",
+            )}
+            onClick={() => onSelectSection("studio")}
           />
         </SettingsGroup>
       </section>

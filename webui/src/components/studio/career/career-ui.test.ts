@@ -81,7 +81,7 @@ describe("career IDE hashes stay inside the WebView", () => {
 
 describe("career catalog URLs leave the IDE", () => {
   it("lists only http(s) boards the OS browser can open", () => {
-    expect(catalogUrls.length).toBe(135);
+    expect(catalogUrls.length).toBe(138);
     for (const row of catalogUrls) {
       expect(officialCareerHref(row.url)).toBeTruthy();
       expect(row.url.startsWith("http://") || row.url.startsWith("https://")).toBe(true);

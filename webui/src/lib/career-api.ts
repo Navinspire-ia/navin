@@ -704,6 +704,13 @@ export const FALLBACK_STACK: CareerStack = {
       docs: "https://www.free-work.com/fr/tech-it/jobs",
     },
     {
+      id: "collective",
+      name: "Collective.work",
+      live: true,
+      ingest: "public_listing",
+      docs: "https://www.collective.work/jobs/fr",
+    },
+    {
       id: "malt",
       name: "Malt",
       live: false,
@@ -712,7 +719,7 @@ export const FALLBACK_STACK: CareerStack = {
     },
   ],
   rules:
-    "LinkedIn public listings come from the guest job search (no login, rate limited). Never auto Easy Apply. Free-Work public listings (FR and GB) come from the public search pages (no login, rate limited). Employer feeds read the ESN, consulting and agency boards of the selected markets directly. CV packs reuse Master CV facts only. Closed boards are official open + paste import.",
+    "LinkedIn public listings come from the guest job search (no login, rate limited). Never auto Easy Apply. Free-Work and Collective.work public listings come from the public search pages (no login, rate limited). Employer feeds read the ESN, consulting and agency boards of the selected markets directly. CV packs reuse Master CV facts only. Closed boards are official open + paste import.",
 };
 
 export const FALLBACK_CATALOG: CareerSource[] = [
@@ -904,6 +911,15 @@ export const FALLBACK_CATALOG: CareerSource[] = [
     ingest: "public_listing",
     url: "https://www.free-work.com/",
     notes: "IT freelance missions and jobs, FR and UK. Public search pages read live: TJM, duration, remote mode, skills.",
+  },
+  {
+    id: "collective",
+    name: "Collective.work",
+    level: 3,
+    zone: "FR EU",
+    ingest: "public_listing",
+    url: "https://www.collective.work/",
+    notes: "IT freelance missions and jobs, FR and neighbouring markets. Public search pages read live: TJM, remote mode, skills.",
   },
   {
     id: "malt",

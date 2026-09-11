@@ -56,6 +56,7 @@ SOURCE_CONTRACT: dict[str, dict[str, str]] = {
     "web-job-search": {"level": "3", "ingest": "search_snippet", "host": "html.duckduckgo.com", "wire": "websearch"},
     "web-search": {"level": "3", "ingest": "search_snippet", "host": "html.duckduckgo.com", "wire": "websearch"},
     "free-work": {"level": "3", "ingest": "public_listing", "host": "free-work.com", "wire": "freework"},
+    "collective": {"level": "3", "ingest": "public_listing", "host": "collective.work", "wire": "collective"},
     "apec": {"level": "3", "ingest": "web_agent", "host": "apec.fr", "wire": "site:apec.fr"},
     "malt": {"level": "4", "ingest": "open_manual", "host": "malt.fr", "wire": "closed:malt.fr"},
     "wttj": {"level": "3", "ingest": "web_agent", "host": "welcometothejungle.com", "wire": "site:welcometothejungle.com"},
@@ -208,6 +209,12 @@ class CareerCatalogRowTest(unittest.TestCase):
                     self.assertFalse(is_open_scrape_url("https://www.free-work.com/fr/tech-it/job-mission/x/y"))
                     self.assertNotIn("site:free-work.com", query_blob)
                     self.assertIn("free-work.com/fr/tech-it/jobs", pack_blob)
+                elif wire == "collective":
+                    self.assertIn("collective", connectors)
+                    self.assertTrue(is_closed_job_url("https://www.collective.work/jobs/fr/x"))
+                    self.assertFalse(is_open_scrape_url("https://www.collective.work/jobs/fr/x"))
+                    self.assertNotIn("site:collective.work", query_blob)
+                    self.assertIn("collective.work/jobs/fr", pack_blob)
                 elif wire.startswith("feed:"):
                     # Public API / RSS engine: one live connector, the feed id known to the
                     # engine, the host never in the generic scrape or web search slots.
@@ -445,6 +452,9 @@ class CareerConnectorLiveTest(unittest.TestCase):
         self.assertTrue(by_id["free-work"]["live"])
         self.assertFalse(by_id["free-work"]["needs_key"])
         self.assertEqual(by_id["free-work"]["ingest"], "public_listing")
+        self.assertTrue(by_id["collective"]["live"])
+        self.assertFalse(by_id["collective"]["needs_key"])
+        self.assertEqual(by_id["collective"]["ingest"], "public_listing")
         self.assertNotIn("france-travail", by_id)
 
 

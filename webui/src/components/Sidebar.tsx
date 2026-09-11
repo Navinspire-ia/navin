@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   Archive,
   BadgeDollarSign,
@@ -9,6 +9,8 @@ import {
   ChevronRight,
   Clapperboard,
   Code2,
+  Eye,
+  EyeOff,
   FileText,
   Globe2,
   Landmark,
@@ -31,35 +33,27 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import type { SettingsSectionKey } from "@/components/settings/SettingsView";
 import { ChatList } from "@/components/ChatList";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
 import NotificationCenter from "@/components/NotificationCenter";
 import { SidebarAccountCard } from "@/components/SidebarAccountCard";
+import { useLocalPreferences } from "@/hooks/useLocalPreferences";
+import { useStudioModuleDrag } from "@/hooks/useStudioModuleDrag";
+import { updateLocalPreferences } from "@/lib/local-preferences";
 import type {
   ChatSummary,
   SidebarViewState,
 } from "@/lib/types";
+import {
+  isStudioModuleId,
+  toggleStudioHidden,
+  visibleStudioModules,
+  type StudioModuleId,
+} from "@/lib/studio-modules";
 import { cn } from "@/lib/utils";
 
-/** Entries under "Studio", in sidebar order. */
-const OTHER_APPS = [
-  "tenders",
-  "career",
-  "leads",
-  "marketing",
-  "trading",
-  "ads",
-  "seo",
-  "scraping",
-  "montage",
-  "notes",
-  "meeting",
-  "crm",
-  "content",
-  "risklens",
-] as const;
-
-type StudioApp = (typeof OTHER_APPS)[number];
+type StudioApp = StudioModuleId;
 
 /**
  * Cursor-style rows: 28px tall, a single 16px glyph column, 13px text, flat
@@ -100,7 +94,7 @@ interface SidebarProps {
   onNewChatInProject?: (projectPath: string, projectName: string) => void;
   onOpenProject: (projectPath: string, projectName: string) => void;
   onCreateProjectFolder?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: SettingsSectionKey) => void;
   onOpenAccount: () => void;
   settingsActive?: boolean;
   onOpenSearch?: () => void;
@@ -171,11 +165,11 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
+  const localPrefs = useLocalPreferences();
   const [menuPortalContainer, setMenuPortalContainer] =
     useState<HTMLElement | null>(null);
   const otherAppActive =
-    props.activeUtility != null &&
-    (OTHER_APPS as readonly string[]).includes(props.activeUtility);
+    props.activeUtility != null && isStudioModuleId(props.activeUtility);
   const [otherAppsOpen, setOtherAppsOpen] = useState(otherAppActive);
   const collapsed = Boolean(props.collapsed);
   const toggleLabel = t("thread.header.toggleSidebar");
@@ -185,97 +179,107 @@ export function Sidebar(props: SidebarProps) {
     if (otherAppActive) setOtherAppsOpen(true);
   }, [otherAppActive]);
 
-  const studioApps: Array<{
-    id: StudioApp;
-    label: string;
-    icon: LucideIcon;
-    onClick: () => void;
-  }> = [
-    {
-      id: "tenders",
+  const studioCatalog: Record<
+    StudioApp,
+    { label: string; icon: LucideIcon; onClick: () => void }
+  > = {
+    tenders: {
       label: t("sidebar.tendersStudio", { defaultValue: "Tenders" }),
       icon: Landmark,
       onClick: props.onOpenTendersStudio,
     },
-    {
-      id: "career",
+    career: {
       label: t("sidebar.careerStudio", { defaultValue: "Career" }),
       icon: Briefcase,
       onClick: props.onOpenCareerStudio,
     },
-    {
-      id: "leads",
+    leads: {
       label: t("sidebar.leadsStudio", { defaultValue: "Leads" }),
       icon: Target,
       onClick: props.onOpenLeadsStudio,
     },
-    {
-      id: "marketing",
+    marketing: {
       label: t("sidebar.marketingStudio", { defaultValue: "Marketing" }),
       icon: Megaphone,
       onClick: props.onOpenMarketingStudio,
     },
-    {
-      id: "trading",
+    trading: {
       label: t("sidebar.tradingStudio", { defaultValue: "Trading" }),
       icon: Wallet,
       onClick: props.onOpenTradingStudio,
     },
-    {
-      id: "ads",
+    ads: {
       label: t("sidebar.adsStudio", { defaultValue: "Ads" }),
       icon: BadgeDollarSign,
       onClick: props.onOpenAdsStudio,
     },
-    {
-      id: "seo",
+    seo: {
       label: t("sidebar.seoStudio", { defaultValue: "SEO" }),
       icon: TrendingUp,
       onClick: props.onOpenSeoStudio,
     },
-    {
-      id: "scraping",
+    scraping: {
       label: t("sidebar.scrapingStudio", { defaultValue: "Scraping" }),
       icon: Globe2,
       onClick: props.onOpenScrapingStudio,
     },
-    {
-      id: "montage",
+    montage: {
       label: t("sidebar.montageStudio", { defaultValue: "Montage" }),
       icon: Clapperboard,
       onClick: props.onOpenMontageStudio,
     },
-    {
-      id: "notes",
+    notes: {
       label: t("sidebar.notes", { defaultValue: "Notes" }),
       icon: NotebookPen,
       onClick: props.onOpenNotes,
     },
-    {
-      id: "meeting",
+    meeting: {
       label: t("sidebar.meetingStudio", { defaultValue: "Meeting" }),
       icon: Mic,
       onClick: props.onOpenMeetingStudio,
     },
-    {
-      id: "crm",
+    crm: {
       label: t("sidebar.crm", { defaultValue: "CRM" }),
       icon: Briefcase,
       onClick: props.onOpenCrmStudio,
     },
-    {
-      id: "content",
+    content: {
       label: t("sidebar.contentStudio", { defaultValue: "Documents" }),
       icon: FileText,
       onClick: props.onOpenContentStudio,
     },
-    {
-      id: "risklens",
+    risklens: {
       label: t("sidebar.risklensStudio", { defaultValue: "RiskLens" }),
       icon: ShieldAlert,
       onClick: props.onOpenRisklensStudio,
     },
-  ];
+  };
+  const studioApps = visibleStudioModules(
+    localPrefs.studioOrder,
+    localPrefs.studioHidden,
+  ).map((id) => ({ id, ...studioCatalog[id] }));
+  const showStudio = studioApps.length > 0;
+
+  const setStudioOrder = (studioOrder: StudioModuleId[]) => {
+    updateLocalPreferences({ studioOrder });
+  };
+  const setStudioHidden = (id: StudioModuleId, hide: boolean) => {
+    updateLocalPreferences((prev) => ({
+      ...prev,
+      studioHidden: toggleStudioHidden(prev.studioHidden, id, hide),
+    }));
+  };
+  const {
+    listRef: studioListRef,
+    draggingId,
+    overId,
+    startDrag,
+    finishDrag,
+    consumeClickIfDragged,
+  } = useStudioModuleDrag({
+    order: localPrefs.studioOrder,
+    onReorder: setStudioOrder,
+  });
 
   return (
     <nav
@@ -368,43 +372,115 @@ export function Sidebar(props: SidebarProps) {
             onClick={props.onOpenDev}
             active={props.activeUtility === "dev"}
           />
-          <SidebarRow
-            collapsed={collapsed}
-            icon={LayoutGrid}
-            label={studioLabel}
-            onClick={() => setOtherAppsOpen((open) => !open)}
-            active={otherAppActive && !otherAppsOpen}
-            expanded={otherAppsOpen}
-            controls="sidebar-other-apps"
-            trailing={
-              <ChevronRight
-                className={cn(
-                  "h-3.5 w-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200",
-                  otherAppsOpen && "rotate-90",
-                )}
-                aria-hidden
-              />
-            }
-          />
-          {otherAppsOpen ? (
+          {showStudio && collapsed ? (
+            <SidebarRow
+              collapsed
+              icon={LayoutGrid}
+              label={studioLabel}
+              onClick={() => setOtherAppsOpen((open) => !open)}
+              active={otherAppActive && !otherAppsOpen}
+              expanded={otherAppsOpen}
+              controls="sidebar-other-apps"
+            />
+          ) : null}
+          {showStudio && !collapsed ? (
             <div
+              className={cn(
+                ROW_BASE,
+                "host-no-drag h-7 w-full gap-0.5 px-2",
+                otherAppActive && !otherAppsOpen ? ROW_ACTIVE : ROW_IDLE,
+              )}
+            >
+              <button
+                type="button"
+                aria-label={studioLabel}
+                aria-expanded={otherAppsOpen}
+                aria-controls="sidebar-other-apps"
+                onClick={() => setOtherAppsOpen((open) => !open)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none"
+              >
+                <LayoutGrid className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                <span className="min-w-0 flex-1 truncate">{studioLabel}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="sidebar-studio-config"
+                aria-label={t("sidebar.studioConfig", { defaultValue: "Studio settings" })}
+                title={t("sidebar.studioConfig", { defaultValue: "Studio settings" })}
+                onClick={() => props.onOpenSettings("studio")}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
+              >
+                <Settings className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+              </button>
+              <button
+                type="button"
+                aria-label={studioLabel}
+                aria-expanded={otherAppsOpen}
+                aria-controls="sidebar-other-apps"
+                onClick={() => setOtherAppsOpen((open) => !open)}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
+              >
+                <ChevronRight
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform duration-200",
+                    otherAppsOpen && "rotate-90",
+                  )}
+                  aria-hidden
+                />
+              </button>
+            </div>
+          ) : null}
+          {showStudio && otherAppsOpen ? (
+            <div
+              ref={(node) => {
+                studioListRef.current = node;
+              }}
               id="sidebar-other-apps"
+              data-testid="sidebar-studio-list"
               className={cn(
                 "space-y-px",
                 collapsed && "flex w-full flex-col items-center",
               )}
             >
-              {studioApps.map((app) => (
-                <SidebarRow
-                  key={app.id}
-                  collapsed={collapsed}
-                  indent
-                  icon={app.icon}
-                  label={app.label}
-                  onClick={app.onClick}
-                  active={props.activeUtility === app.id}
-                />
-              ))}
+              {studioApps.map((app) =>
+                collapsed ? (
+                  <SidebarRow
+                    key={app.id}
+                    collapsed
+                    indent
+                    icon={app.icon}
+                    label={app.label}
+                    onClick={app.onClick}
+                    active={props.activeUtility === app.id}
+                  />
+                ) : (
+                  <StudioSidebarRow
+                    key={app.id}
+                    id={app.id}
+                    icon={app.icon}
+                    label={app.label}
+                    active={props.activeUtility === app.id}
+                    hidden={false}
+                    dragging={draggingId === app.id}
+                    over={overId === app.id && draggingId !== app.id}
+                    hideLabel={t("sidebar.hideStudioModule", {
+                      defaultValue: "Hide {{label}}",
+                      label: app.label,
+                    })}
+                    showLabel={t("sidebar.showStudioModule", {
+                      defaultValue: "Show {{label}}",
+                      label: app.label,
+                    })}
+                    onOpen={() => {
+                      if (consumeClickIfDragged()) return;
+                      app.onClick();
+                    }}
+                    onToggle={() => setStudioHidden(app.id, true)}
+                    onPointerDown={(event) => startDrag(app.id, event, { preventDefault: false })}
+                    onPointerUp={(event) => finishDrag(event.clientY)}
+                  />
+                ),
+              )}
             </div>
           ) : null}
           {props.archivedCount ? (
@@ -499,6 +575,86 @@ export function Sidebar(props: SidebarProps) {
         <NotificationCenter placement="sidebar" />
       </div>
     </nav>
+  );
+}
+
+function StudioSidebarRow({
+  id,
+  icon: Icon,
+  label,
+  active,
+  hidden,
+  dragging,
+  over,
+  hideLabel,
+  showLabel,
+  onOpen,
+  onToggle,
+  onPointerDown,
+  onPointerUp,
+}: {
+  id: StudioModuleId;
+  icon: LucideIcon;
+  label: string;
+  active: boolean;
+  hidden: boolean;
+  dragging: boolean;
+  over: boolean;
+  hideLabel: string;
+  showLabel: string;
+  onOpen: () => void;
+  onToggle: () => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      data-studio-module={id}
+      data-testid={`sidebar-studio-${id}`}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      aria-grabbed={dragging}
+      role="link"
+      tabIndex={0}
+      aria-label={label}
+      aria-current={active ? "page" : undefined}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        onOpen();
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if ((event.target as HTMLElement).closest("button")) return;
+        event.preventDefault();
+        onOpen();
+      }}
+      className={cn(
+        ROW_BASE,
+        "host-no-drag h-7 w-full cursor-grab touch-none select-none gap-1 pl-8 pr-1 outline-none active:cursor-grabbing focus-visible:ring-1 focus-visible:ring-ring/50",
+        active ? ROW_ACTIVE : ROW_IDLE,
+        over && "bg-sidebar-accent/80",
+        dragging && "opacity-45",
+        hidden && !active && "opacity-55",
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <button
+        type="button"
+        data-testid={`sidebar-studio-toggle-${id}`}
+        aria-label={hidden ? showLabel : hideLabel}
+        title={hidden ? showLabel : hideLabel}
+        aria-pressed={!hidden}
+        onClick={onToggle}
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
+      >
+        {hidden ? (
+          <EyeOff className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+        ) : (
+          <Eye className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+        )}
+      </button>
+    </div>
   );
 }
 

@@ -1,6 +1,13 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import {
+  STUDIO_MODULE_IDS,
+  normalizeStudioHidden,
+  normalizeStudioOrder,
+  type StudioModuleId,
+} from "@/lib/studio-modules";
+
 export type LocalDensity = "comfortable" | "compact";
 /**
  * How much of the agent's activity the chat shows by default.
@@ -19,6 +26,8 @@ export interface LocalPreferences {
   codeWrap: boolean;
   brandLogos: boolean;
   fileEditDisplayMode: FileEditDisplayMode;
+  studioOrder: StudioModuleId[];
+  studioHidden: StudioModuleId[];
 }
 
 export const LOCAL_PREFS_STORAGE_KEY = "navin-webui.settings-preferences";
@@ -33,6 +42,8 @@ export const DEFAULT_LOCAL_PREFS: LocalPreferences = {
   // inline, large ones auto-collapse behind a "View diff" toggle. "summary"
   // (counts only) stays available in Settings for users who prefer quiet.
   fileEditDisplayMode: "diff",
+  studioOrder: [...STUDIO_MODULE_IDS],
+  studioHidden: [],
 };
 
 export function normalizeFileEditDisplayMode(value: unknown): FileEditDisplayMode {
@@ -60,6 +71,8 @@ export function readLocalPreferences(): LocalPreferences {
       codeWrap: parsed.codeWrap !== false,
       brandLogos: parsed.brandLogos === true,
       fileEditDisplayMode: normalizeFileEditDisplayMode(parsed.fileEditDisplayMode),
+      studioOrder: normalizeStudioOrder(parsed.studioOrder),
+      studioHidden: normalizeStudioHidden(parsed.studioHidden),
     };
   } catch {
     return DEFAULT_LOCAL_PREFS;
@@ -76,4 +89,17 @@ export function writeLocalPreferences(preferences: LocalPreferences): void {
     LOCAL_PREFS_CHANGED_EVENT,
     { detail: preferences },
   ));
+}
+
+export function localPreferencesEqual(a: LocalPreferences, b: LocalPreferences): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+export function updateLocalPreferences(
+  patch: Partial<LocalPreferences> | ((prev: LocalPreferences) => LocalPreferences),
+): LocalPreferences {
+  const prev = readLocalPreferences();
+  const next = typeof patch === "function" ? patch(prev) : { ...prev, ...patch };
+  if (!localPreferencesEqual(prev, next)) writeLocalPreferences(next);
+  return next;
 }
