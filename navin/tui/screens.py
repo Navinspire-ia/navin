@@ -806,15 +806,15 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+G` | Settings |
 | `F2` / `F3` / `F4` | Graph / Evolve / AGI |
 | `Ctrl+R` | Toggle reasoning visibility |
-| `Ctrl+L` | Clear transcript (keeps session) |
+| `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
 | `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit). Selecting text or right-click also copies it. |
 | `Ctrl+V` / `Cmd+V` / `Ctrl+Shift+V` / `Shift+Insert` | Paste (OS clipboard via pbcopy / clip / wl-copy) |
 | `Ctrl+A` | Select all in the prompt |
 | `Ctrl+F` | Find in the conversation (Enter next, Esc close) |
-| `PageUp` / `PageDown` | Scroll the conversation |
-| `Ctrl+Shift+C` | Copy the last assistant reply |
+| `PageUp` / `PageDown` / `Ctrl+Up` / `Ctrl+Down` | Scroll the conversation |
+| `Ctrl+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
 | Zoom | Terminal zoom: `Ctrl++` / `Ctrl+-` (Windows Terminal / the host) |
 | `Ctrl+Q` | Quit |
 
