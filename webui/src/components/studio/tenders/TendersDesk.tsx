@@ -47,6 +47,7 @@ import { retentionDays } from "@/components/studio/tenders/retention";
 import {
   BUTTON_STYLES,
   HEADER_BUTTON_STYLES,
+  ICON_BUTTON_STYLES,
   CHANNELS_HASH,
   MODELS_HASH,
   NOTICE_ROW_MENU,
@@ -87,9 +88,7 @@ import { cn } from "@/lib/utils";
 
 const FILTERS: { id: PipelineFilter; label: string; fallback: string }[] = [
   { id: "all", label: "filterAll", fallback: "All" },
-  { id: "play", label: "filterPlay", fallback: "In play" },
   { id: "go", label: "filterGo", fallback: "GO" },
-  { id: "urgent", label: "filterUrgent", fallback: "Urgent" },
   { id: "draft", label: "filterDraft", fallback: "Drafts" },
   { id: "nogo", label: "filterNogo", fallback: "No-go" },
 ];
@@ -531,7 +530,8 @@ export function NoticesPane({
   const [downloading, setDownloading] = useState("");
   const [downloadProgress, setDownloadProgress] = useState("");
   const [listNote, setListNote] = useState("");
-  const filter = picked ?? "all";
+  const filter =
+    picked && picked !== "play" && picked !== "urgent" ? picked : "all";
   const { archive_after_days: archiveAfter, delete_after_days: deleteAfter } = retentionDays({
     archive_after_days: desk.profile.archive_after_days ?? desk.retention?.archive_after_days,
     delete_after_days: desk.profile.delete_after_days ?? desk.retention?.delete_after_days,
@@ -745,8 +745,7 @@ export function NoticesPane({
         leading={listTabs}
         extra={
           <>
-            <DefaultButton
-              text={tx("export", "Export")}
+            <IconButton
               iconProps={{ iconName: "Download" }}
               disabled={!visible.length}
               title={
@@ -754,6 +753,7 @@ export function NoticesPane({
                   ? tx("exportHint", "Exports every filtered notice, not only this page.")
                   : tx("exportEmpty", "Nothing to export. Change the filters.")
               }
+              ariaLabel={tx("export", "Export")}
               menuProps={{
                 ...NOTICE_ROW_MENU,
                 items: [
@@ -774,20 +774,21 @@ export function NoticesPane({
                 ],
               }}
               data-testid="tenders-export"
-              styles={BUTTON_STYLES}
+              styles={ICON_BUTTON_STYLES}
             />
-            <DefaultButton
-              text={downloadProgress || tx("downloadOffers", "Download offers")}
+            <IconButton
               iconProps={{ iconName: "WordDocument" }}
               disabled={!offerRows.length || Boolean(downloading) || !token}
               title={
-                offerRows.length
+                downloadProgress ||
+                (offerRows.length
                   ? tx("downloadOffersHint", "Downloads Word packs for filtered notices that already have a reply.")
-                  : tx("downloadOffersEmpty", "No written offer in this list. Open a notice and write the reply.")
+                  : tx("downloadOffersEmpty", "No written offer in this list. Open a notice and write the reply."))
               }
+              ariaLabel={downloadProgress || tx("downloadOffers", "Download offers")}
               onClick={() => void downloadAllOffers()}
               data-testid="tenders-download-offers"
-              styles={BUTTON_STYLES}
+              styles={ICON_BUTTON_STYLES}
             />
           </>
         }
@@ -847,9 +848,7 @@ export function NoticesPane({
               ? tx("favoritesEmptyTitle", "No favorites yet")
               : listView === "archive"
                 ? tx("archiveEmptyTitle", "Archive is empty")
-                : filter === "play"
-                  ? tx("playEmptyTitle", "Nothing in play")
-                  : tx("filterEmptyTitle", "Nothing in this view")}
+                : tx("filterEmptyTitle", "Nothing in this view")}
           </h3>
           <p className="max-w-xl text-pretty text-sm text-muted-foreground">
             {listView === "favorites"
@@ -860,25 +859,12 @@ export function NoticesPane({
                     "Notices are archived after {{archive}} days and deleted after {{purge}} days.",
                     { archive: archiveAfter, purge: deleteAfter },
                   )
-                : filter === "play"
-                  ? tx(
-                      "playEmptyBody",
-                      "{{count}} official notices were read. None meet your bar. That is already time you do not spend on a no-go.",
-                      { count: live.length },
-                    )
-                  : tx("filterEmptyBody", "No notice matches this filter or search.")}
+                : tx("filterEmptyBody", "No notice matches this filter or search.")}
           </p>
           {listView !== "pipeline" ? (
             <DefaultButton
               text={tx("backNotices", "Back to notices")}
               onClick={() => openList("pipeline")}
-              styles={BUTTON_STYLES}
-            />
-          ) : null}
-          {listView === "pipeline" && filter === "play" && counts.nogo ? (
-            <DefaultButton
-              text={tx("reviewNogo", "Review no-gos")}
-              onClick={() => onPicked("nogo")}
               styles={BUTTON_STYLES}
             />
           ) : null}

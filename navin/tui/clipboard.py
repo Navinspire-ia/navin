@@ -81,12 +81,10 @@ def decode_windows_clipboard_bytes(raw: bytes) -> str:
 
 
 def pick_paste_text(app_text: str, os_text: str) -> str:
-    """Prefer the longer payload so a stale in-app clipboard cannot win."""
+    """Prefer the current OS payload; the in-app copy is only a fallback."""
     app = (app_text or "").replace("\x00", "")
     os_clip = os_text or ""
-    if len(os_clip) > len(app):
-        return os_clip
-    return app or os_clip
+    return os_clip or app
 
 
 def osc52_allowed(text: str) -> bool:

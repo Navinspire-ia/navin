@@ -65,6 +65,8 @@ const VISION_FAMILY_MARKERS: readonly string[] = [
   "gpt-4-turbo",
   "gpt-4-vision",
   "gpt-5",
+  "gpt-6",
+  "deepseek-v4.1",
   "o3",
   "o4-mini",
   "chatgpt-4o",

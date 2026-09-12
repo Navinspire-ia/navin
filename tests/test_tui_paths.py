@@ -79,8 +79,9 @@ class MarkdownPathStyleTests(unittest.TestCase):
 
 
 class ClipboardTests(unittest.TestCase):
-    def test_paste_prefers_the_longer_os_clipboard(self) -> None:
+    def test_paste_prefers_the_current_os_clipboard(self) -> None:
         self.assertEqual(pick_paste_text("old", "a much longer os paste"), "a much longer os paste")
+        self.assertEqual(pick_paste_text("a stale long copy", "new"), "new")
         self.assertEqual(pick_paste_text("kept", ""), "kept")
         self.assertEqual(pick_paste_text("", "os"), "os")
         self.assertFalse(osc52_allowed("x" * 5000))

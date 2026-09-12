@@ -303,6 +303,7 @@ interface ThreadShellProps {
     nonce: number;
     files?: ProjectFileMatch[];
     replace?: boolean;
+    ensureCommand?: string;
     mediaTemplate?: { id: string; title?: string; kind?: string; format?: string };
     mediaTemplates?: { id: string; title?: string; kind?: string; format?: string }[];
     localFiles?: File[];

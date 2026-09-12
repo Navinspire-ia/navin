@@ -27,7 +27,7 @@ def should_collapse_pasted_text(
     *,
     threshold: int = PASTED_CONTENT_THRESHOLD,
 ) -> bool:
-    return len(text or "") >= threshold
+    return len(text or "") > threshold
 
 
 def allocate_paste_token(chars: int, existing: dict[str, str]) -> str:
@@ -64,12 +64,12 @@ def split_long_user_text(
     Returns ``(prefix_or_full, collapsed_rest_or_none)``.
     """
     raw = text or ""
-    if len(raw) < threshold:
+    if len(raw) <= threshold:
         return raw, None
     paragraph, _sep, rest = raw.partition("\n\n")
     if not rest:
         paragraph, _sep, rest = raw.partition("\n")
-    if rest and len(paragraph) <= prefix_limit and len(rest) >= threshold:
+    if rest and len(paragraph) <= prefix_limit and len(rest) > threshold:
         return paragraph, rest
     return "", raw
 

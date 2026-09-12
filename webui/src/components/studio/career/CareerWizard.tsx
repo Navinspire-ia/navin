@@ -138,6 +138,7 @@ export function CareerWizard({
   onSave,
   onSeed,
   onSecret,
+  onLeave,
 }: {
   desk: CareerDesk;
   track: CareerTrack;
@@ -148,6 +149,7 @@ export function CareerWizard({
   onSave: (body: Record<string, unknown>) => Promise<boolean>;
   onSeed?: (text: string) => void;
   onSecret?: (name: string, value: string) => Promise<boolean>;
+  onLeave?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const reduceMotion = useReducedMotion();
@@ -451,18 +453,30 @@ export function CareerWizard({
 
   return (
     <div className="mx-auto grid w-full max-w-3xl gap-6" data-testid="career-wizard">
-      <div>
-        <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-indigo-700 dark:text-indigo-300">
-          {tx("wizardKicker", "Career setup")}
-        </p>
-        <h2 className="mt-2 text-balance text-2xl font-semibold tracking-tight">
-          {tx(`wizard.${current.id}Title`, current.id)}
-        </h2>
-        <p className="mt-2 text-pretty text-sm text-muted-foreground">
-          {tx("wizardStepOf", "Step {{current}} of {{total}}", { current: stepIndex + 1, total: steps.length })}
-          {" · "}
-          {track === "freelance" ? tx("trackFreelance", "Freelance") : tx("trackJobs", "Jobs")}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium uppercase tracking-[0.14em] text-indigo-700 dark:text-indigo-300">
+            {tx("wizardKicker", "Career setup")}
+          </p>
+          <h2 className="mt-2 text-balance text-2xl font-semibold tracking-tight">
+            {tx(`wizard.${current.id}Title`, current.id)}
+          </h2>
+          <p className="mt-2 text-pretty text-sm text-muted-foreground">
+            {tx("wizardStepOf", "Step {{current}} of {{total}}", { current: stepIndex + 1, total: steps.length })}
+            {" · "}
+            {track === "freelance" ? tx("trackFreelance", "Freelance") : tx("trackJobs", "Jobs")}
+          </p>
+        </div>
+        {onLeave ? (
+          <DefaultButton
+            text={tx("backOffers", "Back to offers")}
+            title={tx("backOffers", "Back to offers")}
+            iconProps={{ iconName: "Back" }}
+            onClick={onLeave}
+            styles={BUTTON_STYLES}
+            data-testid="career-leave-setup"
+          />
+        ) : null}
       </div>
       <ProgressIndicator percentComplete={(stepIndex + 1) / steps.length} />
       <ol

@@ -55,7 +55,7 @@ _TIER_RANK = {name: idx for idx, name in enumerate(TIERS)}
 
 _GEMINI_37 = "google/gemini-3.7-flash"
 _GROK_46 = "x-ai/grok-4.6"
-_DS_FLASH = "deepseek/deepseek-v4-flash"
+_DS_FLASH = "deepseek/deepseek-v4.1-flash"
 _NEMOTRON_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 # Hide these families from 50 % (chat and vision, same rule).
@@ -63,6 +63,7 @@ _FLAGSHIP_CUTOFF_PERCENT = 50
 _OPUS_VERSION = re.compile(r"opus[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _FABLE_VERSION = re.compile(r"fable[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _GPT_56 = re.compile(r"gpt[-_.]?5[-_.]?6\b", re.IGNORECASE)
+_GPT_6 = re.compile(r"gpt[-_.]?6(?:[-_.]?astra)?\b", re.IGNORECASE)
 
 # Freshest mode / % from the last report_usage (may beat a stale config.json).
 _live_mode: str | None = None
@@ -80,11 +81,11 @@ def _parsed_family_version(match: re.Match[str]) -> tuple[int, int]:
 
 
 def is_expensive_flagship_slug(slug: str) -> bool:
-    """True for Opus 5+, Fable 5+, and GPT 5.6. Opus 4.8 stays available."""
+    """True for Opus 5+, Fable 5+, GPT 5.6, and GPT 6. Opus 4.8 stays available."""
     text = (slug or "").strip()
     if not text:
         return False
-    if _GPT_56.search(text):
+    if _GPT_56.search(text) or _GPT_6.search(text):
         return True
     opus = _OPUS_VERSION.search(text)
     if opus and _parsed_family_version(opus) >= (5, 0):

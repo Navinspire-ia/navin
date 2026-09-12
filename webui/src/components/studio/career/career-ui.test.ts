@@ -115,6 +115,8 @@ describe("career catalog URLs leave the IDE", () => {
     expect(desk).toContain("careerShowsWizard");
     expect(desk).toContain("reopenSetup");
     expect(desk).toContain("career-open-setup");
+    expect(desk).toContain("canLeaveSetup");
+    expect(desk).toContain("onLeave=");
     expect(desk).toContain("profileConfig");
     expect(desk).toContain('tx("settings", "Settings")');
     expect(desk).toContain('iconProps={{ iconName: "Settings" }}');
@@ -185,6 +187,8 @@ describe("career catalog URLs leave the IDE", () => {
       "utf8",
     );
     expect(wizard).toContain("data-testid=\"career-wizard\"");
+    expect(wizard).toContain("career-leave-setup");
+    expect(wizard).toContain('tx("backOffers"');
     expect(wizard).toContain("career-wizard-steps");
     expect(wizard).toContain("career-wizard-api-");
     expect(wizard).toContain("CareerCountryMultiSelect");

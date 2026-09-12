@@ -97,6 +97,11 @@ def _attach_tool_result(rows: list[dict[str, Any]], message: dict[str, Any]) -> 
     for tool in rows[-1].get("tools") or []:
         if tool.get("id") == call_id:
             tool["result"] = text
+            tool["file_edits"] = [
+                edit for edit in message.get("_file_edits") or [] if isinstance(edit, dict)
+            ]
+            status = message.get("_tool_status")
+            tool["phase"] = "error" if status == "error" or text.startswith("Error:") else "end"
             return
 
 

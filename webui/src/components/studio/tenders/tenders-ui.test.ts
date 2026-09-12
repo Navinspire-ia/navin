@@ -147,9 +147,10 @@ describe("tenders loop chrome", () => {
     expect(desk).not.toContain("fr manquant");
     expect(desk).toContain('data-testid="tenders-notice-chips"');
     expect(desk).toContain("flex-nowrap");
-    expect(desk).toContain("const filter = picked ?? \"all\"");
+    expect(desk).toContain('picked !== "play" && picked !== "urgent"');
     expect(desk).not.toContain('baseCounts.play > 0');
-    expect(desk.indexOf('id: "all"')).toBeLessThan(desk.indexOf('id: "play"'));
+    expect(desk).not.toContain('fallback: "In play"');
+    expect(desk.indexOf('id: "all"')).toBeLessThan(desk.indexOf('id: "go"'));
     expect(desk).not.toContain('useState<NoticeLayout>("list")');
     expect(desk).not.toContain('data-testid="tenders-layout-list"');
     expect(desk).not.toContain('data-testid="tenders-layout-cards"');

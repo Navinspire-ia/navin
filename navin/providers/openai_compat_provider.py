@@ -146,9 +146,9 @@ def _provider_prefix_key(name: str) -> str:
 
 
 def _requires_max_completion_tokens(model_name: str) -> bool:
-    """Return True for models that reject ``max_tokens`` (GPT-5 family, o-series)."""
+    """Return True for models that reject ``max_tokens`` (GPT-5/6 family, o-series)."""
     slug = _model_slug(model_name)
-    return "gpt-5" in slug or any(
+    return "gpt-5" in slug or "gpt-6" in slug or any(
         slug == p or slug.startswith((p + "-", p + ".")) for p in ("o1", "o3", "o4")
     )
 
@@ -810,7 +810,7 @@ class OpenAICompatProvider(LLMProvider):
         if reasoning_effort and reasoning_effort.lower() != "none":
             return False
         name = model_name.lower()
-        if any(token in name for token in ("gpt-5", "o1", "o3", "o4")):
+        if any(token in name for token in ("gpt-5", "gpt-6", "o1", "o3", "o4")):
             return False
         from navin.providers.claude_capabilities import claude_supports_temperature
 
@@ -891,7 +891,12 @@ class OpenAICompatProvider(LLMProvider):
         if spec in ("gemini", "groq", "ollama", "mistral", "openai", "azure_openai"):
             return True
         slug = _model_slug(model_name)
-        return "gpt-5" in slug or "gpt-oss" in slug or _requires_max_completion_tokens(model_name)
+        return (
+            "gpt-5" in slug
+            or "gpt-6" in slug
+            or "gpt-oss" in slug
+            or _requires_max_completion_tokens(model_name)
+        )
 
     def _reasoning_off_patch(
         self, model: str | None, model_name: str, wire: str
@@ -1317,7 +1322,7 @@ class OpenAICompatProvider(LLMProvider):
         wants = False
         if reasoning_effort and reasoning_effort.lower() != "none":
             wants = True
-        elif any(token in model_name for token in ("gpt-5", "o1", "o3", "o4")):
+        elif any(token in model_name for token in ("gpt-5", "gpt-6", "o1", "o3", "o4")):
             wants = True
         if not wants:
             return False

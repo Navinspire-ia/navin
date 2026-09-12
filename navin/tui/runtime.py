@@ -111,14 +111,25 @@ class UiFileEdit(UiEvent):
     added: int = 0
     removed: int = 0
     diff: str = ""
+    call_id: str = ""
+    tool: str = "edit_file"
+    phase: str = "end"
+    error: str | None = None
+    truncated: bool = False
+    binary: bool = False
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> UiFileEdit:
+        from navin.utils.file_edit_events import file_edit_details
+
+        return cls(**file_edit_details(payload))
 
 
 def _file_edit_diff_text(payload: dict[str, Any]) -> str:
-    raw = payload.get("diff")
-    if isinstance(raw, dict):
-        text = raw.get("text")
-        return text if isinstance(text, str) else ""
-    return raw if isinstance(raw, str) else ""
+    """Compatibility helper for callers that only need the diff body."""
+    from navin.utils.file_edit_events import file_edit_details
+
+    return file_edit_details(payload)["diff"]
 
 
 @dataclass(frozen=True)
@@ -407,8 +418,36 @@ class TuiRuntime:
             self._license_sync = start_license_sync(lambda: self.agent_loop)
         except ImportError:
             self._license_sync = None
-        self._loop_task = asyncio.create_task(self.agent_loop.run(), name="navin-tui-agent-loop")
-        self._consumer_task = asyncio.create_task(self._consume_outbound(), name="navin-tui-outbound")
+        self._ensure_tasks()
+
+    def _ensure_tasks(self) -> None:
+        """Keep the chat usable after a consumer exits; never silently drop input."""
+        if self._closed or self.agent_loop is None:
+            return
+        for attribute, factory, name in (
+            ("_loop_task", self.agent_loop.run, "navin-tui-agent-loop"),
+            ("_consumer_task", self._consume_outbound, "navin-tui-outbound"),
+        ):
+            task = getattr(self, attribute)
+            if task is None or task.done():
+                task = asyncio.create_task(factory(), name=name)
+                task.add_done_callback(self._runtime_task_finished)
+                setattr(self, attribute, task)
+
+    def _runtime_task_finished(self, task: asyncio.Task) -> None:
+        if self._closed:
+            return
+        error = "cancelled" if task.cancelled() else str(task.exception() or "stopped unexpectedly")
+
+        async def report() -> None:
+            if self._closed or task not in (self._loop_task, self._consumer_task):
+                return
+            self._finish_turn({})
+            await self._emit(UiEngineError(
+                f"Chat connection stopped: {error}. Send a message to reconnect."
+            ))
+
+        asyncio.create_task(report())
 
     async def close(self) -> None:
         if self._closed:
@@ -449,6 +488,8 @@ class TuiRuntime:
                 await result
         except Exception:  # noqa: BLE001 - UI failures must not kill the engine
             logger.exception("TUI event handler failed for {}", type(event).__name__)
+            if not isinstance(event, UiEngineError):
+                await self._emit(UiEngineError("Could not display a chat event. The CLI is still available."))
 
     def _is_ours(self, msg: OutboundMessage) -> bool:
         if msg.channel == "system":
@@ -468,6 +509,7 @@ class TuiRuntime:
                     await self._dispatch(msg)
             except Exception:  # noqa: BLE001
                 logger.exception("TUI failed to dispatch outbound message")
+                await self._emit(UiEngineError("Could not display a response. Check /history or send another message."))
 
     async def _dispatch(self, msg: OutboundMessage) -> None:
         event = outbound_event_from_message(msg)
@@ -579,7 +621,10 @@ class TuiRuntime:
                     render_as=str((msg.metadata or {}).get("render_as") or "markdown"),
                 )
             )
-        if self.status.turn_active:
+        tasks = getattr(self.agent_loop, "_active_tasks", {}).get(self.session_key, [])
+        if self.status.turn_active and not any(not task.done() for task in tasks):
+            # A side-channel command can answer while the main task continues.
+            # Its reply must not remove Working; the engine emits TurnCompleted.
             self._finish_turn(msg.metadata)
 
     async def _dispatch_progress(self, msg: OutboundMessage, event: ProgressEvent) -> None:
@@ -615,15 +660,7 @@ class TuiRuntime:
             for payload in event.file_edit_events:
                 if not isinstance(payload, dict):
                     continue
-                await self._emit(
-                    UiFileEdit(
-                        path=str(payload.get("path") or ""),
-                        kind=str(payload.get("kind") or payload.get("op") or ""),
-                        added=int(payload.get("added") or payload.get("lines_added") or 0),
-                        removed=int(payload.get("removed") or payload.get("lines_removed") or 0),
-                        diff=_file_edit_diff_text(payload),
-                    )
-                )
+                await self._emit(UiFileEdit.from_payload(payload))
         text = (msg.content or "").strip()
         if not text:
             return
@@ -658,11 +695,17 @@ class TuiRuntime:
         bus = getattr(self.agent_loop, "runtime_events", None)
         if bus is None:
             return
-        from navin.bus.runtime_events import RuntimeModelChanged, TurnCompleted
+        from navin.bus.runtime_events import RuntimeModelChanged, SessionTurnStarted, TurnCompleted
 
         async def _handler(event: Any) -> None:
             if isinstance(event, RuntimeModelChanged):
                 self._refresh_status()
+            elif isinstance(event, SessionTurnStarted):
+                if event.context.session_key == self.session_key and not self.status.turn_active:
+                    self.status.turn_active = True
+                    self._streamed_this_turn = False
+                    self._turn_started_at = time.monotonic()
+                    await self._emit(UiTurnStarted(event.user_text))
             elif isinstance(event, TurnCompleted):
                 if event.context.session_key == self.session_key and self.status.turn_active:
                     self._finish_turn({"latency_ms": event.latency_ms})
@@ -862,21 +905,23 @@ class TuiRuntime:
         self._turn_started_at = None
         self._refresh_status()
 
-    async def send(self, text: str, *, model_preset: str | None = None) -> None:
+    async def send(self, text: str, *, model_preset: str | None = None, followup: bool = False) -> None:
         if self.bus is None:
             raise RuntimeError("runtime not started")
         text = text.strip()
         if not text:
             return
+        self._ensure_tasks()
         metadata: dict[str, Any] = {"_wants_stream": True}
         if model_preset and model_preset != "default":
             from navin.bus.events import INBOUND_META_MODEL_PRESET
 
             metadata[INBOUND_META_MODEL_PRESET] = model_preset
-        self.status.turn_active = True
-        self._streamed_this_turn = False
-        self._turn_started_at = time.monotonic()
-        await self._emit(UiTurnStarted(text))
+        if not followup or not self.status.turn_active:
+            self.status.turn_active = True
+            self._streamed_this_turn = False
+            self._turn_started_at = time.monotonic()
+            await self._emit(UiTurnStarted(text))
         try:
             from navin.session.webui_turns import apply_provisional_title
 

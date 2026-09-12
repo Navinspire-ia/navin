@@ -29,8 +29,9 @@ _CHECK_SUFFIXES = _CODE_SUFFIXES | {
 _CHECK_FILENAMES = frozenset({"dockerfile", "makefile", "cmakelists.txt", "justfile"})
 _EDIT_TOOLS = frozenset({"apply_patch", "edit_file", "write_file", "manage_files"})
 _NO_TESTS = re.compile(
-    r"no tests (?:ran|found|collected)|(?:collected|ran) 0 (?:items|tests)|\b0 passed\b",
-    re.IGNORECASE,
+    r"no tests (?:were )?(?:ran|found|collected|to run)|(?:collected|ran) 0 (?:items|tests)"
+    r"|\b0 passed\b|\[no test files\]|^# pass 0\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 _SESSION_ID = re.compile(r"\bsession_id:\s*([\w.-]+)")
 _EXIT_CODE = re.compile(r"\bExit code: (-?\d+)")
@@ -233,7 +234,8 @@ class CodeValidationState:
         if name == "write_stdin":
             self.pending_tests.pop(session_id, None)
         ok = codes[-1] == "0" and status == "ok"
-        if ok and _NO_TESTS.search(text):
+        skipped_only = re.search(r"\b[1-9]\d* skipped\b", text) and not re.search(r"\b[1-9]\d* (?:passed|passing)\b", text)
+        if ok and (_NO_TESTS.search(text) or skipped_only):
             return
         self.record(VerificationEvidence(tests_ok=ok, summary=text[-800:]), revision=revision)
 

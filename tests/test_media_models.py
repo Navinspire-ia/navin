@@ -86,3 +86,43 @@ def test_desktop_route_rejects_a_provider_declared_text_only_model():
     save_config(config)
     with pytest.raises(WebUISettingsError, match="vision"):
         update_model_route({"role": ["computer"], "preset": ["text"]})
+
+
+def test_openai_catalog_injects_gpt_6_astra_when_live_list_omits_it():
+    config = Config()
+    config.providers.openai.api_key = "sk-test"
+    save_config(config)
+    response = httpx.Response(
+        200,
+        json={"data": [{"id": "gpt-5.6-sol"}]},
+        request=httpx.Request("GET", "https://api.openai.com/v1/models"),
+    )
+    with patch("navin.webui.settings_api.httpx.get", return_value=response):
+        result = provider_models_payload({"provider": ["openai"]})
+    ids = [row["id"] for row in result["models"]]
+    assert ids[0] == "gpt-6-astra"
+    assert ids.count("gpt-6-astra") == 1
+    assert "gpt-5.6-sol" in ids
+
+
+def test_openai_catalog_does_not_duplicate_live_gpt_6_astra():
+    config = Config()
+    config.providers.openai.api_key = "sk-test"
+    save_config(config)
+    response = httpx.Response(
+        200,
+        json={"data": [{"id": "gpt-6-astra"}, {"id": "gpt-5.6-sol"}]},
+        request=httpx.Request("GET", "https://api.openai.com/v1/models"),
+    )
+    with patch("navin.webui.settings_api.httpx.get", return_value=response):
+        result = provider_models_payload({"provider": ["openai"]})
+    ids = [row["id"] for row in result["models"]]
+    assert ids.count("gpt-6-astra") == 1
+
+
+def test_openai_codex_catalog_lists_gpt_6_astra():
+    result = provider_models_payload({"provider": ["openai_codex"]})
+    ids = [row["id"] for row in result["models"]]
+    assert ids[0] == "openai-codex/gpt-6-astra"
+    assert "openai-codex/gpt-5.6-sol" in ids
+    assert result["catalog_kind"] == "builtin"

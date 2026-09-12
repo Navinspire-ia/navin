@@ -335,6 +335,14 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="OpenAI",
         backend="openai_compat",
         supports_max_completion_tokens=True,
+        builtin_models=(
+            ProviderModelSpec(
+                id="gpt-6-astra",
+                label="GPT-6 Astra",
+                description="Flagship model for long-horizon agentic work.",
+                context_window=1050000,
+            ),
+        ),
     ),
     # OpenAI Codex: OAuth-based, dedicated provider
     ProviderSpec(
@@ -344,6 +352,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="OpenAI Codex",
         model_catalog="builtin",
         builtin_models=(
+            ProviderModelSpec(
+                id="openai-codex/gpt-6-astra",
+                label="GPT-6-Astra",
+                description="Flagship long-horizon agentic coding model.",
+                context_window=1050000,
+            ),
             ProviderModelSpec(
                 id="openai-codex/gpt-5.6-sol",
                 label="GPT-5.6-Sol",

@@ -18,7 +18,8 @@ from navin.utils.pasted_content import (
 class PastedContentTests(unittest.TestCase):
     def test_threshold_is_1000_chars(self) -> None:
         self.assertFalse(should_collapse_pasted_text("a" * 999))
-        self.assertTrue(should_collapse_pasted_text("a" * 1000))
+        self.assertFalse(should_collapse_pasted_text("a" * 1000))
+        self.assertTrue(should_collapse_pasted_text("a" * 1001))
 
     def test_label_matches_cursor(self) -> None:
         self.assertEqual(pasted_content_label(11448), "[Pasted Content 11448 chars]")
@@ -59,7 +60,7 @@ class PastedContentTests(unittest.TestCase):
     def test_composer_collapse_keeps_the_body_for_send(self) -> None:
         blob = "z" * 1148
         display, pastes = collapse_text_for_composer(f"merci\n{blob}")
-        self.assertEqual(display, f"merci\n[Pasted Content 1148 chars]")
+        self.assertEqual(display, "merci\n[Pasted Content 1148 chars]")
         self.assertEqual(expand_pasted_content(display, pastes), f"merci\n{blob}")
 
     def test_composer_collapse_leaves_tokens_alone(self) -> None:

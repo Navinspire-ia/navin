@@ -19,6 +19,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
+from textual.widgets import Input, TextArea
 
 from navin.optional_live import live_modules_available
 from navin.tui.agi import AgiScreen
@@ -45,7 +46,7 @@ from navin.tui.hubs import (
     skill_set_enabled,
     tool_rows,
 )
-from navin.tui.modes import MODES, display_user_text, get_mode, route_text
+from navin.tui.modes import MODES, display_user_text, get_mode, inbound_for_submit
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
     TuiRuntime,
@@ -374,7 +375,7 @@ class NavinApp(App[None]):
         Binding("f4", "open_agi", "AGI"),
         Binding("f1", "show_help", "Help"),
         Binding("escape", "stop_turn", "Stop", show=True),
-        Binding("ctrl+c", "copy_selection", "Copy", show=False, priority=True),
+        Binding("ctrl+c", "interrupt_or_clear", "Stop / clear", show=False, priority=True),
         Binding("super+c", "copy_selection", "Copy", show=False, priority=True),
         Binding("ctrl+insert", "copy_selection", "Copy", show=False),
         Binding("ctrl+shift+c", "copy_reply", "Copy reply", show=False),
@@ -747,19 +748,30 @@ class NavinApp(App[None]):
                 await block.tool_event(
                     str(tool.get("id") or name),
                     name,
-                    "end",
+                    str(tool.get("phase") or "end"),
                     args,
                     result,
+                    str(result) if tool.get("phase") == "error" else None,
                     None,
-                    result if isinstance(result, str) else None,
                     visible=show_tools,
                 )
+                edits = tool.get("file_edits") or []
+                for payload in edits if show_tools else []:
+                    event = UiFileEdit.from_payload(payload)
+                    await block.note_file_edit(
+                        event.path, event.added, event.removed, diff=event.diff,
+                        call_id=event.call_id, kind=event.kind, phase=event.phase,
+                        tool=event.tool, error=event.error, truncated=event.truncated,
+                        binary=event.binary,
+                    )
                 plus, minus = extract_line_diff(result)
-                if plus or minus:
+                if show_tools and not edits and (plus or minus) and tool.get("phase") != "error":
                     path = ""
                     if isinstance(args, dict):
                         path = str(args.get("path") or args.get("file_path") or "")
-                    block.note_file_edit(path, plus, minus)
+                    await block.note_file_edit(
+                        path, plus, minus, call_id=str(tool.get("id") or name), kind="edit",
+                    )
             await block.finish(
                 latency_ms=meta.get("latency_ms"),
                 model=meta.get("model"),
@@ -816,13 +828,20 @@ class NavinApp(App[None]):
         if text.lower() in {"stop", "/stop"} and self.runtime.turn_active:
             await self.action_stop_turn()
             return
-        inbound = route_text(self.prefs.mode, text)
-        await self.transcript.add(UserMessage(text))
-        if self.runtime.turn_active:
-            await self.runtime.stop_turn()
-            self.runtime.status.turn_active = False
-        self._current = None
-        await self.runtime.send(inbound)
+        inbound, followup = inbound_for_submit(self.prefs.mode, text, turn_active=self.runtime.turn_active)
+        user = UserMessage(text)
+        await self.transcript.add(user)
+        if followup and self._current is not None:
+            self.transcript.move_child(self._current, after=user)
+        elif not followup:
+            self._current = None
+        try:
+            await self.runtime.send(inbound, followup=followup)
+        except Exception as exc:  # noqa: BLE001 - retain the prompt and keep the chat open
+            if not followup:
+                self.runtime._finish_turn({})
+            self.composer.set_text(text)
+            await self._note(f"[$error]Message not sent:[/] {escape(str(exc))}", "error")
         self._refresh_working_line()
 
     async def _run_tui_slash(self, text: str) -> bool:
@@ -973,6 +992,7 @@ class NavinApp(App[None]):
     async def _on_runtime_event(self, event: UiEvent) -> None:
         if isinstance(event, UiTurnStarted):
             self._set_status()
+            self._refresh_working_line()
             return
         if isinstance(event, UiStreamDelta):
             block = await self._ensure_assistant()
@@ -1011,14 +1031,25 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiFileEdit):
-            if self._current is not None:
-                self._current.note_file_edit(
-                    event.path, event.added, event.removed, diff=event.diff
+            if self.prefs.show_tools:
+                block = await self._ensure_assistant()
+                await block.note_file_edit(
+                    event.path, event.added, event.removed, diff=event.diff,
+                    call_id=event.call_id, kind=event.kind, phase=event.phase,
+                    tool=event.tool, error=event.error, truncated=event.truncated,
+                    binary=event.binary,
                 )
             if event.path:
+                from navin.utils.tool_hints import activity_label
+
                 self._activity_push(
-                    f"edit {escape(Path(event.path).name)} +{event.added} -{event.removed}"
+                    escape(activity_label(
+                        event.tool, {}, path=event.path, operation=event.kind,
+                        phase=event.phase, added=event.added, removed=event.removed,
+                        counts_known=not event.binary,
+                    ))
                 )
+            self.transcript.follow()
             return
         if isinstance(event, UiProgress):
             if self.prefs.show_tools:
@@ -1064,6 +1095,7 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiTurnEnd):
+            self._refresh_working_line()
             if self._current is not None and not self._current.finished:
                 st = self.runtime.status
                 await self._current.finish(
@@ -1218,6 +1250,22 @@ class NavinApp(App[None]):
             self._refresh_working_line()
             await self._note("[$warning]stop requested[/]", "warning")
             return
+        self.composer.focus()
+
+    async def action_interrupt_or_clear(self) -> None:
+        """Cancel work or clear input/screen without exiting the CLI."""
+        active = self.runtime.turn_active
+        had_input = bool(self.composer.text)
+        self.composer.clear_text()
+        self.query_one(SlashMenu).hide()
+        self.composer.menu_open = False
+        if active:
+            await self.runtime.stop_turn()
+            await self._note("[$warning]stop requested[/]", "warning")
+        elif not had_input:
+            await self.transcript.remove_children()
+            self._current = None
+        self._refresh_working_line()
         self.composer.focus()
 
     async def action_new_chat(self) -> None:
@@ -1394,10 +1442,33 @@ class NavinApp(App[None]):
             self._find_move(seed.strip(), 0)
 
     def action_paste_composer(self) -> None:
-        if self.query_one(FindBar).visible_bar and self.query_one("#find-query").has_focus:
+        if isinstance(self.focused, (Input, TextArea)) and not isinstance(self.focused, Composer):
+            self.run_worker(self._paste_into_field(self.focused), group="clipboard", exclusive=True)
             return
         self.composer.focus()
         self.composer.action_paste_any()
+
+    async def _paste_into_field(self, field: Input | TextArea) -> None:
+        from navin.tui.clipboard import pick_paste_text, read_clipboard
+
+        try:
+            os_text = await asyncio.to_thread(read_clipboard)
+        except Exception:  # noqa: BLE001 - keep modal inputs usable on clipboard errors
+            os_text = ""
+        text = pick_paste_text(self.clipboard, os_text)
+        if text and field.is_mounted and field is self.focused:
+            field.post_message(events.Paste(text))
+
+    async def on_event(self, event: events.Event) -> None:
+        # Terminal-managed Ctrl+V arrives as Paste even when the transcript
+        # has focus. Route it to the composer instead of dropping the payload.
+        if not isinstance(event, events.Paste) or isinstance(self.focused, (Input, TextArea)):
+            await super().on_event(event)
+            return
+        event.prevent_default()
+        event.stop()
+        self.composer.focus()
+        self.composer._insert_paste(event.text or "", source="terminal")
 
     def _find_move(self, query: str, direction: int) -> None:
         needle = query.strip().lower()

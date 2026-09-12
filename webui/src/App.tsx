@@ -205,6 +205,7 @@ import {
   resolveProjectOpenView,
   viewForCreatedChat,
 } from "@/lib/chat-module";
+import { DESK_CHAT_COMMAND } from "@/lib/desk-chat-command";
 import { writeComposerTurnMode } from "@/components/thread/ComposerModeMenu";
 
 type BootState =
@@ -298,14 +299,17 @@ function isWorkbenchView(view: ShellView): boolean {
   return WORKBENCH_VIEWS.includes(view);
 }
 
-/** These desks hide the side chat until the user clicks Chat. CRM / Meeting /
- *  Notes keep their own `?chat=` + focus behavior and are not in this set. */
+/** These desks hide the side chat until the user clicks Chat. `?chat=` in the
+ *  URL is the session key, not a request to open the column. */
 const DESK_CHAT_OFF_BY_DEFAULT: ReadonlySet<ShellView> = new Set([
   "tenders",
   "career",
   "trading",
   "leads",
   "marketing",
+  "scraping",
+  "meeting",
+  "notes",
 ]);
 
 /** Product module id (gateway) → the shell view that hosts it. */
@@ -1689,9 +1693,8 @@ function Shell({
   // Focus mode: the workbench takes the whole shell and the chat column steps
   // aside. It stays mounted so the session keeps streaming underneath.
   const [workbenchFocus, setWorkbenchFocus] = useState(false);
-  // Tenders / Career / Trading / Leads / Marketing: chat column hidden until the header
-  // Chat button. Independent of workbenchFocus so CRM / Meeting / Notes
-  // `?chat=` and focus mode stay untouched.
+  // Tenders / Career / Trading / Leads / Marketing / Scraping: chat column
+  // hidden until the header Chat button. Independent of workbenchFocus.
   const [deskChatOpen, setDeskChatOpen] = useState(false);
   // Settings / Apps / Skills are overlays: remember the desk underneath so
   // Code (explorer, tabs, status bar) stays mounted instead of flashing a
@@ -2778,6 +2781,7 @@ function Shell({
     nonce: number;
     files?: ProjectFileMatch[];
     replace?: boolean;
+    ensureCommand?: string;
     mediaTemplate?: { id: string; title?: string; kind?: string; format?: string };
     mediaTemplates?: { id: string; title?: string; kind?: string; format?: string }[];
     localFiles?: File[];
@@ -2792,6 +2796,7 @@ function Shell({
     files?: ProjectFileMatch[],
     options?: {
       replace?: boolean;
+      ensureCommand?: string;
       mediaTemplate?: { id: string; title?: string; kind?: string; format?: string };
       mediaTemplates?: { id: string; title?: string; kind?: string; format?: string }[];
       localFiles?: File[];
@@ -2802,6 +2807,7 @@ function Shell({
       text,
       files,
       replace: options?.replace,
+      ensureCommand: options?.ensureCommand,
       mediaTemplate: options?.mediaTemplate,
       mediaTemplates: options?.mediaTemplates,
       localFiles: options?.localFiles,
@@ -3664,8 +3670,16 @@ function Shell({
   }, [persistChatMaximized]);
 
   const onToggleDeskChat = useCallback(() => {
-    setDeskChatOpen((open) => !open);
-  }, []);
+    if (deskChatOpen) {
+      setDeskChatOpen(false);
+      return;
+    }
+    setDeskChatOpen(true);
+    const command = DESK_CHAT_COMMAND[deskView];
+    if (command) {
+      onSeedDevComposer(`${command} `, undefined, { ensureCommand: command });
+    }
+  }, [deskChatOpen, deskView, onSeedDevComposer]);
 
   const onOpenDeskChat = useCallback(() => {
     setDeskChatOpen(true);
@@ -4589,11 +4603,16 @@ function Shell({
                   />
                 ) : deskView === "notes" ? (
                   <NotesWorkbench
-                    chatOpen
-                    onSeed={onSeedDevComposer}
-                    onRun={onRunDevAction}
-                    focusMode={workbenchFocus}
-                    onToggleFocus={onToggleWorkbenchFocus}
+                    chatOpen={!hideSideChat}
+                    onToggleChat={onToggleDeskChat}
+                    onSeed={(text) => {
+                      onOpenDeskChat();
+                      onSeedDevComposer(text, undefined, { replace: true });
+                    }}
+                    onRun={(text) => {
+                      onOpenDeskChat();
+                      onRunDevAction(text);
+                    }}
                     openRequest={notesOpenRequest}
                   />
                 ) : deskView === "crm" ? (
@@ -4739,21 +4758,24 @@ function Shell({
                   />
                 ) : deskView === "meeting" ? (
                   <MeetingWorkbench
-                    chatOpen
-                    onSeed={onSeedDevComposer}
+                    chatOpen={!hideSideChat}
+                    onToggleChat={onToggleDeskChat}
+                    onSeed={(text) => {
+                      onOpenDeskChat();
+                      onSeedDevComposer(text, undefined, { replace: true });
+                    }}
                     onTranscribeAudio={onTranscribeMeetingAudio}
                     transcription={settingsSnapshot?.transcription}
                     onOpenVoiceSettings={onOpenVoiceSettings}
                     onSpeak={meetingSpeechAvailable ? onSpeakMeetingText : undefined}
-                    focusMode={workbenchFocus}
-                    onToggleFocus={onToggleWorkbenchFocus}
                     sessionKey={activeKey}
                     onOpenNote={onOpenNoteById}
                   />
                 ) : (
                   <StudioWorkspace
                     module={deskView as StudioModule}
-                    chatOpen
+                    chatOpen={deskView === "scraping" ? !hideSideChat : true}
+                    onToggleChat={deskView === "scraping" ? onToggleDeskChat : undefined}
                     onRun={onRunDevAction}
                     onSeed={(text, files, options) =>
                       onSeedDevComposer(text, files, {

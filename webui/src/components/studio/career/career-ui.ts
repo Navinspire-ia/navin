@@ -23,8 +23,13 @@ export const ICON_BUTTON_STYLES: IButtonStyles = {
     height: 40,
     minWidth: 40,
     minHeight: 40,
+    padding: 0,
     cursor: "pointer",
+    flexShrink: 0,
   },
+  flexContainer: { justifyContent: "center" },
+  icon: { margin: 0 },
+  menuIcon: { display: "none" },
 };
 export const SURFACE =
   "rounded-2xl bg-card shadow-[0_10px_28px_rgba(15,23,42,0.07)] outline outline-1 outline-black/10 dark:outline-white/10";

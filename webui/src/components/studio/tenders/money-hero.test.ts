@@ -108,8 +108,10 @@ describe("tenders desk without a dashboard", () => {
     expect(html).toContain('data-testid="tenders-notice-chips"');
     expect(html).toContain("flex-nowrap");
     // Same order as the Career desk: pipeline buckets first, then Favorites and Archive.
-    expect(html.indexOf("All ·")).toBeLessThan(html.indexOf("In play ·"));
-    expect(html.indexOf("In play ·")).toBeLessThan(html.indexOf("Favorites ·"));
+    expect(html).not.toContain("In play ·");
+    expect(html).not.toContain("Urgent ·");
+    expect(html.indexOf("All ·")).toBeLessThan(html.indexOf("GO ·"));
+    expect(html.indexOf("GO ·")).toBeLessThan(html.indexOf("Favorites ·"));
     expect(html.indexOf("Favorites ·")).toBeLessThan(html.indexOf("Archive ·"));
     expect(html).not.toContain("Notices ·");
     expect(html).toContain("10 per page");
