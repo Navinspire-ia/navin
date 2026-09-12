@@ -47,6 +47,7 @@ from navin.tui.hubs import (
     skill_set_enabled,
     tool_rows,
 )
+from navin.tui.models import ModelPickerScreen, model_pick_items
 from navin.tui.modes import MODES, ROUTING_COMMANDS, display_user_text, get_mode, inbound_for_submit
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
@@ -205,6 +206,8 @@ class NavinActions(Provider):
             ("Background terminals", "List live exec sessions (/ps)", "list_processes"),
             ("Provider", "Open provider settings (ctrl+i)", "open_settings('providers')"),
             ("Model", "Pick the model for the next turns (ctrl+o)", "pick_model"),
+            ("Reasoning effort", "Choose native reasoning effort (ctrl+shift+r)", "pick_reasoning"),
+            ("Model routing", "Choose model configurations by task", "open_settings('routing')"),
             ("Mode", "chat / ask / plan / agent / review / security / debug (ctrl+t)", "pick_mode"),
             ("Sessions", "Open or resume another session (ctrl+s)", "pick_session"),
             ("Rename chat", "Change the name of this conversation (/title)", "rename_chat"),
@@ -369,6 +372,7 @@ class NavinApp(App[None]):
         Binding("ctrl+n", "new_chat", "New chat"),
         Binding("ctrl+i", "open_settings('providers')", "Provider"),
         Binding("ctrl+o", "pick_model", "Model"),
+        Binding("ctrl+shift+r", "pick_reasoning", "Reasoning effort", show=False),
         Binding("ctrl+t", "pick_mode", "Mode"),
         Binding("ctrl+s", "pick_session", "Sessions"),
         Binding("ctrl+w", "pick_project", "Workspace", priority=True),
@@ -653,6 +657,10 @@ class NavinApp(App[None]):
     def _set_status(self, extra: str = "") -> None:
         st = self.runtime.status
         mode = get_mode(self.prefs.mode)
+        reasoning = ""
+        if self._engine_ready:
+            with contextlib.suppress(Exception):
+                reasoning = self.runtime.reasoning_details()[0]
         try:
             self.query_one("#composer-shell", ComposerShell).set_busy(st.turn_active)
         except Exception:  # noqa: BLE001 - shell not mounted yet
@@ -667,6 +675,7 @@ class NavinApp(App[None]):
                 provider=st.provider,
                 context_used=st.context_used,
                 context_window=st.context_window,
+                reasoning=reasoning,
             )
         except Exception:  # noqa: BLE001 - meta not mounted yet
             pass
@@ -1789,6 +1798,28 @@ class NavinApp(App[None]):
     def action_pick_model(self) -> None:
         self._spawn(self._pick_model())
 
+    def action_pick_reasoning(self) -> None:
+        self._spawn(self._pick_reasoning())
+
+    async def _pick_reasoning(self) -> None:
+        if not self._engine_ready:
+            return
+        current, options = self.runtime.reasoning_details()
+        chosen = await self.push_screen_wait(PickerScreen(
+            "Reasoning effort",
+            [PickItem(value, label) for value, label in options],
+            current=current,
+            hint=("Native reasoning level for the next turns of this chat."
+                  if len(options) > 1 else "This model manages reasoning automatically."),
+        ))
+        if chosen is not None:
+            try:
+                self.runtime.set_reasoning_effort(chosen)
+            except Exception as exc:  # noqa: BLE001
+                await self._note(escape(str(exc)), "error")
+                return
+            self._set_status()
+
     def action_pick_mode(self) -> None:
         self._spawn(self._pick_mode())
 
@@ -1805,25 +1836,25 @@ class NavinApp(App[None]):
         if not self._engine_ready:
             return
         rows = self.runtime.preset_details()
-        items = [
-            PickItem(
-                r["name"],
-                r["name"],
-                f"{r['model'] or 'not set'}" + (f"  ·  {r['provider']}" if r["provider"] else ""),
-                r["label"],
-            )
-            for r in rows
-        ]
+        items = model_pick_items(rows)
         chosen = await self.push_screen_wait(
-            PickerScreen(
-                "Model preset",
+            ModelPickerScreen(
+                "Models",
                 items,
                 hint="Applies to the next turns of this runtime (same as /model).",
                 current=self.runtime.status.model_preset,
             )
         )
         if chosen:
-            await self._apply_preset(chosen)
+            if chosen.startswith("__settings__:"):
+                await self.action_open_settings(chosen.split(":", 1)[1])
+                return
+            row = next(row for row in rows if row["name"] == chosen)
+            modality = row.get("modality", "text")
+            if modality != "text":
+                await self.action_open_settings({"audio": "voice", "music": "voice", "stt": "voice"}.get(modality, modality))
+            else:
+                await self._apply_preset(chosen)
 
     async def _apply_preset(self, name: str) -> None:
         try:

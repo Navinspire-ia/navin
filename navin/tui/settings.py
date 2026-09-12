@@ -39,6 +39,13 @@ from navin.tui.hubs import (
     skill_rows,
     skill_set_enabled,
 )
+from navin.tui.models import (
+    MODALITY_ORDER,
+    ModelFormScreen,
+    model_kind,
+    provider_label,
+    reasoning_options,
+)
 from navin.tui.screens import FormField, FormScreen, PickerScreen, PickItem
 
 # ---------------------------------------------------------------------------
@@ -91,12 +98,6 @@ CONTEXT_WINDOWS: tuple[tuple[str, str], ...] = tuple(
     (v, f"{int(v):,}")
     for v in ("65536", "131072", "200000", "262144", "400000", "1000000", "2000000")
 )
-REASONING: tuple[tuple[str, str], ...] = (
-    ("", "auto"),
-    ("low", "low"),
-    ("medium", "medium"),
-    ("high", "high"),
-)
 ROUTE_ROLES: tuple[tuple[str, str], ...] = (
     ("deep", "Deep reasoning"),
     ("dev", "Development"),
@@ -110,6 +111,18 @@ ROUTE_ROLES: tuple[tuple[str, str], ...] = (
     ("security", "Security"),
     ("docs", "Documentation"),
 )
+
+
+def _route_options(data: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    presets = data.get("modelPresets") or {}
+    return (("", "Auto"), ("default", "Default model")) + tuple(
+        (name, f"{preset.get('label') or name} / {provider_label(str(preset.get('provider') or ''), str(preset.get('model') or ''))}")
+        for name, preset in sorted(presets.items())
+        if isinstance(preset, dict) and preset.get("enabled", True)
+        and (preset.get("modality") or "text") == "text"
+    )
+
+
 IMAGE_ASPECTS = tuple((v, v) for v in ("1:1", "3:4", "9:16", "4:3", "16:9", "3:2", "2:3", "21:9"))
 IMAGE_SIZES = tuple((v, v) for v in ("1K", "2K", "4K", "1024x1024", "1536x1024", "1024x1536"))
 VIDEO_ASPECTS = tuple((v, v) for v in ("16:9", "9:16", "1:1"))
@@ -255,6 +268,16 @@ def build_sections(
             "Model configurations, the active default and task routing.",
             kind="models",
             keys=(("enter", "edit"), ("u", "use"), ("a", "add"), ("d", "delete"), ("r", "routing")),
+        ),
+        Section(
+            "routing",
+            "Model routing",
+            "Choose the model configuration for each task. Save with Ctrl+S.",
+            fields=tuple(Field(
+                label, ("modelRoutes", role), "select",
+                help="Auto uses normal model selection. Each configuration keeps its provider.",
+                options=_route_options(data),
+            ) for role, label in ROUTE_ROLES),
         ),
         Section(
             "mcp",
@@ -865,6 +888,8 @@ class SettingsHub(ModalScreen[bool]):
     SettingsHub #pane { width: 1fr; height: 1fr; padding: 0 0 0 2; }
     SettingsHub #pane-title { text-style: bold; color: $foreground; height: 1; }
     SettingsHub #pane-desc { color: $text-muted; height: auto; margin: 0 0 1 0; }
+    SettingsHub #routing-button { display: none; height: 3; margin-bottom: 1; }
+    SettingsHub #routing-button.-visible { display: block; }
     SettingsHub #rows { height: 1fr; background: transparent; scrollbar-size-vertical: 1; }
     SettingsHub #rows > .option-list--option-highlighted { background: $secondary 30%; text-style: bold; }
     SettingsHub #table { height: 1fr; display: none; }
@@ -935,6 +960,7 @@ class SettingsHub(ModalScreen[bool]):
                 with Vertical(id="pane"):
                     yield Static("", id="pane-title", markup=True)
                     yield Static("", id="pane-desc", markup=True)
+                    yield Button("Model routing", id="routing-button")
                     yield OptionList(id="rows")
                     yield DataTable(id="table", zebra_stripes=True, cursor_type="row")
                     yield Static("", id="help", markup=True)
@@ -1005,6 +1031,7 @@ class SettingsHub(ModalScreen[bool]):
 
     def _show_section(self, section: Section) -> None:
         self._section = section
+        self.query_one("#routing-button", Button).set_class(section.id == "models", "-visible")
         self._editing = None
         self.query_one("#value", Input).remove_class("-visible")
         self.query_one("#pane-title", Static).update(escape(section.title))
@@ -1028,6 +1055,10 @@ class SettingsHub(ModalScreen[bool]):
             rows.remove_class("-hidden")
             self._fill_rows(section)
         self.query_one("#help", Static).update("")
+
+    @on(Button.Pressed, "#routing-button")
+    def _open_routing(self) -> None:
+        self.run_worker(self._routing(), exclusive=False)
 
     # -- form rows --------------------------------------------------------
 
@@ -1353,8 +1384,8 @@ class SettingsHub(ModalScreen[bool]):
                     "●" if active == "default" else "○",
                     "default",
                     str(defaults.get("model") or "-"),
-                    str(defaults.get("provider") or "auto"),
-                    "text",
+                    provider_label(str(defaults.get("provider") or "auto"), str(defaults.get("model") or "")),
+                    model_kind(str(defaults.get("model") or "")),
                     f"{int(defaults.get('contextWindowTokens') or 0):,}",
                     str(defaults.get("reasoningEffort") or "auto"),
                 ],
@@ -1375,8 +1406,8 @@ class SettingsHub(ModalScreen[bool]):
                         mark,
                         str(p.get("label") or name),
                         str(p.get("model") or "-"),
-                        str(p.get("provider") or "auto"),
-                        modality,
+                        provider_label(str(p.get("provider") or "auto"), str(p.get("model") or "")),
+                        model_kind(str(p.get("model") or ""), modality, p.get("inputModalities")),
                         f"{int(p.get('contextWindowTokens') or 0):,}",
                         str(p.get("reasoningEffort") or "auto"),
                     ],
@@ -1387,9 +1418,8 @@ class SettingsHub(ModalScreen[bool]):
         rows.sort(
             key=lambda r: (
                 r.key != "default",
-                r.cells[0] != "●",
-                r.cells[4] != "text",
-                r.cells[4],
+                MODALITY_ORDER.get(str(presets.get(r.key, {}).get("modality") or "text"), 6),
+                r.cells[3].lower(),
                 r.cells[1].lower(),
             )
         )
@@ -1714,12 +1744,12 @@ class SettingsHub(ModalScreen[bool]):
                     "reasoning_effort",
                     "Thinking",
                     kind="select",
-                    options=REASONING,
+                    options=reasoning_options(str(defaults.get("provider") or ""), str(defaults.get("model") or "")),
                     value=str(defaults.get("reasoningEffort") or ""),
                 ),
             ]
             answer = await self.app.push_screen_wait(
-                FormScreen("Default model (agents.defaults)", fields, submit_label="Save")
+                ModelFormScreen("Default model (agents.defaults)", fields, submit_label="Save")
             )
             if answer is None:
                 return
@@ -1758,7 +1788,7 @@ class SettingsHub(ModalScreen[bool]):
                 "reasoning_effort",
                 "Thinking",
                 kind="select",
-                options=REASONING,
+                options=reasoning_options(str(preset.get("provider") or ""), str(preset.get("model") or "")),
                 value=str(preset.get("reasoningEffort") or ""),
             ),
         ]
@@ -1772,7 +1802,7 @@ class SettingsHub(ModalScreen[bool]):
                 )
             )
         answer = await self.app.push_screen_wait(
-            FormScreen(
+            ModelFormScreen(
                 "Edit model configuration" if name else "Add model configuration",
                 fields,
                 submit_label="Save",
@@ -1792,15 +1822,8 @@ class SettingsHub(ModalScreen[bool]):
             self._model_update(query, "create_model_configuration", f"{answer.get('label')} added")
 
     async def _routing(self) -> None:
-        presets = _get(self._data, ("modelPresets",), {}) or {}
         routes = _get(self._data, ("modelRoutes",), {}) or {}
-        options: tuple[tuple[str, str], ...] = (("", "default model"),) + tuple(
-            (n, str(presets[n].get("label") or n))
-            for n in sorted(presets)
-            if isinstance(presets[n], dict)
-            and presets[n].get("enabled", True)
-            and str(presets[n].get("modality") or "text") == "text"
-        )
+        options = _route_options(self._data)
         fields = [
             FormField(
                 role, label, kind="select", options=options, value=str(routes.get(role) or "")
