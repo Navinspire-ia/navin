@@ -71,11 +71,11 @@ MAX_TRANSCRIPT_LINES = 5000
 # Default open preview: a Codex-sized hunk, not a 80-row wall.
 PREVIEW_OPEN_LINES = 32
 PREVIEW_MIN_WIDTH = 72
-# Codex-style washes: readable text on a clear green / red bar.
-PREVIEW_ADD_INK = "#E8FFEF"
-PREVIEW_ADD_BG = "#0F6B38"
-PREVIEW_DEL_INK = "#FFE8E8"
-PREVIEW_DEL_BG = "#8B2222"
+# Subtle washes, preblended with the context background for terminal rendering.
+PREVIEW_ADD_INK = "#BDD1C2"
+PREVIEW_ADD_BG = "#202B24"
+PREVIEW_DEL_INK = "#D6BDBD"
+PREVIEW_DEL_BG = "#302323"
 PREVIEW_CTX_INK = "#E8E8E8"
 PREVIEW_CTX_BG = "#1C1C1C"
 MAX_TRANSCRIPT_CHARS = 400_000
@@ -583,10 +583,32 @@ def activity_label(
 
 
 def activity_head_text(text: str, *, dark: bool = True) -> Text:
-    """Literal paths/commands, with semantic counts that also work without color."""
+    """Color the inline action and counts while keeping paths/commands literal."""
     rendered = Text(text)
+    palette = {
+        "add": "#A3BEA6" if dark else "#356345",
+        "delete": "#CE9C9C" if dark else "#914747",
+        "edit": "#C4B38D" if dark else "#79602F",
+        "explore": "#94AEC8" if dark else "#3F6487",
+        "run": "#B2A5C9" if dark else "#70568B",
+        "muted": "#A3A3A3" if dark else "#626262",
+    }
+    label = re.match(r"^[^\w\n]*(?P<action>[A-Za-z][\w-]*):?", text)
+    if label:
+        action = label["action"].lower()
+        family = {
+            "added": "add", "create": "add", "completed": "add",
+            "deleted": "delete", "failed": "delete",
+            "edit": "edit", "edited": "edit", "editing": "edit", "edits": "edit",
+            "reverted": "edit", "cancelled": "edit",
+            "explored": "explore", "read": "explore", "search": "explore", "list": "explore",
+            "ran": "run", "running": "run", "checked": "run", "checking": "run",
+            "unchanged": "muted",
+        }.get(action, "explore")
+        # Include the tree marker in the accent, on the same line as the target.
+        rendered.stylize(palette[family], 0, label.end())
     for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
-        color = ("#8FE0AE" if dark else "#176339") if match[0].startswith("+") else ("#FFAEAE" if dark else "#A22929")
+        color = palette["add"] if match[0].startswith("+") else palette["delete"]
         rendered.stylize(color, match.start(), match.end())
     return rendered
 
@@ -864,11 +886,11 @@ def format_preview_markup_line(
     else:
         lines = chop_cells(prefix + code, target) or [""]
     palette = {
-        "add": (PREVIEW_ADD_INK, PREVIEW_ADD_BG) if dark else ("#163D26", "#DCF5E4"),
-        "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#67201F", "#FDE2DF"),
+        "add": (PREVIEW_ADD_INK, PREVIEW_ADD_BG) if dark else ("#354E3D", "#EDF3EE"),
+        "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#674545", "#F6EFEF"),
         "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F6F8"),
         "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F6F8"),
-        "error": ("#FFD8D8", "#501E23") if dark else ("#67201F", "#FDE2DF"),
+        "error": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#674545", "#F6EFEF"),
     }
     ink, background = palette.get(kind, palette["ctx"])
     return "\n".join(
