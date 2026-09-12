@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, type ReactNode } from "react";
-import { DefaultButton, Dropdown, TextField, type IDropdownOption, type IDropdownStyles } from "@fluentui/react";
+import { Dropdown, IconButton, TextField, type IDropdownOption, type IDropdownStyles } from "@fluentui/react";
 
 import {
   NONE_FACET,
@@ -14,7 +14,7 @@ import {
   type NoticeFacetFilter,
   type NoticeGoFilter,
 } from "@/components/studio/tenders/notice-filters";
-import { BUTTON_STYLES, FILTER_CALLOUT, Surface, type Tx } from "@/components/studio/tenders/tenders-ui";
+import { FILTER_CALLOUT, ICON_BUTTON_STYLES, Surface, type Tx } from "@/components/studio/tenders/tenders-ui";
 import { domainLabel } from "@/components/studio/tenders/domain-label";
 import { countryDropdownOptions } from "@/lib/country-options";
 import { FacetSearchChip } from "@/components/studio/FacetSearchChip";
@@ -192,24 +192,35 @@ export function NoticeFilters({
             onChange={(_, value) => onQuery(value || "")}
           />
         </div>
-        <DefaultButton
-          text={
+        <IconButton
+          title={
             open
               ? tx("hideFilters", "Hide filters")
               : active
                 ? tx("showFiltersOn", "Show filters · {{count}}", { count })
                 : tx("showFilters", "Show filters")
           }
-          iconProps={{ iconName: open ? "ChevronUp" : "Filter" }}
+          ariaLabel={
+            open
+              ? tx("hideFilters", "Hide filters")
+              : active
+                ? tx("showFiltersOn", "Show filters · {{count}}", { count })
+                : tx("showFilters", "Show filters")
+          }
+          iconProps={{ iconName: open ? "ChevronUp" : active ? "FilterSolid" : "Filter" }}
           onClick={() => setOpen((value) => !value)}
-          styles={BUTTON_STYLES}
+          checked={open || active}
+          styles={ICON_BUTTON_STYLES}
           data-testid="notice-toggle-filters"
         />
-        <DefaultButton
-          text={tx("clearFilters", "Clear filters")}
+        <IconButton
+          title={tx("clearFilters", "Clear filters")}
+          ariaLabel={tx("clearFilters", "Clear filters")}
+          iconProps={{ iconName: "ClearFilter" }}
           disabled={!active}
           onClick={() => onChange(emptyFacetFilter())}
-          styles={BUTTON_STYLES}
+          styles={ICON_BUTTON_STYLES}
+          data-testid="notice-clear-filters"
         />
         {extra}
       </div>

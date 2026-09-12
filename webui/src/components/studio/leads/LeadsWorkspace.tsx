@@ -39,6 +39,7 @@ import {
 } from "@/components/studio/leads/lead-filters";
 import {
   BUTTON_STYLES,
+  HEADER_BUTTON_STYLES,
   ICON_BUTTON_STYLES,
   LEAD_ROW_MENU,
   LEADS_PAGE_SIZE,
@@ -404,7 +405,10 @@ export function LeadsWorkspace({
   const sequencesHint = autonomous
     ? tx("sequencesSendHint", "Autonomous mode: due emails go out now, within the daily cap and the opt-out list.")
     : tx("sequencesDraftHint", "Approval mode: every due step gets a draft in the prospect's language. Nothing is sent.");
-  const loopLabel = live.loop?.enabled ? tx("pause", "Pause loop") : tx("startLoop", "Start loop");
+  const loopLabel = live.loop?.enabled ? tx("pause", "Pause") : tx("startLoop", "Start");
+  const loopTitle = live.loop?.enabled
+    ? tx("pauseTitle", "Pause the loop")
+    : tx("startLoopTitle", "Start the loop");
 
   return (
     <Customizer settings={{ theme: fluentTheme }}>
@@ -436,6 +440,7 @@ export function LeadsWorkspace({
               <>
                 <DefaultButton
                   text={tx("book", "Book")}
+                  title={tx("book", "Book")}
                   iconProps={{ iconName: "PageList" }}
                   checked={bookSelected}
                   onClick={() => {
@@ -443,58 +448,63 @@ export function LeadsWorkspace({
                     setView("work");
                     goBook();
                   }}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="leads-open-book"
                 />
                 {live.loop?.enabled ? (
                   <PrimaryButton
                     text={loopLabel}
                     iconProps={{ iconName: "Pause" }}
-                    title={loopLabel}
-                    ariaLabel={loopLabel}
+                    title={loopTitle}
+                    ariaLabel={loopTitle}
                     onClick={() => void run("stop", {}, tx("saved.pause", "Loop paused."))}
                     disabled={Boolean(busy)}
-                    styles={BUTTON_STYLES}
+                    styles={HEADER_BUTTON_STYLES}
                     data-testid="leads-pause-loop"
                   />
                 ) : (
                   <PrimaryButton
                     text={loopLabel}
                     iconProps={{ iconName: "Play" }}
-                    title={loopLabel}
-                    ariaLabel={loopLabel}
+                    title={loopTitle}
+                    ariaLabel={loopTitle}
                     onClick={() => {
                       setScheduleMode("start");
                       setScheduleOpen(true);
                     }}
                     disabled={Boolean(busy)}
-                    styles={BUTTON_STYLES}
+                    styles={HEADER_BUTTON_STYLES}
                     data-testid="leads-start-loop"
                   />
                 )}
                 <DefaultButton
-                  text={tx("cycle", "Run cycle")}
+                  text={tx("cycle", "Run")}
+                  title={tx("cycleTitle", "Run a cycle")}
+                  ariaLabel={tx("cycleTitle", "Run a cycle")}
                   iconProps={{ iconName: "Sync" }}
                   disabled={Boolean(busy)}
                   onClick={() => void run("tick", { force: true }, tx("saved.cycle", "Cycle finished."))}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="leads-run-cycle"
                 />
                 <DefaultButton
-                  text={autonomous ? tx("sequencesSend", "Send due steps") : tx("sequencesDraft", "Draft due steps")}
+                  text={autonomous ? tx("sequencesSend", "Send") : tx("sequencesDraft", "Draft")}
                   iconProps={{ iconName: autonomous ? "Send" : "Edit" }}
                   title={sequencesHint}
+                  ariaLabel={sequencesHint}
                   disabled={Boolean(busy)}
                   onClick={() => void run("sequences")}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="leads-run-sequences"
                 />
                 <PrimaryButton
-                  text={tx("home.hunt", "Hunt companies")}
+                  text={tx("hunt", "Find")}
+                  title={tx("huntTitle", "Hunt companies")}
+                  ariaLabel={tx("huntTitle", "Hunt companies")}
                   iconProps={{ iconName: "Search" }}
                   disabled={Boolean(busy)}
                   onClick={() => launchHunt({})}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="leads-hunt"
                 />
               </>
@@ -928,11 +938,13 @@ function LeadBook({
         leading={listTabs}
         extra={
           <DefaultButton
-            text={tx("exportCsv", "Export CSV")}
+            text={tx("exportCsv", "Export")}
+            title={tx("exportCsvTitle", "Export CSV")}
+            ariaLabel={tx("exportCsvTitle", "Export CSV")}
             iconProps={{ iconName: "Download" }}
             disabled={busy || exportBusy || rows.length === 0}
             onClick={onExport}
-            styles={BUTTON_STYLES}
+            styles={HEADER_BUTTON_STYLES}
             data-testid="leads-export"
           />
         }

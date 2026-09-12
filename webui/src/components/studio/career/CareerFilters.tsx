@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import {
   DefaultButton,
   Dropdown,
+  IconButton,
   Panel,
   PanelType,
   Pivot,
@@ -15,7 +16,7 @@ import {
 } from "@fluentui/react";
 
 import "@/lib/fluent-icons";
-import { BUTTON_STYLES, SURFACE } from "@/components/studio/career/career-ui";
+import { BUTTON_STYLES, ICON_BUTTON_STYLES, SURFACE } from "@/components/studio/career/career-ui";
 import { contractLabel, experienceLabel } from "@/lib/career-facts";
 import {
   NONE_FACET,
@@ -195,23 +196,35 @@ export function CareerFilters({
             onChange={(_, value) => onChange({ ...filter, query: value || "" })}
           />
         </div>
-        <DefaultButton
-          text={
+        <IconButton
+          title={
             open
               ? tx("hideFilters", "Hide filters")
               : active
                 ? tx("showFiltersOn", "Show filters · {{count}}", { count })
                 : tx("showFilters", "Show filters")
           }
-          iconProps={{ iconName: open ? "ChevronUp" : "Filter" }}
+          ariaLabel={
+            open
+              ? tx("hideFilters", "Hide filters")
+              : active
+                ? tx("showFiltersOn", "Show filters · {{count}}", { count })
+                : tx("showFilters", "Show filters")
+          }
+          iconProps={{ iconName: open ? "ChevronUp" : active ? "FilterSolid" : "Filter" }}
           onClick={() => setOpen((value) => !value)}
-          styles={BUTTON_STYLES}
+          checked={open || active}
+          styles={ICON_BUTTON_STYLES}
+          data-testid="career-toggle-filters"
         />
-        <DefaultButton
-          text={tx("clearFilters", "Clear filters")}
+        <IconButton
+          title={tx("clearFilters", "Clear filters")}
+          ariaLabel={tx("clearFilters", "Clear filters")}
+          iconProps={{ iconName: "ClearFilter" }}
           disabled={!active}
           onClick={() => onChange(emptyOfferFilter())}
-          styles={BUTTON_STYLES}
+          styles={ICON_BUTTON_STYLES}
+          data-testid="career-clear-filters"
         />
         {trailing}
       </div>

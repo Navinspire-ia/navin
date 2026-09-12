@@ -3,9 +3,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
+import threading
+import time
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from navin.tui.widgets import format_elapsed, format_working_line
+from textual import events
+
+from navin.bus.events import OutboundMessage
+from navin.bus.queue import MessageBus
+from navin.tui.app import NavinApp
+from navin.tui.prefs import TuiPrefs
+from navin.tui.widgets import Sidebar, SystemNote, WorkingLine, format_elapsed, format_working_line
 
 
 class FormatElapsedTests(unittest.TestCase):
@@ -55,6 +68,166 @@ class WorkingLineWidgetTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("/ps to view", str(line.content))
             line.set_line("")
             self.assertFalse(line.has_class("-visible"))
+
+
+class _InteractionApp(NavinApp):
+    """Real chat controls and bus, without account/network startup."""
+
+    async def on_mount(self, event):
+        event.prevent_default()
+        self.runtime.bus = MessageBus()
+        self._engine_ready = True
+        self.query_one(Sidebar).display = False
+        self.composer.focus()
+        self.set_interval(0.12, self._tick_spinner)
+
+    async def on_unmount(self, event):
+        event.prevent_default()
+        self.runtime._closed = True
+        tasks = [task for task in (self.runtime._loop_task, self.runtime._consumer_task) if task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _refresh_side(self):
+        self._set_status()
+
+    def _load_account(self, *args, **kwargs):
+        pass
+
+
+class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        self.app = _InteractionApp(SimpleNamespace(workspace_path=Path(self.directory.name)), prefs=prefs)
+
+    async def test_ctrl_v_full_payload_first_enter_working_and_ctrl_c(self):
+        app = self.app
+        payload = "première ligne\n" + "données العربية [x]\n" * 600 + "fin"
+        async with app.run_test(size=(72, 25)) as pilot:
+            app._clipboard = "old" * 12000
+            app.composer.set_text("replace this selection")
+            await pilot.press("ctrl+a")
+            with patch("navin.tui.clipboard.read_clipboard", return_value=payload):
+                await pilot.press("ctrl+v")
+                await app.workers.wait_for_complete()
+            self.assertEqual(app.composer.text, f"[Pasted Content {len(payload)} chars]")
+            await pilot.press("enter")
+            message = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 1)
+            self.assertEqual(message.content, payload)
+            app.runtime._turn_started_at = time.monotonic() - 380
+            app._tick_spinner()
+            await pilot.pause()
+            self.assertIn("Working (6m 20s", str(app.query_one(WorkingLine).content))
+            self.assertIn("Working", app.export_screenshot())
+            block = await app._ensure_assistant()
+            await block.set_text("Checking the request...")
+            app.prefs.mode = "agent"
+            started = app.runtime._turn_started_at
+            await app.submit_text("also check this")
+            followup = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 1)
+            self.assertEqual(followup.content, "also check this")
+            self.assertEqual(app.runtime._turn_started_at, started)
+            self.assertEqual(app.runtime.bus.inbound_size, 0)
+            self.assertIs(app.transcript.children[-1], block)
+            app.prefs.mode = "chat"
+            await pilot.press("ctrl+c")
+            stop = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 1)
+            self.assertEqual(stop.content, "/stop")
+            await app.runtime._dispatch(OutboundMessage("cli", "direct", "Stopped."))
+            await pilot.pause()
+            self.assertFalse(app.query_one(WorkingLine).display)
+            # Terminal-managed Ctrl+V sends Paste, not a key. Its payload wins
+            # over the old in-app clipboard and does not consume the next Enter.
+            app.transcript.focus()
+            app.post_message(events.Paste("nouveau\ntexte"))
+            await pilot.pause()
+            self.assertEqual(app.composer.text, "nouveau\ntexte")
+            await pilot.press("ctrl+c")
+            self.assertEqual(app.composer.text, "")
+            await pilot.press("ctrl+c")
+            self.assertEqual(len(app.transcript.children), 0)
+            app.action_find()
+            await pilot.pause()
+            with patch("navin.tui.clipboard.read_clipboard", return_value="needle"):
+                await pilot.press("ctrl+v")
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+            self.assertEqual(app.query_one("#find-query").value, "needle")
+            await pilot.press("escape")
+            app.composer.focus()
+            await pilot.press("o", "k", "enter")
+            self.assertEqual((await app.runtime.bus.consume_inbound()).content, "ok")
+
+    async def test_slow_clipboard_keeps_ctrl_c_responsive_and_cannot_restore_cleared_text(self):
+        started, release = threading.Event(), threading.Event()
+
+        def slow_read():
+            started.set()
+            release.wait(2)
+            return "late clipboard text" * 200
+
+        async with self.app.run_test(size=(72, 25)) as pilot:
+            with patch("navin.tui.clipboard.read_clipboard", side_effect=slow_read):
+                try:
+                    await pilot.press("ctrl+v")
+                    self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                    await pilot.press("ctrl+c")
+                    self.assertFalse(release.is_set())
+                finally:
+                    release.set()
+                await self.app.workers.wait_for_complete()
+            self.assertEqual(self.app.composer.text, "")
+
+    async def test_recovered_work_is_visible_and_dead_engine_can_answer_next_message(self):
+        from navin.bus.runtime_events import (
+            RuntimeEventBus,
+            RuntimeEventContext,
+            SessionTurnStarted,
+        )
+
+        app = self.app
+        attempts = 0
+
+        async def engine():
+            nonlocal attempts
+            attempts += 1
+            message = await app.runtime.bus.consume_inbound()
+            if attempts == 1:
+                raise RuntimeError("lost connection")
+            await app.runtime.bus.publish_outbound(OutboundMessage("cli", "direct", f"Received: {message.content}"))
+            await asyncio.Event().wait()
+
+        async with app.run_test(size=(72, 25)) as pilot:
+            event_bus = RuntimeEventBus()
+            app.runtime.agent_loop = SimpleNamespace(run=engine, runtime_events=event_bus)
+            app.runtime._refresh_status = lambda: None
+            app.runtime._subscribe_runtime_events()
+            await event_bus.publish(SessionTurnStarted(RuntimeEventContext("cli", "direct", "cli:direct"), "Recovered task"))
+            await pilot.pause()
+            self.assertTrue(app.query_one(WorkingLine).display)
+            active = asyncio.create_task(asyncio.Event().wait())
+            app.runtime.agent_loop._active_tasks = {"cli:direct": [active]}
+            try:
+                await app.runtime._dispatch(OutboundMessage("cli", "direct", "Side command result"))
+                self.assertTrue(app.runtime.turn_active)
+            finally:
+                active.cancel()
+                await asyncio.gather(active, return_exceptions=True)
+            app.runtime._finish_turn({})
+            await pilot.pause()
+            await app.submit_text("first")
+            await pilot.pause()
+            self.assertFalse(app.runtime.turn_active)
+            self.assertTrue(any("lost connection" in str(note.content) for note in app.query(SystemNote)))
+            await app.submit_text("second")
+            await pilot.pause()
+            self.assertEqual(attempts, 2)
+            self.assertEqual(app._current.text, "Received: second")
+            self.assertFalse(app.query_one(WorkingLine).display)
 
 
 if __name__ == "__main__":

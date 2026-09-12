@@ -39,16 +39,18 @@ class UsageModeMathTest(unittest.TestCase):
         grok = "x-ai/grok-4.6"
         gemini = "google/gemini-3.7-flash"
         pro = "deepseek/deepseek-v4-pro"
-        flash = "deepseek/deepseek-v4-flash"
+        flash = "deepseek/deepseek-v4.1-flash"
         nemo = "nvidia/nemotron-3-ultra-550b-a55b:free"
         opus5 = "anthropic/claude-opus-5"
         opus48 = "anthropic/claude-opus-4.8"
         fable5 = "anthropic/claude-fable-5"
         gpt56 = "openai/gpt-5.6-sol"
+        astra = "openai/gpt-6-astra"
         self.assertTrue(slug_allowed_for_budget(opus5, 49))
         self.assertFalse(slug_allowed_for_budget(opus5, 50))
         self.assertFalse(slug_allowed_for_budget(fable5, 50))
         self.assertFalse(slug_allowed_for_budget(gpt56, 50))
+        self.assertFalse(slug_allowed_for_budget(astra, 50))
         self.assertTrue(slug_allowed_for_budget(opus48, 90))
         self.assertTrue(slug_allowed_for_budget(grok, 90))
         self.assertTrue(slug_allowed_for_budget(gemini, 95))
@@ -62,6 +64,9 @@ class UsageModeMathTest(unittest.TestCase):
         self.assertTrue(is_expensive_flagship_slug("anthropic/claude-opus-5-fast"))
         self.assertTrue(is_expensive_flagship_slug("anthropic/claude-fable-5"))
         self.assertTrue(is_expensive_flagship_slug("openai-codex/gpt-5.6-terra"))
+        self.assertTrue(is_expensive_flagship_slug("openai/gpt-6-astra"))
+        self.assertTrue(is_expensive_flagship_slug("openai-codex/gpt-6-astra"))
+        self.assertTrue(is_expensive_flagship_slug("gpt-6-astra"))
         self.assertFalse(is_expensive_flagship_slug("anthropic/claude-opus-4.8"))
         self.assertFalse(is_expensive_flagship_slug("anthropic/claude-opus-4-8"))
         self.assertFalse(is_expensive_flagship_slug("x-ai/grok-4.6"))

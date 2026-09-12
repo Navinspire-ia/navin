@@ -529,7 +529,21 @@ def _print_cli_progress_line(text: str, thinking: ThinkingSpinner | None, render
     with pause:
         if renderer:
             renderer.ensure_header()
-        target.print(f"  [dim]↳ {text}[/dim]")
+        target.print(f"  ↳ {text}", style="dim", markup=False)
+
+
+def _print_cli_activity(
+    *, tool_events: list[dict] | None = None, file_edit_events: list[dict] | None = None,
+    thinking: ThinkingSpinner | None = None, renderer: StreamRenderer | None = None,
+) -> None:
+    from navin.cli.activity import ActivityPrinter
+
+    pause = renderer.pause_spinner() if renderer else (thinking.pause() if thinking else nullcontext())
+    with pause:
+        if renderer:
+            renderer.ensure_header()
+        printer = renderer.activity if renderer else ActivityPrinter(console)
+        printer.consume(tool_events=tool_events, file_edit_events=file_edit_events)
 
 
 class _ReasoningBuffer:
@@ -570,7 +584,7 @@ def _print_cli_reasoning(text: str, thinking: ThinkingSpinner | None, renderer: 
     with pause:
         if renderer:
             renderer.ensure_header()
-        target.print(f"[dim italic]✻ {text}[/dim italic]")
+        target.print(f"✻ {text}", style="dim italic", markup=False)
 
 
 def _flush_cli_reasoning(
@@ -590,7 +604,7 @@ async def _print_interactive_progress_line(text: str, thinking: ThinkingSpinner 
     if renderer:
         with renderer.pause_spinner():
             renderer.ensure_header()
-            renderer.console.print(f"  [dim]↳ {text}[/dim]")
+            renderer.console.print(f"  ↳ {text}", style="dim", markup=False)
     else:
         with thinking.pause() if thinking else nullcontext():
             await _print_interactive_line(text)
@@ -610,6 +624,14 @@ async def _maybe_print_interactive_progress(
 
     if not isinstance(event, ProgressEvent):
         return False
+
+    if event.tool_events or event.file_edit_events:
+        if not channels_config or channels_config.send_tool_hints:
+            _print_cli_activity(
+                tool_events=event.tool_events, file_edit_events=event.file_edit_events,
+                thinking=thinking, renderer=renderer,
+            )
+        return True
 
     reasoning_buffer = reasoning_buffer or _ReasoningBuffer()
 
@@ -3018,6 +3040,14 @@ def agent(
 
         async def _cli_progress(content: str, *, tool_hint: bool = False, reasoning: bool = False, **_kwargs: Any) -> None:
             ch = agent_loop.channels_config
+
+            if _kwargs.get("tool_events") or _kwargs.get("file_edit_events"):
+                if not ch or ch.send_tool_hints:
+                    _print_cli_activity(
+                        tool_events=_kwargs.get("tool_events"), file_edit_events=_kwargs.get("file_edit_events"),
+                        thinking=_thinking, renderer=renderer,
+                    )
+                return
 
             if _kwargs.get("reasoning_end"):
                 if ch and not ch.show_reasoning:

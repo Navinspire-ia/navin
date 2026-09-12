@@ -26,9 +26,13 @@ export const ICON_BUTTON_STYLES: IButtonStyles = {
     minHeight: 40,
     width: 40,
     minWidth: 40,
+    padding: 0,
     cursor: "pointer",
     flexShrink: 0,
   },
+  flexContainer: { justifyContent: "center" },
+  icon: { margin: 0 },
+  menuIcon: { display: "none" },
 };
 export const FILL_BUTTON_STYLES: IButtonStyles = {
   root: {

@@ -37,8 +37,8 @@ def _navin_selection(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
         capacity = 1
         if "claude" in slug and ("opus" in slug or "sonnet" in slug):
             family = "claude-opus" if "opus" in slug else "claude-sonnet"
-        elif "gpt-5" in slug or "computer-use" in slug:
-            family = "gpt" if "gpt-5" in slug else "computer-use"
+        elif any(token in slug for token in ("gpt-5", "gpt-6")) or "computer-use" in slug:
+            family = "gpt" if any(token in slug for token in ("gpt-5", "gpt-6")) else "computer-use"
         elif "gemini" in slug:
             family, capacity = "gemini", 2 if "pro" in slug else 1
         elif "qwen" in slug and any(part in slug for part in ("max", "plus", "flash", "vl")):

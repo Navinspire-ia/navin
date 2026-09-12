@@ -108,6 +108,9 @@ class StreamRenderer:
         self._buf = ""
         self.streamed = False
         self._console = _make_console()
+        from navin.cli.activity import ActivityPrinter
+
+        self.activity = ActivityPrinter(self._console)
         self._live: Live | None = None
         self._spinner: ThinkingSpinner | None = None
         self._header_printed = False
@@ -180,6 +183,7 @@ class StreamRenderer:
         return _pause()
 
     async def on_delta(self, delta: str) -> None:
+        self.activity.break_group()
         self.streamed = True
         self._buf += delta
         if self._live is None:

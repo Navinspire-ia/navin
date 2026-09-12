@@ -18,6 +18,12 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  IconButton,
+  PrimaryButton,
+  type IButtonStyles,
+} from "@fluentui/react";
+import "@/lib/fluent-icons";
+import {
   Archive,
   ArchiveRestore,
   CheckSquare,
@@ -35,8 +41,6 @@ import {
   Languages,
   ListTree,
   Loader2,
-  Maximize2,
-  Minimize2,
   Notebook,
   Paperclip,
   Pin,
@@ -55,6 +59,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { NOTIFICATION_GUTTER } from "@/components/NotificationCenter";
 import { buildAgentRunPrompt } from "@/components/notes/agent-block";
 import {
   buildNoteAskActionPrompt,
@@ -142,13 +147,31 @@ type DangerAction =
 
 const AUTOSAVE_DELAY_MS = 800;
 
+const HEADER_BUTTON_STYLES: IButtonStyles = {
+  root: { minHeight: 40, minWidth: "auto", padding: "0 12px", cursor: "pointer", flexShrink: 0 },
+  label: { whiteSpace: "nowrap", overflow: "visible" },
+};
+const ICON_BUTTON_STYLES: IButtonStyles = {
+  root: {
+    height: 40,
+    minHeight: 40,
+    width: 40,
+    minWidth: 40,
+    padding: 0,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  flexContainer: { justifyContent: "center" },
+  icon: { margin: 0 },
+  menuIcon: { display: "none" },
+};
+
 export interface NotesWorkbenchProps {
   chatOpen?: boolean;
+  onToggleChat?: () => void;
   onSeed?: (text: string) => void;
   /** Auto-send a prompt to the chat (used by Résumé / Traduction / Correction). */
   onRun?: (text: string) => void;
-  focusMode?: boolean;
-  onToggleFocus?: () => void;
   /**
    * Note to open when the desk mounts or when this changes (deep link from
    * another module, e.g. the Meetings desk after "Save to Notes"). The
@@ -158,10 +181,10 @@ export interface NotesWorkbenchProps {
 }
 
 export function NotesWorkbench({
+  chatOpen = false,
+  onToggleChat,
   onSeed,
   onRun,
-  focusMode = false,
-  onToggleFocus,
   openRequest = null,
 }: NotesWorkbenchProps) {
   const { t, i18n } = useTranslation();
@@ -658,9 +681,8 @@ export function NotesWorkbench({
     [refreshList, token],
   );
 
-  const revealChat = useCallback(() => {
-    if (focusMode) onToggleFocus?.();
-  }, [focusMode, onToggleFocus]);
+  // App opens the side chat when onSeed / onRun run (onOpenDeskChat).
+  const revealChat = useCallback(() => {}, []);
 
   const noteAskContext = useCallback(() => {
     const current = detailRef.current;
@@ -808,15 +830,21 @@ export function NotesWorkbench({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      {/* Header */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-muted/15 px-3">
-        <Notebook className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <span className="text-[13px] font-semibold">
-          {t("notes.title", { defaultValue: "Notes" })}
-        </span>
-        <span className="text-[12px] text-muted-foreground">/ {sectionTitle}</span>
-        <div className="ml-auto flex items-center gap-1.5">
-          <div className="relative">
+      <header
+        className={cn(
+          "flex shrink-0 flex-nowrap items-center gap-x-3 border-b border-border bg-muted/15 px-5 py-2.5",
+          !chatOpen && NOTIFICATION_GUTTER,
+        )}
+      >
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <Notebook className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="shrink-0 text-xl font-semibold tracking-tight">
+            {t("notes.title", { defaultValue: "Notes" })}
+          </span>
+          <span className="min-w-0 max-w-[14rem] truncate text-sm text-muted-foreground">
+            / {sectionTitle}
+          </span>
+          <div className="relative shrink-0">
             <Search
               className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
@@ -831,7 +859,7 @@ export function NotesWorkbench({
               placeholder={t("notes.searchPlaceholder", {
                 defaultValue: "Search notes… (Ctrl+K)",
               })}
-              className="h-8 w-36 rounded-lg border border-border/70 bg-background pl-7 pr-7 text-[12.5px] outline-none transition-colors focus:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary sm:w-56"
+              className="h-10 w-36 rounded-lg border border-border/70 bg-background pl-7 pr-7 text-[12.5px] outline-none transition-colors focus:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary sm:w-56"
             />
             {search ? (
               <button
@@ -844,33 +872,39 @@ export function NotesWorkbench({
               </button>
             ) : null}
           </div>
-          <button
-            type="button"
+          <PrimaryButton
+            text={t("notes.newAction", { defaultValue: "New" })}
+            title={t("notes.newNote", { defaultValue: "New note" })}
+            ariaLabel={t("notes.newNote", { defaultValue: "New note" })}
+            iconProps={{ iconName: "Add" }}
             onClick={() => void onCreateNote()}
-            className="flex h-8 items-center gap-1 rounded-lg bg-foreground px-2.5 text-[12px] font-medium text-background transition-[opacity,transform] hover:opacity-85 active:scale-[0.97]"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-            <span className="hidden sm:inline">
-              {t("notes.newNote", { defaultValue: "New note" })}
-            </span>
-          </button>
-          {onToggleFocus ? (
-            <button
-              type="button"
-              onClick={onToggleFocus}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-              aria-label={t("notes.focusMode", { defaultValue: "Focus mode" })}
-              title={t("notes.focusMode", { defaultValue: "Focus mode" })}
-            >
-              {focusMode ? (
-                <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-              ) : (
-                <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-              )}
-            </button>
+            styles={HEADER_BUTTON_STYLES}
+            data-testid="notes-new"
+          />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {onToggleChat ? (
+            <IconButton
+              ariaLabel={
+                chatOpen
+                  ? t("notes.hideChat", { defaultValue: "Hide chat" })
+                  : t("notes.chat", { defaultValue: "Chat" })
+              }
+              title={
+                chatOpen
+                  ? t("notes.hideChat", { defaultValue: "Hide chat" })
+                  : t("notes.chat", { defaultValue: "Chat" })
+              }
+              iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
+              onClick={onToggleChat}
+              aria-pressed={Boolean(chatOpen)}
+              checked={Boolean(chatOpen)}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="notes-toggle-chat"
+            />
           ) : null}
         </div>
-      </div>
+      </header>
 
       <div className="flex min-h-0 flex-1">
         {/* Sections rail */}

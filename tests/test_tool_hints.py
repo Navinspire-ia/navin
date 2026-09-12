@@ -7,17 +7,16 @@ import unittest
 from types import SimpleNamespace
 
 from navin.utils.tool_hints import (
+    PREVIEW_ADD_BG,
+    PREVIEW_CTX_BG,
+    PREVIEW_DEL_BG,
     clip_transcript,
     describe_explore_step,
     describe_tool_headline,
     describe_tool_line,
-    tool_cluster_kind,
     edit_group_key,
     exec_flags,
     extract_line_diff,
-    PREVIEW_ADD_BG,
-    PREVIEW_CTX_BG,
-    PREVIEW_DEL_BG,
     format_preview_markup_line,
     format_seconds,
     format_tool_detail,
@@ -25,7 +24,7 @@ from navin.utils.tool_hints import (
     format_tool_preview_markup,
     format_turn_summary,
     humanize_shell_command,
-    tool_target,
+    tool_cluster_kind,
     tool_verb,
 )
 
@@ -245,7 +244,7 @@ class QuietToolLineTests(unittest.TestCase):
     def test_run_matches_edit_line_shape(self) -> None:
         heredoc = ".venv/bin/python - <<'PY'\nimport json\nfrom pathlib import Path\nprint(1)\nPY\n"
         line = describe_tool_line("exec", {"command": heredoc})
-        self.assertEqual(line, "run  +3  python")
+        self.assertEqual(line, "run  python")
         self.assertEqual(
             describe_tool_line("exec", {"command": "git status --short"}),
             "run  git status",
@@ -260,7 +259,8 @@ class QuietToolLineTests(unittest.TestCase):
         empty = format_tool_detail("exec", {"command": "true"}, result="(no output)")
         self.assertEqual(empty, "")
         script = format_tool_detail("exec", {"command": heredoc}, result="(no output)")
-        self.assertIn("   1 +import json", script)
+        self.assertIn("   1  import json", script)
+        self.assertNotIn("+import json", script, "Executed script text is not a file addition")
         self.assertNotIn("(no output)", script)
         diff = format_tool_detail(
             "exec",

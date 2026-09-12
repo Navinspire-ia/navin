@@ -853,6 +853,50 @@ def _extract_model_rows(body: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def _model_id_aliases(model_id: str) -> set[str]:
+    text = (model_id or "").strip().lower()
+    if not text:
+        return set()
+    aliases = {text}
+    if "/" in text:
+        aliases.add(text.rsplit("/", 1)[-1])
+    return aliases
+
+
+def _builtin_catalog_rows(spec: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for model in spec.builtin_models:
+        payload = _model_row_payload(
+            {
+                "id": model.id,
+                "label": model.label or None,
+                "description": model.description or None,
+                "owned_by": spec.label,
+                "context_window": model.context_window,
+            }
+        )
+        if payload is not None:
+            rows.append(payload)
+    return rows
+
+
+def _merge_builtin_model_rows(rows: list[dict[str, Any]], spec: Any) -> list[dict[str, Any]]:
+    extras = _builtin_catalog_rows(spec)
+    if not extras:
+        return rows
+    seen: set[str] = set()
+    for row in rows:
+        seen.update(_model_id_aliases(str(row.get("id") or "")))
+    injected: list[dict[str, Any]] = []
+    for extra in extras:
+        aliases = _model_id_aliases(str(extra.get("id") or ""))
+        if aliases & seen:
+            continue
+        injected.append(extra)
+        seen.update(aliases)
+    return injected + rows
+
+
 def provider_models_payload(query: QueryParams) -> dict[str, Any]:
     """Fetch an OpenAI-compatible provider's model list for Settings.
 
@@ -891,18 +935,9 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
         }
 
     if catalog_kind == "builtin":
-        rows = [
-            {
-                "id": model.id,
-                "label": model.label or None,
-                "description": model.description or None,
-                "owned_by": spec.label,
-                "context_window": model.context_window,
-            }
-            for model in spec.builtin_models
-        ]
+        rows = _builtin_catalog_rows(spec)
         if media_kind:
-            rows = [_model_row_payload(row) for row in rows if supports_media_model(row["id"], media_kind)]
+            rows = [row for row in rows if supports_media_model(row["id"], media_kind)]
         return {
             **base_payload,
             "status": "available",
@@ -1002,7 +1037,7 @@ def provider_models_payload(query: QueryParams) -> dict[str, Any]:
                 {**row, "id": str(row.get("name") or "").removeprefix("models/")}
                 for row in native_rows if isinstance(row, dict)
             ]}
-        rows = _extract_model_rows(body)
+        rows = _merge_builtin_model_rows(_extract_model_rows(body), spec)
         if media_kind:
             from navin.audio.models import NAVIN_STT_MODEL, NAVIN_TTS_MODEL
 

@@ -5,9 +5,14 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 from pathlib import Path
 from typing import Any
+
+from rich.cells import cell_len, chop_cells
+from rich.markup import escape
+from rich.text import Text
 
 from navin.utils.path import abbreviate_path
 
@@ -94,7 +99,8 @@ _EMPTY_OUTPUT_RE = re.compile(
 )
 _DIFF_HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
-    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
+    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@",
+    re.MULTILINE,
 )
 _TRUTHY = {True, "true", "True", "1", 1}
 
@@ -503,8 +509,6 @@ def describe_tool_line(
     """``edit  +38 -14  foo.py`` or ``run  +16  python`` on one line."""
     del done
     verb = tool_verb(name)
-    if verb == "run" and added == 0 and removed == 0:
-        added, removed = infer_run_stats(arguments)
     target = tool_target(arguments, limit=TOOL_LINE_LIMIT)
     if verb in {"edit", "create"}:
         path = _first_path(arguments if isinstance(arguments, dict) else {})
@@ -525,7 +529,66 @@ def edit_group_key(name: str, arguments: dict | None) -> str:
     path = _first_path(arguments if isinstance(arguments, dict) else {})
     if not path:
         return ""
-    return f"{tool_verb(name)}:{Path(path).name.lower()}"
+    return f"{tool_verb(name)}:{activity_path_key(path)}"
+
+
+def activity_path_key(path: str) -> str:
+    """Keep the whole path and its case; src/a.py and tests/a.py are distinct."""
+    return posixpath.normpath(path.replace("\\", "/")) if path else ""
+
+
+FILE_OPERATION_LABELS = {
+    "create": "Added", "add": "Added", "added": "Added",
+    "edit": "Edited", "modify": "Edited", "modified": "Edited",
+    "delete": "Deleted", "deleted": "Deleted", "remove": "Deleted",
+    "restore": "Reverted", "revert": "Reverted", "reverted": "Reverted",
+    "unchanged": "Unchanged",
+}
+
+
+def file_operation_label(operation: str) -> str:
+    return FILE_OPERATION_LABELS.get(operation, "Edited")
+
+
+def activity_label(
+    name: str, arguments: dict | None, *, phase: str = "end",
+    added: int = 0, removed: int = 0, operation: str = "", path: str = "",
+    counts_known: bool = True,
+) -> str:
+    """Describe actual activity without treating printed output as added code."""
+    args = arguments if isinstance(arguments, dict) else {}
+    verb = tool_verb(name)
+    pending = phase in {"start", "output"}
+    if path or verb in _EDIT_VERBS:
+        target = path or _first_path(args) or "files"
+        label = "Editing" if pending else file_operation_label(operation)
+        if not operation and not pending:
+            label = "Edit"
+        suffix = f" (+{max(0, added)} -{max(0, removed)})" if counts_known and operation and operation != "unchanged" else ""
+        text = f"{label} {target}{suffix}"
+    elif verb == "run":
+        command = _command_from_args(args) or tool_target(args) or "command"
+        label = "Running" if pending else "Ran"
+        text = f"{label} {command}"
+    elif verb in _EXPLORE_VERBS:
+        text = describe_explore_step(name, args, limit=500)
+    else:
+        label = "Checking" if pending and verb == "check" else "Checked" if verb == "check" else verb.title()
+        text = f"{label} {tool_target(args)}".rstrip()
+    if phase == "error":
+        text = f"Failed: {text}"
+    elif phase in {"cancelled", "interrupted"}:
+        text = f"Cancelled: {text}"
+    return text
+
+
+def activity_head_text(text: str, *, dark: bool = True) -> Text:
+    """Literal paths/commands, with semantic counts that also work without color."""
+    rendered = Text(text)
+    for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
+        color = ("#8FE0AE" if dark else "#176339") if match[0].startswith("+") else ("#FFAEAE" if dark else "#A22929")
+        rendered.stylize(color, match.start(), match.end())
+    return rendered
 
 
 def format_diff_suffix(added: int, removed: int) -> str:
@@ -622,13 +685,15 @@ def _useful_output(text: str) -> str:
 
 
 def _result_text(result: Any, output_lines: list[str] | None) -> str:
-    parts: list[str] = []
-    if output_lines:
-        parts.extend(str(line) for line in output_lines if line)
+    streamed = _useful_output("\n".join(str(line) for line in output_lines or []))
     preview = _human_result(result) if result is not None else ""
-    if preview:
-        parts.append(preview)
-    return _useful_output("\n".join(parts))
+    final = _useful_output(preview)
+    # Completion commonly repeats stdout that was already streamed.
+    if streamed and final and streamed in final:
+        return final
+    if final and streamed and final in streamed:
+        return streamed
+    return "\n".join(part for part in (streamed, final) if part)
 
 
 def _count_diff_marks(text: str) -> tuple[int, int]:
@@ -692,12 +757,12 @@ def preview_rows(
     args = arguments if isinstance(arguments, dict) else {}
     rows: list[tuple[int | None, str, str]] = []
     verb = tool_verb(name)
-    extra = (diff_text or "").strip()
+    extra = (diff_text or "").strip("\n")
     if extra and _looks_like_unified_diff(extra):
         if error:
             for line in error.replace("\r\n", "\n").splitlines():
                 if line.strip():
-                    rows.append((None, "del", line.rstrip()))
+                    rows.append((None, "error", line.rstrip()))
         rows.extend(_rows_from_unified_diff(extra))
         return rows[: max(1, int(limit))]
     path = _first_path(args)
@@ -709,7 +774,7 @@ def preview_rows(
     if error:
         for line in error.replace("\r\n", "\n").splitlines():
             if line.strip():
-                rows.append((None, "del", line.rstrip()))
+                rows.append((None, "error", line.rstrip()))
     command = _command_from_args(args)
     text = _result_text(result, output_lines)
     _, body = split_heredoc(command)
@@ -722,7 +787,7 @@ def preview_rows(
             rows.append((index, "ctx", line))
     elif body:
         for index, line in enumerate(body.splitlines(), start=1):
-            rows.append((index, "add", line))
+            rows.append((index, "ctx", line))
     elif not rows:
         question = args.get("question")
         if isinstance(question, str) and question.strip():
@@ -737,11 +802,17 @@ def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:
     for line in (text or "").splitlines():
         hunk = _DIFF_HUNK_RE.match(line)
         if hunk:
+            if seen_hunk:
+                rows.append((None, "meta", "    ⋮"))
             old = int(hunk.group("old_start"))
             new = int(hunk.group("new_start"))
             seen_hunk = True
             continue
-        if line.startswith(("diff --git ", "index ", "--- ", "+++ ", "\\")):
+        if line.startswith("diff --git "):
+            rows.append((None, "meta", line.removeprefix("diff --git ")))
+            seen_hunk = False
+            continue
+        if line.startswith(("index ", "--- ", "+++ ", "\\")):
             continue
         if not seen_hunk:
             if line.strip():
@@ -764,7 +835,7 @@ def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:
 
 def format_preview_line(number: int | None, kind: str, text: str) -> str:
     if number is None:
-        mark = {"add": "+", "del": "-", "ctx": ""}.get(kind, "")
+        mark = {"add": "+", "del": "-", "ctx": "", "error": "× "}.get(kind, "")
         return f"{mark}{text}" if mark else text
     pad = f"{number:>4}"
     mark = {"add": "+", "del": "-", "ctx": " "}.get(kind, " ")
@@ -777,18 +848,33 @@ def format_preview_markup_line(
     text: str,
     *,
     width: int = 0,
+    dark: bool = True,
 ) -> str:
     """Codex-style row: number, +/- , full-width wash, readable code. No bold."""
-    plain = format_preview_line(number, kind, text)
-    target = max(int(width or 0), PREVIEW_MIN_WIDTH, len(plain))
-    payload = plain.replace("[", r"\[").replace("]", r"\]")
-    if target > len(plain):
-        payload = f"{payload}{' ' * (target - len(plain))}"
-    if kind == "add":
-        return f"[{PREVIEW_ADD_INK} on {PREVIEW_ADD_BG}]{payload}[/]"
-    if kind == "del":
-        return f"[{PREVIEW_DEL_INK} on {PREVIEW_DEL_BG}]{payload}[/]"
-    return f"[{PREVIEW_CTX_INK} on {PREVIEW_CTX_BG}]{payload}[/]"
+    prefix = format_preview_line(number, kind, "")
+    code = text.expandtabs(4)
+    target = max(1, int(width or PREVIEW_MIN_WIDTH))
+    gutter = cell_len(prefix)
+    if 0 < gutter < target:
+        # Keep the source number on the first visual line and repeat the
+        # change marker on continuations. Copying still uses the source line.
+        continuation = " " * (gutter - 1) + prefix[-1]
+        chunks = chop_cells(code, target - gutter) or [""]
+        lines = [(prefix if index == 0 else continuation) + chunk for index, chunk in enumerate(chunks)]
+    else:
+        lines = chop_cells(prefix + code, target) or [""]
+    palette = {
+        "add": (PREVIEW_ADD_INK, PREVIEW_ADD_BG) if dark else ("#163D26", "#DCF5E4"),
+        "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#67201F", "#FDE2DF"),
+        "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F6F8"),
+        "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F6F8"),
+        "error": ("#FFD8D8", "#501E23") if dark else ("#67201F", "#FDE2DF"),
+    }
+    ink, background = palette.get(kind, palette["ctx"])
+    return "\n".join(
+        f"[{ink} on {background}]{escape(line)}{' ' * max(0, target - cell_len(line))}[/]"
+        for line in lines
+    )
 
 
 def format_tool_preview_markup(
@@ -801,6 +887,7 @@ def format_tool_preview_markup(
     diff_text: str | None = None,
     limit: int = PREVIEW_OPEN_LINES,
     width: int = 0,
+    dark: bool = True,
 ) -> str:
     """Numbered preview for the TUI body: data, metadata, add/del backgrounds."""
     rows = preview_rows(
@@ -813,7 +900,7 @@ def format_tool_preview_markup(
         limit=limit,
     )
     return "\n".join(
-        format_preview_markup_line(*row, width=width) for row in rows
+        format_preview_markup_line(*row, width=width, dark=dark) for row in rows
     )
 
 

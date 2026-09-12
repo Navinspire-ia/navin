@@ -18,7 +18,7 @@ from tempfile import TemporaryDirectory
 
 from navin.agent.tools.quality import _record_test_outcomes, _record_verify_report
 from navin.quality import verification_log as vlog
-from navin.quality.testing import TestOutcome
+from navin.quality.testing import TestOutcome as SuiteOutcome
 from navin.quality.verify import (
     VERDICT_CLEAN,
     VERDICT_NO_CHANGES,
@@ -103,7 +103,7 @@ class QualityToolHooksTest(_LogTestBase):
 
     def test_test_run_outcomes_are_recorded(self) -> None:
         outcomes = [
-            TestOutcome(runner="pytest", ran=True, passed=45, failed=0, total=45),
+            SuiteOutcome(runner="pytest", ran=True, passed=45, failed=0, total=45),
         ]
         _record_test_outcomes(self.root, outcomes, target="tests/test_x.py")
         last = vlog.last_verification(self.root)
@@ -115,7 +115,7 @@ class QualityToolHooksTest(_LogTestBase):
 
     def test_failing_test_run_is_recorded_red(self) -> None:
         outcomes = [
-            TestOutcome(runner="pytest", ran=True, passed=40, failed=2, total=42),
+            SuiteOutcome(runner="pytest", ran=True, passed=40, failed=2, total=42),
         ]
         _record_test_outcomes(self.root, outcomes)
         last = vlog.last_verification(self.root)
@@ -125,7 +125,7 @@ class QualityToolHooksTest(_LogTestBase):
     def test_suite_that_did_not_run_invalidates_an_earlier_pass(self) -> None:
         vlog.record_verification(self.root, source="test_run", ok=True, tests_ran=True)
         outcomes = [
-            TestOutcome(runner="pytest", ran=False, skipped_reason="no tests found"),
+            SuiteOutcome(runner="pytest", ran=False, skipped_reason="no tests found"),
         ]
         _record_test_outcomes(self.root, outcomes)
         last = vlog.last_verification(self.root)
@@ -138,7 +138,7 @@ class QualityToolHooksTest(_LogTestBase):
         report = VerificationReport(
             verdict=VERDICT_CLEAN,
             test_outcomes=[
-                TestOutcome(runner="pytest", ran=True, passed=12, total=12),
+                SuiteOutcome(runner="pytest", ran=True, passed=12, total=12),
             ],
         )
         _record_verify_report(self.root, report)
@@ -151,7 +151,7 @@ class QualityToolHooksTest(_LogTestBase):
         report = VerificationReport(
             verdict=VERDICT_TEST_FAILURES,
             test_outcomes=[
-                TestOutcome(runner="pytest", ran=True, passed=10, failed=2, total=12),
+                SuiteOutcome(runner="pytest", ran=True, passed=10, failed=2, total=12),
             ],
         )
         _record_verify_report(self.root, report)

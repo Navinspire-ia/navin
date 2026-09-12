@@ -5,9 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   DefaultButton,
+  IconButton,
   MessageBar,
   MessageBarType,
+  PrimaryButton,
   SearchBox,
+  type IButtonStyles,
 } from "@fluentui/react";
 import "@/lib/fluent-icons";
 import {
@@ -21,10 +24,8 @@ import {
   FileText,
   LayoutTemplate,
   Loader2,
-  Maximize2,
   MessageSquareText,
   Mic,
-  Minimize2,
   Plus,
   Printer,
   ShieldCheck,
@@ -262,6 +263,25 @@ function formatDay(iso: string, language: string): string {
   }
 }
 
+const HEADER_BUTTON_STYLES: IButtonStyles = {
+  root: { minHeight: 40, minWidth: "auto", padding: "0 12px", cursor: "pointer", flexShrink: 0 },
+  label: { whiteSpace: "nowrap", overflow: "visible" },
+};
+const ICON_BUTTON_STYLES: IButtonStyles = {
+  root: {
+    height: 40,
+    minHeight: 40,
+    width: 40,
+    minWidth: 40,
+    padding: 0,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  flexContainer: { justifyContent: "center" },
+  icon: { margin: 0 },
+  menuIcon: { display: "none" },
+};
+
 function formatEventWhen(iso: string, language: string): string {
   try {
     return new Intl.DateTimeFormat(language, {
@@ -278,17 +298,17 @@ function formatEventWhen(iso: string, language: string): string {
 
 export function MeetingWorkbench({
   chatOpen,
+  onToggleChat,
   onSeed,
   onTranscribeAudio,
   transcription,
   onOpenVoiceSettings,
   onSpeak,
-  focusMode = false,
-  onToggleFocus,
   sessionKey,
   onOpenNote,
 }: {
   chatOpen?: boolean;
+  onToggleChat?: () => void;
   onSeed?: (text: string) => void;
   onTranscribeAudio?: (
     dataUrl: string,
@@ -298,9 +318,6 @@ export function MeetingWorkbench({
   onOpenVoiceSettings?: () => void;
   /** Reads text aloud through the Navin TTS provider; absent when unavailable. */
   onSpeak?: (text: string) => { done: Promise<void>; stop: () => void };
-  /** True when the desk covers the chat column. */
-  focusMode?: boolean;
-  onToggleFocus?: () => void;
   /** Session the desk runs in; required to synthesize without the chat. */
   sessionKey?: string | null;
   /** Jump to a note in the Notes module (the one this meeting was filed into). */
@@ -1592,11 +1609,9 @@ export function MeetingWorkbench({
       .join("\n");
   }, [active, template]);
 
-  // Seeded prompts land in the chat composer, which focus mode hides: leaving
-  // focus is what makes the action visibly do something.
-  const revealChat = useCallback(() => {
-    if (focusMode) onToggleFocus?.();
-  }, [focusMode, onToggleFocus]);
+  // App opens the side chat when onSeed runs (onOpenDeskChat). Do not toggle
+  // Chat here: that would seed /meeting and overwrite the action prompt.
+  const revealChat = useCallback(() => {}, []);
 
   const seedAction = useCallback(
     (action: MeetingAction) => {
@@ -2523,117 +2538,100 @@ export function MeetingWorkbench({
     >
       <header
         className={cn(
-          "flex h-11 shrink-0 items-center gap-2 border-b border-border/55 px-3",
+          "flex shrink-0 flex-nowrap items-center gap-x-3 border-b border-border/55 px-5 py-2.5",
           !chatOpen && NOTIFICATION_GUTTER,
         )}
       >
-        <Mic className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold text-foreground">
-            {tx("meeting.title", "Meeting")}
-          </p>
-          <p className="truncate text-[11px] text-muted-foreground">
-            {active
-              ? active.title
-              : tx("meeting.headerEmpty", "No meeting selected")}
-          </p>
-        </div>
-
-        {sttPill}
-        <span
-          className="hidden text-[10.5px] text-muted-foreground sm:inline"
-          aria-live="polite"
-        >
-          {!hydrated
-            ? tx("meeting.persistence.loading", "Loading disk...")
-            : saving
-              ? tx("meeting.persistence.saving", "Saving...")
-              : tx("meeting.persistence.saved", "Saved to disk")}
-        </span>
-
-        <Button
-          type="button"
-          size="sm"
-          variant={recording ? "destructive" : "default"}
-          className="h-8 shrink-0 rounded-full px-3 active:scale-[0.96]"
-          disabled={busy || (!sttReady && !recording)}
-          onClick={() => {
-            if (recording) stopRecording();
-            else void startRecording();
-          }}
-        >
-          {recording ? (
-            <>
-              <Square className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              <span className="tabular-nums">{elapsedLabel}</span>
-            </>
-          ) : (
-            <>
-              <Mic className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-              {tx("meeting.record", "Record")}
-            </>
-          )}
-        </Button>
-
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-8 shrink-0 gap-1.5 rounded-full px-2 active:scale-[0.96]"
-          disabled={busy || recording || !sttReady}
-          onClick={() => fileInputRef.current?.click()}
-          title={tx("meeting.import", "Import audio")}
-          aria-label={tx("meeting.import", "Import audio")}
-        >
-          {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Upload className="h-3.5 w-3.5" aria-hidden />
-          )}
-          {progress ? (
-            <span className="tabular-nums text-[11px]">
-              {progress.done}/{progress.total}
-            </span>
-          ) : null}
-        </Button>
-
-        {onToggleFocus ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 shrink-0 p-0 active:scale-[0.96]"
-            onClick={onToggleFocus}
-            title={
-              focusMode
-                ? tx("meeting.focusExit", "Show chat")
-                : tx("meeting.focusEnter", "Full width (hide chat)")
-            }
-            aria-label={
-              focusMode
-                ? tx("meeting.focusExit", "Show chat")
-                : tx("meeting.focusEnter", "Full width (hide chat)")
-            }
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <Mic className="h-4 w-4 shrink-0 text-foreground/80" aria-hidden />
+          <div className="min-w-0 max-w-[16rem] shrink-0">
+            <p className="truncate text-xl font-semibold tracking-tight text-foreground">
+              {tx("meeting.title", "Meeting")}
+            </p>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {active
+                ? active.title
+                : tx("meeting.headerEmpty", "No meeting selected")}
+            </p>
+          </div>
+          {sttPill}
+          <span
+            className="hidden shrink-0 text-[10.5px] text-muted-foreground sm:inline"
+            aria-live="polite"
           >
-            {focusMode ? (
-              <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-            ) : (
-              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-            )}
-          </Button>
-        ) : null}
-
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-8 w-8 shrink-0 p-0 active:scale-[0.96]"
-          onClick={() => createMeeting()}
-          title={tx("meeting.new", "New meeting")}
-          aria-label={tx("meeting.new", "New meeting")}
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-        </Button>
+            {!hydrated
+              ? tx("meeting.persistence.loading", "Loading disk...")
+              : saving
+                ? tx("meeting.persistence.saving", "Saving...")
+                : tx("meeting.persistence.saved", "Saved to disk")}
+          </span>
+          <PrimaryButton
+            text={recording ? elapsedLabel : tx("meeting.record", "Record")}
+            title={
+              recording
+                ? elapsedLabel
+                : tx("meeting.record", "Record")
+            }
+            ariaLabel={
+              recording
+                ? elapsedLabel
+                : tx("meeting.record", "Record")
+            }
+            iconProps={{ iconName: recording ? "Stop" : "Microphone" }}
+            disabled={busy || (!sttReady && !recording)}
+            onClick={() => {
+              if (recording) stopRecording();
+              else void startRecording();
+            }}
+            styles={HEADER_BUTTON_STYLES}
+            data-testid="meeting-record"
+          />
+          <DefaultButton
+            text={
+              progress
+                ? `${tx("meeting.importAction", "Import")} · ${progress.done}/${progress.total}`
+                : tx("meeting.importAction", "Import")
+            }
+            title={tx("meeting.import", "Import audio")}
+            ariaLabel={tx("meeting.import", "Import audio")}
+            iconProps={{ iconName: busy ? "Sync" : "Upload" }}
+            disabled={busy || recording || !sttReady}
+            onClick={() => fileInputRef.current?.click()}
+            styles={HEADER_BUTTON_STYLES}
+            data-testid="meeting-import"
+          />
+          <DefaultButton
+            text={tx("meeting.newAction", "New")}
+            title={tx("meeting.new", "New meeting")}
+            ariaLabel={tx("meeting.new", "New meeting")}
+            iconProps={{ iconName: "Add" }}
+            onClick={() => createMeeting()}
+            styles={HEADER_BUTTON_STYLES}
+            data-testid="meeting-new"
+          />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {onToggleChat ? (
+            <IconButton
+              ariaLabel={
+                chatOpen
+                  ? tx("meeting.hideChat", "Hide chat")
+                  : tx("meeting.chat", "Chat")
+              }
+              title={
+                chatOpen
+                  ? tx("meeting.hideChat", "Hide chat")
+                  : tx("meeting.chat", "Chat")
+              }
+              iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
+              onClick={onToggleChat}
+              aria-pressed={Boolean(chatOpen)}
+              checked={Boolean(chatOpen)}
+              styles={ICON_BUTTON_STYLES}
+              data-testid="meeting-toggle-chat"
+            />
+          ) : null}
+        </div>
 
         <input
           ref={fileInputRef}

@@ -28,10 +28,10 @@ from navin.providers.managed_catalog import (
 # The shape /api/models serves, reduced to two models per relevant tier.
 SITE_PAYLOAD = {
     "provider": "openrouter",
-    "defaultModel": "deepseek/deepseek-v4-flash",
+    "defaultModel": "deepseek/deepseek-v4.1-flash",
     "models": [
         {"slug": "nvidia/nemotron-3-ultra-550b-a55b:free", "name": "Nemotron 3 Ultra", "tier": "light"},
-        {"slug": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "tier": "executor"},
+        {"slug": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash", "tier": "executor"},
         {"slug": "minimax/minimax-m3", "name": "MiniMax M3", "tier": "executor"},
         {"slug": "z-ai/glm-5.2", "name": "GLM 5.2", "tier": "main"},
         {"slug": "x-ai/grok-4.5", "name": "Grok 4.5", "tier": "expert", "priceUnconfirmed": True},
@@ -41,7 +41,7 @@ SITE_PAYLOAD = {
 
 FLASH_BY_PLAN = {
     "flash": {
-        "defaultModel": "deepseek/deepseek-v4-flash",
+        "defaultModel": "deepseek/deepseek-v4.1-flash",
         "models": [
             {
                 "slug": "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -51,8 +51,8 @@ FLASH_BY_PLAN = {
             {"slug": "qwen/qwen3.7-flash", "name": "Qwen3.7 Flash", "tier": "light"},
             {"slug": "z-ai/glm-4.7-flash", "name": "GLM 4.7 Flash", "tier": "light"},
             {
-                "slug": "deepseek/deepseek-v4-flash",
-                "name": "DeepSeek V4 Flash",
+                "slug": "deepseek/deepseek-v4.1-flash",
+                "name": "DeepSeek V4.1 Flash",
                 "tier": "executor",
             },
             {"slug": "minimax/minimax-m3", "name": "MiniMax M3", "tier": "main"},
@@ -73,6 +73,10 @@ class ParseTest(unittest.TestCase):
         self.assertIn("z-ai/glm-5.3", slugs)
         self.assertIn("anthropic/claude-fable-5.1", slugs)
         self.assertIn("meta/muse-spark-1.3", slugs)
+        self.assertIn("openai/gpt-6-astra", slugs)
+        self.assertIn("deepseek/deepseek-v4.1-flash", slugs)
+        self.assertIn("deepseek/deepseek-v4-pro", slugs)
+        self.assertNotIn("deepseek/deepseek-v4-flash", slugs)
         self.assertFalse(any(s.startswith("meta/muse-spark-1.1") for s in slugs))
         self.assertFalse(any(s.startswith("meta/muse-spark-1.2") for s in slugs))
 
@@ -82,6 +86,10 @@ class ParseTest(unittest.TestCase):
         self.assertIn("z-ai/glm-5.3-flash", flash_slugs)
         self.assertNotIn("x-ai/grok-4.6", flash_slugs)
         self.assertNotIn("z-ai/glm-5.3", flash_slugs)
+        self.assertNotIn("openai/gpt-6-astra", flash_slugs)
+        self.assertIn("deepseek/deepseek-v4.1-flash", flash_slugs)
+        self.assertNotIn("deepseek/deepseek-v4-flash", flash_slugs)
+        self.assertNotIn("deepseek/deepseek-v4-pro", flash_slugs)
 
     def test_stale_flash_payload_drops_grok_and_keeps_glm_flash(self):
         payload = {
@@ -97,8 +105,13 @@ class ParseTest(unittest.TestCase):
                             "tier": "expert",
                         },
                         {
-                            "slug": "deepseek/deepseek-v4-flash",
-                            "name": "DeepSeek V4 Flash",
+                            "slug": "openai/gpt-6-astra",
+                            "name": "GPT-6 Astra",
+                            "tier": "expert",
+                        },
+                        {
+                            "slug": "deepseek/deepseek-v4.1-flash",
+                            "name": "DeepSeek V4.1 Flash",
                             "tier": "executor",
                         },
                     ],
@@ -108,6 +121,7 @@ class ParseTest(unittest.TestCase):
         flash = parse_catalog(payload, plan="flash")
         slugs = {m.slug for m in flash.models}
         self.assertNotIn("x-ai/grok-4.6", slugs)
+        self.assertNotIn("openai/gpt-6-astra", slugs)
         self.assertIn("z-ai/glm-5.3-flash", slugs)
         self.assertEqual(flash.default_model, "z-ai/glm-5.3-flash")
 
@@ -122,8 +136,8 @@ class ParseTest(unittest.TestCase):
                     "tier": "main",
                 },
                 {
-                    "slug": "deepseek/deepseek-v4-flash",
-                    "name": "DeepSeek V4 Flash",
+                    "slug": "deepseek/deepseek-v4.1-flash",
+                    "name": "DeepSeek V4.1 Flash",
                     "tier": "executor",
                 },
             ],
@@ -181,7 +195,7 @@ class ParseTest(unittest.TestCase):
     def test_the_site_payload_parses(self):
         catalog = parse_catalog(SITE_PAYLOAD)
         self.assertEqual(catalog.provider, "openrouter")
-        self.assertEqual(catalog.default_model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(catalog.default_model, "deepseek/deepseek-v4.1-flash")
         self.assertEqual(len(catalog.models), 6)
 
     def test_garbage_is_refused(self):
@@ -211,7 +225,7 @@ class ParseTest(unittest.TestCase):
             "models": [
                 {"slug": "google/lyria-3-clip-preview", "name": "Lyria 3", "tier": "executor"},
                 {"slug": "google/veo-3.1-fast", "name": "Veo 3.1 Fast", "tier": "executor"},
-                {"slug": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "tier": "executor"},
+                {"slug": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash", "tier": "executor"},
                 {"slug": "z-ai/glm-5.2", "name": "GLM 5.2", "tier": "main"},
             ],
         }
@@ -219,11 +233,11 @@ class ParseTest(unittest.TestCase):
         slugs = [m.slug for m in catalog.models]
         self.assertNotIn("google/lyria-3-clip-preview", slugs)
         self.assertNotIn("google/veo-3.1-fast", slugs)
-        self.assertEqual(catalog.default_model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(catalog.default_model, "deepseek/deepseek-v4.1-flash")
 
         config = Config()
         apply_catalog(config, catalog, force_managed=True)
-        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
 
     def test_an_stt_model_never_lands_on_a_text_tier(self):
         """Regression (2026-08-10 incident): a degraded payload mapped the
@@ -234,10 +248,10 @@ class ParseTest(unittest.TestCase):
         """
         degraded = {
             "provider": "openrouter",
-            "defaultModel": "deepseek/deepseek-v4-flash",
+            "defaultModel": "deepseek/deepseek-v4.1-flash",
             "models": [
                 {"slug": "fish-audio/transcribe-1", "name": "Transcribe 1", "tier": "executor"},
-                {"slug": "deepseek/deepseek-v4-flash", "name": "DeepSeek V4 Flash", "tier": "executor"},
+                {"slug": "deepseek/deepseek-v4.1-flash", "name": "DeepSeek V4.1 Flash", "tier": "executor"},
                 {"slug": "moonshotai/kimi-k3", "name": "Kimi K3", "tier": "expert"},
             ],
         }
@@ -245,7 +259,7 @@ class ParseTest(unittest.TestCase):
         slugs = [m.slug for m in catalog.models]
         self.assertNotIn("fish-audio/transcribe-1", slugs)
         self.assertEqual(
-            catalog.tier_leader("executor").slug, "deepseek/deepseek-v4-flash"
+            catalog.tier_leader("executor").slug, "deepseek/deepseek-v4.1-flash"
         )
 
     def test_an_existing_lyria_default_is_healed_even_without_media_block(self):
@@ -255,13 +269,13 @@ class ParseTest(unittest.TestCase):
         config.agents.defaults.model = "google/lyria-3-clip-preview"
         config.agents.defaults.provider = "navin"
         apply_catalog(config, parse_catalog(SITE_PAYLOAD), force_managed=True)
-        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
 
 
 class PresetTest(unittest.TestCase):
     def test_each_tier_gets_the_first_confirmed_model(self):
         presets = catalog_presets(parse_catalog(SITE_PAYLOAD))
-        self.assertEqual(presets["executor"].model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(presets["executor"].model, "deepseek/deepseek-v4.1-flash")
         self.assertEqual(presets["executor"].provider, "navin")
         self.assertEqual(presets["main"].label, "GLM 5.2")
 
@@ -280,7 +294,7 @@ class PresetTest(unittest.TestCase):
         }
         self.assertEqual(len(selectable), 6)
         self.assertEqual(
-            presets[slug_preset_key("deepseek/deepseek-v4-flash")].provider,
+            presets[slug_preset_key("deepseek/deepseek-v4.1-flash")].provider,
             "navin",
         )
 
@@ -289,22 +303,22 @@ class ApplyTest(unittest.TestCase):
     def test_a_fresh_config_is_fully_wired(self):
         config = Config()
         self.assertTrue(apply_catalog(config, parse_catalog(SITE_PAYLOAD)))
-        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
         self.assertEqual(config.agents.defaults.provider, "navin")
         self.assertEqual(
             config.agents.defaults.model_preset,
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
         self.assertEqual(config.model_routes["review"], slug_preset_key("z-ai/glm-5.2"))
         self.assertEqual(
             config.model_routes["fast"],
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
         self.assertEqual(
             config.model_presets["light"].model,
             "nvidia/nemotron-3-ultra-550b-a55b:free",
         )
-        self.assertEqual(config.model_presets["executor"].model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.model_presets["executor"].model, "deepseek/deepseek-v4.1-flash")
         # Every task role used by /pilot and the Settings routing UI is wired.
         for role in ("fast", "search", "docs", "dev", "plan", "deep", "review", "security"):
             self.assertIn(role, config.model_routes)
@@ -329,7 +343,7 @@ class ApplyTest(unittest.TestCase):
         # Roles the user never routed still get filled.
         self.assertEqual(
             config.model_routes["fast"],
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
 
     def test_a_user_pinned_default_survives_a_forced_sync(self):
@@ -361,7 +375,7 @@ class ApplyTest(unittest.TestCase):
 
         self.assertEqual(
             config.agents.defaults.model_preset,
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
 
     def test_a_pin_on_a_media_preset_is_healed_and_released(self):
@@ -394,7 +408,7 @@ class ApplyTest(unittest.TestCase):
 
         self.assertEqual(
             config.agents.defaults.model_preset,
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
 
     def test_a_new_catalog_rewrites_the_tier_presets(self):
@@ -407,7 +421,7 @@ class ApplyTest(unittest.TestCase):
         self.assertTrue(apply_catalog(config, parse_catalog(moved)))
         self.assertEqual(config.model_presets["executor"].model, "z-ai/glm-5.2")
         # The already-set default model is a user-visible choice by now: kept.
-        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
 
 
 class SyncTest(unittest.TestCase):
@@ -476,7 +490,7 @@ class SyncTest(unittest.TestCase):
         with mock.patch.object(managed_catalog.httpx, "get", return_value=response):
             self.assertTrue(sync_managed_catalog(config))
         saved = json.loads(Path(get_config_path()).read_text(encoding="utf-8"))
-        self.assertEqual(saved["agents"]["defaults"]["model"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(saved["agents"]["defaults"]["model"], "deepseek/deepseek-v4.1-flash")
         self.assertIn("expert", saved["modelPresets"])
         self.assertEqual(saved["modelPresets"]["expert"]["provider"], "navin")
 
@@ -489,7 +503,7 @@ class SyncTest(unittest.TestCase):
             self.assertTrue(sync_managed_catalog(config))
         saved = json.loads(Path(get_config_path()).read_text(encoding="utf-8"))
         self.assertEqual(saved["agents"]["defaults"]["model"], "z-ai/glm-5.3-flash")
-        self.assertEqual(saved["modelPresets"]["executor"]["model"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(saved["modelPresets"]["executor"]["model"], "deepseek/deepseek-v4.1-flash")
         self.assertEqual(saved["modelPresets"]["executor"]["provider"], "navin")
         self.assertEqual(
             saved["modelRoutes"]["dev"],
@@ -562,7 +576,7 @@ class SyncTest(unittest.TestCase):
             config.model_routes["security"],
             slug_preset_key("minimax/minimax-m3"),
         )
-        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4-flash")
+        self.assertEqual(config.agents.defaults.model, "deepseek/deepseek-v4.1-flash")
         self.assertEqual(config.agents.defaults.provider, "navin")
         selectable = [
             name
@@ -572,7 +586,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(len(selectable), 6)
         for slug in (
             "nvidia/nemotron-3-ultra-550b-a55b:free",
-            "deepseek/deepseek-v4-flash",
+            "deepseek/deepseek-v4.1-flash",
             "minimax/minimax-m3",
             "z-ai/glm-4.7-flash",
             "qwen/qwen3.7-flash",
@@ -591,15 +605,15 @@ class SyncTest(unittest.TestCase):
         )
         self.assertEqual(
             config.model_routes["fast"],
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
         self.assertEqual(
             config.model_routes["code"],
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
         self.assertEqual(
             config.model_routes["search"],
-            slug_preset_key("deepseek/deepseek-v4-flash"),
+            slug_preset_key("deepseek/deepseek-v4.1-flash"),
         )
         for role, target in config.model_routes.items():
             if role == "vision":
@@ -617,7 +631,7 @@ class SyncTest(unittest.TestCase):
         config.model_routes["fast"] = "light"
         config.model_routes["search"] = "nemotron-3-ultra-550b-a55b-free"
         self.assertTrue(apply_catalog(config, parse_catalog(SITE_PAYLOAD)))
-        paid = slug_preset_key("deepseek/deepseek-v4-flash")
+        paid = slug_preset_key("deepseek/deepseek-v4.1-flash")
         self.assertEqual(config.model_routes["fast"], paid)
         self.assertEqual(config.model_routes["search"], paid)
 
@@ -639,7 +653,7 @@ class SyncTest(unittest.TestCase):
                     },
                     "mine": {
                         "label": "Mine",
-                        "model": "deepseek/deepseek-v4-flash",
+                        "model": "deepseek/deepseek-v4.1-flash",
                         "provider": "openrouter",
                     },
                 },

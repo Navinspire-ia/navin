@@ -26,9 +26,11 @@ _VISION_FAMILY_MARKERS: tuple[str, ...] = (
     "gpt-4-turbo",
     "gpt-4-vision",
     "gpt-5",
+    "gpt-6",
     "o3",
     "o4-mini",
     "chatgpt-4o",
+    "deepseek-v4.1",
     # Anthropic: every Claude 3 and later reads images.
     "claude-3",
     "claude-4",
@@ -204,11 +206,13 @@ _GROUNDING_FAMILY_MARKERS: tuple[str, ...] = (
     "claude-haiku-4",
     "claude-sonnet",
     "claude-opus",
-    # OpenAI: CUA / Operator lineage and the 4o / 4.1 / 5 generations.
+    # OpenAI: CUA / Operator lineage and the 4o / 4.1 / 5 / 6 generations.
     "computer-use",
     "gpt-4o",
     "gpt-4.1",
     "gpt-5",
+    "gpt-6",
+    "deepseek-v4.1",
     "o3",
     "o4-mini",
     # Google: Gemini 2.x+ (and the dedicated computer-use variants).
