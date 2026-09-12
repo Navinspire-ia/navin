@@ -3663,12 +3663,6 @@ function Shell({
     if (DESK_CHAT_OFF_BY_DEFAULT.has(deskView)) setDeskChatOpen(false);
   }, [deskView]);
 
-  const onToggleWorkbenchFocus = useCallback(() => {
-    setWorkbenchFocus((prev) => !prev);
-    // The two modes are opposites: entering focus un-maximizes the chat.
-    persistChatMaximized(false);
-  }, [persistChatMaximized]);
-
   const onToggleDeskChat = useCallback(() => {
     if (deskChatOpen) {
       setDeskChatOpen(false);
