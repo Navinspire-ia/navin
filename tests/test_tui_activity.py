@@ -200,8 +200,8 @@ def test_theme_switch_repaints_existing_diff_and_chunked_stdout_stays_intact():
             app.theme = "navin-light"
             await pilot.pause()
             after = row.query_one(".tool-body", Static).content
-            assert any("on #0f6b38" in str(span.style).lower() for span in before.spans)
-            assert any("on #dcf5e4" in str(span.style).lower() for span in after.spans)
+            assert any("on #202b24" in str(span.style).lower() for span in before.spans)
+            assert any("on #edf3ee" in str(span.style).lower() for span in after.spans)
             await app.block.tool_event("run", "exec", "start", {"command": "pytest -q"}, None, None, None)
             for chunk in ("test_", "prices PASSED\n", "1 passed\n"):
                 await app.block.tool_event("run", "exec", "output", {}, None, None, chunk)

@@ -378,7 +378,7 @@ class ToolClusterTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(tool.query_one(".tool-body").display)
             body = str(tool.query_one(".tool-body").content)
             self.assertIn("import queue", body)
-            self.assertTrue(any("on #0f6b38" in str(span.style).lower() for span in tool.query_one(".tool-body").content.spans))
+            self.assertTrue(any("on #202b24" in str(span.style).lower() for span in tool.query_one(".tool-body").content.spans))
 
 
 class UpdateOfferTests(unittest.IsolatedAsyncioTestCase):
