@@ -109,6 +109,23 @@ class EventLoopStaysResponsiveTest(unittest.TestCase):
         with mock.patch.object(testing_mod, "run_tests", _SlowStub([outcome])):
             self._assert_loop_kept_beating(tool.execute(action="run"))
 
+    def test_missing_test_action_runs_the_requested_target(self) -> None:
+        from navin.agent.tools.registry import ToolRegistry
+
+        tool = quality_tools.TestRunTool(workspace=str(self.root))
+        registry = ToolRegistry()
+        registry.register(tool)
+        _, params, error = registry.prepare_call("test_run", {"target": "tests/test_sample.py"})
+        self.assertIsNone(error)
+        self.assertEqual(params["action"], "run")
+        outcome = testing_mod.TestOutcome(runner="pytest", ran=True, passed=1, exit_code=0)
+        with mock.patch.object(testing_mod, "run_tests", return_value=[outcome]) as run:
+            result = asyncio.run(registry.execute("test_run", {"target": "tests/test_sample.py"}))
+        self.assertFalse(result.is_error)
+        self.assertEqual(run.call_args.kwargs["target"], "tests/test_sample.py")
+        _, _, error = registry.prepare_call("test_run", {"action": "invalid"})
+        self.assertTrue(error.is_error)
+
     def test_a_full_verification_does_not_freeze_other_sessions(self) -> None:
         tool = quality_tools.VerifyTool(workspace=str(self.root))
         report = verify_mod.VerificationReport(verdict=verify_mod.VERDICT_NO_CHANGES)

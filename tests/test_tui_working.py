@@ -10,7 +10,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from textual import events
 
@@ -18,7 +18,15 @@ from navin.bus.events import OutboundMessage
 from navin.bus.queue import MessageBus
 from navin.tui.app import NavinApp
 from navin.tui.prefs import TuiPrefs
-from navin.tui.widgets import Sidebar, SystemNote, WorkingLine, format_elapsed, format_working_line
+from navin.tui.widgets import (
+    PromptQueue,
+    QueuedPromptRow,
+    Sidebar,
+    SystemNote,
+    WorkingLine,
+    format_elapsed,
+    format_working_line,
+)
 
 
 class FormatElapsedTests(unittest.TestCase):
@@ -26,6 +34,29 @@ class FormatElapsedTests(unittest.TestCase):
         self.assertEqual(format_elapsed(12), "12s")
         self.assertEqual(format_elapsed(654), "10m 54s")
         self.assertEqual(format_elapsed(3723), "1h 02m")
+
+
+class TerminalBackgroundTests(unittest.TestCase):
+    def test_background_covers_terminal_padding_and_is_restored(self):
+        driver = Mock(is_headless=False, is_inline=False)
+        host = SimpleNamespace(_driver=driver, ansi_color=False, no_color=False,
+                               current_theme=SimpleNamespace(background="#000000"))
+        NavinApp._sync_terminal_background(host, "navin")
+        driver.write.assert_called_once_with("\x1b]11;#000000\x1b\\")
+        host.current_theme.background = "#F5F5F5"
+        NavinApp._sync_terminal_background(host, "navin-light")
+        self.assertEqual(driver.write.call_args.args[0], "\x1b]11;#F5F5F5\x1b\\")
+        NavinApp._restore_terminal_background(host)
+        self.assertEqual(driver.write.call_args.args[0], "\x1b]111\x1b\\")
+        driver.flush.assert_called_once()
+        self.assertFalse(host._terminal_background_set)
+
+    def test_headless_and_inline_sessions_leave_terminal_colors_alone(self):
+        for headless, inline in [(True, False), (False, True)]:
+            driver = Mock(is_headless=headless, is_inline=inline)
+            host = SimpleNamespace(_driver=driver)
+            NavinApp._sync_terminal_background(host, "navin")
+            driver.write.assert_not_called()
 
 
 class FormatWorkingLineTests(unittest.TestCase):
@@ -104,6 +135,26 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
         prefs.save = lambda: None
         self.app = _InteractionApp(SimpleNamespace(workspace_path=Path(self.directory.name)), prefs=prefs)
 
+    async def test_ctrl_c_copies_selected_input_without_stopping_work(self):
+        app = self.app
+        async with app.run_test(size=(72, 25)) as pilot:
+            await app.submit_text("keep working")
+            await app.runtime.bus.consume_inbound()
+            app.composer.set_text("copy this")
+            app.composer.focus()
+            await pilot.press("ctrl+a")
+            with patch.object(app, "copy_to_clipboard") as copy:
+                await pilot.press("ctrl+c")
+                copy.assert_called_once_with("copy this")
+            self.assertTrue(app.runtime.turn_active)
+            self.assertEqual(app.runtime.bus.inbound_size, 0)
+            self.assertEqual(app.composer.text, "copy this")
+            # Transcript selections receive the same priority.
+            with patch.object(app.screen, "get_selected_text", return_value="selected output"), patch.object(app, "copy_to_clipboard") as copy:
+                await pilot.press("ctrl+c")
+                copy.assert_called_once_with("selected output")
+            self.assertEqual(app.runtime.bus.inbound_size, 0)
+
     async def test_ctrl_v_full_payload_first_enter_working_and_ctrl_c(self):
         app = self.app
         payload = "première ligne\n" + "données العربية [x]\n" * 600 + "fin"
@@ -128,8 +179,9 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             app.prefs.mode = "agent"
             started = app.runtime._turn_started_at
             await app.submit_text("also check this")
-            followup = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 1)
-            self.assertEqual(followup.content, "also check this")
+            self.assertEqual(app.runtime.bus.inbound_size, 0)
+            self.assertEqual(app._queued_prompts[app.runtime.session_key][0].text, "also check this")
+            self.assertTrue(app.query_one(PromptQueue).display)
             self.assertEqual(app.runtime._turn_started_at, started)
             self.assertEqual(app.runtime.bus.inbound_size, 0)
             self.assertIs(app.transcript.children[-1], block)
@@ -140,6 +192,9 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             await app.runtime._dispatch(OutboundMessage("cli", "direct", "Stopped."))
             await pilot.pause()
             self.assertFalse(app.query_one(WorkingLine).display)
+            self.assertIn(app.runtime.session_key, app._queue_paused)
+            await pilot.click(app.query_one(QueuedPromptRow).query_one("Button"))
+            self.assertFalse(app.query_one(PromptQueue).display)
             # Terminal-managed Ctrl+V sends Paste, not a key. Its payload wins
             # over the old in-app clipboard and does not consume the next Enter.
             app.transcript.focus()
@@ -148,8 +203,10 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.composer.text, "nouveau\ntexte")
             await pilot.press("ctrl+c")
             self.assertEqual(app.composer.text, "")
+            messages = list(app.transcript.children)
             await pilot.press("ctrl+c")
-            self.assertEqual(len(app.transcript.children), 0)
+            self.assertEqual(list(app.transcript.children), messages)
+            self.assertTrue(messages)
             app.action_find()
             await pilot.pause()
             with patch("navin.tui.clipboard.read_clipboard", return_value="needle"):

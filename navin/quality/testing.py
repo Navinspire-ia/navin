@@ -11,6 +11,7 @@ agent can act on a failure instead of guessing from truncated output.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -18,7 +19,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from navin.quality.linters import _binary_for, _read_json
 from navin.utils.proc import no_window_kwargs
@@ -666,6 +667,7 @@ def run_tests(
     *,
     runners: list[str] | None = None,
     target: str | None = None,
+    on_output: Callable[[str], None] | None = None,
 ) -> list[TestOutcome]:
     """Run the project's test suites and return structured outcomes."""
     table = runner_table()
@@ -693,7 +695,7 @@ def run_tests(
                 TestOutcome(runner=name, ran=False, skipped_reason="unknown runner")
             )
             continue
-        outcomes.append(_run_one(name, spec, root, target))
+        outcomes.append(_run_one(name, spec, root, target, on_output=on_output))
     if not outcomes:
         outcomes.append(
             TestOutcome(
@@ -752,7 +754,8 @@ def _runner_argv(spec: dict[str, Any], root: Path) -> list[str] | None:
 
 
 def _run_one(
-    name: str, spec: dict[str, Any], root: Path, target: str | None
+    name: str, spec: dict[str, Any], root: Path, target: str | None,
+    *, on_output: Callable[[str], None] | None = None,
 ) -> TestOutcome:
     workdir = _workdir_for(spec, root)
     if not (_detected(spec, workdir) or _detected(spec, root)):
@@ -785,10 +788,13 @@ def _run_one(
     if target:
         for arg in spec.get("target_args", []):
             argv.append(str(arg).replace("{target}", target))
+    if on_output is not None and name == "pytest":
+        argv.extend(["-o", "console_output_style=progress", "-vv"])
 
     started = time.monotonic()
     try:
-        completed = subprocess.run(  # noqa: S603
+        execute = _run_streaming if on_output is not None else subprocess.run
+        completed = execute(
             argv,
             cwd=str(workdir),
             capture_output=True,
@@ -796,6 +802,7 @@ def _run_one(
             encoding="utf-8",
             errors="replace",
             timeout=float(spec.get("timeout_s", 600)),
+            **({"on_output": on_output} if on_output is not None else {}),
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
@@ -854,6 +861,42 @@ def _run_one(
         # must not read as a pass.
         outcome.skipped_reason = "runner found no tests to run"
     return outcome
+
+
+def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwargs: Any):
+    """Drain runner output without pipes filling up, preserving the time limit."""
+    timeout = kwargs.pop("timeout")
+    for key in ("capture_output", "text", "encoding", "errors"):
+        kwargs.pop(key, None)
+    deadline = time.monotonic() + timeout
+    with tempfile.TemporaryDirectory(prefix="navin-test-output-") as logdir:
+        log = Path(logdir) / "output.log"
+        with log.open("wb") as output, log.open("rb") as reader, subprocess.Popen(
+            argv, stdout=output, stderr=subprocess.STDOUT,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kwargs,
+        ) as process:
+            tail = b""
+            try:
+                while True:
+                    try:
+                        process.wait(timeout=min(0.1, max(0.001, deadline - time.monotonic())))
+                    except subprocess.TimeoutExpired:
+                        pass
+                    chunk = reader.read()
+                    if chunk:
+                        tail = (tail + chunk)[-16000:]
+                        on_output(tail.decode("utf-8", errors="replace"))
+                    if process.poll() is not None:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            reader.seek(0)
+            text = reader.read().decode("utf-8", errors="replace")
+            return subprocess.CompletedProcess(argv, process.returncode, stdout=text, stderr="")
 
 
 def _log_tail(output: str) -> str:

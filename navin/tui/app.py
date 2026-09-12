@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,7 @@ from navin.tui.hubs import (
     skill_set_enabled,
     tool_rows,
 )
-from navin.tui.modes import MODES, display_user_text, get_mode, inbound_for_submit
+from navin.tui.modes import MODES, ROUTING_COMMANDS, display_user_text, get_mode, inbound_for_submit
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
     TuiRuntime,
@@ -94,6 +95,8 @@ from navin.tui.widgets import (
     ComposerShell,
     DockBar,
     FindBar,
+    PromptQueue,
+    QueuedPromptRow,
     Sidebar,
     SlashMenu,
     SystemNote,
@@ -318,6 +321,13 @@ class NavinScreen(Screen):
         super()._forward_event(event)
 
 
+@dataclass(frozen=True)
+class QueuedPrompt:
+    id: int
+    text: str
+    inbound: str
+
+
 class NavinApp(App[None]):
     TITLE = "navin-cli"
     ALLOW_SELECT = True
@@ -329,7 +339,7 @@ class NavinApp(App[None]):
     #transcript { background: $background; }
     #composer-block {
         height: auto;
-        padding: 2 2 0 2;
+        padding: 1 2 0 2;
         background: $background;
     }
     #composer-shell { height: auto; width: 1fr; background: $panel; }
@@ -375,7 +385,7 @@ class NavinApp(App[None]):
         Binding("f4", "open_agi", "AGI"),
         Binding("f1", "show_help", "Help"),
         Binding("escape", "stop_turn", "Stop", show=True),
-        Binding("ctrl+c", "interrupt_or_clear", "Stop / clear", show=False, priority=True),
+        Binding("ctrl+c", "interrupt_or_clear", "Copy / stop", show=False, priority=True),
         Binding("super+c", "copy_selection", "Copy", show=False, priority=True),
         Binding("ctrl+insert", "copy_selection", "Copy", show=False),
         Binding("ctrl+shift+c", "copy_reply", "Copy reply", show=False),
@@ -418,6 +428,12 @@ class NavinApp(App[None]):
         self._update_info: dict[str, Any] = {}
         self._engine_error: str | None = None
         self._spin = 0
+        self._queued_prompts: dict[str, list[QueuedPrompt]] = {}
+        self._queue_paused: set[str] = set()
+        self._queue_serial = 0
+        self._queue_sending = False
+        self._queue_visible_session = self.runtime.session_key
+        self._awaiting_reply = False
         self._find_hits: list[Any] = []
         self._find_index = -1
         # Project analysed by Graph / Evolve: where `navin-cli` was launched,
@@ -436,6 +452,7 @@ class NavinApp(App[None]):
             with Vertical(id="column"):
                 yield Transcript(id="transcript")
                 yield WorkingLine(id="working")
+                yield PromptQueue(id="prompt-queue")
                 yield SlashMenu(id="slash-menu")
                 yield FindBar(id="find")
                 with Vertical(id="composer-block"):
@@ -449,11 +466,13 @@ class NavinApp(App[None]):
     async def on_mount(self) -> None:
         if self.prefs.theme in self.available_themes:
             self.theme = self.prefs.theme
+        self.watch(self, "theme", self._sync_terminal_background)
         self.query_one(Sidebar).set_class(self.prefs.sidebar, "-visible")
         self._render_mode()
         self._set_status("starting engine…")
         self.query_one(Composer).focus()
         self.set_interval(0.12, self._tick_spinner)
+        self.set_interval(2, self._refresh_context_status)
         if live_modules_available():
             self._load_account(refresh=True)
             self.set_interval(60, self._load_account)
@@ -464,6 +483,64 @@ class NavinApp(App[None]):
             self._spin += 1
             self._set_status()
         self._refresh_working_line()
+        key = self.runtime.session_key
+        if self._queue_visible_session != key:
+            self._queue_visible_session = key
+            self._awaiting_reply = self.runtime.turn_active
+            self.call_later(self._refresh_queue)
+        if self._queue_ready() and self._queued_prompts.get(key) and key not in self._queue_paused and not self._queue_sending:
+            self._queue_sending = True
+            self.call_later(self._send_next_queued)
+
+    def _refresh_context_status(self) -> None:
+        if self.runtime.turn_active:
+            self.runtime._refresh_status()
+            self._set_status()
+
+    def _queue_ready(self) -> bool:
+        if not self._engine_ready or self.runtime.turn_active or self._awaiting_reply or self._pending_approvals or self._pending_choices:
+            return False
+        tasks = getattr(self.runtime.agent_loop, "_active_tasks", {}).get(self.runtime.session_key, [])
+        if any(not task.done() for task in tasks):
+            return False
+        if self.runtime.bus is not None and self.runtime.bus.outbound_size:
+            return False
+        return self._current is None or self._current.finished
+
+    async def _refresh_queue(self) -> None:
+        key = self.runtime.session_key
+        await self.query_one(PromptQueue).set_items(
+            [(item.id, item.text) for item in self._queued_prompts.get(key, [])],
+            paused=key in self._queue_paused,
+        )
+
+    async def _send_next_queued(self) -> None:
+        key = self.runtime.session_key
+        try:
+            items = self._queued_prompts.get(key, [])
+            if not items or key in self._queue_paused or not self._queue_ready():
+                return
+            item = items[0]
+            if await self._send_prompt(item.text, item.inbound, restore_input=False):
+                self._queued_prompts[key] = [entry for entry in self._queued_prompts.get(key, []) if entry.id != item.id]
+            else:
+                self._queue_paused.add(key)
+        finally:
+            self._queue_sending = False
+            await self._refresh_queue()
+
+    @on(QueuedPromptRow.Removed)
+    async def _remove_queued_prompt(self, event: QueuedPromptRow.Removed) -> None:
+        if self._queue_sending:
+            return
+        key = self.runtime.session_key
+        self._queued_prompts[key] = [item for item in self._queued_prompts.get(key, []) if item.id != event.prompt_id]
+        await self._refresh_queue()
+
+    @on(PromptQueue.Resumed)
+    async def _resume_queued_prompts(self) -> None:
+        self._queue_paused.discard(self.runtime.session_key)
+        await self._refresh_queue()
 
     def _refresh_working_line(self) -> None:
         try:
@@ -534,12 +611,36 @@ class NavinApp(App[None]):
         await self.transcript.add(UpdateOffer(latest, detail))
 
     async def on_unmount(self) -> None:
+        self._restore_terminal_background()
         self.prefs.last_session = self.runtime.session_key
         self.prefs.save()
         with contextlib.suppress(Exception):
             await self.runtime.close()
 
     # -- helpers ----------------------------------------------------------
+
+    def _sync_terminal_background(self, _theme: str) -> None:
+        # Cell backgrounds cannot paint the terminal's padding at the right
+        # edge. OSC 11 aligns it with the app; OSC 111 restores it on exit.
+        driver = self._driver
+        if driver is None or driver.is_headless or driver.is_inline:
+            return
+        if self.ansi_color or self.no_color:
+            self._restore_terminal_background()
+            return
+        background = self.current_theme.background
+        if background:
+            from textual.color import Color
+
+            color = Color.parse(background).hex
+            driver.write(f"\x1b]11;{color}\x1b\\")
+            self._terminal_background_set = True
+
+    def _restore_terminal_background(self) -> None:
+        if getattr(self, "_terminal_background_set", False) and self._driver is not None:
+            self._driver.write("\x1b]111\x1b\\")
+            self._driver.flush()
+            self._terminal_background_set = False
 
     @property
     def transcript(self) -> Transcript:
@@ -563,6 +664,9 @@ class NavinApp(App[None]):
                 extra=extra,
                 busy=st.turn_active,
                 spin=self._spin,
+                provider=st.provider,
+                context_used=st.context_used,
+                context_window=st.context_window,
             )
         except Exception:  # noqa: BLE001 - meta not mounted yet
             pass
@@ -828,7 +932,20 @@ class NavinApp(App[None]):
         if text.lower() in {"stop", "/stop"} and self.runtime.turn_active:
             await self.action_stop_turn()
             return
+        key = self.runtime.session_key
+        ordinary_prompt = not text.startswith("/") or text.split(None, 1)[0].lower() in ROUTING_COMMANDS
+        if ordinary_prompt and (not self._queue_ready() or self._queued_prompts.get(key)):
+            self._queue_serial += 1
+            inbound, _ = inbound_for_submit(self.prefs.mode, text, turn_active=False)
+            self._queued_prompts.setdefault(key, []).append(QueuedPrompt(self._queue_serial, text, inbound))
+            await self._refresh_queue()
+            return
         inbound, followup = inbound_for_submit(self.prefs.mode, text, turn_active=self.runtime.turn_active)
+        if ordinary_prompt:
+            self._queue_paused.discard(key)
+        await self._send_prompt(text, inbound, followup=followup)
+
+    async def _send_prompt(self, text: str, inbound: str, *, followup: bool = False, restore_input: bool = True) -> bool:
         user = UserMessage(text)
         await self.transcript.add(user)
         if followup and self._current is not None:
@@ -838,11 +955,16 @@ class NavinApp(App[None]):
         try:
             await self.runtime.send(inbound, followup=followup)
         except Exception as exc:  # noqa: BLE001 - retain the prompt and keep the chat open
+            self._awaiting_reply = False
             if not followup:
                 self.runtime._finish_turn({})
-            self.composer.set_text(text)
+            await user.remove()
+            if restore_input:
+                self.composer.set_text(text)
             await self._note(f"[$error]Message not sent:[/] {escape(str(exc))}", "error")
+            return False
         self._refresh_working_line()
+        return True
 
     async def _run_tui_slash(self, text: str) -> bool:
         """Slash commands handled by the TUI itself (screens), not by the engine."""
@@ -991,6 +1113,7 @@ class NavinApp(App[None]):
 
     async def _on_runtime_event(self, event: UiEvent) -> None:
         if isinstance(event, UiTurnStarted):
+            self._awaiting_reply = True
             self._set_status()
             self._refresh_working_line()
             return
@@ -1021,6 +1144,8 @@ class NavinApp(App[None]):
                 event.error,
                 event.output,
                 visible=self.prefs.show_tools,
+                percent=event.percent,
+                output_mode=event.output_mode,
             )
             if event.phase == "start":
                 self._activity_push(f"⟳ {escape(event.name)}")
@@ -1075,6 +1200,7 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiAssistantMessage):
+            self._awaiting_reply = False
             # The turn-end signal can overtake the final message. Keep writing
             # into the same bubble instead of opening a second one mid-sentence.
             block = self._current
@@ -1186,6 +1312,9 @@ class NavinApp(App[None]):
             self.composer.focus()
             return
         if isinstance(event, UiEngineError):
+            self._awaiting_reply = False
+            self._queue_paused.add(self.runtime.session_key)
+            await self._refresh_queue()
             await self._note(f"[$error]{escape(event.text)}[/]", "error")
             return
 
@@ -1246,6 +1375,8 @@ class NavinApp(App[None]):
                 card.answer(skipped=True)
                 return
         if self.runtime.turn_active:
+            self._queue_paused.add(self.runtime.session_key)
+            await self._refresh_queue()
             await self.runtime.stop_turn()
             self._refresh_working_line()
             await self._note("[$warning]stop requested[/]", "warning")
@@ -1253,18 +1384,20 @@ class NavinApp(App[None]):
         self.composer.focus()
 
     async def action_interrupt_or_clear(self) -> None:
-        """Cancel work or clear input/screen without exiting the CLI."""
+        """Copy selected text first; otherwise cancel work or clear input."""
+        selected = self._selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            return
         active = self.runtime.turn_active
-        had_input = bool(self.composer.text)
         self.composer.clear_text()
         self.query_one(SlashMenu).hide()
         self.composer.menu_open = False
         if active:
+            self._queue_paused.add(self.runtime.session_key)
+            await self._refresh_queue()
             await self.runtime.stop_turn()
             await self._note("[$warning]stop requested[/]", "warning")
-        elif not had_input:
-            await self.transcript.remove_children()
-            self._current = None
         self._refresh_working_line()
         self.composer.focus()
 

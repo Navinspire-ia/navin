@@ -102,6 +102,7 @@ class UiToolEvent(UiEvent):
     output: str | None = None
     label: str | None = None
     percent: float | None = None
+    output_mode: str = "delta"
 
 
 @dataclass(frozen=True)
@@ -654,6 +655,7 @@ class TuiRuntime:
                         output=payload.get("output") if isinstance(payload.get("output"), str) else None,
                         label=payload.get("label") if isinstance(payload.get("label"), str) else None,
                         percent=payload.get("percent") if isinstance(payload.get("percent"), (int, float)) else None,
+                        output_mode=str(payload.get("output_mode") or "delta"),
                     )
                 )
         if event.file_edit_events:
