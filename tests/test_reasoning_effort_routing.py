@@ -1,12 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Reasoning effort is routed per request, not forwarded from config verbatim.
-
-Agent turns force thinking off (GLM/Grok treat low/medium/high as the same
-on-switch). Plan turns think at least "high". Explicit xhigh/max/adaptive
-survive the first call only. The integration tests drive the real runner.
-"""
+"""Explicit effort survives the real runner, including tool follow-ups."""
 
 from __future__ import annotations
 
@@ -25,62 +20,62 @@ from navin.utils.llm_runtime import LLMRuntime
 class RoutingRulesTest(unittest.TestCase):
     def test_no_signals_turns_agent_thinking_off(self) -> None:
         self.assertEqual(route_reasoning_effort(None), "none")
-        self.assertEqual(route_reasoning_effort("medium"), "none")
-        self.assertEqual(route_reasoning_effort("high"), "none")
+        self.assertEqual(route_reasoning_effort("medium"), "medium")
+        self.assertEqual(route_reasoning_effort("high"), "high")
 
     def test_plan_mode_floors_at_high(self) -> None:
         self.assertEqual(route_reasoning_effort(None, composer_mode="plan"), "high")
-        self.assertEqual(route_reasoning_effort("low", composer_mode="plan"), "high")
+        self.assertEqual(route_reasoning_effort("low", composer_mode="plan"), "low")
         self.assertEqual(route_reasoning_effort("high", composer_mode="plan"), "high")
 
-    def test_agent_mode_ignores_configured_high(self) -> None:
+    def test_agent_mode_honors_configured_effort(self) -> None:
         for mode in ("agent", "ask", "chat", None):
             self.assertEqual(route_reasoning_effort(None, composer_mode=mode), "none")
-            self.assertEqual(route_reasoning_effort("low", composer_mode=mode), "none")
-            self.assertEqual(route_reasoning_effort("high", composer_mode=mode), "none")
+            self.assertEqual(route_reasoning_effort("low", composer_mode=mode), "low")
+            self.assertEqual(route_reasoning_effort("high", composer_mode=mode), "high")
 
-    def test_explicit_think_hard_survives_the_first_call(self) -> None:
-        for choice in ("adaptive", "xhigh", "max"):
+    def test_explicit_effort_survives_every_call(self) -> None:
+        for choice in ("minimal", "low", "medium", "high", "adaptive", "xhigh", "max"):
             self.assertEqual(
                 route_reasoning_effort(choice, composer_mode="agent"),
                 choice,
             )
             self.assertEqual(
                 route_reasoning_effort(choice, composer_mode="agent", tool_followup=True),
-                "none",
+                choice,
             )
 
-    def test_plan_escalation_raises_one_step_capped_at_high(self) -> None:
+    def test_plan_escalation_respects_explicit_effort(self) -> None:
         self.assertEqual(
             route_reasoning_effort("low", composer_mode="plan", escalations=1),
-            "high",
+            "low",
         )
 
-    def test_agent_escalation_does_not_turn_thinking_back_on(self) -> None:
+    def test_agent_escalation_respects_explicit_effort(self) -> None:
         self.assertEqual(
             route_reasoning_effort("low", tool_followup=True, escalations=3),
-            "none",
+            "low",
         )
 
-    def test_tool_followup_turns_thinking_off(self) -> None:
+    def test_tool_followup_preserves_explicit_effort(self) -> None:
         self.assertEqual(
             route_reasoning_effort("high", tool_followup=True),
-            "none",
+            "high",
         )
         self.assertEqual(
             route_reasoning_effort("low", composer_mode="plan", tool_followup=True),
-            "none",
+            "low",
         )
         self.assertEqual(route_reasoning_effort(None, tool_followup=True), "none")
 
-    def test_verify_red_followup_does_not_think(self) -> None:
+    def test_verify_red_followup_preserves_effort(self) -> None:
         self.assertEqual(
             route_reasoning_effort("low", tool_followup=True, escalations=1),
-            "none",
+            "low",
         )
 
-    def test_empty_retry_disables_thinking(self) -> None:
-        self.assertEqual(route_reasoning_effort("high", empty_retry=True), "none")
+    def test_empty_retry_only_disables_automatic_thinking(self) -> None:
+        self.assertEqual(route_reasoning_effort("high", empty_retry=True), "high")
         self.assertEqual(route_reasoning_effort(None, empty_retry=True), "none")
         self.assertEqual(
             route_reasoning_effort("xhigh", empty_retry=True),
@@ -213,9 +208,9 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.stop_reason, "completed")
         self.assertEqual(verifier.calls, 2)
         self.assertTrue(any("Verification failed" in str(m.get("content")) for m in result.messages))
-        self.assertTrue(all(effort == "none" for effort in provider.efforts))
+        self.assertTrue(all(effort == "low" for effort in provider.efforts))
 
-    async def test_after_tools_the_next_call_stays_off(self) -> None:
+    async def test_after_tools_the_next_call_keeps_high(self) -> None:
         registry = ToolRegistry()
         registry.register(_NamedTool("read_file", "ok"))
         provider = _EffortCapturingProvider([
@@ -225,7 +220,7 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
             LLMResponse(content="done"),
         ])
         await AgentRunner().run(_spec(provider, registry, effort="high"))
-        self.assertEqual(provider.efforts, ["none", "none"])
+        self.assertEqual(provider.efforts, ["high", "high"])
 
     async def test_identical_reads_are_blocked_after_two_successes(self) -> None:
         registry = ToolRegistry()

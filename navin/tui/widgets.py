@@ -2065,6 +2065,8 @@ class ComposerMeta(Horizontal):
     ComposerMeta #meta-sep { width: auto; color: $text-muted; padding: 0 1; }
     ComposerMeta #meta-model { width: 1fr; min-width: 0; height: 1; color: $text-muted; text-overflow: ellipsis; }
     ComposerMeta #meta-model:hover { color: $foreground; }
+    ComposerMeta #meta-reasoning { width: auto; height: 1; padding-left: 1; color: $text-muted; }
+    ComposerMeta #meta-reasoning:hover { color: $foreground; }
     ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; text-align: right; color: $text-muted; }
     """
 
@@ -2072,6 +2074,7 @@ class ComposerMeta(Horizontal):
         yield Static("", id="meta-mode", markup=True)
         yield Static("", id="meta-sep", markup=True)
         yield Static("", id="meta-model", markup=True)
+        yield Static("Reasoning Auto", id="meta-reasoning", markup=False)
         yield Static("Context --", id="meta-context", markup=False)
 
     def set_meta(
@@ -2085,6 +2088,7 @@ class ComposerMeta(Horizontal):
         provider: str = "",
         context_used: int = 0,
         context_window: int = 0,
+        reasoning: str = "",
     ) -> None:
         name, slug_provider = split_model_slug(model)
         provider = provider or slug_provider
@@ -2092,6 +2096,9 @@ class ComposerMeta(Horizontal):
         sep_w = self.query_one("#meta-sep", Static)
         model_w = self.query_one("#meta-model", Static)
         context_w = self.query_one("#meta-context", Static)
+        reasoning_w = self.query_one("#meta-reasoning", Static)
+        reasoning_w.update(f"Reasoning {reasoning or 'Auto'}")
+        reasoning_w.tooltip = "Choose native reasoning effort (Ctrl+Shift+R)"
         if context_window > 0:
             percent = max(0, min(100, round(context_used * 100 / context_window)))
             context_w.update(f"Context {percent}%")
@@ -2116,6 +2123,10 @@ class ComposerMeta(Horizontal):
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
+        if isinstance(target, Static) and target.id == "meta-reasoning":
+            event.stop()
+            self.app.call_later(self.app.run_action, "pick_reasoning")
+            return
         if isinstance(target, Static) and target.id == "meta-context":
             event.stop()
             return

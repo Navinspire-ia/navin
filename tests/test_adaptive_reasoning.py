@@ -1,11 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Adaptive reasoning effort: Plan thinks, Agent executes.
-
-Agent caps to none so a config of high cannot turn GLM/Grok thinking on.
-Plan still floors at high. An explicit UI override beats both.
-"""
+"""Explicit reasoning choices win; Auto follows the composer mode."""
 
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from navin.quality.verification_log import record_verification
 
 class PolicyTest(unittest.TestCase):
     def test_plan_mode_floors_at_high(self) -> None:
-        for base in (None, "minimal", "low", "medium"):
+        for base in (None, ""):
             self.assertEqual(
                 "high",
                 adaptive_reasoning_effort(base, composer_mode="plan"),
@@ -32,10 +28,10 @@ class PolicyTest(unittest.TestCase):
             "xhigh", adaptive_reasoning_effort("xhigh", composer_mode="plan")
         )
 
-    def test_agent_mode_turns_configured_high_off(self) -> None:
+    def test_agent_mode_preserves_configured_effort(self) -> None:
         self.assertEqual("none", adaptive_reasoning_effort(None, composer_mode="agent"))
-        self.assertEqual("none", adaptive_reasoning_effort("low", composer_mode="agent"))
-        self.assertEqual("none", adaptive_reasoning_effort("high", composer_mode="agent"))
+        self.assertEqual("low", adaptive_reasoning_effort("low", composer_mode="agent"))
+        self.assertEqual("high", adaptive_reasoning_effort("high", composer_mode="agent"))
 
     def test_explicit_think_hard_survives_on_agent(self) -> None:
         self.assertEqual(
@@ -45,15 +41,15 @@ class PolicyTest(unittest.TestCase):
             "adaptive", adaptive_reasoning_effort("adaptive", composer_mode="agent")
         )
 
-    def test_verify_failure_does_not_turn_agent_thinking_on(self) -> None:
+    def test_verify_failure_preserves_effort(self) -> None:
         self.assertEqual(
-            "none",
+            "low",
             adaptive_reasoning_effort(
                 "low", composer_mode="agent", after_verify_failure=True
             ),
         )
         self.assertEqual(
-            "none",
+            "high",
             adaptive_reasoning_effort(
                 "high", composer_mode="agent", after_verify_failure=True
             ),
@@ -76,7 +72,7 @@ class PolicyTest(unittest.TestCase):
 
     def test_garbage_override_is_ignored(self) -> None:
         self.assertEqual(
-            "high",
+            "medium",
             adaptive_reasoning_effort(
                 "medium", composer_mode="plan", override="turbo-max"
             ),
@@ -110,7 +106,7 @@ class LoopWiringTest(unittest.TestCase):
             adapted = self._loop_stub()._adapt_reasoning_effort(
                 self._runtime("low"), {}, tmp
             )
-            self.assertEqual("none", adapted.generation.reasoning_effort)
+            self.assertEqual("low", adapted.generation.reasoning_effort)
 
     def test_green_verify_stays_off_on_agent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="navin-ar-") as tmp:
@@ -118,7 +114,7 @@ class LoopWiringTest(unittest.TestCase):
             adapted = self._loop_stub()._adapt_reasoning_effort(
                 self._runtime("low"), {}, tmp
             )
-            self.assertEqual("none", adapted.generation.reasoning_effort)
+            self.assertEqual("low", adapted.generation.reasoning_effort)
 
     def test_stale_failure_stays_off_on_agent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="navin-ar-") as tmp:
@@ -132,7 +128,7 @@ class LoopWiringTest(unittest.TestCase):
             adapted = self._loop_stub()._adapt_reasoning_effort(
                 self._runtime("low"), {}, tmp
             )
-            self.assertEqual("none", adapted.generation.reasoning_effort)
+            self.assertEqual("low", adapted.generation.reasoning_effort)
 
     def test_plan_metadata_floors_at_high(self) -> None:
         adapted = self._loop_stub()._adapt_reasoning_effort(
@@ -140,11 +136,11 @@ class LoopWiringTest(unittest.TestCase):
         )
         self.assertEqual("high", adapted.generation.reasoning_effort)
 
-    def test_agent_high_is_rewritten_to_none(self) -> None:
+    def test_agent_high_is_preserved(self) -> None:
         runtime = self._runtime("high")
         adapted = self._loop_stub()._adapt_reasoning_effort(runtime, {}, None)
-        self.assertEqual("none", adapted.generation.reasoning_effort)
-        self.assertIsNot(runtime, adapted)
+        self.assertEqual("high", adapted.generation.reasoning_effort)
+        self.assertIs(runtime, adapted)
 
 
 if __name__ == "__main__":
