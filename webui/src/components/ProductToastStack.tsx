@@ -19,9 +19,14 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { useAccount } from "@/hooks/useAccount";
-import type { UpdateInfo } from "@/lib/api";
+import type { UpdateInfo, UpdateStatus } from "@/lib/api";
 import { fetchRuntimeHealth, type RuntimeHealth } from "@/lib/api";
-import { isReleaseAnnouncement } from "@/lib/product-toasts";
+import { UpdateProgress } from "@/components/UpdateProgress";
+import {
+  isReleaseAnnouncement,
+  isUpdateToastDismissed,
+  readDismissedUpdateToast,
+} from "@/lib/product-toasts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -96,6 +101,7 @@ export function ProductToastStack({
   availableUpdate,
   updateBusy,
   updateError,
+  updateStatus,
   onInstallUpdate,
   onDismissUpdate,
   onSkipUpdate,
@@ -106,6 +112,7 @@ export function ProductToastStack({
   availableUpdate: UpdateInfo | null;
   updateBusy: boolean;
   updateError?: string | null;
+  updateStatus?: UpdateStatus | null;
   onInstallUpdate: () => void;
   onDismissUpdate: () => void;
   onSkipUpdate: () => void;
@@ -238,25 +245,35 @@ export function ProductToastStack({
     setAnnouncementToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const updateToast =
+    availableUpdate
+    && !isUpdateToastDismissed(
+      availableUpdate.latestVersion,
+      readDismissedUpdateToast(),
+    )
+      ? availableUpdate
+      : null;
+
   const visibleAnnouncements = announcementToasts.filter((item) => {
     // The update card already says the same thing with Install Now. A second
     // NEWS / Open toast for the same version is what people click, and it used
     // to do nothing in the desktop WebView.
-    if (availableUpdate && isReleaseAnnouncement(item)) return false;
+    if (updateToast && isReleaseAnnouncement(item)) return false;
     return true;
   });
 
   const showHealth =
-    !!health?.pressure && !healthDismissed && !availableUpdate;
+    !!health?.pressure && !healthDismissed && !updateToast;
 
-  if (!availableUpdate && visibleAnnouncements.length === 0 && !showHealth) {
+  if (!updateToast && visibleAnnouncements.length === 0 && !showHealth) {
     return null;
   }
 
   return (
     <div className="pointer-events-none fixed bottom-5 left-5 z-50 flex w-[min(22.5rem,calc(100vw-2.5rem))] flex-col gap-2.5">
-      {availableUpdate ? (
+      {updateToast ? (
         <div
+          key={updateToast.latestVersion || "update"}
           role="status"
           className={cn(
             "pointer-events-auto overflow-hidden rounded-2xl border border-border/60 bg-popover/95 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-md",
@@ -274,12 +291,16 @@ export function ProductToastStack({
               <p className="mt-0.5 text-[14px] font-semibold leading-snug text-foreground">
                 {t("updates.cardTitle", {
                   defaultValue: "Navin {{version}} is available",
-                  version: availableUpdate.latestVersion,
+                  version: updateToast.latestVersion,
                 })}
               </p>
-              {availableUpdate.notes?.trim() ? (
+              {updateToast.supported === false && updateToast.reason ? (
+                <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
+                  {updateToast.reason}
+                </p>
+              ) : updateToast.notes?.trim() ? (
                 <p className="mt-1.5 line-clamp-3 text-[12.5px] leading-relaxed text-muted-foreground">
-                  {availableUpdate.notes.trim()}
+                  {updateToast.notes.trim()}
                 </p>
               ) : (
                 <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
@@ -296,10 +317,12 @@ export function ProductToastStack({
                   })}
                 </p>
               ) : null}
+              {updateBusy ? <UpdateProgress status={updateStatus ?? null} /> : null}
             </div>
             <button
               type="button"
               onClick={onDismissUpdate}
+              disabled={updateBusy}
               className="rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground"
               aria-label={t("common.dismiss", { defaultValue: "Dismiss" })}
             >
@@ -310,11 +333,12 @@ export function ProductToastStack({
             <button
               type="button"
               onClick={onDismissUpdate}
+              disabled={updateBusy}
               className="rounded-lg px-3 py-1.5 text-[12.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               {t("updates.later", { defaultValue: "Later" })}
             </button>
-            {availableUpdate.supported ? (
+            {updateToast.supported ? (
               <button
                 type="button"
                 onClick={onInstallUpdate}

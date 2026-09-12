@@ -52,7 +52,7 @@ from navin.agent.history_media import replay_history_images
 from navin.agent.hook import AgentHook, AgentTurnHookFactory
 from navin.agent.memory import Consolidator
 from navin.agent.model_runtime import ModelRuntimeResolver
-from navin.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
+from navin.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentLoopGuard, AgentRunner, AgentRunSpec
 from navin.agent.scope_anchor import named_targets, scope_anchor_context_provider
 from navin.agent.subagent import SubagentManager
 from navin.agent.tools.context import RequestContext, bind_request_context, reset_request_context
@@ -860,6 +860,7 @@ class AgentLoop:
         # When a session has an active task, new messages for that session
         # are routed here instead of creating a new task.
         self._pending_queues: dict[str, asyncio.Queue] = {}
+        self._loop_guards: dict[str, AgentLoopGuard] = {}
         self._deferred_automation_turns: dict[str, list[InboundMessage]] = {}
         self._cron_turns = CronTurnCoordinator(
             publish_inbound=self.bus.publish_inbound,
@@ -1397,7 +1398,7 @@ class AgentLoop:
     def _verify_fail_nudge_limit(
         msg: InboundMessage | None, metadata: dict | None
     ) -> int | None:
-        """Per-turn cap on red-verify fix retries (None = runner default)."""
+        """Consecutive unaddressed validation nudges (None = runner default)."""
         from navin.command.modules import VERIFY_FAIL_NUDGE_LIMIT_METADATA_KEY
 
         for source in (metadata, getattr(msg, "metadata", None) if msg is not None else None):
@@ -2202,6 +2203,7 @@ class AgentLoop:
                 requires_verify_before_done=self._requires_verify_before_done(
                     None, metadata
                 ),
+                validate_code_changes=not ephemeral,
                 verify_fail_nudge_limit=self._verify_fail_nudge_limit(None, metadata),
                 read_only_tools=self._read_only_tools(None, metadata),
                 # Plan turns refuse mutating calls at the runner (design-only);
@@ -2229,6 +2231,13 @@ class AgentLoop:
                     session_metadata=session_metadata,
                     message_metadata=metadata,
                     session_key=session.key if session is not None else session_key,
+                ),
+                # One-shot CLI calls have no dispatcher to consume a next
+                # slice. Keep the accepted task in this runner until it ends.
+                continue_on_max_iterations=pending_queue is None and not ephemeral,
+                loop_guard=(
+                    self._loop_guards.setdefault(active_session_key, AgentLoopGuard())
+                    if active_session_key and not ephemeral else None
                 ),
             ))
         finally:
@@ -2326,7 +2335,7 @@ class AgentLoop:
             ):
                 self.sessions.save(session)
         if result.stop_reason == "max_iterations":
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
+            logger.info("Tool slice completed for {}", active_session_key or "default")
             should_stream = turn_continuation.should_stream_budget_response(
                 stop_reason=result.stop_reason,
                 pending_queue_available=pending_queue is not None and session is not None,
@@ -2334,7 +2343,6 @@ class AgentLoop:
                 message_metadata=metadata,
                 session_key=session.key if session is not None else session_key,
                 final_content=result.final_content,
-                tools_used=result.tools_used,
             )
             # Push final content through stream so streaming channels (e.g. Telegram)
             # update the card instead of leaving it empty.
@@ -2752,10 +2760,13 @@ class AgentLoop:
                                 "Dropped {} queued message(s) after cancelled turn for session {}",
                                 dropped, session_key,
                             )
+                    if turn_cancelled:
+                        self._loop_guards.pop(session_key, None)
                     if (
                         not turn_continuation.internal_continuation_pending(msg.metadata)
                         and not self.turn_recovery.waiting(session_key)
                     ):
+                        self._loop_guards.pop(session_key, None)
                         await self._runtime_events().run_status_changed(
                             msg, session_key, "idle"
                         )
@@ -3066,7 +3077,7 @@ class AgentLoop:
 
         event = None
         meta = dict(msg.metadata or {})
-        if on_stream is not None and stop_reason not in {"error", "tool_error"}:
+        if on_stream is not None and stop_reason not in {"error", "tool_error", "validation_failed"}:
             event = StreamedResponseEvent()
         if turn_latency_ms is not None:
             meta["latency_ms"] = int(turn_latency_ms)
@@ -3114,10 +3125,11 @@ class AgentLoop:
         # ensure it exists in case this handler is invoked independently.
         if ctx.session is None:
             ctx.session = self.sessions.get_or_create(ctx.session_key)
-        # A genuine user message starts a fresh autonomy budget: continuation
-        # round caps bound one prompt's run, never the whole session.
+        # A genuine user message restarts checkpoint numbering. Internal
+        # slices retain it so a long run keeps getting coherence checkpoints.
         if not turn_continuation.internal_continuation_inbound(msg.metadata):
             turn_continuation.reset_budget_continuation_rounds(ctx.session.metadata)
+            self._loop_guards.pop(ctx.session_key, None)
         self._persist_model_pin(ctx.session, msg)
         await self._runtime_events().session_turn_started(msg, ctx.session_key)
         # Tell the WebUI the turn is live as soon as it is accepted - not only
@@ -3370,6 +3382,7 @@ class AgentLoop:
             and not turn_continuation.internal_continuation_pending(ctx.msg.metadata)
         ):
             self.turn_recovery.finish(ctx.session)
+            self._loop_guards.pop(ctx.session_key, None)
         self.sessions.save(ctx.session)
         return "ok"
 
@@ -3767,5 +3780,6 @@ class AgentLoop:
                     else:
                         return response
         finally:
+            self._loop_guards.pop(session_key, None)
             await self._runtime_events().run_status_changed(msg, session_key, "idle")
             self._runtime_events().clear_turn(session_key)

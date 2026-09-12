@@ -125,7 +125,7 @@ def _runtime(provider: Any, effort: str | None = None) -> LLMRuntime:
 
 
 class _NamedTool(Tool):
-    def __init__(self, name: str, result: str) -> None:
+    def __init__(self, name: str, result: str | list[str]) -> None:
         self._tool_name = name
         self._result = result
         self.calls = 0
@@ -148,6 +148,8 @@ class _NamedTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         self.calls += 1
+        if isinstance(self._result, list):
+            return self._result[min(self.calls - 1, len(self._result) - 1)]
         return self._result
 
 
@@ -186,14 +188,18 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_verify_red_retry_stays_fast(self) -> None:
         registry = ToolRegistry()
         registry.register(_NamedTool("edit_file", "edited"))
-        registry.register(_NamedTool("verify", "VERDICT_TEST_FAILURES: 2 red"))
+        verifier = _NamedTool("verify", ["FAIL - 2 tests failed", "PASS - tests green"])
+        registry.register(verifier)
         provider = _EffortCapturingProvider([
             LLMResponse(content=None, tool_calls=[
                 ToolCallRequest(id="1", name="edit_file", arguments={}),
-                ToolCallRequest(id="2", name="verify", arguments={}),
+                ToolCallRequest(id="2", name="verify", arguments={"action": "check"}),
             ]),
             LLMResponse(content="done"),
-            LLMResponse(content="done"),
+            LLMResponse(content=None, tool_calls=[
+                ToolCallRequest(id="3", name="edit_file", arguments={}),
+                ToolCallRequest(id="4", name="verify", arguments={"action": "check"}),
+            ]),
             LLMResponse(content="done"),
         ])
         runner = AgentRunner()
@@ -205,6 +211,8 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
         ))
 
         self.assertEqual(result.stop_reason, "completed")
+        self.assertEqual(verifier.calls, 2)
+        self.assertTrue(any("Verification failed" in str(m.get("content")) for m in result.messages))
         self.assertTrue(all(effort == "none" for effort in provider.efforts))
 
     async def test_after_tools_the_next_call_stays_off(self) -> None:
@@ -245,7 +253,7 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(blocked), 1)
 
-    async def test_search_only_loops_stop_before_the_step_budget(self) -> None:
+    async def test_audit_of_distinct_files_can_finish_without_an_edit(self) -> None:
         registry = ToolRegistry()
         reader = _NamedTool("read_file", "ok")
         registry.register(reader)
@@ -262,12 +270,15 @@ class RunnerRoutesEffortTest(unittest.IsolatedAsyncioTestCase):
             )
             for i in range(1, 16)
         ]
-        provider = _EffortCapturingProvider(responses)
+        provider = _EffortCapturingProvider([
+            *responses, LLMResponse(content="All 15 files audited; findings recorded."),
+        ])
         result = await AgentRunner().run(_spec(
             provider, registry, effort="none", max_iterations=30,
         ))
-        self.assertEqual(result.stop_reason, "no_progress")
-        self.assertEqual(reader.calls, 8)
+        self.assertEqual(result.stop_reason, "completed")
+        self.assertEqual(reader.calls, 15)
+        self.assertEqual(result.final_content, "All 15 files audited; findings recorded.")
 
 
 if __name__ == "__main__":

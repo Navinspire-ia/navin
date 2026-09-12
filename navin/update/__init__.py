@@ -9,6 +9,7 @@ from navin.update.service import (
     check_for_update,
     download_update,
     install_update,
+    start_update_download,
     update_status,
     updates_configured,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "check_for_update",
     "download_update",
     "install_update",
+    "start_update_download",
     "update_status",
     "updates_configured",
 ]

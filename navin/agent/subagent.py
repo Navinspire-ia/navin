@@ -466,7 +466,8 @@ class SubagentManager:
         logger.info("Queued subagent [{}]: {} (position {})", task_id, display_label, ahead)
         detail = (
             f"Subagent [{display_label}] queued (id: {task_id}), position {ahead}: "
-            f"the machine is already running {self.max_concurrent_subagents} of them. "
+            f"this conversation has reached its limit of {self.max_concurrent_subagents} running subagents. "
+            "This task has not started; do not report it as running in parallel. "
             "It starts on its own as soon as a slot frees up, and its result "
             "arrives like any other. Do not retry this call."
         )
@@ -812,8 +813,8 @@ class SubagentManager:
                     max_tool_result_chars=self.max_tool_result_chars,
                     tool_result_clearing=self.tool_result_clearing,
                     hook=self._build_hook(task_id, status, _emit_progress),
-                    max_iterations_message="Task completed but no final response was generated.",
                     finalize_on_max_iterations=False,
+                    continue_on_max_iterations=True,
                     error_message=None,
                     # Same batching the parent loop gets. A subagent explores
                     # more than it writes, so running its reads one at a time
@@ -831,6 +832,7 @@ class SubagentManager:
                     # work too, so a subagent cannot finish unverified or use
                     # a tool the module locked out.
                     requires_verify_before_done=policy.requires_verify_before_done,
+                    validate_code_changes=policy.validate_code_changes,
                     denied_tools=policy.locked_denied_tools,
                     locked_denied_tools=policy.locked_denied_tools,
                     allowed_tools=policy.allowed_tools,
@@ -857,9 +859,14 @@ class SubagentManager:
             note = await self._settle_worktree(checkout) + isolation_note
             checkout = None
 
-            if result.stop_reason == "tool_error":
+            if result.stop_reason == "max_iterations" and not result.error:
+                result.error = "Subagent reached its iteration limit before completing the task."
+            if result.stop_reason == "no_progress" and not result.error:
+                result.error = result.final_content or "The subagent repeated blocked tool calls."
+
+            if result.stop_reason in {"tool_error", "max_iterations", "no_progress", "validation_failed"}:
                 status.phase = "error"
-                status.error = "tool_error"
+                status.error = result.error or "Tool execution failed."
                 status.tool_events = list(result.tool_events)
                 self._publish_progress(status, force=True, done=True)
                 await self._announce_result(
@@ -1297,10 +1304,10 @@ class SubagentManager:
                 lines.append("")
             lines.append("Failure:")
             lines.append(f"- {failure['name']}: {failure['detail']}")
-        if result.error and not failure:
+        if result.error:
             if lines:
                 lines.append("")
-            lines.append("Failure:")
+            lines.append("Stop reason:" if failure else "Failure:")
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
 

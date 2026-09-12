@@ -85,6 +85,7 @@ def govern_concurrent_agents(config: Any, ceiling: int) -> int:
             reserve_ratio=float(getattr(resources, "max_utilisation", 0.70)),
             agents_per_core=int(getattr(resources, "agents_per_core", 32)),
             memory_per_agent_mb=int(getattr(resources, "memory_per_agent_mb", 96)),
+            minimum=int(getattr(resources, "min_concurrent_agents", 5)),
             ceiling=ceiling,
         )
         _log_governed_limit(allowed, ceiling, cores, available)
@@ -202,10 +203,11 @@ def effective_steps_per_task(config: Any, configured: int | None = None) -> int:
 
 
 def effective_turn_iterations(configured: int, *, goal_active: bool) -> int:
-    """Per-turn tool-loop cap: license ceiling, then a snappy default.
+    """Size one saved tool-loop slice within the plan entitlement.
 
     Sustained goals (create_goal / long missions) keep the full entitlement.
-    Everything else is capped so a stuck read/grep loop cannot spend an hour.
+    Other interactive tasks resume at each boundary; this is not a limit on
+    the total work needed to finish the request.
     """
     configured = max(1, int(configured))
     if goal_active:

@@ -16,6 +16,7 @@ if typing.TYPE_CHECKING:
     from pydantic import BaseModel
 
     from navin.agent.tools.context import ToolContext
+    from navin.quality.evidence import VerificationEvidence
     from navin.runtime_context import RuntimeContextProvider
 
 _ToolT = TypeVar("_ToolT", bound="Tool")
@@ -139,11 +140,16 @@ class ToolResult(str):
 
     is_error: bool
     recovery_hint: str | None
+    verification: VerificationEvidence | None
 
-    def __new__(cls, content: str, *, is_error: bool = False, recovery_hint: str | None = None) -> ToolResult:
+    def __new__(
+        cls, content: str, *, is_error: bool = False,
+        recovery_hint: str | None = None, verification: VerificationEvidence | None = None,
+    ) -> ToolResult:
         obj = str.__new__(cls, content)
         obj.is_error = is_error
         obj.recovery_hint = recovery_hint
+        obj.verification = verification
         return obj
 
     @classmethod

@@ -793,7 +793,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | --- | --- |
 | `Enter` | Send message |
 | `Shift+Enter` / `Ctrl+J` | New line |
-| `Esc` | Stop the running turn |
+| `Esc` | Stop the running turn (shown as ``esc to interrupt`` while Working) |
 | `Ctrl+P` | Command palette (all actions + slash commands) |
 | `Ctrl+N` | New chat (`/new`) |
 | `Ctrl+I` | Provider settings |
@@ -834,8 +834,11 @@ desktop composer. `/mode <name>` switches without opening the list.
 
 ## Slash commands
 
+While a turn is running, the chat shows ``Working (elapsed • esc to interrupt)``.
+Background ``exec`` sessions add ``/ps to view``. Esc (or ``/stop``) cancels the turn.
+
 Type `/` to get inline completion. Every builtin command of Navin is available:
-`/new`, `/stop`, `/restart`, `/status`, `/update`, `/title`, `/model`, `/history`, `/goal`,
+`/new`, `/stop` (or Esc), `/ps` (background terminals), `/restart`, `/status`, `/update`, `/title`, `/model`, `/history`, `/goal`,
 `/trigger`, `/skill`, `/pack`, `/checkpoint`, `/dream`, `/dream-log`,
 `/board`, `/pilot`, `/pairing`, workflows (`/forge`, `/blueprint`, `/cruise`,
 `/inspect`, `/fortify`, `/debug`, `/ask`, `/ops`, `/pulse`, ...) and more.

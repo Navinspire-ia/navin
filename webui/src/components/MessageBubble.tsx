@@ -50,6 +50,7 @@ import { formatTurnLatency } from "@/lib/format";
 import { downloadMediaAttachment, toMediaAttachment } from "@/lib/media";
 import { matchingSlashCommand } from "@/lib/slash-command";
 import { visibleUserChatText } from "@/lib/chat-visible-text";
+import { splitLongUserText } from "@/lib/pasted-content";
 import { stripModeRoutingSlash } from "@/components/thread/ComposerModeMenu";
 import type {
   CliAppInfo,
@@ -98,6 +99,53 @@ function ForkArrowIcon({ className }: { className?: string }) {
       <path d="m21 3-7.536 7.536A5 5 0 0 0 12 14.07V21" />
       <path d="m3 3 7.536 7.536A5 5 0 0 1 12 14.07V15" />
     </svg>
+  );
+}
+
+function UserPastedBody({
+  text,
+  renderText,
+}: {
+  text: string;
+  renderText: (chunk: string) => ReactNode;
+}) {
+  const { t } = useTranslation();
+  const { prefix, rest } = splitLongUserText(text);
+  const [open, setOpen] = useState(false);
+  if (!rest) return <>{renderText(prefix || text)}</>;
+  const label = t("message.pastedContent", {
+    count: rest.length,
+    defaultValue: `[Pasted Content ${rest.length} chars]`,
+  });
+  return (
+    <>
+      {prefix ? renderText(`${prefix}\n`) : null}
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={cn(
+          "my-0.5 inline-flex max-w-full items-center rounded-md border border-border/60",
+          "bg-muted/70 px-2 py-0.5 text-left text-[12px] text-muted-foreground",
+          "hover:bg-muted hover:text-foreground",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        )}
+        aria-expanded={open}
+        aria-label={open
+          ? t("message.pastedContentCollapse", { defaultValue: "Hide pasted content" })
+          : t("message.pastedContentExpand", { defaultValue: "Show pasted content" })}
+        data-testid="pasted-content-chip"
+      >
+        {label}
+      </button>
+      {open ? (
+        <div
+          className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-background/50 px-2 py-1.5 text-[12px] leading-relaxed"
+          data-testid="pasted-content-body"
+        >
+          {renderText(rest)}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -227,27 +275,26 @@ export const MessageBubble = memo(function MessageBubble({
     // when the server command list is empty or the command declines args.
     // A bare command with no args keeps its pill.
     const routingRemainder = stripModeRoutingSlash(visibleContent);
-    const messageText = routingRemainder ? (
-      <CliAppMentionText
-        text={routingRemainder}
-        cliApps={mentionCliApps}
-        mcpPresets={mentionMcpPresets}
-      />
-    ) : slashCommand ? (
+    const bodySource = routingRemainder
+      ?? (slashCommand
+        ? visibleContent.slice(slashCommand.command.length)
+        : visibleContent);
+    const messageText = (
       <>
-        <SlashCommandText command={slashCommand.command} />
-        <CliAppMentionText
-          text={visibleContent.slice(slashCommand.command.length)}
-          cliApps={mentionCliApps}
-          mcpPresets={mentionMcpPresets}
+        {!routingRemainder && slashCommand ? (
+          <SlashCommandText command={slashCommand.command} />
+        ) : null}
+        <UserPastedBody
+          text={bodySource}
+          renderText={(chunk) => (
+            <CliAppMentionText
+              text={chunk}
+              cliApps={mentionCliApps}
+              mcpPresets={mentionMcpPresets}
+            />
+          )}
         />
       </>
-    ) : (
-      <CliAppMentionText
-        text={visibleContent}
-        cliApps={mentionCliApps}
-        mcpPresets={mentionMcpPresets}
-      />
     );
 
     const submitEdit = () => {

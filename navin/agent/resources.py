@@ -51,6 +51,10 @@ DEFAULT_RESERVE_RATIO = 0.70
 # has to be able to run something, and a limit of zero would deadlock a turn
 # that is waiting on a subagent.
 MIN_AGENTS = 1
+# A small parallel wave stays useful even when a fluctuating free-memory
+# estimate would otherwise serialize every task. Smaller explicit ceilings
+# still win, and constrained hosts can lower the configurable floor.
+MIN_PARALLEL_AGENTS = 5
 # Cores assumed when the count cannot be read, mirroring blocking_pool.
 _FALLBACK_CORES = 4
 
@@ -284,6 +288,7 @@ def governed_agent_count(
     reserve_ratio: float = DEFAULT_RESERVE_RATIO,
     agents_per_core: int = AGENTS_PER_CORE,
     memory_per_agent_mb: int = MEMORY_PER_AGENT_MB,
+    minimum: int = MIN_PARALLEL_AGENTS,
     ceiling: int,
 ) -> int:
     """How many agents fit, never above ``ceiling``.
@@ -294,6 +299,7 @@ def governed_agent_count(
     governor.
     """
     ceiling = max(MIN_AGENTS, int(ceiling))
+    floor = min(ceiling, max(MIN_AGENTS, int(minimum)))
     if cores is None:
         cores = usable_cores()
     if available_bytes is None:
@@ -305,7 +311,7 @@ def governed_agent_count(
     if available_bytes and available_bytes > 0 and memory_per_agent_mb > 0:
         budget = available_bytes * max(0.0, reserve_ratio)
         allowed = min(allowed, int(budget // (memory_per_agent_mb * 1024 * 1024)))
-    return max(MIN_AGENTS, min(ceiling, allowed))
+    return max(floor, min(ceiling, allowed))
 
 
 def describe_capacity(

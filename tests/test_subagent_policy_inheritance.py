@@ -100,6 +100,7 @@ class RunnerBindsPolicyTest(unittest.IsolatedAsyncioTestCase):
             max_iterations=4,
             max_tool_result_chars=10_000,
             requires_verify_before_done=True,
+            validate_code_changes=True,
             locked_denied_tools=frozenset({"exec", "cron"}),
             allowed_tools=frozenset({"read_file", "verify", "probe"}),
         )
@@ -108,6 +109,7 @@ class RunnerBindsPolicyTest(unittest.IsolatedAsyncioTestCase):
         policy = probe.seen[0]
         assert policy is not None
         self.assertTrue(policy.requires_verify_before_done)
+        self.assertTrue(policy.validate_code_changes)
         self.assertEqual(frozenset({"exec", "cron"}), policy.locked_denied_tools)
         self.assertEqual(frozenset({"read_file", "verify", "probe"}), policy.allowed_tools)
 
@@ -227,6 +229,7 @@ class SubagentSpecCarriesPolicyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(specs))
         spec = specs[0]
         self.assertTrue(spec.requires_verify_before_done)
+        self.assertTrue(spec.validate_code_changes)
         self.assertIn("exec", spec.locked_denied_tools)
         self.assertIn("montage", spec.locked_denied_tools)
         # Runtime denial, not only the lock: the tool schema and the runner

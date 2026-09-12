@@ -98,13 +98,19 @@ class VerificationReport:
         }
 
     def render(self) -> str:
+        from navin.quality.evidence import verify_evidence
+
+        evidence = verify_evidence(self)
+        tests = "tests green" if evidence.tests_ok else "tests not run"
         headline = {
-            VERDICT_CLEAN: "PASS - no lint errors, tests green",
-            VERDICT_LINT_WARNINGS: "PASS with warnings - no errors, tests green",
+            VERDICT_CLEAN: f"PASS - no lint errors, {tests}",
+            VERDICT_LINT_WARNINGS: f"PASS with warnings - no errors, {tests}",
             VERDICT_LINT_ERRORS: "FAIL - lint errors must be fixed",
             VERDICT_TEST_FAILURES: "FAIL - tests are failing",
             VERDICT_NO_CHANGES: "Nothing to verify - no modified files detected",
         }.get(self.verdict, self.verdict)
+        if self.verdict in {VERDICT_CLEAN, VERDICT_LINT_WARNINGS} and not evidence.ok:
+            headline = "Not verified - no checks ran"
         lines = [headline, ""]
 
         if self.changed_paths:
