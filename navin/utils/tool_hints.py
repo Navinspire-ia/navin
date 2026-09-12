@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import posixpath
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from rich.cells import cell_len, chop_cells
-from rich.markup import escape
 from rich.text import Text
 
 from navin.utils.path import abbreviate_path
@@ -71,16 +71,30 @@ MAX_TRANSCRIPT_LINES = 5000
 # Default open preview: a Codex-sized hunk, not a 80-row wall.
 PREVIEW_OPEN_LINES = 32
 PREVIEW_MIN_WIDTH = 72
-# Subtle washes, preblended with the context background for terminal rendering.
-PREVIEW_ADD_INK = "#BDD1C2"
-PREVIEW_ADD_BG = "#202B24"
-PREVIEW_DEL_INK = "#D6BDBD"
-PREVIEW_DEL_BG = "#302323"
+# A single background with readable change colors and explicit +/- markers.
+PREVIEW_ADD_INK = "#E8E8E8"
+PREVIEW_ADD_BG = "#20392B"
+PREVIEW_DEL_INK = "#E8E8E8"
+PREVIEW_DEL_BG = "#48251F"
 PREVIEW_CTX_INK = "#E8E8E8"
-PREVIEW_CTX_BG = "#1C1C1C"
+PREVIEW_CTX_BG = "#181A1D"
 MAX_TRANSCRIPT_CHARS = 400_000
 # One TUI row: long enough for a real grep/run, short enough for WT.
 TOOL_LINE_LIMIT = 160
+
+
+def activity_palette(dark: bool = True) -> dict[str, str]:
+    """Soft semantic accents, with separate inks for exploration and its tools."""
+    return {
+        "blue": "#5EA8FF" if dark else "#3D82FF",
+        "green": "#8FBC8F" if dark else "#2D6A4F",
+        "mustard": "#D6BC78" if dark else "#795B13",
+        "coral": "#E39B91" if dark else "#914747",
+        "lavender": "#C6AFE3" if dark else "#705393",
+        "explore": "#B5BBD1" if dark else "#555E7A",
+        "tool": "#C3BDA3" if dark else "#6C6042",
+        "muted": "#A3A3A3" if dark else "#626262",
+    }
 
 # Matches file paths embedded in shell commands, including quoted paths with spaces.
 _PATH_IN_CMD_RE = re.compile(
@@ -428,7 +442,32 @@ def _raw_command_stub(command: str) -> str:
 def _command_from_args(arguments: dict | None) -> str:
     args = arguments if isinstance(arguments, dict) else {}
     command = args.get("command") or args.get("cmd")
-    return command.strip() if isinstance(command, str) and command.strip() else ""
+    return redact_command(command.strip()) if isinstance(command, str) and command.strip() else ""
+
+
+def redact_command(command: str) -> str:
+    """Mask explicit credentials in display text without changing execution args."""
+    value = r'''(?:'(?:[^']*)'|"(?:[^"\\]|\\.)*"|[^\s;&|]+)'''
+    command = re.sub(
+        rf"(?i)(\b[\w]*(?:password|passwd|token|secret|api_key|apikey)\s*=\s*){value}",
+        r"\1[redacted]", command,
+    )
+    command = re.sub(
+        rf"(?i)(--(?:password|passwd|token|secret|api-key)(?:=|\s+)){value}",
+        r"\1[redacted]", command,
+    )
+    return re.sub(r"(\b[\w+.-]+://[^\s/:]+:)[^\s/@]+(@)", r"\1[redacted]\2", command)
+
+
+def command_summary(command: str) -> str:
+    """Keep script bodies out of the activity heading; details retain the script."""
+    command = redact_command(command)
+    head = command.splitlines()[0] if command else "command"
+    if len(head) > TOOL_LINE_LIMIT:
+        head = head[:TOOL_LINE_LIMIT].rstrip() + " [details]"
+    if "\n" in command:
+        head += f" · {len(command.splitlines())} lines"
+    return head
 
 
 def short_run_target(command: str, *, limit: int = TOOL_LINE_LIMIT) -> str:
@@ -559,7 +598,19 @@ def activity_label(
     args = arguments if isinstance(arguments, dict) else {}
     verb = tool_verb(name)
     pending = phase in {"start", "output"}
-    if path or verb in _EDIT_VERBS:
+    if name == "manage_files" and not operation:
+        action = str(args.get("action") or "manage")
+        labels = {"delete": ("Deleting", "Deleted"), "move": ("Moving", "Moved"), "copy": ("Copying", "Copied"), "mkdir": ("Creating", "Created")}
+        label = labels.get(action, ("Managing", "Managed"))[0 if pending else 1]
+        if phase in {"error", "cancelled", "interrupted"}:
+            label = {"mkdir": "Create directory"}.get(action, action.title())
+        paths = args.get("paths") or [path or args.get("path") or "files"]
+        target = ", ".join(str(item) for item in paths) if isinstance(paths, list) else str(paths)
+        text = f"{label} {target}"
+    elif name == "test_run":
+        target = args.get("target") or args.get("runner") or "project"
+        text = f"{'Testing' if pending else 'Tests'} {target}"
+    elif path or verb in _EDIT_VERBS:
         target = path or _first_path(args) or "files"
         label = "Editing" if pending else file_operation_label(operation)
         if not operation and not pending:
@@ -569,7 +620,7 @@ def activity_label(
     elif verb == "run":
         command = _command_from_args(args) or tool_target(args) or "command"
         label = "Running" if pending else "Ran"
-        text = f"{label} {command}"
+        text = f"{label} {command_summary(command)}"
     elif verb in _EXPLORE_VERBS:
         text = describe_explore_step(name, args, limit=500)
     else:
@@ -585,30 +636,29 @@ def activity_label(
 def activity_head_text(text: str, *, dark: bool = True) -> Text:
     """Color the inline action and counts while keeping paths/commands literal."""
     rendered = Text(text)
-    palette = {
-        "add": "#A3BEA6" if dark else "#356345",
-        "delete": "#CE9C9C" if dark else "#914747",
-        "edit": "#C4B38D" if dark else "#79602F",
-        "explore": "#94AEC8" if dark else "#3F6487",
-        "run": "#B2A5C9" if dark else "#70568B",
-        "muted": "#A3A3A3" if dark else "#626262",
-    }
+    palette = activity_palette(dark)
     label = re.match(r"^[^\w\n]*(?P<action>[A-Za-z][\w-]*):?", text)
     if label:
         action = label["action"].lower()
-        family = {
-            "added": "add", "create": "add", "completed": "add",
-            "deleted": "delete", "failed": "delete",
-            "edit": "edit", "edited": "edit", "editing": "edit", "edits": "edit",
-            "reverted": "edit", "cancelled": "edit",
-            "explored": "explore", "read": "explore", "search": "explore", "list": "explore",
-            "ran": "run", "running": "run", "checked": "run", "checking": "run",
-            "unchanged": "muted",
-        }.get(action, "explore")
+        if action in {"failed", "cancelled", "unchanged"}:
+            family = {"failed": "coral", "cancelled": "mustard", "unchanged": "muted"}[action]
+        elif action in {"explored", "exploring"}:
+            family = "explore"
+        elif action in {"edit", "edited", "editing", "edits", "add", "added", "create", "created", "creating", "delete", "deleted", "deleting", "move", "moved", "moving", "copy", "copied", "copying"}:
+            family = "lavender"
+        elif action in {"run", "ran", "running", "testing", "tests", "completed", "checking", "checked"}:
+            family = "mustard"
+        else:
+            family = "tool"
         # Include the tree marker in the accent, on the same line as the target.
         rendered.stylize(palette[family], 0, label.end())
+    from navin.tui.paths import looks_like_path
+
+    for match in re.finditer(r"[^\s()\[\],]+", text):
+        if looks_like_path(match[0]):
+            rendered.stylize(palette["green"], match.start(), match.end())
     for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
-        color = palette["add"] if match[0].startswith("+") else palette["delete"]
+        color = palette["green"] if match[0].startswith("+") else palette["coral"]
         rendered.stylize(color, match.start(), match.end())
     return rendered
 
@@ -782,23 +832,27 @@ def preview_rows(
     extra = (diff_text or "").strip("\n")
     if extra and _looks_like_unified_diff(extra):
         if error:
-            for line in error.replace("\r\n", "\n").splitlines():
+            for line in display_tool_error(error).splitlines():
                 if line.strip():
                     rows.append((None, "error", line.rstrip()))
         rows.extend(_rows_from_unified_diff(extra))
         return rows[: max(1, int(limit))]
     path = _first_path(args)
-    if path and verb not in {"run", "edit", "create"}:
+    if path and verb not in {"run", "edit", "create"} and name != "manage_files":
         rows.append((None, "ctx", abbreviate_path(path, max_len=120)))
     pattern = args.get("pattern") or args.get("query")
     if isinstance(pattern, str) and pattern.strip() and verb != "run":
         rows.append((None, "ctx", pattern.strip()))
     if error:
-        for line in error.replace("\r\n", "\n").splitlines():
+        for line in display_tool_error(error).splitlines():
             if line.strip():
                 rows.append((None, "error", line.rstrip()))
     command = _command_from_args(args)
     text = _result_text(result, output_lines)
+    if error:
+        # A failure may also contain useful stdout. Remove only a duplicate
+        # error and the agent's retry suffix, not the rest of that output.
+        text = display_tool_error(text).replace(display_tool_error(error), "").strip()
     _, body = split_heredoc(command)
     if extra:
         text = extra
@@ -807,7 +861,7 @@ def preview_rows(
     elif text:
         for index, line in enumerate(text.splitlines(), start=1):
             rows.append((index, "ctx", line))
-    elif body:
+    elif body and not error:
         for index, line in enumerate(body.splitlines(), start=1):
             rows.append((index, "ctx", line))
     elif not rows:
@@ -815,6 +869,14 @@ def preview_rows(
         if isinstance(question, str) and question.strip():
             rows.append((None, "ctx", " ".join(question.split())))
     return rows[: max(1, int(limit))]
+
+
+def display_tool_error(error: str) -> str:
+    """Hide agent retry instructions while preserving the actionable failure."""
+    return re.sub(
+        r"\n\s*\[(?:No tool was executed\.|Analyze the error above).*\]\s*$",
+        "", error.replace("\r\n", "\n"), flags=re.DOTALL,
+    ).strip()
 
 
 def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:
@@ -864,6 +926,43 @@ def format_preview_line(number: int | None, kind: str, text: str) -> str:
     return f"{pad} {mark}{text}"
 
 
+@lru_cache(maxsize=64)
+def _preview_lexer(filename: str):
+    from pygments.lexers import get_lexer_for_filename
+    from pygments.util import ClassNotFound
+
+    try:
+        return get_lexer_for_filename(filename, stripnl=False, ensurenl=False)
+    except ClassNotFound:
+        return None
+
+
+def _highlight_preview_source(code: str, filename: str, dark: bool) -> Text:
+    """Restrained syntax colors, sharing the same five activity accents."""
+    from pygments.token import Token
+
+    source = Text(code)
+    lexer = _preview_lexer(filename) if filename else None
+    if lexer is None:
+        return source
+    palette = activity_palette(dark)
+    for start, token, value in lexer.get_tokens_unprocessed(code):
+        accent = None
+        if token in Token.Comment:
+            accent = "muted"
+        elif token in Token.Literal.String:
+            accent = "green"
+        elif token in Token.Keyword or token in Token.Literal.Number:
+            accent = "mustard"
+        elif token in Token.Name.Function or token in Token.Name.Builtin:
+            accent = "blue"
+        elif token in Token.Name.Class or token in Token.Operator:
+            accent = "lavender"
+        if accent:
+            source.stylize(palette[accent], start, start + len(value))
+    return source
+
+
 def format_preview_markup_line(
     number: int | None,
     kind: str,
@@ -871,8 +970,9 @@ def format_preview_markup_line(
     *,
     width: int = 0,
     dark: bool = True,
+    filename: str = "",
 ) -> str:
-    """Codex-style row: number, +/- , full-width wash, readable code. No bold."""
+    """One flat diff: tinted changes, quiet numbers and readable syntax."""
     prefix = format_preview_line(number, kind, "")
     code = text.expandtabs(4)
     target = max(1, int(width or PREVIEW_MIN_WIDTH))
@@ -886,17 +986,30 @@ def format_preview_markup_line(
     else:
         lines = chop_cells(prefix + code, target) or [""]
     palette = {
-        "add": (PREVIEW_ADD_INK, PREVIEW_ADD_BG) if dark else ("#354E3D", "#EDF3EE"),
-        "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#674545", "#F6EFEF"),
-        "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F6F8"),
-        "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F6F8"),
-        "error": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#674545", "#F6EFEF"),
+        "add": (PREVIEW_ADD_INK, PREVIEW_ADD_BG) if dark else ("#20242A", "#E5F0E8"),
+        "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#20242A", "#F5E6E3"),
+        "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F5F5"),
+        "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F5F5"),
+        "error": (activity_palette(dark)["coral"], PREVIEW_CTX_BG if dark else "#F5F5F5"),
     }
     ink, background = palette.get(kind, palette["ctx"])
-    return "\n".join(
-        f"[{ink} on {background}]{escape(line)}{' ' * max(0, target - cell_len(line))}[/]"
-        for line in lines
-    )
+    accents = activity_palette(dark)
+    source = _highlight_preview_source(code, filename, dark)
+    rendered = []
+    offset = 0
+    for line in lines:
+        row = Text(line, style=f"{ink} on {background}")
+        if number is not None and 0 < gutter < target:
+            row.stylize(accents["muted"], 0, gutter - 1)
+            if kind in {"add", "del"}:
+                row.stylize(accents["green" if kind == "add" else "coral"], gutter - 1, gutter)
+            length = len(line) - gutter
+            for span in source[offset:offset + length].spans:
+                row.stylize(span.style, gutter + span.start, gutter + span.end)
+            offset += length
+        row.pad_right(max(0, target - cell_len(line)))
+        rendered.append(row.markup)
+    return "\n".join(rendered)
 
 
 def format_tool_preview_markup(
@@ -921,8 +1034,9 @@ def format_tool_preview_markup(
         diff_text=diff_text,
         limit=limit,
     )
+    filename = _first_path(arguments or {}) if diff_text or any(row[1] in {"add", "del"} for row in rows) else ""
     return "\n".join(
-        format_preview_markup_line(*row, width=width, dark=dark) for row in rows
+        format_preview_markup_line(*row, width=width, dark=dark, filename=filename) for row in rows
     )
 
 

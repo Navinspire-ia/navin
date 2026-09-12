@@ -3,7 +3,7 @@
 
 """Navin color themes for the terminal UI.
 
-Brand chrome uses a sky blue that stays readable on black without the
+Brand chrome uses a sky blue that stays readable on charcoal without the
 neon punch of ``#0369FF``. Teal ``#54D4CD`` stays for accents. File paths
 use sage green; inline code that is not a path stays with the body text.
 Built-in Textual themes stay selectable from the theme picker.
@@ -29,9 +29,9 @@ NAVIN_DARK = Theme(
     error="#E85D4C",
     success="#54D4CD",
     foreground="#F2F2F2",
-    background="#000000",
-    surface="#262626",
-    panel="#1E1E1E",
+    background="#181A1D",
+    surface="#2A2D32",
+    panel="#22252A",
     dark=True,
     variables={
         "text-muted": "#9A9A9A",
@@ -40,20 +40,20 @@ NAVIN_DARK = Theme(
         "scrollbar": "#3A3A3A",
         "scrollbar-hover": "#4A4A4A",
         "scrollbar-active": "#8A8A8A",
-        "scrollbar-background": "#000000",
-        "scrollbar-background-hover": "#000000",
-        "scrollbar-background-active": "#000000",
+        "scrollbar-background": "#181A1D",
+        "scrollbar-background-hover": "#181A1D",
+        "scrollbar-background-active": "#181A1D",
         "block-cursor-foreground": "#000000",
         "block-cursor-background": "#F2F2F2",
         "input-cursor-foreground": "#000000",
         "input-cursor-background": "#F2F2F2",
         "input-selection-background": "#F2F2F2 25%",
-        "footer-background": "#000000",
+        "footer-background": "#181A1D",
         "footer-key-foreground": "#8A8A8A",
         "footer-description-foreground": "#8A8A8A",
         "button-color-foreground": "#111111",
         "markdown-code-inline-background": "transparent",
-        "markdown-code-block-background": "#121212",
+        "markdown-code-block-background": "#1E2126",
         "link-color": "#7AA8A2",
         "link-color-hover": "#8FBC8F",
         "path": "#8FBC8F",

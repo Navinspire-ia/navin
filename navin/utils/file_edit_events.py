@@ -404,7 +404,12 @@ def _resolve_manage_paths(tool: Any, workspace: Path | None, params: dict[str, A
             raw_paths = params.get("paths")
             if not isinstance(raw_paths, list):
                 return []
-            paths = [file for raw in raw_paths if (path := resolve(raw)) is not None for file in _files_under(path)]
+            targets = [path for raw in raw_paths if (path := resolve(raw)) is not None]
+            if not params.get("recursive") and any(path.is_dir() and not path.is_symlink() for path in targets):
+                # Deletion validates the whole request before touching files.
+                # Do not invent failed edits for children it will never touch.
+                return []
+            paths = [file for path in targets for file in _files_under(path)]
         elif action in {"move", "copy"}:
             source, destination = resolve(params.get("path")), resolve(params.get("destination"))
             if source is None or destination is None:
