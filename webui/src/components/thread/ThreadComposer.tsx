@@ -1407,13 +1407,15 @@ function ThreadComposerImpl({
     () => splitCapabilityMentionSegments(value, cliApps, mcpPresets, pickedFiles),
     [cliApps, mcpPresets, pickedFiles, value],
   );
-  const composerDecorations = useMemo(
-    () => mentionSegments.flatMap((segment) => {
+  const composerDecorations = useMemo((): Array<
+    CapabilityMentionSegment | { kind: "paste"; text: string }
+  > => {
+    type Decoration = CapabilityMentionSegment | { kind: "paste"; text: string };
+    return mentionSegments.flatMap((segment): Decoration[] => {
       if (segment.kind !== "text") return [segment];
       return splitPastedContentSegments(segment.text);
-    }),
-    [mentionSegments],
-  );
+    });
+  }, [mentionSegments]);
   const hasMentionDecorations = composerDecorations.some(
     (segment) => segment.kind !== "text",
   );

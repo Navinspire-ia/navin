@@ -190,6 +190,8 @@ def _describe_failure(exc: BaseException) -> str:
     invites it to retry the identical call. ``McpError`` carries the server's own
     message and JSON-RPC code, so prefer those.
     """
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_describe_failure(child) for child in exc.exceptions)[:_MAX_FAILURE_CHARS]
     error = getattr(exc, "error", None)
     message = str(getattr(error, "message", "") or "").strip()
     code = getattr(error, "code", None)
@@ -1146,10 +1148,9 @@ async def connect_mcp_servers(
             "In a packaged build this usually means anyio/sniffio metadata is missing."
         ) from exc
 
-    async def open_single_server(name: str, cfg) -> tuple[str, AsyncExitStack | None]:
-        server_stack = AsyncExitStack()
-        await server_stack.__aenter__()
-
+    async def open_single_server(
+        name: str, cfg, server_stack: AsyncExitStack
+    ) -> tuple[str, AsyncExitStack | None]:
         try:
             transport_type = cfg.type
             if not transport_type:
@@ -1161,7 +1162,6 @@ async def connect_mcp_servers(
                     )
                 else:
                     logger.warning("MCP server '{}': no command or url configured, skipping", name)
-                    await server_stack.aclose()
                     return name, None
 
             if transport_type in {"sse", "streamableHttp"}:
@@ -1173,7 +1173,6 @@ async def connect_mcp_servers(
                         _redact_url(cfg.url),
                         error,
                     )
-                    await server_stack.aclose()
                     return name, None
 
             if transport_type == "stdio":
@@ -1198,7 +1197,6 @@ async def connect_mcp_servers(
             elif transport_type == "sse":
                 if not await _probe_http_url(cfg.url):
                     logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
-                    await server_stack.aclose()
                     return name, None
 
                 def httpx_client_factory(
@@ -1226,7 +1224,6 @@ async def connect_mcp_servers(
             elif transport_type == "streamableHttp":
                 if not await _probe_http_url(cfg.url):
                     logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
-                    await server_stack.aclose()
                     return name, None
 
                 http_client = await server_stack.enter_async_context(
@@ -1243,7 +1240,6 @@ async def connect_mcp_servers(
                 )
             else:
                 logger.warning("MCP server '{}': unknown transport type '{}'", name, transport_type)
-                await server_stack.aclose()
                 return name, None
 
             read = _filter_malformed_mcp_progress_notifications(read, name)
@@ -1363,8 +1359,6 @@ async def connect_mcp_servers(
                     "only JSON-RPC to stdout and sends logs/debug output to stderr instead."
                 )
             logger.exception("MCP server '{}': failed to connect: {}", name, hint)
-            with suppress(Exception):
-                await server_stack.aclose()
             return name, None
 
     async def connect_single_server(name: str, cfg) -> tuple[str, MCPConnection | None]:
@@ -1373,20 +1367,27 @@ async def connect_mcp_servers(
         close_requested = asyncio.Event()
 
         async def own_connection() -> None:
-            stack: AsyncExitStack | None = None
             try:
-                _, stack = await open_single_server(name, cfg)
-                if not ready.done():
-                    ready.set_result(stack is not None)
-                if stack is not None:
+                # Own the stack before the handshake: SDK task-group failures
+                # cancel initialize(), so cleanup must also cover BaseException.
+                # Let __aexit__ unwind in this task and recover the HTTP error
+                # before reporting a failed connection to the caller.
+                async with AsyncExitStack() as stack:
+                    _, connected_stack = await open_single_server(name, cfg, stack)
+                    if connected_stack is None:
+                        return
+                    if not ready.done():
+                        ready.set_result(True)
                     await close_requested.wait()
+            except Exception as exc:
+                logger.warning("MCP server '{}': connection closed: {}", name, _describe_failure(exc))
             except BaseException as exc:
                 if not ready.done():
                     ready.set_exception(exc)
                 raise
             finally:
-                if stack is not None:
-                    await stack.aclose()
+                if not ready.done():
+                    ready.set_result(False)
 
         owner = asyncio.create_task(own_connection(), name=f"mcp:{name}")
         connection = _OwnedMCPConnection(owner, close_requested)
