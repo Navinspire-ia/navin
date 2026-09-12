@@ -43,6 +43,7 @@ class PickItem:
     title: str
     subtitle: str = ""
     badge: str = ""
+    group: str = ""
 
 
 class PickerScreen(ModalScreen[str | None]):
@@ -158,11 +159,15 @@ class PickerScreen(ModalScreen[str | None]):
         self._filtered = items
         options = self.query_one("#options", OptionList)
         options.clear_options()
-        highlight = 0
+        highlight = None
+        group = ""
         for idx, item in enumerate(items):
+            if item.group and item.group != group:
+                group = item.group
+                options.add_option(Option(Text(group, style="#87AFD7"), disabled=True))
             mark = ">" if item.id == self._current else "-"
-            if item.id == self._current:
-                highlight = idx
+            if highlight is None or item.id == self._current:
+                highlight = options.option_count
             options.add_option(Option(self._option_line(item, mark), id=f"{idx}"))
         if items:
             options.highlighted = highlight
@@ -184,7 +189,7 @@ class PickerScreen(ModalScreen[str | None]):
             item
             for item in self._items
             if all(
-                w in f"{item.id} {item.title} {item.subtitle} {item.badge}".lower() for w in words
+                w in f"{item.id} {item.title} {item.subtitle} {item.badge} {item.group}".lower() for w in words
             )
         ]
         self._fill(matched)
@@ -197,12 +202,9 @@ class PickerScreen(ModalScreen[str | None]):
             title = " ".join(self._query.split())
             self.dismiss(f"{RENAME_PREFIX}{self._rename_key}\n{title}")
             return
-        options = self.query_one("#options", OptionList)
-        idx = options.highlighted
-        if idx is None and self._filtered:
-            idx = 0
-        if idx is not None and 0 <= idx < len(self._filtered):
-            self.dismiss(self._filtered[idx].id)
+        item = self._highlighted_item()
+        if item is not None:
+            self.dismiss(item.id)
 
     @on(OptionList.OptionSelected, "#options")
     def _selected(self, event: OptionList.OptionSelected) -> None:
@@ -218,9 +220,12 @@ class PickerScreen(ModalScreen[str | None]):
     def _highlighted_item(self) -> PickItem | None:
         options = self.query_one("#options", OptionList)
         idx = options.highlighted
-        if idx is None or not (0 <= idx < len(self._filtered)):
+        if idx is None:
             return None
-        return self._filtered[idx]
+        option = options.get_option_at_index(idx)
+        if option.disabled or option.id is None:
+            return None
+        return self._filtered[int(option.id)]
 
     def action_rename(self) -> None:
         if not self._renamable:
@@ -806,6 +811,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+G` | Settings |
 | `F2` / `F3` / `F4` | Graph / Evolve / AGI |
 | `Ctrl+R` | Toggle reasoning visibility |
+| `Ctrl+Shift+R` | Choose reasoning effort |
 | `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |

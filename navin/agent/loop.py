@@ -1443,9 +1443,8 @@ class AgentLoop:
     ) -> LLMRuntime:
         """Route reasoning effort by mode and explicit override.
 
-        Plan turns think at least at ``high``. Agent turns force thinking
-        off so a config of ``high`` cannot spend a minute before the first
-        tool. An explicit ``reasoning_effort`` in the message metadata wins.
+        Explicit message and configuration choices win over mode defaults.
+        Automatic effort uses high for Plan and none for Agent turns.
         """
         try:
             from navin.agent.adaptive_reasoning import (

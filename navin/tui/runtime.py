@@ -769,9 +769,9 @@ class TuiRuntime:
                 if isinstance(msg, dict) and msg.get("role") == "user" and not msg.get("injected_event")
             )
 
-    def preset_details(self) -> list[dict[str, str]]:
+    def preset_details(self) -> list[dict[str, Any]]:
         """Model presets as rows for the picker."""
-        rows: list[dict[str, str]] = []
+        rows: list[dict[str, Any]] = []
         loop = self.agent_loop
         try:
             resolved_default = self.config.resolve_preset("default")
@@ -782,12 +782,13 @@ class TuiRuntime:
                 "name": "default",
                 "model": getattr(resolved_default, "model", "") or "",
                 "provider": getattr(resolved_default, "provider", "") or "",
-                "label": "Default (agents.defaults)",
+                "label": "Default",
+                "modality": "text",
             }
         )
-        presets = getattr(loop, "model_presets", None) if loop is not None else None
-        if not presets:
-            presets = getattr(self.config, "model_presets", {}) or {}
+        presets = dict(getattr(self.config, "model_presets", {}) or {})
+        if loop is not None:
+            presets.update(getattr(loop, "model_presets", {}) or {})
         for name in sorted(presets):
             preset = presets[name]
             rows.append(
@@ -796,9 +797,39 @@ class TuiRuntime:
                     "model": str(getattr(preset, "model", "") or ""),
                     "provider": str(getattr(preset, "provider", "") or ""),
                     "label": str(getattr(preset, "label", "") or ""),
+                    "modality": getattr(preset, "modality", "text"),
+                    "input_modalities": getattr(preset, "input_modalities", None),
+                    "enabled": getattr(preset, "enabled", True),
                 }
             )
         return rows
+
+    def reasoning_details(self) -> tuple[str, tuple[tuple[str, str], ...]]:
+        from navin.tui.models import reasoning_options
+
+        resolved = self.config.resolve_preset(self.status.model_preset)
+        options = reasoning_options(resolved.provider or "", resolved.model)
+        effort = resolved.reasoning_effort or ""
+        if self.agent_loop is not None:
+            session = self.agent_loop.sessions.get_or_create(self.session_key)
+            choices = session.metadata.get("tui_reasoning_efforts", {})
+            effort = choices.get(self._reasoning_key(resolved), effort)
+        values = {value for value, _ in options}
+        return (effort if effort in values else ""), options
+
+    def _reasoning_key(self, resolved: Any) -> str:
+        return f"{self.status.model_preset}:{resolved.provider}:{resolved.model}"
+
+    def set_reasoning_effort(self, effort: str) -> None:
+        if self.agent_loop is None:
+            raise RuntimeError("runtime not started")
+        _, options = self.reasoning_details()
+        if effort not in {value for value, _ in options}:
+            raise ValueError("This reasoning level is not supported by the selected model")
+        resolved = self.config.resolve_preset(self.status.model_preset)
+        session = self.agent_loop.sessions.get_or_create(self.session_key)
+        session.metadata.setdefault("tui_reasoning_efforts", {})[self._reasoning_key(resolved)] = effort
+        self.agent_loop.sessions.save(session)
 
     def tool_rows(self) -> list[dict[str, Any]]:
         loop = self.agent_loop
@@ -915,6 +946,14 @@ class TuiRuntime:
             return
         self._ensure_tasks()
         metadata: dict[str, Any] = {"_wants_stream": True}
+        sessions = getattr(self.agent_loop, "sessions", None)
+        if sessions is not None:
+            from navin.agent.adaptive_reasoning import REASONING_EFFORT_METADATA_KEY
+
+            resolved = self.config.resolve_preset(self.status.model_preset)
+            session = sessions.get_or_create(self.session_key)
+            if self._reasoning_key(resolved) in session.metadata.get("tui_reasoning_efforts", {}):
+                metadata[REASONING_EFFORT_METADATA_KEY] = self.reasoning_details()[0]
         if model_preset and model_preset != "default":
             from navin.bus.events import INBOUND_META_MODEL_PRESET
 
@@ -1015,6 +1054,9 @@ class TuiRuntime:
         """Switch the runtime preset for future turns (same as ``/model``)."""
         if self.agent_loop is None:
             return
+        row = next((row for row in self.preset_details() if row["name"] == (name or "default")), None)
+        if row is None or not row.get("enabled", True) or row.get("modality", "text") != "text":
+            raise ValueError("Choose an enabled chat model; media models are configured in Settings")
         self.agent_loop.model_preset = None if name in (None, "", "default") else name
         self._refresh_status()
 
