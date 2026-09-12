@@ -17,6 +17,7 @@ from unittest import mock
 
 from navin.agent.resources import (
     MIN_AGENTS,
+    MIN_PARALLEL_AGENTS,
     _cgroup_cpu_quota,
     _cgroup_memory_limit,
     describe_capacity,
@@ -202,11 +203,24 @@ class GovernedCountTest(unittest.TestCase):
             4,
         )
 
-    def test_a_loaded_machine_still_gets_one_agent(self) -> None:
-        """Zero would deadlock a turn that is waiting on a subagent."""
+    def test_a_loaded_machine_keeps_a_small_parallel_wave(self) -> None:
+        """A low free-memory estimate must not serialize a delegated task."""
         self.assertEqual(
             governed_agent_count(cores=1, available_bytes=1024, ceiling=200),
-            MIN_AGENTS,
+            MIN_PARALLEL_AGENTS,
+        )
+
+    def test_the_parallel_floor_never_overrides_a_lower_ceiling(self) -> None:
+        for ceiling in (1, 3, 5):
+            self.assertEqual(
+                governed_agent_count(cores=1, available_bytes=1024, ceiling=ceiling),
+                ceiling,
+            )
+
+    def test_a_constrained_host_can_explicitly_lower_the_floor(self) -> None:
+        self.assertEqual(
+            governed_agent_count(cores=1, available_bytes=1024, minimum=1, ceiling=200),
+            1,
         )
 
     def test_a_bigger_reserve_allows_more_agents(self) -> None:
@@ -246,6 +260,16 @@ class ComposedWithPlanLimitsTest(unittest.TestCase):
             effective_concurrent_agents(config),
             config.agents.defaults.max_concurrent_subagents,
         )
+
+    def test_the_configured_floor_applies_to_live_limit_calculations(self) -> None:
+        from navin.config.schema import Config
+        from navin.plan_limits import effective_concurrent_agents
+
+        config = Config()
+        with mock.patch("navin.plan_limits.measured_capacity", return_value=(1, 1024)):
+            self.assertEqual(effective_concurrent_agents(config), 5)
+            config.resources.min_concurrent_agents = 1
+            self.assertEqual(effective_concurrent_agents(config), 1)
 
     def test_the_governed_limit_never_exceeds_the_configured_one(self) -> None:
         from navin.config.schema import Config

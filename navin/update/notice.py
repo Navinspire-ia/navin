@@ -33,6 +33,19 @@ def _cache_path() -> Path:
     return Path.home() / ".navin" / "update-check.json"
 
 
+def _cache_context() -> dict[str, str]:
+    from navin.update import service
+
+    base_url, channel, skipped = service._update_config()
+    kind = service._install_kind()
+    return {
+        "platform": service._platform_key(kind),
+        "baseUrl": base_url,
+        "channel": channel,
+        "skippedVersion": skipped,
+    }
+
+
 def _read_cache() -> dict[str, Any] | None:
     try:
         raw = json.loads(_cache_path().read_text(encoding="utf-8"))
@@ -44,7 +57,7 @@ def _read_cache() -> dict[str, Any] | None:
         fresh = time.time() - float(raw.get("at") or 0) < _CACHE_TTL_S
     except (TypeError, ValueError):
         return None
-    if not fresh or raw.get("currentVersion") != __version__:
+    if not fresh or raw.get("currentVersion") != __version__ or raw.get("context") != _cache_context():
         return None
     info = raw.get("info")
     return info if isinstance(info, dict) else None
@@ -55,7 +68,10 @@ def _write_cache(info: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps({"at": time.time(), "currentVersion": __version__, "info": info}),
+            json.dumps({
+                "at": time.time(), "currentVersion": __version__,
+                "context": _cache_context(), "info": info,
+            }),
             encoding="utf-8",
         )
     except OSError:

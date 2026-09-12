@@ -36,6 +36,7 @@ import {
 import {
   DEFAULT_SEARCH_COUNTRIES,
   BUTTON_STYLES,
+  HEADER_BUTTON_STYLES,
   ICON_BUTTON_STYLES,
   OFFER_ROW_MENU,
   careerDeskHash,
@@ -1078,17 +1079,19 @@ export function CareerWorkspace({
               pane === "offers" && view === "work" ? (
                 <PrimaryButton
                   text={tx("offerBook", "Offers")}
+                  title={tx("offerBook", "Offers")}
                   iconProps={{ iconName: "PageList" }}
                   onClick={() => openOffers()}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="career-open-offers"
                 />
               ) : (
                 <DefaultButton
                   text={tx("offerBook", "Offers")}
+                  title={tx("offerBook", "Offers")}
                   iconProps={{ iconName: "PageList" }}
                   onClick={() => openOffers()}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="career-open-offers"
                 />
               )
@@ -1096,38 +1099,46 @@ export function CareerWorkspace({
             {showDesk ? (
               desk.loop?.enabled ? (
                 <PrimaryButton
-                  text={tx("pause", "Pause loop")}
+                  text={tx("pause", "Pause")}
+                  title={tx("pauseTitle", "Pause the loop")}
+                  ariaLabel={tx("pauseTitle", "Pause the loop")}
                   iconProps={{ iconName: "Pause" }}
                   onClick={() => void run("stop")}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="career-pause-loop"
                 />
               ) : (
                 <PrimaryButton
-                  text={tx("startLoop", "Start loop")}
+                  text={tx("startLoop", "Start")}
+                  title={tx("startLoopTitle", "Start the loop")}
+                  ariaLabel={tx("startLoopTitle", "Start the loop")}
                   iconProps={{ iconName: "Play" }}
                   onClick={() => {
                     setScheduleMode("start");
                     setScheduleOpen(true);
                   }}
                   disabled={Boolean(busy)}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="career-start-loop"
                 />
               )
             ) : null}
             {showDesk ? (
               <DefaultButton
-                text={tx("cycle", "Run cycle")}
+                text={tx("cycle", "Run")}
+                title={tx("cycleTitle", "Run a cycle")}
+                ariaLabel={tx("cycleTitle", "Run a cycle")}
                 iconProps={{ iconName: "Sync" }}
                 onClick={() => void run("tick", { force: true })}
                 disabled={Boolean(busy)}
-                styles={BUTTON_STYLES}
+                styles={HEADER_BUTTON_STYLES}
               />
             ) : null}
             {showDesk ? (
               <PrimaryButton
-                text={tx("findMission", "Find me a mission")}
+                text={tx("findMission", "Find")}
+                title={tx("findMissionTitle", "Find me a mission")}
+                ariaLabel={tx("findMissionTitle", "Find me a mission")}
                 iconProps={{ iconName: "Search" }}
                 disabled={Boolean(busy)}
                 onClick={() => {
@@ -1138,7 +1149,7 @@ export function CareerWorkspace({
                   );
                   openOffers({ view: "inbox", bucket: "all" });
                 }}
-                styles={BUTTON_STYLES}
+                styles={HEADER_BUTTON_STYLES}
               />
             ) : null}
           </div>

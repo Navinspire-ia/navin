@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -31,11 +32,14 @@ from packaging.version import InvalidVersion, Version
 from navin import __version__
 from navin.bus.notify import notify
 from navin.config.loader import load_config
+from navin.process_runtime import child_environment
 from navin.utils.proc import detached_no_window_kwargs, no_window_kwargs
 
 _CACHE_TTL_S = 6 * 60 * 60
 _MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
 _STATE_LOCK = threading.Lock()
+_OPERATION_LOCK = threading.Lock()
+_DOWNLOAD_WORKER: threading.Thread | None = None
 _STATE: dict[str, Any] = {
     "state": "idle",
     "progress": 0,
@@ -56,6 +60,43 @@ class UpdateError(RuntimeError):
 def _set_state(**values: Any) -> None:
     with _STATE_LOCK:
         _STATE.update(values)
+
+
+def _set_checked_release(info: dict[str, Any]) -> None:
+    with _STATE_LOCK:
+        if _STATE.get("state") in {"downloading", "installing", "restarting"}:
+            return
+        if _STATE.get("state") == "ready" and _STATE.get("update") == info:
+            return
+        _STATE.update(
+            state="available" if info.get("available") else "idle",
+            update=info,
+            error=None,
+            path=None,
+            progress=0,
+        )
+
+
+def _update_failure(exc: Exception) -> UpdateError:
+    error = exc if isinstance(exc, UpdateError) else UpdateError(
+        f"Could not complete the update: {exc}", status=503,
+    )
+    _set_state(state="error", error=str(error))
+    return error
+
+
+def _run_update_operation(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    if not _OPERATION_LOCK.acquire(blocking=False):
+        raise UpdateError("An update is already in progress", status=409)
+    try:
+        return action()
+    except (UpdateError, OSError, subprocess.SubprocessError) as exc:
+        error = _update_failure(exc)
+        if error is exc:
+            raise
+        raise error from exc
+    finally:
+        _OPERATION_LOCK.release()
 
 
 _INSTALL_KINDS = frozenset(
@@ -461,7 +502,7 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
             "installKind": kind,
             "channel": channel,
         }
-        _set_state(state="idle", update=result, error=None)
+        _set_checked_release(result)
         return result
 
     now = time.monotonic()
@@ -480,10 +521,12 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
         result["configured"] = True
         result["channel"] = channel
         _CACHE = (now, result)
-        _set_state(state="available" if result.get("available") else "idle", update=result, error=None)
+        _set_checked_release(result)
         return result
     except UpdateError as exc:
-        _set_state(state="error", error=str(exc))
+        with _STATE_LOCK:
+            if _STATE.get("state") not in {"downloading", "ready", "installing", "restarting"}:
+                _STATE.update(state="error", error=str(exc))
         raise
 
 
@@ -511,6 +554,43 @@ def _download_path(version: str, kind: str) -> Path:
 
 def download_update() -> dict[str, Any]:
     """Download the currently available update and verify it byte-for-byte."""
+    return _run_update_operation(_download_update)
+
+
+def start_update_download() -> dict[str, Any]:
+    """Start one download and return immediately so the UI can poll progress."""
+    global _DOWNLOAD_WORKER
+    if not _OPERATION_LOCK.acquire(blocking=False):
+        return update_status()
+    with _STATE_LOCK:
+        ready = _STATE.get("state") == "ready" and bool(_STATE.get("path"))
+        restarting = _STATE.get("state") == "restarting"
+    if restarting or (ready and Path(str(_STATE["path"])).is_file()):
+        _OPERATION_LOCK.release()
+        return update_status()
+    _set_state(
+        state="downloading", progress=0, downloadedBytes=0, totalBytes=0,
+        path=None, error=None,
+    )
+
+    def run() -> None:
+        try:
+            _download_update()
+        except Exception as exc:  # noqa: BLE001 - every worker failure must reach the UI
+            _update_failure(exc)
+        finally:
+            _OPERATION_LOCK.release()
+
+    _DOWNLOAD_WORKER = threading.Thread(target=run, name="navin-update-download", daemon=True)
+    try:
+        _DOWNLOAD_WORKER.start()
+    except RuntimeError as exc:
+        _OPERATION_LOCK.release()
+        raise _update_failure(exc) from exc
+    return update_status()
+
+
+def _download_update() -> dict[str, Any]:
     info = check_for_update()
     if not info.get("available"):
         raise UpdateError("No update is available", status=409)
@@ -528,6 +608,8 @@ def download_update() -> dict[str, Any]:
         downloadedBytes=0,
         totalBytes=expected,
         error=None,
+        update=info,
+        path=None,
     )
     try:
         with httpx.stream(
@@ -585,25 +667,24 @@ _WAIT_FOR_APP = (
 # columns: a volume name with spaces, extra tabs, or a localized "Volumes"
 # line used to leave $mount empty and the install died with no UI.
 _MACOS_INSTALL_SCRIPT = (
-    _WAIT_FOR_APP + 'mnt=$(mktemp -d "${TMPDIR:-/tmp}/navin-dmg.XXXXXX"); '
+    _WAIT_FOR_APP + 'target="$4"; abort() { open -a "$target" >/dev/null 2>&1; exit 1; }; '
+    'mnt=$(mktemp -d "${TMPDIR:-/tmp}/navin-dmg.XXXXXX") || abort; '
+    'unmount() { hdiutil detach "$mnt" -force >/dev/null 2>&1; rm -rf "$mnt"; }; '
     'hdiutil attach "$3" -mountpoint "$mnt" -readonly -nobrowse -noautoopen '
-    ">/dev/null || { rm -rf \"$mnt\"; exit 1; }; "
-    'src=$(find "$mnt" -maxdepth 2 -name "*.app" -type d | head -n 1); '
-    '[ -d "$src" ] || { hdiutil detach "$mnt" -force >/dev/null 2>&1; '
-    'rm -rf "$mnt"; exit 1; }; '
-    'rm -rf "$5"; mv "$4" "$5"; '
+    ">/dev/null || { rm -rf \"$mnt\"; abort; }; "
+    'src=""; for app in "$mnt"/*.app "$mnt"/*/*.app; do '
+    'if [ -d "$app" ]; then src="$app"; break; fi; done; '
+    '[ -d "$src" ] || { unmount; abort; }; '
     # ditto is what Finder uses: it preserves the signature and the resource
-    # forks, and a signature broken in transit stops the app from starting at all
-    # on Apple Silicon.
-    'if ditto "$src" "$4"; then '
-    'hdiutil detach "$mnt" -force >/dev/null 2>&1; rm -rf "$mnt"; '
-    'xattr -dr com.apple.quarantine "$4" >/dev/null 2>&1; '
+    # forks. Finish copying before moving the current application aside.
+    'rm -rf "$4.new" || { unmount; abort; }; '
+    'ditto "$src" "$4.new" || { unmount; rm -rf "$4.new"; abort; }; '
+    'unmount; xattr -dr com.apple.quarantine "$4.new" >/dev/null 2>&1; '
+    'rm -rf "$5" && mv "$4" "$5" || { rm -rf "$4.new"; abort; }; '
+    'if mv "$4.new" "$4"; then '
     'if open -a "$4"; then rm -rf "$5"; '
-    # The new bundle refused to start: put the working one back rather than
-    # leaving the user with no application at all.
-    'else rm -rf "$4"; mv "$5" "$4"; open -a "$4"; fi; '
-    'else hdiutil detach "$mnt" -force >/dev/null 2>&1; rm -rf "$mnt"; '
-    'rm -rf "$4"; mv "$5" "$4"; open -a "$4"; fi'
+    'else rm -rf "$4"; mv "$5" "$4"; open -a "$4"; exit 1; fi; '
+    'else mv "$5" "$4"; open -a "$4"; exit 1; fi'
 )
 
 # A single-file install: the AppImage the user launched, or a bare frozen
@@ -622,6 +703,12 @@ _FILE_SWAP_INSTALL_SCRIPT = (
     'if kill -0 "$newpid" 2>/dev/null; then rm -f "$5"; '
     'else rm -f "$4"; mv -f "$5" "$4"; "$4" >/dev/null 2>&1 & fi'
 )
+
+
+def _updater_environment() -> dict[str, str]:
+    # The new application outlives the old frozen process and must load its
+    # own libraries instead of inheriting the old bundle's runtime directory.
+    return {**child_environment(), "PYINSTALLER_RESET_ENVIRONMENT": "1"}
 
 
 def _install_posix_app(
@@ -652,6 +739,7 @@ def _install_posix_app(
             _os_path(target),
             _os_path(backup),
         ],
+        env=_updater_environment(),
         close_fds=True,
         **detached_no_window_kwargs(),
     )
@@ -763,6 +851,7 @@ def _probe_binary(binary: Path, version: str) -> None:
             encoding="utf-8",
             errors="replace",
             timeout=180,
+            env=_updater_environment(),
             check=False,
             **no_window_kwargs(),
         )
@@ -833,6 +922,7 @@ def _relaunch_after_exit(argv: list[str], pid: int) -> None:
     """Start ``argv`` once process ``pid`` is gone (POSIX)."""
     subprocess.Popen(  # noqa: S603
         ["/bin/sh", "-c", _RELAUNCH_SCRIPT, "navin-updater", str(pid), "0", *argv],
+        env=_updater_environment(),
         close_fds=True,
         **detached_no_window_kwargs(),
     )
@@ -846,6 +936,15 @@ def _windows_helper() -> Path:
     if not helper.is_file():
         raise UpdateError("Navin update helper is missing", status=503)
     return helper
+
+
+def _stage_windows_helper(version: str) -> Path:
+    """The running helper must not lock files that the installer replaces."""
+    helper = _windows_helper()
+    outside = Path.home() / ".navin" / "updates" / version / "NavinUpdater.exe"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(helper, outside)
+    return outside
 
 
 def _other_processes_in_tree(tree: Path, pid: int) -> list[int]:
@@ -897,10 +996,7 @@ def _launch_windows_tree_updater(
     the directory open. A copy under ~/.navin/updates does the work once this
     process has exited.
     """
-    helper = _windows_helper()
-    outside = Path.home() / ".navin" / "updates" / version / "NavinUpdater.exe"
-    outside.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(helper, outside)
+    outside = _stage_windows_helper(version)
     command = [
         _os_path(outside),
         "--mode",
@@ -916,7 +1012,10 @@ def _launch_windows_tree_updater(
         command += ["--restart", _os_path(restart[0])]
         if len(restart) > 1:
             command += ["--restart-args", subprocess.list2cmdline(restart[1:])]
-    subprocess.Popen(command, close_fds=True, **_updater_spawn_kwargs())  # noqa: S603
+    subprocess.Popen(  # noqa: S603
+        command, cwd=_os_path(outside.parent), env=_updater_environment(),
+        close_fds=True, **_updater_spawn_kwargs(),
+    )
 
 
 def _install_cli(archive: Path, *, version: str, pid: int, relaunch: bool) -> dict[str, Any]:
@@ -955,11 +1054,15 @@ def apply_cli_update() -> dict[str, Any]:
     Unlike :func:`install_update`, nothing here stops the process or announces
     a restart: the command that called this prints the outcome and exits.
     """
+    return _run_update_operation(_apply_cli_update)
+
+
+def _apply_cli_update() -> dict[str, Any]:
     with _STATE_LOCK:
         path = str(_STATE.get("path", ""))
         info = dict(_STATE.get("update") or {})
     if not path or not Path(path).is_file():
-        downloaded = download_update()
+        downloaded = _download_update()
         path = downloaded["path"]
         info = downloaded
     kind = str(info.get("installKind") or _install_kind())
@@ -1061,11 +1164,17 @@ def _updater_spawn_kwargs() -> dict[str, Any]:
 
 def install_update() -> dict[str, Any]:
     """Launch the platform updater, then stop Navin after the HTTP response."""
+    return _run_update_operation(_install_update)
+
+
+def _install_update() -> dict[str, Any]:
     with _STATE_LOCK:
         path = str(_STATE.get("path", ""))
         info = dict(_STATE.get("update") or {})
+        if _STATE.get("state") == "restarting":
+            return {"state": "restarting", "latestVersion": info.get("latestVersion")}
     if not path or not Path(path).is_file():
-        downloaded = download_update()
+        downloaded = _download_update()
         path = downloaded["path"]
         info = downloaded
     kind = str(info.get("installKind") or _install_kind())
@@ -1080,12 +1189,7 @@ def install_update() -> dict[str, Any]:
     _set_state(state="installing", progress=100)
 
     if kind.startswith("windows"):
-        helper = executable.with_name("NavinUpdater.exe")
-        bundled_root = Path(getattr(sys, "_MEIPASS", executable.parent))
-        if not helper.is_file():
-            helper = bundled_root / "NavinUpdater.exe"
-        if not helper.is_file():
-            raise UpdateError("Navin update helper is missing", status=503)
+        helper = _stage_windows_helper(str(info.get("latestVersion") or ""))
         mode = "installer" if kind == "windows-setup" else "portable"
         # What comes back up is the window the user closed, not the sidecar
         # behind it: relaunching the gateway alone would leave them with a
@@ -1105,7 +1209,10 @@ def install_update() -> dict[str, Any]:
             "--restart",
             _os_path(relaunch),
         ]
-        subprocess.Popen(command, close_fds=True, **_updater_spawn_kwargs())
+        subprocess.Popen(
+            command, cwd=_os_path(helper.parent), env=_updater_environment(),
+            close_fds=True, **_updater_spawn_kwargs(),
+        )
     elif kind == "macos-app":
         _install_macos_app(Path(path), pid=pid, desktop_pid=desktop_pid)
     elif kind == "linux-appimage":
@@ -1136,6 +1243,7 @@ def install_update() -> dict[str, Any]:
 
     version = str(info.get("latestVersion") or "").strip()
     _record_pending_install(version)
+    _set_state(state="restarting", error=None)
     # The tab that asked for this gets a reply; every other open window just
     # loses its connection in a second and a half with no idea why.
     notify(

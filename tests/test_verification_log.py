@@ -122,12 +122,17 @@ class QualityToolHooksTest(_LogTestBase):
         assert last is not None
         self.assertFalse(last["ok"])
 
-    def test_suite_that_did_not_run_proves_nothing(self) -> None:
+    def test_suite_that_did_not_run_invalidates_an_earlier_pass(self) -> None:
+        vlog.record_verification(self.root, source="test_run", ok=True, tests_ran=True)
         outcomes = [
             TestOutcome(runner="pytest", ran=False, skipped_reason="no tests found"),
         ]
         _record_test_outcomes(self.root, outcomes)
-        self.assertIsNone(vlog.last_verification(self.root))
+        last = vlog.last_verification(self.root)
+        assert last is not None
+        self.assertFalse(last["ok"])
+        self.assertFalse(last["tests_ran"])
+        self.assertIsNotNone(vlog.refusal_to_close_without_proof(self.root, require_tests=True))
 
     def test_clean_verify_report_is_recorded_green(self) -> None:
         report = VerificationReport(

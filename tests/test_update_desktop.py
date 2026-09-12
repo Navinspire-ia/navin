@@ -451,7 +451,6 @@ class MacosInstallScriptTests(unittest.TestCase):
     def test_the_image_is_mounted_at_a_known_path(self):
         script = service._MACOS_INSTALL_SCRIPT
         self.assertIn("-mountpoint", script)
-        self.assertIn('find "$mnt"', script)
         self.assertNotIn("grep -o '/Volumes/", script)
 
 

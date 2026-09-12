@@ -39,6 +39,7 @@ from navin.update import (
     check_for_update,
     download_update,
     install_update,
+    start_update_download,
     update_status,
 )
 from navin.webui.channel_login import (
@@ -1279,6 +1280,8 @@ class WebUISettingsRouter:
         if not self._authorized(request):
             return self._unauthorized()
         try:
+            if _query_first(self._query(request), "background") in {"1", "true"}:
+                return self._json_response(start_update_download())
             return self._json_response(await asyncio.to_thread(download_update))
         except UpdateError as exc:
             return self._error_response(exc.status, str(exc))

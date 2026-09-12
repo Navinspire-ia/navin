@@ -120,10 +120,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OllamaSetupPanel } from "@/components/settings/OllamaSetupPanel";
+import { UpdateProgress } from "@/components/UpdateProgress";
 import {
   checkVersion,
   createModelConfiguration,
-  downloadUpdate,
+  downloadAndInstallUpdate,
   disableNavinFeature,
   enableNavinFeature,
   fetchAutomations,
@@ -138,7 +139,6 @@ import {
   chunkModelImportEntries,
   importMcpConfig,
   importModelConfigurations,
-  installUpdate,
   loginProviderOAuth,
   logoutProviderOAuth,
   openExternalUrl,
@@ -163,6 +163,7 @@ import {
   updateWebSearchSettings,
   updatePreferences,
   type UpdateInfo,
+  type UpdateStatus,
 } from "@/lib/api";
 import { notifyCliAppsChanged } from "@/lib/cli-app-events";
 import { copyTextOrNotify, copyTextToClipboard } from "@/lib/clipboard";
@@ -3372,6 +3373,7 @@ function VersionCheckRow({
   const { token } = useClient();
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [result, setResult] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoCheck, setAutoCheck] = useState(preferences?.autoCheck ?? true);
@@ -3405,9 +3407,9 @@ function VersionCheckRow({
   const handleInstall = async () => {
     setInstalling(true);
     setError(null);
+    setUpdateStatus({ state: "downloading", progress: 0, downloadedBytes: 0, totalBytes: 0 });
     try {
-      await downloadUpdate(token);
-      await installUpdate(token);
+      await downloadAndInstallUpdate(token, setUpdateStatus);
     } catch (err) {
       setError((err as Error).message);
       setInstalling(false);
@@ -3477,6 +3479,7 @@ function VersionCheckRow({
             </Button>
           ) : null}
         </div>
+        {installing ? <UpdateProgress status={updateStatus} /> : null}
         {result && !result.available ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
             <Check className="h-3 w-3" aria-hidden />

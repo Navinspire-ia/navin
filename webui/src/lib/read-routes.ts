@@ -71,6 +71,8 @@ const GLOBAL_READS = new Set([
   "/api/settings/pairing",
   "/api/settings/provider-models",
   "/api/settings/usage",
+  "/api/settings/update-status",
+  "/api/settings/version-check",
   "/api/webui/account",
   "/api/webui/app-templates",
   "/api/webui/automations",

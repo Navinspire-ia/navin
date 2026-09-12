@@ -26,6 +26,7 @@ class TurnPolicy:
     """The inheritable slice of an AgentRunSpec."""
 
     requires_verify_before_done: bool = False
+    validate_code_changes: bool = True
     locked_denied_tools: frozenset[str] = field(default_factory=frozenset)
     # None = no allowlist (all tools except denials). A frozenset is the
     # parent's /forge surface; subagents must inherit it or they get every

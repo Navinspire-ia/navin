@@ -154,7 +154,8 @@ export function CareerDashboard({
             styles={BUTTON_STYLES}
           />
           <DefaultButton
-            text={tx("findMission", "Find me a mission")}
+            text={tx("findMission", "Find")}
+            title={tx("findMissionTitle", "Find me a mission")}
             iconProps={{ iconName: "Work" }}
             disabled={busy}
             onClick={onFind}

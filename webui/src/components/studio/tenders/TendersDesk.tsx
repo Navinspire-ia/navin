@@ -46,6 +46,7 @@ import { DocumentGenerationNotice } from "@/components/studio/DocumentGeneration
 import { retentionDays } from "@/components/studio/tenders/retention";
 import {
   BUTTON_STYLES,
+  HEADER_BUTTON_STYLES,
   CHANNELS_HASH,
   MODELS_HASH,
   NOTICE_ROW_MENU,
@@ -133,10 +134,11 @@ export function FollowUpButton({
       <div ref={anchor} className="shrink-0">
         <DefaultButton
           text={pending ? `${label} · ${pending}` : label}
+          title={label}
           iconProps={{ iconName: "Send" }}
           onClick={() => setOpen((value) => !value)}
           checked={open}
-          styles={BUTTON_STYLES}
+          styles={HEADER_BUTTON_STYLES}
           aria-haspopup="dialog"
           aria-expanded={open}
           data-testid="tenders-follow-up"

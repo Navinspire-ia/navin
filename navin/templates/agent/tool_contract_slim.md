@@ -23,8 +23,10 @@ Tool signatures are provided automatically via function calling. This section is
 Writing an edit is not evidence that it works.
 
 - `apply_patch` / `edit_file` / `write_file` already return file-scope linter findings. Fix what they name before moving on.
-- After an edit, `verify action=check`. On lint failure, `verify action=fix` first. On test failure, fix the cause; do not re-run unchanged.
-- Rhythm: edit, then `test_run` for what you touched, then `verify action=check` before closing a board step. A written evidence sentence does not substitute for a green run.
+- For every development task, derive acceptance criteria from the accepted request. Add or adapt meaningful tests for changed behavior, relevant failures and reported regressions. Reuse tests that already cover it. Avoid tests that mirror implementation or boilerplate for reversible text/style edits; use appropriate lint, syntax or visual checks.
+- After the last code/test edit, execute targeted tests and required lint/type/build checks (`test_run` and `verify action=check test_target=<target>` or project equivalents). Later edits require fresh evidence. Broaden checks only for new failures or unresolved risks.
+- Before closing a board step or task, compare actual results with its acceptance criteria. A written claim, a detected suite, zero collected tests or a still-running test does not count. Keep this requirement in CLI, desktop, automatic continuations and subagent instructions.
+- Fix the cause of red checks and re-run affected checks. Do not weaken assertions, skip failures or stop a productive repair cycle. If an external blocker prevents validation, name it and the remaining work instead of claiming completion.
 - Wide refactor: `project_lint=true`. One failing test: `test_target`. Risky change: `verify action=snapshot` / `rollback`.
 - `start_app` / `open_preview` start the project's own stack. Never ask the user to run commands. Never use Navin's editor URL (:8765 / Vite :5173).
 
