@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from navin.agent.tool_output import emit_tool_output
+from navin.agent.tool_output import emit_tool_meta, emit_tool_output
 from navin.agent.tools.base import Tool, ToolResult
 from navin.agent.tools.filesystem import _FsTool
 from navin.utils.path import normalize_relative_path
@@ -24,6 +24,22 @@ from navin.utils.proc import no_window_kwargs
 
 _MAX_SHOWN = 40
 _GIT_TIMEOUT_S = 20
+
+
+def _test_output_callback():
+    """Forward synchronous runner progress to the active async tool call."""
+    from navin.utils.task_progress import parse_progress_from_output
+
+    loop = asyncio.get_running_loop()
+
+    async def publish(output: str) -> None:
+        parsed = parse_progress_from_output(output)
+        await emit_tool_output(output, **parsed)
+
+    def callback(output: str) -> None:
+        asyncio.run_coroutine_threadsafe(publish(output), loop).result()
+
+    return callback
 
 
 def _tracked_modifications(root: Path, paths: list[str] | None) -> list[str]:
@@ -319,13 +335,16 @@ class TestRunTool(_QualityTool):
     def name(self) -> str:
         return "test_run"
 
+    def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        return super().cast_params({"action": "run", **params})
+
     @property
     def description(self) -> str:
         return (
             "Run the project's tests and get structured results: pass/fail/skip "
             "counts plus each failure's test name, file and assertion message. "
             "Auto-detects the runner (pytest, vitest, jest, go test, cargo "
-            "test). Use 'run' after changing code, optionally with 'target' to "
+            "test). The default action is 'run', optionally with 'target' to "
             "run a single file or test, and 'detect' to see which suites exist. "
             "Prefer this over running tests through exec: failures come back "
             "parsed instead of buried in truncated logs."
@@ -343,7 +362,8 @@ class TestRunTool(_QualityTool):
                 "action": {
                     "type": "string",
                     "enum": ["run", "detect"],
-                    "description": "run: execute tests; detect: list test suites",
+                    "description": "run: execute tests (default); detect: list test suites",
+                    "default": "run",
                 },
                 "target": {
                     "type": "string",
@@ -365,7 +385,7 @@ class TestRunTool(_QualityTool):
 
     async def execute(
         self,
-        action: str,
+        action: str = "run",
         target: str | None = None,
         runner: str | None = None,
         **kwargs: Any,
@@ -399,7 +419,10 @@ class TestRunTool(_QualityTool):
                 root,
                 runners=[runner] if runner else None,
                 target=(target or None),
+                on_output=_test_output_callback(),
             )
+            if outcomes and all(outcome.ran for outcome in outcomes):
+                await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
             _record_test_outcomes(root, outcomes, target=target)
             from navin.quality.evidence import test_evidence
 
@@ -595,8 +618,11 @@ class VerifyTool(_QualityTool):
                 with_project_lint=project_lint,
                 test_target=(test_target or None),
                 auto_fix=(action == "fix"),
+                on_test_output=_test_output_callback(),
             )
             _record_verify_report(root, report)
+            if report.test_outcomes and all(outcome.ran for outcome in report.test_outcomes):
+                await emit_tool_meta(percent=100, label="Tests finished", indeterminate=False)
             from navin.quality.evidence import verify_evidence
 
             return ToolResult(report.render(), verification=verify_evidence(report))

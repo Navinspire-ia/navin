@@ -505,10 +505,11 @@ class ReadFileTool(_FsTool):
     @property
     def description(self) -> str:
         return (
-            "Read a file (text, image, or document). "
+            "Read a file (text, image, video, or document). "
             "Text output format: LINE_NUM|CONTENT. "
             "Images return visual content for analysis. "
             "Supports PDF, DOCX, XLSX, PPTX documents. "
+            "Videos return sampled visual frames with timestamps (no audio). "
             "Prefer code_index / grep with a path or glob before reading. "
             "Use find_files/list_dir first when the path is uncertain. "
             "Read the relevant range before editing so replacements or patches "
@@ -577,6 +578,11 @@ class ReadFileTool(_FsTool):
             if fp.suffix.lower() in {".docx", ".xlsx", ".pptx"}:
                 return self._read_office_doc(fp)
 
+            from navin.utils.video_frames import is_video_path
+
+            if is_video_path(fp):
+                return await asyncio.to_thread(self._read_video, fp)
+
             read_mtime = fp.stat().st_mtime
             raw = fp.read_bytes()
             if not raw:
@@ -613,7 +619,7 @@ class ReadFileTool(_FsTool):
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
                 if mime and mime.startswith("image/"):
                     return build_image_content_blocks(raw, mime, str(fp), f"(Image file: {path})")
-                return ToolResult.error(f"Error: Cannot read binary file {path} (MIME: {mime or 'unknown'}). Only text and images are supported.")
+                return ToolResult.error(f"Error: Unsupported binary file {path} (MIME: {mime or 'unknown'}).")
 
             text_content = decoded.text
             if fp.suffix.lower() == ".ipynb":
@@ -693,6 +699,28 @@ class ReadFileTool(_FsTool):
         workspace = self._display_workspace()
         root = Path(workspace).expanduser() if workspace is not None else None
         return closest_existing_match(fp, root)
+
+    def _read_video(self, fp: Path) -> Any:
+        from navin.utils.video_frames import extract_video_frames
+
+        frames = extract_video_frames(fp)
+        if not frames.ok:
+            return ToolResult.error(f"Error reading video {fp.name}: {frames.reason}")
+        blocks: list[dict[str, Any]] = [{
+            "type": "text",
+            "text": (
+                f"Video: {fp.name}. {len(frames.paths)} sampled frames. "
+                "Only these stills are available; motion between frames and audio "
+                "have not been read."
+            ),
+        }]
+        for path, timestamp in zip(frames.paths, frames.timestamps):
+            raw = Path(path).read_bytes()
+            mime = detect_image_mime(raw) or "image/jpeg"
+            blocks.extend(build_image_content_blocks(
+                raw, mime, path, f"(Frame at {timestamp:g}s of {fp.name})",
+            ))
+        return blocks
 
     def _read_pdf(self, fp: Path, pages: str | None) -> str:
         from navin.utils.document import PdfPageRangeError, PdfSafetyError, extract_pdf_pages

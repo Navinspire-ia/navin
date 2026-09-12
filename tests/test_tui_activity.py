@@ -34,6 +34,42 @@ class ActivityHost(App):
             yield self.block
 
 
+def test_script_header_is_compact_and_full_command_remains_accessible():
+    async def run():
+        app = ActivityHost()
+        command = "PGPASSWORD='demo-password' psql <<'SQL'\nSELECT 1;\nSQL"
+        async with app.run_test(size=(80, 24)) as pilot:
+            await app.block.tool_event("sql", "exec", "end", {"command": command}, "1 row", None, None)
+            row = app.block.query_one(ToolCall)
+            assert "\n" not in row._head_text()
+            assert "3 lines" in row._head_text()
+            assert "demo-password" not in row.copy_text()
+            assert "SELECT 1;" in row.copy_text()
+            assert row.arguments["command"] == command
+            details = row.query_one(".tool-command", Static)
+            assert not details.display
+            await pilot.pause()
+            await pilot.click(row.query_one(".tool-more", Button))
+            assert details.display
+            assert "SELECT 1;" in str(details.content)
+            assert "demo-password" not in app.export_screenshot()
+    asyncio.run(run())
+
+
+def test_binary_delete_does_not_repeat_tool_summary_or_invent_source_lines():
+    async def run():
+        app = ActivityHost()
+        async with app.run_test(size=(80, 24)):
+            await app.block.tool_event("del", "manage_files", "start", {"action": "delete", "paths": ["cache.pyc"]}, None, None, None)
+            await app.block.note_file_edit("cache.pyc", 0, 0, call_id="del", kind="delete", binary=True, tool="manage_files")
+            await app.block.tool_event("del", "manage_files", "end", {}, "Deleted 1 file(s), 1 directory tree(s): home", None, None)
+            row = app.block.query_one(ToolCall)
+            assert "Deleted cache.pyc" in row._head_text()
+            assert "directory tree" not in row.copy_text()
+            assert "No text preview." in str(row.query_one(".tool-body", Static).content)
+    asyncio.run(run())
+
+
 async def deliver_file(block, payload):
     event = UiFileEdit.from_payload(payload)
     await block.note_file_edit(
@@ -200,8 +236,8 @@ def test_theme_switch_repaints_existing_diff_and_chunked_stdout_stays_intact():
             app.theme = "navin-light"
             await pilot.pause()
             after = row.query_one(".tool-body", Static).content
-            assert any("on #202b24" in str(span.style).lower() for span in before.spans)
-            assert any("on #edf3ee" in str(span.style).lower() for span in after.spans)
+            assert any("on #20392b" in str(span.style).lower() for span in before.spans)
+            assert any("on #e5f0e8" in str(span.style).lower() for span in after.spans)
             await app.block.tool_event("run", "exec", "start", {"command": "pytest -q"}, None, None, None)
             for chunk in ("test_", "prices PASSED\n", "1 passed\n"):
                 await app.block.tool_event("run", "exec", "output", {}, None, None, chunk)
@@ -244,6 +280,6 @@ def test_binary_file_does_not_claim_zero_changed_lines(tmp_path):
             row = app.block.query_one(ToolCall)
             assert "Added asset.bin" in row._head_text()
             assert "+0 -0" not in row._head_text()
-            assert "line counts unavailable" in str(row.query_one(".tool-body").content)
+            assert "No text preview." in str(row.query_one(".tool-body").content)
             assert "+0 -0" not in app.block.query_one(ToolCluster)._head_text()
     asyncio.run(run())

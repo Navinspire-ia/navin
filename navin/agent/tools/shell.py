@@ -1155,6 +1155,7 @@ class ExecTool(Tool):
             # communicate(), but in containers the child-watcher sometimes
             # misses it, leaving a zombie.
             _reap_pid(process.pid)
+            await emit_tool_meta(percent=100, label="Command finished", indeterminate=False)
 
             output_parts = []
 
@@ -1404,7 +1405,7 @@ class ExecTool(Tool):
         if output:
             await self._emit_progressing_output(output)
 
-    async def _emit_progressing_output(self, output: str) -> None:
+    async def _emit_progressing_output(self, output: str, *, output_mode: str = "snapshot") -> None:
         parsed = parse_progress_from_output(output)
         await emit_tool_output(
             output,
@@ -1412,6 +1413,7 @@ class ExecTool(Tool):
             eta_s=parsed.get("eta_s"),
             label=parsed.get("label"),
             indeterminate=parsed.get("indeterminate"),
+            output_mode=output_mode,
         )
         await emit_task_progress(
             label=str(parsed.get("label") or "Running…"),
@@ -1467,7 +1469,7 @@ class ExecTool(Tool):
             )
             waited = min(chunk_ms, total_yield) if total_yield else 0
             if poll.output:
-                await self._emit_progressing_output(poll.output)
+                await self._emit_progressing_output(poll.output, output_mode="delta")
             while not poll.done and waited < total_yield:
                 step = min(chunk_ms or 500, total_yield - waited)
                 poll = await self._session_manager.poll(
@@ -1478,13 +1480,13 @@ class ExecTool(Tool):
                 )
                 waited += step
                 if poll.output:
-                    await self._emit_progressing_output(poll.output)
+                    await self._emit_progressing_output(poll.output, output_mode="delta")
             if poll.done and poll.output:
                 cmd = display_command or prepared.command
                 poll.output = compact_session_body(cmd, poll.output, poll.exit_code)
             result = format_session_poll(session_id, poll)
-            if poll.output or not poll.done:
-                await self._emit_progressing_output(result)
+            if poll.done and not poll.timed_out and not poll.terminated:
+                await emit_tool_meta(percent=100, label="Command finished", indeterminate=False)
             result += sandbox_result_note(
                 prepared.sandbox,
                 exit_code=poll.exit_code if poll.done else None,

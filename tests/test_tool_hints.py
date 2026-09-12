@@ -289,7 +289,9 @@ class QuietToolLineTests(unittest.TestCase):
         self.assertNotIn("test_tool_parameter_recovery.py", file_diff.splitlines()[0])
         painted = format_preview_markup_line(9, "add", "import queue", width=24)
         self.assertIn(f"on {PREVIEW_ADD_BG}", painted)
-        self.assertIn("9 +import queue", painted)
+        from rich.text import Text
+
+        self.assertIn("9 +import queue", Text.from_markup(painted).plain)
         self.assertIn(f"on {PREVIEW_DEL_BG}", format_preview_markup_line(8, "del", "old"))
         self.assertIn(f"on {PREVIEW_CTX_BG}", format_preview_markup_line(8, "ctx", "keep"))
         colored = format_tool_preview_markup(
@@ -299,8 +301,8 @@ class QuietToolLineTests(unittest.TestCase):
         )
         self.assertIn(f"on {PREVIEW_ADD_BG}", colored)
         self.assertIn(f"on {PREVIEW_DEL_BG}", colored)
-        self.assertIn("8 -old", colored)
-        self.assertIn("8 +new", colored)
+        self.assertIn("8 -old", Text.from_markup(colored).plain)
+        self.assertIn("8 +new", Text.from_markup(colored).plain)
 
     def test_run_keeps_the_real_command(self) -> None:
         line = describe_tool_line(

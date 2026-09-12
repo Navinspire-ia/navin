@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.text import Text
 
 from navin.utils.file_edit_events import file_edit_details
+from navin.utils.task_progress import parse_progress_from_output, progress_bar
 from navin.utils.tool_hints import (
     MAX_TRANSCRIPT_LINES,
     activity_head_text,
@@ -70,7 +71,7 @@ class ActivityPrinter:
         phase = event.get("phase") or "start"
         if state["done"]:
             return
-        if phase in {"start", "output"} and tool_verb(state["name"]) == "run" and not state["printed"]:
+        if phase in {"start", "output"} and (tool_verb(state["name"]) == "run" or state["name"] == "test_run") and not state["printed"]:
             self.break_group()
             self._head("• " + activity_label(state["name"], state.get("arguments"), phase="start").replace("\n", "\n  │ "))
             state["printed"] = True
@@ -79,9 +80,30 @@ class ActivityPrinter:
         if phase == "output":
             if isinstance(event.get("output"), str):
                 chunk = event["output"]
-                state["output"] += chunk
+                if event.get("output_mode") == "snapshot":
+                    previous = state["output"]
+                    state["output"] = chunk
+                    if chunk.startswith(previous):
+                        chunk = chunk[len(previous):]
+                    else:
+                        # A bounded tail may have dropped its oldest lines.
+                        for overlap in range(min(len(previous), len(chunk)), 0, -1):
+                            if previous.endswith(chunk[:overlap]):
+                                chunk = chunk[overlap:]
+                                break
+                else:
+                    state["output"] += chunk
                 if state["printed"]:
                     self.console.print(Text.from_ansi(chunk), end="", highlight=False)
+            percent = event.get("percent")
+            if not isinstance(percent, (int, float)):
+                percent = parse_progress_from_output(state["output"][-4000:]).get("percent")
+            bar = progress_bar(percent)
+            if bar and bar != state.get("bar"):
+                if state["output"] and not state["output"].endswith("\n"):
+                    self.console.print()
+                self._head("  └ Running " + bar)
+                state["bar"] = bar
             return
         state["done"] = True
         if key in self._file_calls:
@@ -136,8 +158,6 @@ class ActivityPrinter:
             noun = "file" if count == 1 else "files"
             counted = [edit for edit in done if not edit["binary"]]
             suffix = f" (+{sum(e['added'] for e in counted)} -{sum(e['removed'] for e in counted)})" if counted else ""
-            if len(counted) < len(done):
-                suffix += " · some line counts unavailable"
             self._head(f"• {title} {count} {noun}{suffix}")
         for edit in edits:
             label = activity_label(
@@ -153,8 +173,8 @@ class ActivityPrinter:
             )
             if edit["truncated"]:
                 self.console.print(Text("  Diff truncated by source. Counts cover the whole change.", style="dim"))
-            elif edit["binary"]:
-                self.console.print(Text("  Preview and line counts unavailable (binary, large or unreadable file).", style="dim"))
+            elif edit["binary"] and edit["phase"] == "end":
+                self.console.print(Text("  No text preview.", style="dim"))
 
     def _body(self, name: str, arguments: dict, **kwargs: Any) -> None:
         body = format_tool_preview_markup(

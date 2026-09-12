@@ -44,6 +44,7 @@ from navin.utils.tool_hints import (
     activity_label,
     activity_path_key,
     clip_transcript,
+    command_summary,
     describe_explore_step,
     edit_group_key,
     file_operation_label,
@@ -52,6 +53,7 @@ from navin.utils.tool_hints import (
     format_tool_preview_markup,
     format_turn_summary,
     preview_rows,
+    redact_command,
     tool_cluster_kind,
     tool_target,
     tool_verb,
@@ -532,17 +534,22 @@ class ToolCall(Vertical, can_focus=True):
         overflow-x: hidden;
         overflow-y: auto;
         scrollbar-size-vertical: 1;
-        scrollbar-gutter: stable;
-        background: $surface;
+        scrollbar-gutter: auto;
+        background: $background;
     }
     ToolCall .tool-body {
         height: auto;
         padding: 0;
         color: #E8E8E8;
-        background: $surface;
+        background: $background;
         text-style: none;
     }
-    ToolCall > .tool-more {
+    ToolCall .tool-command {
+        height: auto;
+        color: $text-muted;
+        background: $background;
+    }
+    ToolCall > Button.tool-more.-style-default {
         height: 1;
         min-height: 1;
         min-width: 0;
@@ -550,13 +557,14 @@ class ToolCall(Vertical, can_focus=True):
         margin: 0;
         padding: 0 1;
         border: none;
-        background: $surface;
+        background: $background;
         color: $text-muted;
         text-style: none;
     }
-    ToolCall > .tool-more:hover, ToolCall > .tool-more:focus {
+    ToolCall > Button.tool-more.-style-default:hover, ToolCall > Button.tool-more.-style-default:focus {
         background: $panel;
         color: $foreground;
+        text-style: none;
     }
     ToolCall.-cluster { margin: 0; }
     """
@@ -584,6 +592,7 @@ class ToolCall(Vertical, can_focus=True):
         self.error: str | None = None
         self.output_lines: list[str] = []
         self._output_buffer = ""
+        self.percent: float | None = None
         self.added = 0
         self.removed = 0
         self.edit_count = 1
@@ -606,6 +615,7 @@ class ToolCall(Vertical, can_focus=True):
     def compose(self) -> ComposeResult:
         yield Static(self._plain_head(), classes="tool-head", markup=False)
         with VerticalScroll(classes="tool-output"):
+            yield Static("", classes="tool-command", markup=False)
             yield Static("", classes="tool-body", markup=False)
         yield Button("Show full output", classes="tool-more", compact=True)
 
@@ -665,6 +675,10 @@ class ToolCall(Vertical, can_focus=True):
                 path=self.file_path,
                 counts_known=not self.file_binary,
             )
+        if self.percent is not None:
+            from navin.utils.task_progress import progress_bar
+
+            label += "  " + progress_bar(self.percent)
         if self.cluster_kind:
             mark = self.tree_mark or "  "
             if self.cluster_kind == "explore" and self.phase in {"error", "cancelled"}:
@@ -682,10 +696,21 @@ class ToolCall(Vertical, can_focus=True):
         return self._plain_head()
 
     def apply(
-        self, *, phase: str, result: Any = None, error: str | None = None, output: str | None = None
+        self, *, phase: str, result: Any = None, error: str | None = None,
+        output: str | None = None, percent: float | None = None,
+        output_mode: str = "delta",
     ) -> None:
+        from navin.utils.task_progress import parse_progress_from_output
+
+        if percent is None and output:
+            percent = parse_progress_from_output(output).get("percent")
+        if percent is not None:
+            self.percent = percent
         if output:
-            self._output_buffer += output
+            if output_mode == "snapshot":
+                self._output_buffer = output
+            else:
+                self._output_buffer += output
             self.output_lines = self._output_buffer.splitlines()[-MAX_TRANSCRIPT_LINES:]
             if len(self._output_buffer.splitlines()) > MAX_TRANSCRIPT_LINES:
                 self._output_buffer = "\n".join(self.output_lines) + ("\n" if output.endswith("\n") else "")
@@ -719,6 +744,7 @@ class ToolCall(Vertical, can_focus=True):
     def copy_text(self) -> str:
         return clip_transcript(
             self._plain_head() + "\n"
+            + (self._command_details() + "\n" if self._command_details() else "")
             + format_tool_detail(
                 self.tool_name,
                 self.arguments if isinstance(self.arguments, dict) else {},
@@ -729,6 +755,15 @@ class ToolCall(Vertical, can_focus=True):
             )
             + ("\nDiff truncated by source." if self.file_truncated else "")
         )
+
+    def _command_details(self) -> str:
+        if tool_verb(self.tool_name) != "run":
+            return ""
+        raw = self.arguments.get("command") or self.arguments.get("cmd")
+        if not isinstance(raw, str):
+            return ""
+        command = redact_command(raw.strip())
+        return command if command_summary(command) != command else ""
 
     def _refresh_body(self) -> None:
         if not self.is_mounted:
@@ -746,7 +781,7 @@ class ToolCall(Vertical, can_focus=True):
         limit = MAX_TRANSCRIPT_LINES if self._show_full else PREVIEW_OPEN_LINES
         text = format_tool_preview_markup(
             self.tool_name,
-            self.arguments if isinstance(self.arguments, dict) else {},
+            {**self.arguments, **({"path": self.file_path} if self.file_path else {})},
             result=self.result,
             error=self.error,
             output_lines=self.output_lines,
@@ -758,8 +793,8 @@ class ToolCall(Vertical, can_focus=True):
         note = ""
         if self.file_truncated:
             note = "Diff truncated by source. Counts cover the whole change."
-        elif self.file_binary:
-            note = "Preview and line counts unavailable (binary, large or unreadable file)."
+        elif self.file_binary and self.phase == "end":
+            note = "No text preview."
         elif self.file_recorded and not rows:
             if self.file_operation == "unchanged":
                 note = "No content changes."
@@ -775,10 +810,17 @@ class ToolCall(Vertical, can_focus=True):
         # so an unmatched '[' in code cannot consume a closing style tag.
         body.update(Text.from_markup(text))
         body.display = self._open and bool(text)
-        viewport.display = body.display
+        command = self.query_one(".tool-command", Static)
+        details = self._command_details()
+        command.update(details)
+        command.display = self._open and self._show_full and bool(details)
+        viewport.display = body.display or command.display
         more = self.query_one(".tool-more", Button)
-        more.display = self._open and len(rows) > PREVIEW_OPEN_LINES
-        more.label = "Show less" if self._show_full else f"… +{len(rows) - PREVIEW_OPEN_LINES} lines · Show all"
+        more.display = self._open and (len(rows) > PREVIEW_OPEN_LINES or bool(details))
+        more.label = "Show less" if self._show_full else (
+            f"Show all (+{len(rows) - PREVIEW_OPEN_LINES} lines)" if len(rows) > PREVIEW_OPEN_LINES
+            else "Show command"
+        )
         more.tooltip = "F expands the full output. Enter folds this activity."
 
     def on_resize(self) -> None:
@@ -805,7 +847,7 @@ class ToolCall(Vertical, can_focus=True):
         self._refresh_body()
 
     def _has_preview(self) -> bool:
-        return self.file_recorded or bool(
+        return self.file_recorded or bool(self._command_details()) or bool(
             format_tool_detail(
                 self.tool_name,
                 self.arguments if isinstance(self.arguments, dict) else {},
@@ -923,6 +965,8 @@ class ToolCluster(Vertical, can_focus=True):
 
     def on_mount(self) -> None:
         self.set_interval(0.2, self._tick)
+        self.watch(self.app, "theme", lambda _: self._refresh_head(), init=False)
+        self._refresh_head()
 
     def _tick(self) -> None:
         if any(tool.phase in {"start", "output"} for tool in self.tools):
@@ -930,7 +974,7 @@ class ToolCluster(Vertical, can_focus=True):
 
     def _head_text(self) -> str:
         title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
-        confirmed = [tool for tool in self.tools if tool.file_recorded]
+        confirmed = [tool for tool in self.tools if tool.file_recorded and tool.phase == "end"]
         if self.kind == "edit":
             operations = {file_operation_label(tool.file_operation) for tool in confirmed}
             if len(operations) == 1:
@@ -950,8 +994,6 @@ class ToolCluster(Vertical, can_focus=True):
             extra = f" {files} {noun}"
             if any(tool.file_recorded and not tool.file_binary and tool.file_operation != "unchanged" for tool in self.tools):
                 extra += f" (+{sum(tool.added for tool in self.tools)} -{sum(tool.removed for tool in self.tools)})"
-            if any(tool.file_binary for tool in confirmed):
-                extra += " · some line counts unavailable"
             failures = sum(tool.phase == "error" for tool in self.tools)
             cancelled = sum(tool.phase == "cancelled" for tool in self.tools)
             if failures:
@@ -966,7 +1008,9 @@ class ToolCluster(Vertical, can_focus=True):
         if not self.is_mounted:
             return
         try:
-            self.query_one(".cluster-head", Static).update(
+            head = self.query_one(".cluster-head", Static)
+            head.display = self.kind != "edit" or len(self.tools) > 1 or not self._open
+            head.update(
                 activity_head_text(self._head_text(), dark=self.app.current_theme.dark)
             )
         except Exception:  # noqa: BLE001
@@ -975,7 +1019,7 @@ class ToolCluster(Vertical, can_focus=True):
     def _retree(self) -> None:
         last = len(self.tools) - 1
         for index, tool in enumerate(self.tools):
-            tool.tree_mark = "└ " if index == last else "├ "
+            tool.tree_mark = "• " if self.kind == "edit" and last == 0 else "└ " if index == last else "├ "
             tool._refresh_head()
 
     async def add_call(self, widget: ToolCall) -> None:
@@ -1079,7 +1123,7 @@ class WorkingLine(Static):
         display: block;
         height: auto;
         min-height: 1;
-        margin: 0 0 1 0;
+        margin: 0;
     }
     WorkingLine:hover { color: $foreground; }
     """
@@ -1196,7 +1240,7 @@ class AssistantMessage(Vertical):
     DEFAULT_CSS = """
     AssistantMessage {
         height: auto;
-        margin: 1 2 0 2;
+        margin: 0 2;
         padding: 0 1 0 1;
         border-left: vkey $primary;
         background: $background;
@@ -1249,7 +1293,7 @@ class AssistantMessage(Vertical):
         margin: 0 0 1 0;
         padding: 0 1;
         color: #E8E8E8;
-        background: #121212;
+        background: $panel;
     }
     AssistantMessage > .assistant-body MarkdownH1,
     AssistantMessage > .assistant-body MarkdownH2,
@@ -1349,6 +1393,8 @@ class AssistantMessage(Vertical):
         error: str | None,
         output: str | None,
         visible: bool = True,
+        percent: float | None = None,
+        output_mode: str = "delta",
     ) -> None:
         if not visible:
             return
@@ -1369,13 +1415,20 @@ class AssistantMessage(Vertical):
             else:
                 self._cluster = None
                 await self.mount(widget, before=preview)
-            if phase == "start":
-                return
             widgets = [widget]
         for widget in widgets:
             if phase == "start":
+                if percent is not None:
+                    widget.percent = percent
+                    widget._refresh_head()
                 continue
-            widget.apply(phase=phase, result=result, error=error, output=output)
+            # File events already carry the exact diff and outcome. A tool's
+            # aggregate result must not be printed inside every file preview.
+            if widget.file_recorded:
+                widget._refresh_head()
+                widget._refresh_body()
+                continue
+            widget.apply(phase=phase, result=result, error=error, output=output, percent=percent, output_mode=output_mode)
 
     async def _ensure_cluster(self, kind: str) -> ToolCluster:
         current = self._cluster
@@ -1642,8 +1695,6 @@ class AssistantMessage(Vertical):
                 summary += f" · {failed} failed"
             if cancelled:
                 summary += f" · {cancelled} cancelled"
-            if any(tool.file_binary for tool in completed):
-                summary += " · some line counts unavailable"
             foot.update(summary)
             foot.add_class("-visible")
         else:
@@ -1887,6 +1938,81 @@ def split_model_slug(slug: str) -> tuple[str, str]:
     return text, ""
 
 
+class QueuedPromptRow(Horizontal):
+    DEFAULT_CSS = """
+    QueuedPromptRow { height: 1; background: $background; }
+    QueuedPromptRow Static { width: 1fr; height: 1; color: $text-muted; text-overflow: ellipsis; }
+    QueuedPromptRow Button.-style-default {
+        width: auto; min-width: 0; height: 1; min-height: 1;
+        border: none; padding: 0 1; background: $background; color: $text-muted; text-style: none;
+    }
+    QueuedPromptRow Button:hover { color: $error; }
+    """
+
+    class Removed(Message):
+        def __init__(self, prompt_id: int) -> None:
+            super().__init__()
+            self.prompt_id = prompt_id
+
+    def __init__(self, prompt_id: int, text: str, position: int) -> None:
+        super().__init__()
+        self.prompt_id = prompt_id
+        self.text = text
+        self.position = position
+
+    def compose(self) -> ComposeResult:
+        preview = " ".join(display_user_text(self.text).split())
+        yield Static(f"{self.position}. {preview}", markup=False)
+        yield Button("Remove", compact=True)
+
+    @on(Button.Pressed)
+    def remove_prompt(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.Removed(self.prompt_id))
+
+
+class PromptQueue(Vertical):
+    """Pending prompts stay outside the transcript until they are sent."""
+
+    DEFAULT_CSS = """
+    PromptQueue { height: auto; display: none; margin: 0 2; padding: 0 2; background: $background; }
+    PromptQueue > Horizontal { height: 1; }
+    PromptQueue #queue-title { width: 1fr; color: $primary; }
+    PromptQueue #queue-items { height: auto; max-height: 5; background: $background; }
+    PromptQueue Button.-style-default {
+        width: auto; min-width: 0; height: 1; min-height: 1;
+        border: none; padding: 0 1; background: $background; color: $primary; text-style: none;
+    }
+    """
+
+    class Resumed(Message):
+        pass
+
+    def compose(self) -> ComposeResult:
+        with Horizontal():
+            yield Static("", id="queue-title", markup=False)
+            yield Button("Resume queue", id="queue-resume", compact=True)
+        yield VerticalScroll(id="queue-items")
+
+    async def set_items(self, items: list[tuple[int, str]], *, paused: bool) -> None:
+        if not self.is_mounted or not self.query("#queue-title"):
+            return
+        self.display = bool(items)
+        self.query_one("#queue-title", Static).update(
+            f"Queued {len(items)} · {'paused' if paused else 'after current reply'}"
+        )
+        self.query_one("#queue-resume", Button).display = paused
+        body = self.query_one("#queue-items", VerticalScroll)
+        await body.remove_children()
+        if items:
+            await body.mount(*(QueuedPromptRow(key, text, i + 1) for i, (key, text) in enumerate(items)))
+
+    @on(Button.Pressed, "#queue-resume")
+    def resume_queue(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.Resumed())
+
+
 class ComposerShell(Vertical):
     """Prompt, then mode · model, then the line under both."""
 
@@ -1894,7 +2020,7 @@ class ComposerShell(Vertical):
     ComposerShell {
         height: auto;
         background: $panel;
-        padding: 1 2 1 2;
+        padding: 0 2;
         border-left: wide $foreground 35%;
     }
     ComposerShell > TideRule { margin: 0; height: 1; }
@@ -1937,14 +2063,16 @@ class ComposerMeta(Horizontal):
     }
     ComposerMeta #meta-mode:hover { color: $primary; }
     ComposerMeta #meta-sep { width: auto; color: $text-muted; padding: 0 1; }
-    ComposerMeta #meta-model { width: 1fr; color: $text-muted; }
+    ComposerMeta #meta-model { width: 1fr; min-width: 0; height: 1; color: $text-muted; text-overflow: ellipsis; }
     ComposerMeta #meta-model:hover { color: $foreground; }
+    ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; text-align: right; color: $text-muted; }
     """
 
     def compose(self) -> ComposeResult:
         yield Static("", id="meta-mode", markup=True)
         yield Static("", id="meta-sep", markup=True)
         yield Static("", id="meta-model", markup=True)
+        yield Static("Context --", id="meta-context", markup=False)
 
     def set_meta(
         self,
@@ -1954,11 +2082,23 @@ class ComposerMeta(Horizontal):
         extra: str = "",
         busy: bool = False,
         spin: int = 0,
+        provider: str = "",
+        context_used: int = 0,
+        context_window: int = 0,
     ) -> None:
-        name, provider = split_model_slug(model)
+        name, slug_provider = split_model_slug(model)
+        provider = provider or slug_provider
         mode_w = self.query_one("#meta-mode", Static)
         sep_w = self.query_one("#meta-sep", Static)
         model_w = self.query_one("#meta-model", Static)
+        context_w = self.query_one("#meta-context", Static)
+        if context_window > 0:
+            percent = max(0, min(100, round(context_used * 100 / context_window)))
+            context_w.update(f"Context {percent}%")
+            context_w.tooltip = f"{context_used:,} / {context_window:,} tokens used in the latest request"
+        else:
+            context_w.update("Context --")
+            context_w.tooltip = "Context usage is not available yet"
         if extra:
             mode_w.update(extra)
             sep_w.update("")
@@ -1976,6 +2116,9 @@ class ComposerMeta(Horizontal):
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
+        if isinstance(target, Static) and target.id == "meta-context":
+            event.stop()
+            return
         if isinstance(target, Static) and target.id == "meta-model":
             self.app.call_later(self.app.run_action, "pick_model")
         else:
@@ -2394,7 +2537,8 @@ class Transcript(VerticalScroll):
     DEFAULT_CSS = """
     Transcript {
         height: 1fr;
-        padding: 0 0 2 0;
+        align-vertical: bottom;
+        padding: 0;
         scrollbar-size-vertical: 1;
         background: $background;
     }

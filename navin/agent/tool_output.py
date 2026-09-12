@@ -55,6 +55,7 @@ async def emit_tool_output(
     eta_s: float | int | None = None,
     label: str | None = None,
     indeterminate: bool | None = None,
+    output_mode: str = "snapshot",
 ) -> None:
     """Push the cumulative output tail for the current tool call, if bound.
 
@@ -73,6 +74,7 @@ async def emit_tool_output(
         "name": meta["name"],
         "arguments": meta["arguments"],
         "output": output,
+        "output_mode": output_mode,
         "result": None,
         "error": None,
         "files": [],

@@ -10,6 +10,7 @@ the WebSocket (and optionally enriches the current tool's ``output`` event).
 
 from __future__ import annotations
 
+import math
 import re
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
@@ -40,6 +41,15 @@ _DOWNLOAD_RE = re.compile(
     r"(download|installing|extracting|building|compiling|sdkmanager)",
     re.IGNORECASE,
 )
+
+
+def progress_bar(percent: float | int | None, *, width: int = 10) -> str:
+    """A compact terminal bar; absent measurements stay indeterminate."""
+    if percent is None or not math.isfinite(percent):
+        return ""
+    value = max(0, min(100, round(percent)))
+    filled = value * width // 100
+    return f"[{'━' * filled}{'·' * (width - filled)}] {value}%"
 
 
 def bind_task_progress_emitter(emitter: TaskProgressEmitter | None) -> None:

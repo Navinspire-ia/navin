@@ -23,7 +23,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from navin.quality.linters import (
     Diagnostic,
@@ -451,6 +451,7 @@ def verify_changes(
     with_project_lint: bool = False,
     test_target: str | None = None,
     auto_fix: bool = False,
+    on_test_output: Callable[[str], None] | None = None,
 ) -> VerificationReport:
     """Lint what changed, run the tests, and return a verdict.
 
@@ -488,7 +489,10 @@ def verify_changes(
 
     test_outcomes: list[TestOutcome] = []
     if with_tests:
-        test_outcomes = run_tests(root, target=test_target)
+        test_outcomes = run_tests(
+            root, target=test_target,
+            **({"on_output": on_test_output} if on_test_output is not None else {}),
+        )
 
     report = VerificationReport(
         verdict=_verdict_for(lint_results, test_outcomes, changed),

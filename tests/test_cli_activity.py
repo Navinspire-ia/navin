@@ -32,6 +32,7 @@ from navin.utils.file_edit_events import (
 )
 from navin.utils.llm_runtime import LLMRuntime
 from navin.utils.tool_hints import (
+    activity_head_text,
     activity_label,
     edit_group_key,
     format_preview_markup_line,
@@ -39,6 +40,45 @@ from navin.utils.tool_hints import (
     preview_rows,
 )
 from tests.test_long_task_continuation import ScriptedProvider, registry, tool_call
+
+
+def test_refused_directory_delete_does_not_report_edits_to_untouched_children(tmp_path):
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home/cache.pyc").write_bytes(b"\x00binary")
+    tool = ManageFilesTool(workspace=tmp_path)
+    params = {"action": "delete", "paths": ["home"]}
+    assert prepare_file_edit_trackers(call_id="delete", tool_name="manage_files", tool=tool, workspace=tmp_path, params=params) == []
+    assert len(prepare_file_edit_trackers(call_id="delete", tool_name="manage_files", tool=tool, workspace=tmp_path, params={**params, "recursive": True})) == 1
+
+
+def test_retry_instructions_are_hidden_but_actual_tool_error_stays_visible():
+    error = "Error: Invalid parameters: missing required action\n\n[No tool was executed. Reissue the call.]"
+    detail = format_tool_detail("test_run", {}, error=error, result=error)
+    assert detail.count("missing required action") == 1
+    assert "Reissue" not in detail
+
+
+def test_tool_families_have_separate_accents_and_paths_stay_green():
+    console = Console()
+    colors = []
+    for label in ["├ Search jsonb_populate_record in migrate.py", "└ Read migrate.py", "• Ran sed -n 1,20p migrate.py", "• Ran grep auth migrate.py", "• Edited migrate.py (+6 -3)"]:
+        head = activity_head_text(label)
+        colors.append(head.get_style_at_offset(console, 2).color.triplet.hex)
+        assert head.get_style_at_offset(console, label.index("migrate.py")).color.triplet.hex == "#8fbc8f"
+    assert colors[0] == colors[1]
+    assert colors[2] == colors[3]
+    assert len({colors[0], colors[2], colors[4]}) == 3
+    assert "#5ea8ff" not in colors
+
+
+def test_diff_syntax_and_line_markers_share_one_flat_background():
+    text = Text.from_markup(format_preview_markup_line(9, "add", 'return "ready" # status', filename="sample.py", width=48))
+    console = Console()
+    colors = {text.get_style_at_offset(console, index).bgcolor.triplet.hex for index in range(len(text))}
+    assert colors == {"#20392b"}
+    assert text.get_style_at_offset(console, text.plain.index("return")).color.triplet.hex == "#d6bc78"
+    assert text.get_style_at_offset(console, text.plain.index("ready")).color.triplet.hex == "#8fbc8f"
+    assert text.plain.rstrip() == '   9 +return "ready" # status'
 
 
 def test_actual_add_replace_delete_events_preserve_counts_and_operation(tmp_path):

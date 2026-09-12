@@ -809,7 +809,8 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
-| `Ctrl+C` | Stop active work; otherwise clear the prompt, then the screen |
+| `Ctrl+C` | Copy selected text; otherwise stop active work or clear the prompt. Keep the chat visible |
+| Send while working | Queue the message for the next turn. Remove a queued message or resume the queue after stopping |
 | `Cmd+C` / `Ctrl+Insert` | Copy the selection |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
 | `Ctrl+V` / `Cmd+V` | Paste |
