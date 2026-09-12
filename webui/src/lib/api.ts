@@ -2265,6 +2265,7 @@ export interface UpdateStatus extends Partial<UpdateInfo> {
   downloadedBytes: number;
   totalBytes: number;
   error?: string | null;
+  update?: UpdateInfo;
 }
 
 export async function checkVersion(
@@ -2276,7 +2277,7 @@ export async function checkVersion(
     `${base}/api/settings/version-check?force=${force ? "1" : "0"}`,
     token,
     undefined,
-    10_000,
+    30_000,
   );
 }
 
@@ -2284,19 +2285,22 @@ export async function fetchUpdateStatus(
   token: string,
   base: string = "",
 ): Promise<UpdateStatus> {
-  return request<UpdateStatus>(`${base}/api/settings/update-status`, token);
+  return request<UpdateStatus>(`${base}/api/settings/update-status`, token, undefined, 15_000);
 }
 
 export async function downloadUpdate(
   token: string,
   base: string = "",
-): Promise<UpdateInfo> {
-  return request<UpdateInfo>(
-    `${base}/api/settings/update-download`,
+  onProgress?: (status: UpdateStatus) => void,
+): Promise<UpdateStatus> {
+  const { waitForUpdateDownload } = await import("./update-flow");
+  const initial = await request<UpdateStatus>(
+    `${base}/api/settings/update-download?background=1`,
     token,
     undefined,
     15 * 60_000,
   );
+  return waitForUpdateDownload(initial, () => fetchUpdateStatus(token, base), onProgress);
 }
 
 export async function installUpdate(
@@ -2309,6 +2313,23 @@ export async function installUpdate(
     undefined,
     15 * 60_000,
   );
+}
+
+export async function downloadAndInstallUpdate(
+  token: string,
+  onProgress?: (status: UpdateStatus) => void,
+  base: string = "",
+): Promise<UpdateStatus> {
+  const downloaded = await downloadUpdate(token, base, onProgress);
+  if (downloaded.state === "restarting") return downloaded;
+  onProgress?.({ ...downloaded, state: "installing" });
+  const installed = await installUpdate(token, base);
+  if (installed.state !== "restarting") {
+    throw new Error(installed.error || "The installer did not confirm the restart.");
+  }
+  const status = { ...downloaded, ...installed };
+  onProgress?.(status);
+  return status;
 }
 
 export async function updatePreferences(

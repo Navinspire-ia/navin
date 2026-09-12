@@ -293,6 +293,35 @@ class ExecSessionManager:
         """
         return bool(self._sessions)
 
+    def running_count(self) -> int:
+        """Live processes only. Safe to read from the TUI spinner."""
+        return sum(
+            1
+            for session in self._sessions.values()
+            if session.process.returncode is None
+        )
+
+    def running_snapshot(self) -> list[ExecSessionInfo]:
+        """Sync list of live sessions for ``/ps``."""
+        now = time.monotonic()
+        rows: list[ExecSessionInfo] = []
+        for session_id, session in sorted(self._sessions.items()):
+            if session.process.returncode is not None:
+                continue
+            rows.append(
+                ExecSessionInfo(
+                    session_id=session_id,
+                    command=session.command,
+                    cwd=session.cwd,
+                    elapsed_s=max(0.0, now - session.started_at),
+                    idle_s=max(0.0, now - session.last_access),
+                    remaining_s=max(0.0, session.deadline - now),
+                    returncode=session.process.returncode,
+                    owner_session_key=session.owner_session_key,
+                )
+            )
+        return rows
+
     async def start(
         self,
         *,

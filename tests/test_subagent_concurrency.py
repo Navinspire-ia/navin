@@ -149,6 +149,35 @@ class ParallelExecutionTest(unittest.IsolatedAsyncioTestCase):
         self.runner.gate.set()
         await asyncio.gather(*list(self.manager._running_tasks.values()))
 
+    async def test_raising_a_live_limit_starts_five_of_six_queued_tasks(self) -> None:
+        from types import SimpleNamespace
+
+        from navin.config.schema import Config
+        from navin.plan_limits import apply_to_agent_loop
+
+        self.manager.max_concurrent_subagents = 1
+        for index in range(6):
+            await self._spawn(f"translation group {index}")
+        await self._settle()
+        self.assertEqual(self.runner.started, 1)
+        self.assertEqual(self.manager.queued_count("cli:local"), 5)
+
+        config = Config()
+        config.agents.defaults.max_concurrent_subagents = 5
+        loop = SimpleNamespace(subagents=self.manager, _concurrency_gate=None)
+        with mock.patch("navin.plan_limits.measured_capacity", return_value=(1, 1024)):
+            apply_to_agent_loop(loop, config)
+
+        await self._settle(expected_started=5)
+        self.assertEqual(self.runner.peak_concurrent, 5)
+        self.assertEqual(self.manager.queued_count("cli:local"), 1)
+        self.runner.gate.set()
+        await asyncio.gather(*list(self.manager._running_tasks.values()))
+        await self._settle(expected_started=6)
+        await asyncio.gather(*list(self.manager._running_tasks.values()))
+        await asyncio.sleep(0)  # Let the final task's cleanup callback return its slot.
+        self.assertEqual(self.manager.get_running_count(), 0)
+
     async def test_running_counts_are_per_session(self) -> None:
         await self._spawn("a", session_key="cli:one")
         await self._spawn("b", session_key="cli:two")
@@ -222,8 +251,9 @@ class SpawnQueueTest(unittest.IsolatedAsyncioTestCase):
             tasks = list(self.manager._running_tasks.values())
             if tasks:
                 await asyncio.gather(*tasks)
-            else:
-                await asyncio.sleep(0)
+            # Completed tasks can still have cleanup callbacks queued. Yield
+            # even when gather returned immediately so those free their slots.
+            await asyncio.sleep(0)
 
     async def test_a_spawn_past_the_limit_is_queued_not_refused(self) -> None:
         await self._fill()

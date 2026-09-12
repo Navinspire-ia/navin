@@ -6,6 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   clearComposerDraft,
   readComposerDraft,
+  readComposerDraftState,
   writeComposerDraft,
   composerDraftStorageKey,
 } from "./composer-draft";
@@ -56,5 +57,24 @@ describe("composer-draft", () => {
     writeComposerDraft("websocket:1", "queued thought");
     clearComposerDraft("websocket:1");
     expect(readComposerDraft("websocket:1")).toBe("");
+  });
+
+  it("keeps pasted bodies next to the chip so a reload can still send them", () => {
+    const token = "[Pasted Content 1148 chars]";
+    const body = "z".repeat(1148);
+    writeComposerDraft("websocket:1", `merci\n${token}`, { [token]: body });
+    expect(readComposerDraft("websocket:1")).toBe(`merci\n${token}`);
+    expect(readComposerDraftState("websocket:1").pastes[token]).toBe(body);
+  });
+
+  it("still reads a plain-text draft written by an older build", () => {
+    window.localStorage.setItem(
+      composerDraftStorageKey("websocket:1")!,
+      "continue the audit",
+    );
+    expect(readComposerDraftState("websocket:1")).toEqual({
+      text: "continue the audit",
+      pastes: {},
+    });
   });
 });

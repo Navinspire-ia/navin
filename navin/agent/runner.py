@@ -9,15 +9,18 @@ import asyncio
 import inspect
 import os
 import re
+import shlex
 import time
 from contextlib import suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
+from itertools import count
 from pathlib import Path
 from typing import Any, Callable
 
 from loguru import logger
 
+from navin.agent.code_validation import CodeValidationState, edit_paths, workspace_code_snapshot
 from navin.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
@@ -31,6 +34,7 @@ from navin.agent.scope_anchor import (
     is_orientation_batch,
     scope_drift_message,
 )
+from navin.agent.tools.base import ToolResult
 from navin.agent.tools.registry import ToolRegistry, is_tool_error_result, tool_error_hint
 from navin.agent.turn_timing import (
     PHASE_CONTEXT,
@@ -63,6 +67,7 @@ from navin.utils.runtime import (
     build_goal_continue_message,
     build_length_recovery_message,
     build_no_progress_continue_message,
+    build_no_progress_finalization_message,
     build_verify_before_done_message,
     build_verify_failed_message,
     is_blank_text,
@@ -90,17 +95,21 @@ PROGRESS_TOOL_NAMES = _EDIT_TOOL_NAMES | {
     "write_stdin",
 }
 _PROGRESS_TOOL_NAMES = PROGRESS_TOOL_NAMES
-# Consecutive search-only iterations before a nudge, then a hard stop.
-# Reading a handful of files before the first edit is normal work, not a
-# spin, so the stop sits above a realistic investigation.
+# Only repeated calls already refused by a loop guard count as a stall.
+# Successful reads of different files are progress, including long audits.
+_REPEATED_CALL_BLOCKS = frozenset({
+    "repeated identical tool call blocked",
+    "repeated identical read blocked",
+    "repeated external lookup blocked",
+})
 _NO_PROGRESS_NUDGE = 5
 _NO_PROGRESS_STOP = 8
 # Look-around batches (list/find/grep/read) touching none of the targets the
 # user named before the turn is told, once, where the request pointed. Two
 # batches is a repo listing plus a README, i.e. exactly the drift.
 _SCOPE_DRIFT_NUDGE = 2
-# Red verify means the code is broken. Two repair attempts, then hand it
-# back with the failure visible instead of pretending it is done.
+# Only repeated final answers without new validation or repair are capped.
+# Actual edit/check cycles can continue until the accepted task is complete.
 _MAX_VERIFY_FAIL_NUDGES = 2
 
 
@@ -146,9 +155,18 @@ _EXIT_CODE_RE = re.compile(r"Exit code: (-?\d+)")
 
 
 def _is_test_command(command: str) -> bool:
-    """Does any simple command in this shell line run a test suite?"""
+    """Can a successful exit prove this command actually ran tests?"""
+    # Shell fallbacks, later commands and pipes can hide a failing test exit.
+    if re.search(r"\|\||(?<!&);|(?<!\|)\|(?!\|)", command):
+        return False
+    if re.search(r"(?:^|\s)--(?:collect-only|listTests|list-tests|list|help|version|dry-run)(?:\s|$)", command):
+        return False
+    command = command.replace("\\", "/")
     for simple in re.split(r"\s*(?:&&|\|\||;|\|)\s*", command):
-        tokens = simple.strip().split()
+        try:
+            tokens = shlex.split(simple)
+        except ValueError:
+            continue
         while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
             tokens.pop(0)  # FOO=bar prefixes
         while tokens and os.path.basename(tokens[0]) in _RUN_WRAPPERS:
@@ -161,22 +179,28 @@ def _is_test_command(command: str) -> bool:
                 tokens.pop(0)
         if not tokens:
             continue
-        program = os.path.basename(tokens[0]).lower()
+        program = os.path.basename(tokens[0].strip("\"'")).lower()
         if program.endswith(".exe"):
             program = program[:-4]
         args = tokens[1:]
         if program in _TEST_PROGRAMS:
             return True
-        if re.fullmatch(r"python[0-9.]*|pypy[0-9.]*", program):
+        if re.fullmatch(r"python[0-9.]*|pypy[0-9.]*|py", program):
+            while args and (args[0] in {"-B", "-u", "-E", "-s", "-S", "-I", "-O", "-OO"} or re.fullmatch(r"-3(?:\.\d+)?", args[0])):
+                args.pop(0)
             if len(args) >= 2 and args[0] == "-m" and args[1] in {"pytest", "unittest", "nose2", "behave"}:
                 return True
             continue
+        if program == "node" and "--test" in args:
+            return True
         if program in {"npm", "pnpm", "yarn", "bun"} and len(args) >= 2 and args[0] == "run":
             if args[1].split(":")[0] in {"test", "tests", "e2e"} or args[1].startswith("test"):
                 return True
             continue
         expected = _TEST_SUBCOMMANDS.get(program)
-        if expected and any(token in expected for token in args if not token.startswith("-")):
+        if expected and args and args[0] in expected:
+            if program == "cargo" and args[0] == "nextest" and args[1:2] != ["run"]:
+                continue
             return True
     return False
 
@@ -185,7 +209,7 @@ def _exec_event_fields(params: Any, result: Any) -> dict[str, str]:
     """What a tool event needs to say about an ``exec`` beyond its first line."""
     command = ""
     if isinstance(params, dict):
-        command = str(params.get("command") or "")
+        command = str(params.get("command") or params.get("cmd") or "")
     codes = _EXIT_CODE_RE.findall(str(result or ""))
     return {"command": command[:300], "exit_code": codes[-1] if codes else ""}
 
@@ -356,6 +380,7 @@ def _arrearage_error_message(
 # that needs different limits sets them on its spec instead of editing these.
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
+_MAX_INVALID_TOOL_ITERATIONS = 3
 # Keep aligned with AgentDefaults.max_concurrent_subagents: the parent must be
 # able to drain one full wave of completions per injection cycle. Draining less
 # than a wave is not lossy (the surplus waits in the queue), but it spends one
@@ -374,6 +399,20 @@ def _call_read_only(tool: Any, params: Any) -> bool:
         except Exception:
             return bool(getattr(tool, "read_only", False))
     return bool(getattr(tool, "read_only", False))
+
+@dataclass(slots=True)
+class AgentLoopGuard:
+    """Loop protection and validation shared by one accepted request's slices."""
+
+    external_lookups: dict[str, int] = field(default_factory=dict)
+    workspace_violations: dict[str, int] = field(default_factory=dict)
+    tool_failures: dict[str, int] = field(default_factory=dict)
+    readonly_calls: dict[str, int] = field(default_factory=dict)
+    invalid_tool_iterations: int = 0
+    no_progress_streak: int = 0
+    no_progress_nudge_count: int = 0
+    validation: CodeValidationState = field(default_factory=CodeValidationState)
+
 
 @dataclass(slots=True)
 class AgentRunSpec:
@@ -413,9 +452,11 @@ class AgentRunSpec:
     # When True, a first final answer with zero successful tool calls is nudged
     # once so delivery workflows (/studio, /campaign, …) cannot end on a plan.
     requires_tool_delivery: bool = False
-    # When True, a first final answer that used tools but skipped verify/lint/
-    # test_run is nudged once (Build/Code /forge /cruise).
+    # Explicit workflows require checks after every workspace edit.
     requires_verify_before_done: bool = False
+    # CLI, desktop and their delegated work enable this regardless of module.
+    # Source edits require tests; config/style edits require appropriate checks.
+    validate_code_changes: bool = False
     # Paths, branches, services or files the user named in the request. A
     # turn whose first look-around batches touch none of them is reminded
     # once where to look (see navin.agent.scope_anchor).
@@ -424,10 +465,11 @@ class AgentRunSpec:
     max_empty_retries: int = _MAX_EMPTY_RETRIES
     # finish_reason=length continuations before the output is cut short.
     max_length_recoveries: int = _MAX_LENGTH_RECOVERIES
-    # How many times a red verify may be nudged back into a fix retry before
-    # the turn is allowed to finish. Build workflows (/forge, /cruise, /debug)
-    # raise it above the default so hard bugs get their full edit+verify
-    # cycles instead of closing "done" on a red gate. None = runner default.
+    # Responses containing only invalid tool arguments get two chances to
+    # recover. Stop the run after that so a broken subagent releases its slot.
+    max_invalid_tool_iterations: int = _MAX_INVALID_TOOL_ITERATIONS
+    # Consecutive attempts to finish with unchanged missing validation. Repair
+    # edits reset this guard; exhausting it reports a blocker, never success.
     verify_fail_nudge_limit: int | None = None
     # When True, only read-only tool *calls* may run (Ask mode). Tools that
     # multiplex reads and writes behind one name (git, board) are judged per
@@ -461,6 +503,12 @@ class AgentRunSpec:
     # has run, and when the build does not ship that tool.
     forced_tool: str | None = None
     finalize_on_max_iterations: bool = True
+    # Standalone CLI calls and subagents have no dispatcher to resume a slice.
+    # Keep their runner alive, with checkpoints and context compaction, until
+    # completion, a real failure, or cancellation. Explicit bounded callers
+    # (evals and ephemeral jobs) retain the finite default.
+    continue_on_max_iterations: bool = False
+    loop_guard: AgentLoopGuard | None = None
 
 
 @dataclass(slots=True)
@@ -710,6 +758,7 @@ class AgentRunner:
         # parent. contextvars carry the value into tasks created mid-turn.
         policy_token = bind_turn_policy(TurnPolicy(
             requires_verify_before_done=spec.requires_verify_before_done,
+            validate_code_changes=spec.validate_code_changes,
             locked_denied_tools=spec.locked_denied_tools,
             allowed_tools=spec.allowed_tools,
         ))
@@ -771,13 +820,16 @@ class AgentRunner:
         error: str | None = None
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
-        external_lookup_counts: dict[str, int] = {}
-        # Per-turn throttle for repeated attempts against the same outside target.
-        workspace_violation_counts: dict[str, int] = {}
+        loop_guard = spec.loop_guard or AgentLoopGuard()
+        spec.loop_guard = loop_guard
+        validation = loop_guard.validation
+        external_lookup_counts = loop_guard.external_lookups
+        workspace_violation_counts = loop_guard.workspace_violations
         # Soft-error retry budget: identical failing calls escalate after a few tries.
-        tool_failure_counts: dict[str, int] = {}
+        tool_failure_counts = loop_guard.tool_failures
+        invalid_tool_iterations = loop_guard.invalid_tool_iterations
         # Identical successful reads/greps: thinking models re-fetch blanked results.
-        readonly_call_counts: dict[str, int] = {}
+        readonly_call_counts = loop_guard.readonly_calls
         empty_content_retries = 0
         length_recovery_count = 0
         had_injections = False
@@ -814,16 +866,15 @@ class AgentRunner:
         )
 
         delivery_nudge_count = 0
-        verify_nudge_count = 0
-        verify_fail_nudge_count = 0
-        no_progress_streak = 0
-        no_progress_nudge_count = 0
+        no_progress_streak = loop_guard.no_progress_streak
+        no_progress_nudge_count = loop_guard.no_progress_nudge_count
         # Scope anchor: look-around batches that never touch a named target.
         scope_drift_streak = 0
         scope_anchored = not spec.scope_targets
         scope_nudge_count = 0
         timing = TurnTiming(session_key=spec.session_key, model=spec.runtime.model)
-        for iteration in range(spec.max_iterations):
+        iterations = count() if spec.continue_on_max_iterations else range(spec.max_iterations)
+        for iteration in iterations:
             try:
                 # Keep the persisted conversation untouched. Context governance
                 # may repair or compact historical messages for the model, but
@@ -944,6 +995,28 @@ class AgentRunner:
                 )
                 context.tool_results = list(results)
                 context.tool_events = list(new_events)
+                # Count model responses, not individual calls: a parallel
+                # batch must still get a chance to recover on the next turn.
+                # Ordinary execution failures stay soft, and any other batch
+                # ends the streak. Empty arguments remain valid for no-arg tools.
+                if new_events and all(
+                    event.get("error_kind") == "invalid_parameters" for event in new_events
+                ):
+                    invalid_tool_iterations += 1
+                else:
+                    invalid_tool_iterations = 0
+                loop_guard.invalid_tool_iterations = invalid_tool_iterations
+                if (
+                    fatal_error is None
+                    and invalid_tool_iterations > 0
+                    and invalid_tool_iterations >= spec.max_invalid_tool_iterations
+                ):
+                    names = ", ".join(dict.fromkeys(call.name for call in response.tool_calls))
+                    fatal_error = RuntimeError(
+                        f"Stopped after {invalid_tool_iterations} consecutive responses "
+                        f"with invalid tool arguments for {names}. No tool from these "
+                        "responses was executed."
+                    )
                 completed_tool_results: list[dict[str, Any]] = []
                 for tool_call, result in zip(response.tool_calls, results):
                     tool_message = {
@@ -975,6 +1048,11 @@ class AgentRunner:
                     )
                     if should_continue:
                         had_injections = True
+                        invalid_tool_iterations = 0
+                        loop_guard.invalid_tool_iterations = 0
+                        error = None
+                        final_content = None
+                        stop_reason = "completed"
                         continue
                     break
                 await self._emit_checkpoint(
@@ -990,18 +1068,18 @@ class AgentRunner:
                 )
                 empty_content_retries = 0
                 length_recovery_count = 0
-                ok_names = {
-                    tool_call.name
-                    for tool_call, event in zip(response.tool_calls, new_events)
-                    if event.get("status") == "ok"
-                }
-                if ok_names & _PROGRESS_TOOL_NAMES:
-                    no_progress_streak = 0
-                elif ok_names:
+                if new_events and all(
+                    event.get("status") == "error"
+                    and event.get("detail") in _REPEATED_CALL_BLOCKS
+                    for event in new_events
+                ):
                     no_progress_streak += 1
+                else:
+                    no_progress_streak = 0
+                loop_guard.no_progress_streak = no_progress_streak
                 if no_progress_streak >= _NO_PROGRESS_STOP:
                     logger.warning(
-                        "Search-only loop after {} iterations for {}; stopping",
+                        "Only blocked duplicate calls for {} iterations in {}; stopping",
                         no_progress_streak,
                         spec.session_key or "default",
                     )
@@ -1009,6 +1087,7 @@ class AgentRunner:
                         await hook.on_stream_end(context, resuming=False)
                     final_content = await self._try_finalize_after_max_iterations(
                         spec, hook, messages, usage,
+                        finalization_message=build_no_progress_finalization_message(),
                     )
                     if is_blank_text(final_content):
                         final_content = NO_PROGRESS_STOP_FALLBACK
@@ -1023,6 +1102,7 @@ class AgentRunner:
                     and no_progress_nudge_count < 1
                 ):
                     no_progress_nudge_count += 1
+                    loop_guard.no_progress_nudge_count = no_progress_nudge_count
                     messages.append(build_no_progress_continue_message())
                 if not scope_anchored:
                     if calls_touch_targets(response.tool_calls, spec.scope_targets):
@@ -1150,63 +1230,51 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 continue
 
-            # Build/Code: tools ran but verify/lint/tests never did - nudge once
-            # before allowing a "done" narration.
+            # Validation belongs to the accepted request, not to its last
+            # slice. A final narration cannot turn a missing/red check green.
+            if spec.workspace and spec.validate_code_changes and validation.workspace_snapshot is not None:
+                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
             if (
-                spec.requires_verify_before_done
-                and _EDIT_TOOL_NAMES.intersection(tools_used)
-                and not _VERIFY_TOOL_NAMES.intersection(tools_used)
-                and not _tests_passed_via_exec(tool_events)
-                and verify_nudge_count < 1
+                (spec.requires_verify_before_done or spec.validate_code_changes)
+                and validation.pending
                 and response.finish_reason != "error"
                 and assistant_message is not None
+                and not spec.read_only_tools
+                and not spec.plan_read_only
             ):
-                verify_nudge_count += 1
+                limit = spec.verify_fail_nudge_limit
+                limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
+                attempts = validation.nudge()
+                if attempts > limit:
+                    final_content = (
+                        "The changes are saved, but the task is not validated. "
+                        "The agent repeatedly tried to finish without resolving these checks.\n\n"
+                        + validation.missing()
+                    )
+                    error = final_content
+                    stop_reason = "validation_failed"
+                    self._append_final_message(messages, final_content)
+                    context.final_content = final_content
+                    context.error = error
+                    context.stop_reason = stop_reason
+                    if hook.wants_streaming():
+                        await hook.on_stream_end(context, resuming=False)
+                    await hook.after_iteration(context)
+                    break
                 logger.info(
-                    "Build/Debug workflow skipped verify after edits on turn {}; "
-                    "nudging once for {}",
-                    iteration,
-                    spec.session_key or "default",
+                    "Validation pending after edits on turn {}; continuing for {}",
+                    iteration, spec.session_key or "default",
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
                 messages.append(assistant_message)
-                messages.append(build_verify_before_done_message())
-                await hook.after_iteration(context)
-                continue
-
-            # Build/Code: verify ran but is still red - refuse "done" and auto-retry.
-            verify_fail_nudge_limit = (
-                spec.verify_fail_nudge_limit
-                if spec.verify_fail_nudge_limit is not None
-                else _MAX_VERIFY_FAIL_NUDGES
-            )
-            if (
-                spec.requires_verify_before_done
-                and _EDIT_TOOL_NAMES.intersection(tools_used)
-                and _VERIFY_TOOL_NAMES.intersection(tools_used)
-                and _last_verify_failed(tool_events)
-                and verify_fail_nudge_count < verify_fail_nudge_limit
-                and response.finish_reason != "error"
-                and assistant_message is not None
-            ):
-                verify_fail_nudge_count += 1
-                # The retry should think harder than the attempt that failed.
-                spec.effort_escalations += 1
-                logger.info(
-                    "Build/Debug verify still red on turn {}; "
-                    "nudging fix retry {}/{} for {}",
-                    iteration,
-                    verify_fail_nudge_count,
-                    verify_fail_nudge_limit,
-                    spec.session_key or "default",
-                )
-                if hook.wants_streaming():
-                    await hook.on_stream_end(context, resuming=True)
-                messages.append(assistant_message)
-                messages.append(build_verify_failed_message(
-                    last_summary=_verify_failure_summary(spec, tool_events),
-                ))
+                if validation.failed:
+                    spec.effort_escalations += 1
+                    messages.append(build_verify_failed_message(last_summary=validation.missing()))
+                else:
+                    nudge = build_verify_before_done_message()
+                    nudge["content"] += "\n\n" + validation.missing()
+                    messages.append(nudge)
                 await hook.after_iteration(context)
                 continue
 
@@ -1319,15 +1387,21 @@ class AgentRunner:
                 had_injections = True
             final_content = None
             if spec.finalize_on_max_iterations:
-                final_content = await self._try_finalize_after_max_iterations(
-                    spec,
-                    hook,
-                    messages,
-                    usage,
-                )
-            if final_content is None:
+                if validation.pending:
+                    final_content = "The task ended before validation was completed.\n\n" + validation.missing()
+                    stop_reason = "validation_failed"
+                    error = final_content
+                else:
+                    final_content = await self._try_finalize_after_max_iterations(
+                        spec,
+                        hook,
+                        messages,
+                        usage,
+                    )
+            if final_content is None and spec.finalize_on_max_iterations:
                 final_content = self._max_iterations_fallback(spec)
-            self._append_final_message(messages, final_content)
+            if final_content:
+                self._append_final_message(messages, final_content)
 
         if peak_prompt_tokens > 0:
             usage["peak_prompt_tokens"] = peak_prompt_tokens
@@ -1650,8 +1724,14 @@ class AgentRunner:
         hook: AgentHook,
         messages: list[dict[str, Any]],
         usage: dict[str, int],
+        *,
+        finalization_message: dict[str, str] | None = None,
     ) -> str | None:
-        retry_messages = self._budget_exhausted_finalization_messages(messages)
+        retry_messages = (
+            [*messages, finalization_message]
+            if finalization_message is not None
+            else self._budget_exhausted_finalization_messages(messages)
+        )
         try:
             response = await self._request_no_tools(spec, retry_messages)
         except Exception:
@@ -1870,7 +1950,16 @@ class AgentRunner:
         )
         batches = self._partition_tool_batches(spec, tool_calls)
         tool_results: list[tuple[Any, dict[str, str], BaseException | None]] = []
+        validation = spec.loop_guard.validation if spec.loop_guard is not None else None
+        validating = validation is not None and (spec.requires_verify_before_done or spec.validate_code_changes)
         for batch in batches:
+            watch_workspace = bool(
+                validating and spec.validate_code_changes and spec.workspace
+                and any(call.name in {"exec", "write_stdin", "run_cli_app", "spawn", "manage_files", "lsp"} for call in batch)
+            )
+            if watch_workspace:
+                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
+            execution_revision = validation.revision if validating else None
             if spec.concurrent_tools and len(batch) > 1:
                 batch_results = await asyncio.gather(*(
                     self._run_tool(
@@ -1903,6 +1992,23 @@ class AgentRunner:
                     )
                     tool_results.append(result)
                     batch_results.append(result)
+
+            if watch_workspace:
+                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
+            if validating:
+                for call, (result, event, _) in zip(batch, batch_results):
+                    _, params, _ = spec.tools.prepare_call(call.name, call.arguments)
+                    if not isinstance(params, dict):
+                        continue
+                    validation.observe(
+                        call.name, params, result, status=event.get("status", "error"),
+                        require_verify=spec.requires_verify_before_done,
+                        validate_code=spec.validate_code_changes,
+                        is_test_command=_is_test_command,
+                        execution_revision=execution_revision,
+                    )
+                    if spec.workspace and event.get("status") == "ok" and call.name in _EDIT_TOOL_NAMES:
+                        validation.sync_known_edits(spec.workspace, edit_paths(params))
 
         results: list[Any] = []
         events: list[dict[str, str]] = []
@@ -1973,9 +2079,18 @@ class AgentRunner:
             readonly_call_counts if readonly_call_counts is not None else {}
         )
         hint = "\n\n[Analyze the error above and try a different approach.]"
+        prepare_call = getattr(spec.tools, "prepare_call", None)
+        tool, params, prep_error = None, tool_call.arguments, None
+        if callable(prepare_call):
+            with suppress(Exception):
+                prepared = prepare_call(tool_call.name, tool_call.arguments)
+                if isinstance(prepared, tuple) and len(prepared) == 3:
+                    tool, params, prep_error = prepared
+        if isinstance(prep_error, ToolResult):
+            hint = tool_error_hint(prep_error)
         # Soft throttle only: after enough identical failures this turn, refuse
-        # to re-execute the same call. Never raise a fatal error here - long
-        # agents must keep the turn alive for hours.
+        # to re-execute the same call. The run-level invalid-argument guard
+        # separately stops batches that cannot reach any executable tool.
         if repeated_tool_failure_is_hard_stop(
             tool_call.name, tool_call.arguments, tool_failure_counts
         ):
@@ -1989,6 +2104,8 @@ class AgentRunner:
                 "status": "error",
                 "detail": "repeated identical tool call blocked",
             }
+            if prep_error and tool is not None:
+                event["error_kind"] = "invalid_parameters"
             if spec.fail_on_tool_error:
                 return blocked + hint, event, RuntimeError(blocked)
             return blocked + hint, event, None
@@ -2020,19 +2137,14 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return spin_error + hint, event, RuntimeError(spin_error)
             return spin_error + hint, event, None
-        prepare_call = getattr(spec.tools, "prepare_call", None)
-        tool, params, prep_error = None, tool_call.arguments, None
-        if callable(prepare_call):
-            with suppress(Exception):
-                prepared = prepare_call(tool_call.name, tool_call.arguments)
-                if isinstance(prepared, tuple) and len(prepared) == 3:
-                    tool, params, prep_error = prepared
         if prep_error:
             event = {
                 "name": tool_call.name,
                 "status": "error",
                 "detail": prep_error.split(": ", 1)[-1][:120],
             }
+            if tool is not None:
+                event["error_kind"] = "invalid_parameters"
             handled = self._classify_violation(
                 raw_text=prep_error,
                 soft_payload=prep_error + hint,
@@ -2048,6 +2160,22 @@ class AgentRunner:
             return prep_error + hint + (escalation or ""), event, (
                 RuntimeError(prep_error) if spec.fail_on_tool_error else None
             )
+        # A board step or goal must not be closed before the same validation
+        # required for the final answer, even if its old task metadata lacked
+        # a validation field. Non-code work leaves this gate inactive.
+        validation = spec.loop_guard.validation if spec.loop_guard else None
+        closing_work = isinstance(params, dict) and (
+            (tool_call.name == "board" and params.get("status") == "done")
+            or (tool_call.name == "update_goal" and params.get("action") == "complete")
+        )
+        if closing_work and validation is not None and validation.pending:
+            detail = "Validation required before closing this work.\n" + validation.missing()
+            limit = spec.verify_fail_nudge_limit
+            limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
+            fatal = RuntimeError(detail) if validation.nudge() > limit else None
+            return ToolResult.error(detail), {
+                "name": tool_call.name, "status": "error", "detail": "validation required before completion",
+            }, fatal
         if spec.read_only_tools or spec.plan_read_only:
             candidate = tool
             if candidate is None:

@@ -138,6 +138,30 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
                 "glm-5.3-flash",
             )
 
+    async def test_long_user_paste_stays_a_chip(self) -> None:
+        from textual.app import App, ComposeResult
+        from textual.widgets import Static
+
+        from navin.tui.widgets import UserMessage
+
+        blob = "x" * 1148
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield UserMessage(f"regarde\n{blob}")
+
+        app = Host()
+        async with app.run_test(size=(80, 20)) as pilot:
+            user = app.query_one(UserMessage)
+            self.assertEqual(
+                user.query_one(".user-paste-chip", Static).content,
+                "[Pasted Content 1148 chars]",
+            )
+            self.assertIn("regarde", user.query_one(".user-body", Static).content)
+            self.assertEqual(user.copy_text(), f"regarde\n{blob}")
+            await pilot.click(user)
+            self.assertTrue(user.has_class("-expanded"))
+
     async def test_thinking_stays_folded_until_done(self) -> None:
         from textual.app import App, ComposeResult
         from textual.widgets import Static
@@ -198,10 +222,9 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("{", tool._head_text())
             tool.apply(phase="end", result="PASS - no lint errors\n2 passed")
             await _pilot.pause()
-            tool.toggle()
-            await _pilot.pause()
             self.assertTrue(tool._open)
             self.assertTrue(tool.query_one(".tool-body").display)
+            self.assertIn("PASS", str(tool.query_one(".tool-body").content))
 
 
 class ToolColorTests(unittest.TestCase):
@@ -262,6 +285,100 @@ class ToolColorTests(unittest.TestCase):
         self.assertNotIn("{", body)
         self.assertTrue(body)
         self.assertNotIn("args:", body)
+
+
+class ToolClusterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reads_and_searches_fold_under_explored(self) -> None:
+        from textual.app import App, ComposeResult
+
+        from navin.tui.theme import NAVIN_DARK
+        from navin.tui.widgets import AssistantMessage, ToolCall, ToolCluster
+
+        block = AssistantMessage("navin")
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield block
+
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 20)) as _pilot:
+            await block.tool_event(
+                "r1", "read_file", "end", {"path": "useAccount.ts"}, "ok", None, None
+            )
+            await block.tool_event(
+                "g1",
+                "grep",
+                "end",
+                {"pattern": "NavinClient", "path": "navin-client.ts"},
+                "ok",
+                None,
+                None,
+            )
+            await block.tool_event(
+                "e1", "exec", "end", {"command": "git status"}, "ok", None, None
+            )
+            clusters = list(block.query(ToolCluster))
+            self.assertEqual(len(clusters), 1)
+            self.assertEqual(clusters[0].kind, "explore")
+            self.assertIn("Explored", clusters[0]._head_text())
+            heads = [tool._head_text() for tool in clusters[0].tools]
+            self.assertTrue(any("Read useAccount.ts" in head for head in heads))
+            self.assertTrue(any("Search NavinClient in navin-client.ts" in head for head in heads))
+            self.assertTrue(heads[0].startswith("├ ") or heads[-1].startswith("└ "))
+            runs = [
+                tool
+                for tool in block.query(ToolCall)
+                if tool.cluster_kind == ""
+            ]
+            self.assertEqual(len(runs), 1)
+            self.assertIn("git status", runs[0]._head_text())
+
+    async def test_edit_diff_stays_open_without_a_click(self) -> None:
+        from textual.app import App, ComposeResult
+
+        from navin.tui.theme import NAVIN_DARK
+        from navin.tui.widgets import AssistantMessage, ToolCluster
+
+        block = AssistantMessage("navin")
+
+        class Host(App):
+            def compose(self) -> ComposeResult:
+                yield block
+
+        diff = (
+            "@@ -1,2 +1,3 @@\n"
+            " import asyncio\n"
+            "+import queue\n"
+            " from pathlib import Path\n"
+        )
+        app = Host()
+        app.register_theme(NAVIN_DARK)
+        app.theme = "navin"
+        async with app.run_test(size=(80, 24)) as _pilot:
+            await block.tool_event(
+                "e1",
+                "edit_file",
+                "end",
+                {"path": "navin/tui/app.py"},
+                "ok",
+                None,
+                None,
+            )
+            block.note_file_edit("navin/tui/app.py", 1, 0, diff=diff)
+            await block.finish(latency_ms=12, model="glm", preset=None)
+            cluster = block.query_one(ToolCluster)
+            self.assertEqual(cluster.kind, "edit")
+            self.assertIn("Edited", cluster._head_text())
+            self.assertIn("1 file", cluster._head_text())
+            self.assertIn("+1", cluster._head_text())
+            tool = cluster.tools[0]
+            self.assertTrue(tool._open)
+            self.assertTrue(tool.query_one(".tool-body").display)
+            body = str(tool.query_one(".tool-body").content)
+            self.assertIn("import queue", body)
+            self.assertIn("on #0F6B38", body)
 
 
 class UpdateOfferTests(unittest.IsolatedAsyncioTestCase):

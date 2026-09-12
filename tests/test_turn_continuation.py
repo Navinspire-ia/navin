@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from navin.board import session_focus
 from navin.bus.events import InboundMessage
 from navin.session import turn_continuation as tc
+from navin.session.goal_state import GOAL_STATE_KEY
 
 
 def _msg(content: str = "build the CRM", metadata: dict | None = None) -> InboundMessage:
@@ -64,18 +65,37 @@ class ContinuationKindTest(unittest.TestCase):
             )
         )
 
-    def test_round_cap_only_bounds_a_single_prompt(self) -> None:
-        metadata = {tc._TURN_CONTINUATION_ROUNDS_KEY: tc._MAX_TURN_CONTINUATION_ROUNDS}
-        self.assertIsNone(
-            tc._continuation_kind(
-                stop_reason="max_iterations",
-                pending_queue_available=True,
-                session_metadata=metadata,
-                session_key="websocket:chat-1",
-            )
-        )
-        # A fresh user message resets the budget: autonomy resumes.
+    def test_old_round_counters_never_strand_unfinished_work(self) -> None:
+        metadata = {
+            tc._TURN_CONTINUATION_ROUNDS_KEY: 2_000,
+            tc._BOARD_CONTINUATION_ROUNDS_KEY: 2_000,
+            tc._GOAL_CONTINUATION_ROUNDS_KEY: 2_000,
+        }
+        for kind in ("turn_budget", "session_board", "sustained_goal"):
+            with self.subTest(kind=kind):
+                if kind == "session_board":
+                    session_focus.remember("websocket:chat-1", ["task-1"])
+                if kind == "sustained_goal":
+                    metadata[GOAL_STATE_KEY] = {
+                        "status": "active", "objective": "Translate all 169 locale files",
+                    }
+                kwargs = {
+                    "pending_queue_available": True,
+                    "session_metadata": metadata,
+                    "session_key": "websocket:chat-1",
+                }
+                self.assertEqual(
+                    tc._continuation_kind(stop_reason="max_iterations", **kwargs), kind,
+                )
+                self.assertFalse(tc.should_finalize_on_max_iterations(**kwargs))
+                self.assertFalse(tc.should_stream_budget_response(
+                    stop_reason="max_iterations", **kwargs,
+                ))
+
+    def test_new_user_request_resets_checkpoint_counters(self) -> None:
+        metadata = {tc._TURN_CONTINUATION_ROUNDS_KEY: 20}
         tc.reset_budget_continuation_rounds(metadata)
+        self.assertNotIn(tc._TURN_CONTINUATION_ROUNDS_KEY, metadata)
         self.assertEqual(
             tc._continuation_kind(
                 stop_reason="max_iterations",
@@ -190,23 +210,18 @@ class MaybeContinueTurnTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("board checklist", queued.content)
 
-    async def test_a_round_that_changed_nothing_is_not_resumed(self) -> None:
-        """Twenty-four steps of reading and searching is circling, not work.
-
-        Re-queuing such a round would run the same reads again, and the round
-        caps would let that repeat for hours. The transcript is delivered.
-        """
+    async def test_an_audit_continues_after_a_slice_of_reads(self) -> None:
+        """Inspecting different locale files is necessary audit work."""
         ctx = self._ctx()
         ctx.tools_used = ["read_file", "grep", "find_files", "read_file"]
-        self.assertFalse(await tc.maybe_continue_turn(ctx))
-        self.assertFalse(ctx.suppress_response)
-        self.assertTrue(ctx.pending_queue.empty())
-        self.assertTrue(
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
+        self.assertTrue(ctx.suppress_response)
+        self.assertEqual(ctx.pending_queue.qsize(), 1)
+        self.assertFalse(
             tc.should_stream_budget_response(
                 stop_reason="max_iterations",
                 pending_queue_available=True,
                 session_metadata={},
-                tools_used=ctx.tools_used,
             )
         )
 
@@ -217,18 +232,41 @@ class MaybeContinueTurnTest(unittest.IsolatedAsyncioTestCase):
             ctx.tools_used = progress
             self.assertTrue(await tc.maybe_continue_turn(ctx), progress)
 
-    def test_untracked_tool_use_is_not_held_against_the_turn(self) -> None:
-        self.assertTrue(tc.turn_made_progress(None))
-        self.assertFalse(tc.turn_made_progress([]))
-
-    async def test_exhausted_rounds_stop_the_chain(self) -> None:
+    async def test_a_long_running_plan_keeps_its_next_slice_and_history(self) -> None:
+        session_focus.remember("websocket:chat-1", ["task-1"])
         ctx = self._ctx(
             session_metadata={
-                tc._TURN_CONTINUATION_ROUNDS_KEY: tc._MAX_TURN_CONTINUATION_ROUNDS,
+                tc._TURN_CONTINUATION_ROUNDS_KEY: 20,
+                tc._BOARD_CONTINUATION_ROUNDS_KEY: 40,
             }
         )
-        self.assertFalse(await tc.maybe_continue_turn(ctx))
-        self.assertFalse(ctx.suppress_response)
+        ctx.tools_used = ["apply_patch", "verify"]
+        ctx.visible_run_started_at = 123.0
+        ctx.all_messages.append({
+            "role": "tool", "tool_call_id": "last-edit", "name": "apply_patch",
+            "content": "Translated module 103 of 169",
+        })
+        ctx.all_messages.append({"role": "assistant", "content": ctx.final_content})
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
+        self.assertTrue(ctx.suppress_response)
+        queued = ctx.pending_queue.get_nowait()
+        self.assertEqual(ctx.session.metadata[tc._BOARD_CONTINUATION_ROUNDS_KEY], 41)
+        self.assertEqual(queued.metadata[tc.INTERNAL_CONTINUATION_RUN_STARTED_AT_META], 123.0)
+        self.assertEqual(ctx.all_messages[-1]["tool_call_id"], "last-edit")
+        self.assertFalse(tc.should_persist_user_message(queued.metadata))
+
+    async def test_tool_errors_and_completed_work_do_not_resume(self) -> None:
+        for reason in ("completed", "tool_error", "error", "no_progress"):
+            with self.subTest(reason=reason):
+                ctx = self._ctx()
+                ctx.stop_reason = reason
+                self.assertFalse(await tc.maybe_continue_turn(ctx))
+                self.assertTrue(ctx.pending_queue.empty())
+
+    async def test_custom_tools_are_not_mistaken_for_no_progress(self) -> None:
+        ctx = self._ctx()
+        ctx.tools_used = ["mcp__locales__translate"]
+        self.assertTrue(await tc.maybe_continue_turn(ctx))
 
     async def test_a_final_question_waits_for_the_user(self) -> None:
         """A plan proposal ending in a question must never be auto-resumed.

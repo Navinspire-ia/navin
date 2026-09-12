@@ -63,6 +63,16 @@ CARD_ONLY_TOOLS = frozenset({"ask_user", "message"})
 
 # How much of a tool/message we keep on screen and on the clipboard.
 MAX_TRANSCRIPT_LINES = 5000
+# Default open preview: a Codex-sized hunk, not a 80-row wall.
+PREVIEW_OPEN_LINES = 32
+PREVIEW_MIN_WIDTH = 72
+# Codex-style washes: readable text on a clear green / red bar.
+PREVIEW_ADD_INK = "#E8FFEF"
+PREVIEW_ADD_BG = "#0F6B38"
+PREVIEW_DEL_INK = "#FFE8E8"
+PREVIEW_DEL_BG = "#8B2222"
+PREVIEW_CTX_INK = "#E8E8E8"
+PREVIEW_CTX_BG = "#1C1C1C"
 MAX_TRANSCRIPT_CHARS = 400_000
 # One TUI row: long enough for a real grep/run, short enough for WT.
 TOOL_LINE_LIMIT = 160
@@ -77,6 +87,15 @@ _SLEEP_RE = re.compile(r"^sleep\s+(\d+(?:\.\d+)?)$", re.I)
 _CD_RE = re.compile(r"^cd\s+(.+)$")
 _PYTHON_BIN_RE = re.compile(r"(?:\S+/)?(?:\.venv|venv)/bin/python\d*(?:\.\d+)*")
 _SHELL_SPLIT_RE = re.compile(r"\s*(?:&&|;)\s*")
+_HEREDOC_OPEN_RE = re.compile(r"""<<-?\s*(['\"]?)(\w+)\1\s*$""")
+_EMPTY_OUTPUT_RE = re.compile(
+    r"^\((?:no output(?: yet)?|[\w.:-]+ completed with no output)\)$",
+    re.I,
+)
+_DIFF_HUNK_RE = re.compile(
+    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
+    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
+)
 _TRUTHY = {True, "true", "True", "1", 1}
 
 
@@ -167,6 +186,27 @@ def _last_path_bits(path: str, keep: int = 2) -> str:
     return ".../" + "/".join(parts[-keep:])
 
 
+def split_heredoc(command: str) -> tuple[str, str]:
+    """Split ``python - <<'PY'\\ncode\\nPY`` into ``('python -', 'code')``."""
+    raw = (command or "").replace("\r\n", "\n")
+    if "<<" not in raw:
+        return raw.strip(), ""
+    first, sep, rest = raw.partition("\n")
+    opened = _HEREDOC_OPEN_RE.search(first)
+    if not opened:
+        return raw.strip(), ""
+    tag = opened.group(2)
+    head = first[: opened.start()].strip()
+    if not sep:
+        return head, ""
+    body: list[str] = []
+    for line in rest.splitlines():
+        if line.strip() == tag:
+            break
+        body.append(line)
+    return head, "\n".join(body)
+
+
 def humanize_shell_command(cmd: str, max_len: int = 88) -> str:
     """Turn a raw exec string into the action a human can read at a glance.
 
@@ -174,7 +214,9 @@ def humanize_shell_command(cmd: str, max_len: int = 88) -> str:
     becomes ``in db-migration · python migration-v2.py``.
     ``sleep 120 && tail -5 .../run.log`` becomes ``wait 2 min · tail -5 .../run.log``.
     """
-    raw = " ".join((cmd or "").strip().split())
+    head, body = split_heredoc(cmd)
+    source = head if body or _HEREDOC_OPEN_RE.search(head) else cmd
+    raw = " ".join((source or "").strip().split())
     if not raw:
         return "shell"
     chunks = [chunk.strip() for chunk in _SHELL_SPLIT_RE.split(raw) if chunk.strip()]
@@ -194,7 +236,10 @@ def humanize_shell_command(cmd: str, max_len: int = 88) -> str:
             continue
         action = chunk
     action = _PYTHON_BIN_RE.sub("python", action)
+    action = re.sub(r"\s+-\s*$", "", action)
     action = action.strip() or raw
+    if body or _HEREDOC_OPEN_RE.search(head):
+        action = action.split()[0] if action.split() else "python"
     action = _abbreviate_command(action, max_len=max(36, max_len - 18))
     bits: list[str] = []
     if cwd:
@@ -219,6 +264,61 @@ def exec_flags(arguments: dict) -> str:
     if pretty:
         flags.append(pretty)
     return " · ".join(flags)
+
+
+# Consecutive reads/searches fold under one TUI header, like Cursor's Explored.
+_EXPLORE_VERBS = frozenset({"read", "list", "grep", "find", "search"})
+_EDIT_VERBS = frozenset({"edit", "create"})
+_EXPLORE_OP = {
+    "read": "Read",
+    "list": "List",
+    "grep": "Search",
+    "find": "Search",
+    "search": "Search",
+}
+
+
+def tool_cluster_kind(name: str) -> str:
+    """``explore`` or ``edit``. Empty string means a standalone row (run, git)."""
+    verb = tool_verb(name)
+    if verb in _EXPLORE_VERBS:
+        return "explore"
+    if verb in _EDIT_VERBS:
+        return "edit"
+    return ""
+
+
+def describe_explore_step(
+    name: str,
+    arguments: dict | None,
+    *,
+    limit: int = 72,
+) -> str:
+    """``Read useAccount.ts`` or ``Search NavinClient in navin-client.ts``."""
+    verb = tool_verb(name)
+    label = _EXPLORE_OP.get(verb, verb.title() if verb else "Tool")
+    args = arguments if isinstance(arguments, dict) else {}
+    path = _first_path(args)
+    file_name = _path_name(path) if path else ""
+    query = ""
+    for key in ("pattern", "query", "glob"):
+        val = args.get(key)
+        if isinstance(val, str) and val.strip():
+            query = " ".join(val.split())
+            break
+    if verb in {"grep", "find", "search"}:
+        if query and file_name:
+            text = f"{label} {query} in {file_name}"
+        elif query:
+            text = f"{label} {query}"
+        else:
+            text = f"{label} {file_name}".strip() or label
+    else:
+        target = file_name or tool_target(args)
+        text = f"{label} {target}".strip() if target else label
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
 
 
 def tool_verb(name: str) -> str:
@@ -319,8 +419,48 @@ def _raw_command_stub(command: str) -> str:
     return raw.strip() or "command"
 
 
+def _command_from_args(arguments: dict | None) -> str:
+    args = arguments if isinstance(arguments, dict) else {}
+    command = args.get("command") or args.get("cmd")
+    return command.strip() if isinstance(command, str) and command.strip() else ""
+
+
+def short_run_target(command: str, *, limit: int = TOOL_LINE_LIMIT) -> str:
+    """Same shape as an edit target: ``git status``, ``python``, ``pytest  foo.py``."""
+    head, body = split_heredoc(command)
+    source = head if body or _HEREDOC_OPEN_RE.search((command or "").split("\n", 1)[0]) else command
+    raw = _raw_command_stub(source)
+    raw = _PYTHON_BIN_RE.sub("python", raw)
+    raw = re.sub(r"\s+-\s*$", "", raw).strip()
+    tokens = raw.split()
+    if not tokens:
+        return _command_label(command, limit)
+    name = tokens[0]
+    if name == "git" and len(tokens) >= 2:
+        return "git " + tokens[1]
+    if name in {"pytest", "python", "python3"}:
+        if body or _HEREDOC_OPEN_RE.search((command or "").split("\n", 1)[0]):
+            return "python" if name.startswith("python") else name
+        files = [tok for tok in tokens[1:] if not tok.startswith("-") and tok != "--"]
+        if len(files) == 1:
+            return f"{name} {_path_name(files[0])}"
+        if len(files) > 1:
+            return f"{name} {len(files)} files"
+        return name
+    if name in {"rg", "grep"}:
+        return _command_label(command, limit)
+    pretty = humanize_shell_command(command, max_len=max(limit, 80))
+    if _usable_shell_label(pretty) and not _looks_broken_command_head(pretty):
+        return pretty if len(pretty) <= limit else pretty[: limit - 1] + "…"
+    return _command_label(command, limit)
+
+
 def _command_label(command: str, limit: int = TOOL_LINE_LIMIT) -> str:
     """Never an empty ``run  "``. Keep the real command, not a 56-char stub."""
+    if "<<" in (command or ""):
+        short = short_run_target(command, limit=limit)
+        if _usable_shell_label(short):
+            return short
     pretty = humanize_shell_command(command, max_len=max(limit, 80))
     if _usable_shell_label(pretty) and not _looks_broken_command_head(pretty):
         text = pretty
@@ -337,9 +477,9 @@ def _command_label(command: str, limit: int = TOOL_LINE_LIMIT) -> str:
 def tool_target(arguments: dict | None, *, limit: int = TOOL_LINE_LIMIT) -> str:
     """Short action target: file name, command, or query. No JSON. Never blank."""
     args = arguments if isinstance(arguments, dict) else {}
-    command = args.get("command") or args.get("cmd")
-    if isinstance(command, str) and command.strip():
-        return _command_label(command, limit)
+    command = _command_from_args(args)
+    if command:
+        return short_run_target(command, limit=limit)
     path = _first_path(args)
     if path:
         return _path_name(path)
@@ -360,10 +500,16 @@ def describe_tool_line(
     added: int = 0,
     removed: int = 0,
 ) -> str:
-    """``edit  +38 -14  foo.py`` on one line."""
+    """``edit  +38 -14  foo.py`` or ``run  +16  python`` on one line."""
     del done
     verb = tool_verb(name)
+    if verb == "run" and added == 0 and removed == 0:
+        added, removed = infer_run_stats(arguments)
     target = tool_target(arguments, limit=TOOL_LINE_LIMIT)
+    if verb in {"edit", "create"}:
+        path = _first_path(arguments if isinstance(arguments, dict) else {})
+        if path:
+            target = _last_path_bits(path, keep=2)
     suffix = format_diff_suffix(added, removed)
     if target and suffix:
         return f"{verb}  {suffix}  {target}"
@@ -383,7 +529,7 @@ def edit_group_key(name: str, arguments: dict | None) -> str:
 
 
 def format_diff_suffix(added: int, removed: int) -> str:
-    """``+38 -14`` for edit/create rows. Empty when both are zero."""
+    """``+38 -14`` when both sides exist, ``+16`` for a create-style add."""
     try:
         plus = max(0, int(added or 0))
         minus = max(0, int(removed or 0))
@@ -391,7 +537,11 @@ def format_diff_suffix(added: int, removed: int) -> str:
         return ""
     if plus == 0 and minus == 0:
         return ""
-    return f"+{plus} -{minus}"
+    if plus and minus:
+        return f"+{plus} -{minus}"
+    if plus:
+        return f"+{plus}"
+    return f"-{minus}"
 
 
 _DIFF_IN_TEXT_RE = re.compile(r"\(\+(\d+)/-(\d+)\)")
@@ -461,6 +611,212 @@ def format_turn_summary(
     return f"{text} {diff}" if diff else text
 
 
+def _useful_output(text: str) -> str:
+    lines: list[str] = []
+    for line in (text or "").replace("\r\n", "\n").splitlines():
+        stripped = line.strip()
+        if not stripped or _EMPTY_OUTPUT_RE.match(stripped):
+            continue
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
+def _result_text(result: Any, output_lines: list[str] | None) -> str:
+    parts: list[str] = []
+    if output_lines:
+        parts.extend(str(line) for line in output_lines if line)
+    preview = _human_result(result) if result is not None else ""
+    if preview:
+        parts.append(preview)
+    return _useful_output("\n".join(parts))
+
+
+def _count_diff_marks(text: str) -> tuple[int, int]:
+    plus = minus = 0
+    in_diff = False
+    for line in (text or "").splitlines():
+        if line.startswith("@@ ") or line.startswith("diff --git "):
+            in_diff = True
+            continue
+        if line.startswith(("+++", "---")):
+            continue
+        if not in_diff:
+            continue
+        if line.startswith("+"):
+            plus += 1
+        elif line.startswith("-"):
+            minus += 1
+    if plus or minus:
+        return plus, minus
+    return 0, 0
+
+
+def infer_run_stats(
+    arguments: dict | None,
+    output_lines: list[str] | None = None,
+    result: Any = None,
+) -> tuple[int, int]:
+    """Line counts for a run row, same + / - language as edit/create."""
+    text = _result_text(result, output_lines)
+    plus, minus = _count_diff_marks(text)
+    if plus or minus:
+        return plus, minus
+    plus, minus = extract_line_diff(result)
+    if plus or minus:
+        return plus, minus
+    command = _command_from_args(arguments)
+    _, body = split_heredoc(command)
+    if body and not text:
+        return len(body.splitlines()), 0
+    if text:
+        n = len([line for line in text.splitlines() if line.strip()])
+        return (n, 0) if n else (0, 0)
+    return 0, 0
+
+
+def _looks_like_unified_diff(text: str) -> bool:
+    return bool(_DIFF_HUNK_RE.search(text or "") or (text or "").startswith("diff --git "))
+
+
+def preview_rows(
+    name: str,
+    arguments: dict | None,
+    *,
+    result: Any = None,
+    error: str | None = None,
+    output_lines: list[str] | None = None,
+    diff_text: str | None = None,
+    limit: int = MAX_TRANSCRIPT_LINES,
+) -> list[tuple[int | None, str, str]]:
+    """Numbered preview rows: ``(line_no, add|del|ctx, text)``."""
+    args = arguments if isinstance(arguments, dict) else {}
+    rows: list[tuple[int | None, str, str]] = []
+    verb = tool_verb(name)
+    extra = (diff_text or "").strip()
+    if extra and _looks_like_unified_diff(extra):
+        if error:
+            for line in error.replace("\r\n", "\n").splitlines():
+                if line.strip():
+                    rows.append((None, "del", line.rstrip()))
+        rows.extend(_rows_from_unified_diff(extra))
+        return rows[: max(1, int(limit))]
+    path = _first_path(args)
+    if path and verb not in {"run", "edit", "create"}:
+        rows.append((None, "ctx", abbreviate_path(path, max_len=120)))
+    pattern = args.get("pattern") or args.get("query")
+    if isinstance(pattern, str) and pattern.strip() and verb != "run":
+        rows.append((None, "ctx", pattern.strip()))
+    if error:
+        for line in error.replace("\r\n", "\n").splitlines():
+            if line.strip():
+                rows.append((None, "del", line.rstrip()))
+    command = _command_from_args(args)
+    text = _result_text(result, output_lines)
+    _, body = split_heredoc(command)
+    if extra:
+        text = extra
+    if text and _looks_like_unified_diff(text):
+        rows.extend(_rows_from_unified_diff(text))
+    elif text:
+        for index, line in enumerate(text.splitlines(), start=1):
+            rows.append((index, "ctx", line))
+    elif body:
+        for index, line in enumerate(body.splitlines(), start=1):
+            rows.append((index, "add", line))
+    elif not rows:
+        question = args.get("question")
+        if isinstance(question, str) and question.strip():
+            rows.append((None, "ctx", " ".join(question.split())))
+    return rows[: max(1, int(limit))]
+
+
+def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:
+    rows: list[tuple[int | None, str, str]] = []
+    old = new = 0
+    seen_hunk = False
+    for line in (text or "").splitlines():
+        hunk = _DIFF_HUNK_RE.match(line)
+        if hunk:
+            old = int(hunk.group("old_start"))
+            new = int(hunk.group("new_start"))
+            seen_hunk = True
+            continue
+        if line.startswith(("diff --git ", "index ", "--- ", "+++ ", "\\")):
+            continue
+        if not seen_hunk:
+            if line.strip():
+                rows.append((len(rows) + 1, "ctx", line))
+            continue
+        if line.startswith("+"):
+            rows.append((new, "add", line[1:]))
+            new += 1
+        elif line.startswith("-"):
+            rows.append((old, "del", line[1:]))
+            old += 1
+        elif line.startswith(" "):
+            rows.append((new, "ctx", line[1:]))
+            old += 1
+            new += 1
+        elif line.strip():
+            rows.append((len(rows) + 1, "ctx", line))
+    return rows
+
+
+def format_preview_line(number: int | None, kind: str, text: str) -> str:
+    if number is None:
+        mark = {"add": "+", "del": "-", "ctx": ""}.get(kind, "")
+        return f"{mark}{text}" if mark else text
+    pad = f"{number:>4}"
+    mark = {"add": "+", "del": "-", "ctx": " "}.get(kind, " ")
+    return f"{pad} {mark}{text}"
+
+
+def format_preview_markup_line(
+    number: int | None,
+    kind: str,
+    text: str,
+    *,
+    width: int = 0,
+) -> str:
+    """Codex-style row: number, +/- , full-width wash, readable code. No bold."""
+    plain = format_preview_line(number, kind, text)
+    target = max(int(width or 0), PREVIEW_MIN_WIDTH, len(plain))
+    payload = plain.replace("[", r"\[").replace("]", r"\]")
+    if target > len(plain):
+        payload = f"{payload}{' ' * (target - len(plain))}"
+    if kind == "add":
+        return f"[{PREVIEW_ADD_INK} on {PREVIEW_ADD_BG}]{payload}[/]"
+    if kind == "del":
+        return f"[{PREVIEW_DEL_INK} on {PREVIEW_DEL_BG}]{payload}[/]"
+    return f"[{PREVIEW_CTX_INK} on {PREVIEW_CTX_BG}]{payload}[/]"
+
+
+def format_tool_preview_markup(
+    name: str,
+    arguments: dict | None,
+    *,
+    result: Any = None,
+    error: str | None = None,
+    output_lines: list[str] | None = None,
+    diff_text: str | None = None,
+    limit: int = PREVIEW_OPEN_LINES,
+    width: int = 0,
+) -> str:
+    """Numbered preview for the TUI body: data, metadata, add/del backgrounds."""
+    rows = preview_rows(
+        name,
+        arguments,
+        result=result,
+        error=error,
+        output_lines=output_lines,
+        diff_text=diff_text,
+        limit=limit,
+    )
+    return "\n".join(
+        format_preview_markup_line(*row, width=width) for row in rows
+    )
+
+
 def format_tool_detail(
     name: str,
     arguments: dict | None,
@@ -468,55 +824,22 @@ def format_tool_detail(
     result: Any = None,
     error: str | None = None,
     output_lines: list[str] | None = None,
+    diff_text: str | None = None,
+    limit: int = MAX_TRANSCRIPT_LINES,
 ) -> str:
-    """Full click-to-expand text: path, command, live output, result."""
-    args = arguments if isinstance(arguments, dict) else {}
-    lines: list[str] = []
-    path = _first_path(args)
-    if path:
-        lines.append(abbreviate_path(path, max_len=120))
-    for key in ("offset", "limit", "line", "start", "end"):
-        val = args.get(key)
-        if val not in (None, "", 0, "0"):
-            lines.append(f"{key} {val}")
-    pattern = args.get("pattern") or args.get("query")
-    if isinstance(pattern, str) and pattern.strip():
-        lines.append(pattern.strip())
-    command = args.get("command") or args.get("cmd")
-    if isinstance(command, str) and command.strip():
-        flags = exec_flags(args)
-        pretty = humanize_shell_command(command, max_len=100)
-        lines.append(f"{pretty} · {flags}" if flags else pretty)
-        raw = " ".join(command.split())
-        if raw and raw != pretty:
-            lines.append(raw)
-    url = args.get("url")
-    if isinstance(url, str) and url.strip():
-        lines.append(url.strip())
-    action = args.get("action")
-    if isinstance(action, str) and action.strip() and action not in {path, pattern}:
-        lines.append(action.strip())
-    question = args.get("question")
-    if isinstance(question, str) and question.strip():
-        lines.append(" ".join(question.split()))
-    edits = args.get("edits")
-    if isinstance(edits, list) and edits:
-        lines.append(f"{len(edits)} edit{'s' if len(edits) != 1 else ''}")
-    if error:
-        lines.extend(line.rstrip() for line in error.replace("\r\n", "\n").splitlines() if line.strip())
-    live = [line.rstrip() for line in (output_lines or []) if line]
-    if live:
-        lines.extend(live[:MAX_TRANSCRIPT_LINES])
-    preview = _human_result(result, limit=MAX_TRANSCRIPT_CHARS)
-    if preview:
-        for line in preview.splitlines():
-            if line.strip() and line not in lines:
-                lines.append(line)
-    if not lines:
-        label = describe_tool_line(name, args)
-        if label:
-            lines.append(label)
-    return clip_transcript("\n".join(lines).strip())
+    """Click-to-expand preview: numbered lines, + / - like an edit."""
+    rows = preview_rows(
+        name,
+        arguments,
+        result=result,
+        error=error,
+        output_lines=output_lines,
+        diff_text=diff_text,
+        limit=limit,
+    )
+    if not rows:
+        return ""
+    return clip_transcript("\n".join(format_preview_line(*row) for row in rows))
 
 
 def _human_result(result: Any, limit: int = MAX_TRANSCRIPT_CHARS) -> str:

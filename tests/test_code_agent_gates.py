@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from navin.agent.hook import AgentHook
-from navin.agent.runner import AgentRunner, AgentRunSpec, _last_verify_failed
+from navin.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec, _last_verify_failed
 from navin.agent.tools.base import Tool
 from navin.agent.tools.registry import ToolRegistry
 from navin.command.builtin import _workflow_handler
@@ -392,7 +392,7 @@ class ExecTestRunCountsAsVerifyTest(unittest.IsolatedAsyncioTestCase):
     in the transcript).
     """
 
-    async def _run(self, responses: list[LLMResponse], exec_tool: _ExecTool) -> tuple[int, list[dict[str, Any]]]:
+    async def _run(self, responses: list[LLMResponse], exec_tool: _ExecTool) -> tuple[int, AgentRunResult]:
         provider = _FakeProvider(responses)
         tools = ToolRegistry()
         tools.register(_ApplyPatchTool())
@@ -408,7 +408,7 @@ class ExecTestRunCountsAsVerifyTest(unittest.IsolatedAsyncioTestCase):
                 requires_verify_before_done=True,
             )
         )
-        return provider.calls, result.messages
+        return provider.calls, result
 
     @staticmethod
     def _verify_nudges(messages: list[dict[str, Any]]) -> int:
@@ -421,25 +421,32 @@ class ExecTestRunCountsAsVerifyTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_a_green_pytest_through_exec_is_enough(self) -> None:
-        calls, messages = await self._run(
+        calls, result = await self._run(
             _edit_then_exec_then_done("python -m pytest tests -q"), _ExecTool(),
         )
-        self.assertEqual(self._verify_nudges(messages), 0)
+        self.assertEqual(self._verify_nudges(result.messages), 0)
         self.assertEqual(calls, 3)
+        self.assertEqual(result.stop_reason, "completed")
 
     async def test_a_red_pytest_still_gets_the_nudge(self) -> None:
         command = "pytest -q"
-        calls, messages = await self._run(
+        calls, result = await self._run(
             _edit_then_exec_then_done(command), _ExecTool({command: 1}),
         )
-        self.assertEqual(self._verify_nudges(messages), 1)
+        self.assertTrue(any(
+            VERIFY_FAILED_CONTINUE_PROMPT in str(message.get("content"))
+            for message in result.messages if message.get("role") == "user"
+        ))
+        self.assertEqual(result.stop_reason, "validation_failed")
+        self.assertIn("task is not validated", result.final_content)
         self.assertGreater(calls, 3)
 
     async def test_a_command_that_is_not_a_test_run_still_gets_the_nudge(self) -> None:
-        calls, messages = await self._run(
+        calls, result = await self._run(
             _edit_then_exec_then_done("npm run build"), _ExecTool(),
         )
-        self.assertEqual(self._verify_nudges(messages), 1)
+        self.assertEqual(self._verify_nudges(result.messages), 2)
+        self.assertEqual(result.stop_reason, "validation_failed")
 
     async def test_an_edit_after_the_green_run_reopens_the_question(self) -> None:
         responses = [
@@ -455,8 +462,9 @@ class ExecTestRunCountsAsVerifyTest(unittest.IsolatedAsyncioTestCase):
             ),
             LLMResponse(content="Done.", finish_reason="stop"),
         ]
-        _calls, messages = await self._run(responses, _ExecTool())
-        self.assertEqual(self._verify_nudges(messages), 1)
+        _calls, result = await self._run(responses, _ExecTool())
+        self.assertEqual(self._verify_nudges(result.messages), 2)
+        self.assertEqual(result.stop_reason, "validation_failed")
 
 
 class VerifyFailedNudgeTest(unittest.IsolatedAsyncioTestCase):

@@ -46,7 +46,6 @@ from navin.tui.hubs import (
     tool_rows,
 )
 from navin.tui.modes import MODES, display_user_text, get_mode, route_text
-from navin.utils.tool_hints import extract_line_diff
 from navin.tui.prefs import TuiPrefs
 from navin.tui.runtime import (
     TuiRuntime,
@@ -101,9 +100,14 @@ from navin.tui.widgets import (
     Transcript,
     UpdateOffer,
     UserMessage,
+    WorkingLine,
     account_side_text,
+    format_elapsed,
+    format_working_line,
+    running_exec_count,
     split_model_slug,
 )
+from navin.utils.tool_hints import extract_line_diff
 
 # ---------------------------------------------------------------------------
 # Command palette providers
@@ -177,6 +181,11 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "title": "AGI",
         "description": "Skills evolution, world model, policy, transfer, memory (F4)",
     },
+    {
+        "command": "/ps",
+        "title": "Background terminals",
+        "description": "List live exec sessions started in the background",
+    },
 )
 
 
@@ -188,7 +197,8 @@ class NavinActions(Provider):
         assert isinstance(app, NavinApp)
         items = [
             ("New chat", "Reset the conversation (/new)", "new_chat"),
-            ("Stop turn", "Cancel the running turn (/stop)", "stop_turn"),
+            ("Stop turn", "Cancel the running turn (esc)", "stop_turn"),
+            ("Background terminals", "List live exec sessions (/ps)", "list_processes"),
             ("Provider", "Open provider settings (ctrl+i)", "open_settings('providers')"),
             ("Model", "Pick the model for the next turns (ctrl+o)", "pick_model"),
             ("Mode", "chat / ask / plan / agent / review / security / debug (ctrl+t)", "pick_mode"),
@@ -424,6 +434,7 @@ class NavinApp(App[None]):
         with Horizontal(id="main"):
             with Vertical(id="column"):
                 yield Transcript(id="transcript")
+                yield WorkingLine(id="working")
                 yield SlashMenu(id="slash-menu")
                 yield FindBar(id="find")
                 with Vertical(id="composer-block"):
@@ -451,6 +462,22 @@ class NavinApp(App[None]):
         if self.runtime.status.turn_active:
             self._spin += 1
             self._set_status()
+        self._refresh_working_line()
+
+    def _refresh_working_line(self) -> None:
+        try:
+            line = self.query_one("#working", WorkingLine)
+        except Exception:  # noqa: BLE001
+            return
+        if not self.runtime.status.turn_active:
+            line.set_line("")
+            return
+        line.set_line(
+            format_working_line(
+                elapsed_s=self.runtime.turn_elapsed_s,
+                background=running_exec_count(),
+            )
+        )
 
     async def _boot(self) -> None:
         try:
@@ -796,6 +823,7 @@ class NavinApp(App[None]):
             self.runtime.status.turn_active = False
         self._current = None
         await self.runtime.send(inbound)
+        self._refresh_working_line()
 
     async def _run_tui_slash(self, text: str) -> bool:
         """Slash commands handled by the TUI itself (screens), not by the engine."""
@@ -844,6 +872,9 @@ class NavinApp(App[None]):
             return True
         if head == "/paste":
             self.action_paste_composer()
+            return True
+        if head == "/ps":
+            await self.action_list_processes()
             return True
         return False
 
@@ -981,7 +1012,9 @@ class NavinApp(App[None]):
             return
         if isinstance(event, UiFileEdit):
             if self._current is not None:
-                self._current.note_file_edit(event.path, event.added, event.removed)
+                self._current.note_file_edit(
+                    event.path, event.added, event.removed, diff=event.diff
+                )
             if event.path:
                 self._activity_push(
                     f"edit {escape(Path(event.path).name)} +{event.added} -{event.removed}"
@@ -1150,6 +1183,26 @@ class NavinApp(App[None]):
 
     # -- actions ----------------------------------------------------------
 
+    async def action_list_processes(self) -> None:
+        try:
+            from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
+
+            rows = DEFAULT_EXEC_SESSION_MANAGER.running_snapshot()
+        except Exception:  # noqa: BLE001
+            rows = []
+        if not rows:
+            await self._note("No background terminals.")
+            return
+        lines = ["background terminals"]
+        for info in rows:
+            command = " ".join(info.command.split())
+            if len(command) > 80:
+                command = command[:79] + "…"
+            lines.append(
+                f"{info.session_id}  {format_elapsed(info.elapsed_s)}  {command}"
+            )
+        await self._note("\n".join(lines))
+
     async def action_stop_turn(self) -> None:
         menu = self.query_one(SlashMenu)
         if menu.visible_menu:
@@ -1162,6 +1215,7 @@ class NavinApp(App[None]):
                 return
         if self.runtime.turn_active:
             await self.runtime.stop_turn()
+            self._refresh_working_line()
             await self._note("[$warning]stop requested[/]", "warning")
             return
         self.composer.focus()
@@ -1271,15 +1325,17 @@ class NavinApp(App[None]):
 
     async def action_update(self) -> None:
         """Install the signed release, or say why this tree cannot."""
-        from navin.update import notice, service
+        from navin.update import service
 
-        info = dict(self._update_info)
-        if not info.get("available"):
-            try:
-                info = notice.latest_update_info(force=True) or {}
-            except Exception:  # noqa: BLE001
-                info = {}
-            self._update_info = dict(info)
+        try:
+            info = await asyncio.to_thread(service.check_for_update, force=True)
+        except Exception as exc:  # noqa: BLE001 - an unavailable server is not "up to date"
+            await self._note(f"[$error]Update check failed:[/] {escape(str(exc))}", "error")
+            return
+        self._update_info = dict(info)
+        if not info.get("configured"):
+            await self._note("This build has no update server configured.", "warning")
+            return
         latest = str(info.get("latestVersion") or "").strip()
         if not info.get("available") or not latest:
             await self._note("navin is up to date.")

@@ -353,6 +353,7 @@ def _dispatch_stub(bus: _FakeBus, process_message) -> SimpleNamespace:
         _session_locks={},
         _concurrency_gate=None,
         _pending_queues={},
+        _loop_guards={"websocket:chat-1": object()},
         _automation_turn_coordinators=[],
         _process_message=process_message,
         _restore_runtime_checkpoint=lambda session: False,
@@ -390,6 +391,7 @@ class DispatchCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(bus.inbound, [])  # nothing re-published: the run truly stops
         self.assertEqual(stub._pending_queues, {})
+        self.assertEqual(stub._loop_guards, {})
 
     async def test_normal_turn_still_republishes_leftovers(self) -> None:
         bus = _FakeBus()

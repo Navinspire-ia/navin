@@ -137,16 +137,16 @@ import { Input } from "@/components/ui/input";
 import {
   checkVersion,
   createProjectFolder,
-  downloadUpdate,
+  downloadAndInstallUpdate,
   fetchPairingRequests,
   fetchSettings,
   fetchWorkspaces,
-  installUpdate,
   openExternalUrl,
   runPairingAction,
   setUnauthorizedRefresher,
   updatePreferences,
   type UpdateInfo,
+  type UpdateStatus,
 } from "@/lib/api";
 import {
   createRuntimeHost,
@@ -173,6 +173,12 @@ import {
   shellHashesEqual,
 } from "@/lib/last-shell-route";
 import { isDesktopShell, isInternalDesktopUrl } from "@/lib/desktop";
+import {
+  dismissUpdateToast,
+  nextAvailableUpdate,
+  readDismissedUpdateToast,
+  UPDATE_RECHECK_AFTER_HIDDEN_MS,
+} from "@/lib/product-toasts";
 import { isTimeoutError, isTransportError, transportMessage } from "@/lib/http";
 import {
   persistRailDensity,
@@ -1647,6 +1653,10 @@ function Shell({
   const [availableUpdate, setAvailableUpdate] = useState<UpdateInfo | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const updateInFlight = useRef(false);
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   // Update + navin.live announcements land in the notification center. The
   // installer is reached through a ref because the notification outlives the
   // render that raised it, and is defined further down with the update state.
@@ -2075,50 +2085,47 @@ function Shell({
       return;
     }
     let cancelled = false;
+    let hiddenAt = document.visibilityState === "hidden" ? Date.now() : 0;
+    const applyInfo = (info: UpdateInfo) => {
+      if (cancelled) return;
+      // Kept even when it cannot be installed in place (a .deb, an .rpm):
+      // the card then says where the update comes from instead of
+      // offering a button, which beats staying silent about a version
+      // the user can perfectly well install by hand.
+      setAvailableUpdate((current) =>
+        nextAvailableUpdate(current, info, readDismissedUpdateToast()),
+      );
+    };
     const check = (force: boolean = false) => {
-      void checkVersion(token, force)
-        .then((info) => {
-          if (!cancelled) {
-            // Kept even when it cannot be installed in place (a .deb, an .rpm):
-            // the card then says where the update comes from instead of
-            // offering a button, which beats staying silent about a version
-            // the user can perfectly well install by hand.
-            setAvailableUpdate((current) => {
-              if (!info.available) return current === null ? current : null;
-              if (
-                current
-                && current.latestVersion === info.latestVersion
-                && current.currentVersion === info.currentVersion
-              ) {
-                return current;
-              }
-              return info;
-            });
-          }
-        })
+      void checkVersion(tokenRef.current, force)
+        .then(applyInfo)
         .catch(() => {
           // Automatic checks are deliberately silent; Settings exposes errors on demand.
         });
     };
-    const checkWhenVisible = () => {
-      if (document.visibilityState === "visible") check(false);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const awayMs = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = 0;
+      // Tauri/WebView fires focus every few seconds. That must not re-open Later.
+      if (awayMs >= UPDATE_RECHECK_AFTER_HIDDEN_MS) check(false);
     };
 
     check();
     const interval = window.setInterval(() => check(true), 6 * 60 * 60 * 1_000);
-    document.addEventListener("visibilitychange", checkWhenVisible);
-    window.addEventListener("focus", checkWhenVisible);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", checkWhenVisible);
-      window.removeEventListener("focus", checkWhenVisible);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [
     settingsSnapshot?.updates?.autoCheck,
     settingsSnapshot?.updates?.configured,
     settingsSnapshot?.updates?.enabled,
-    token,
   ]);
 
   const openProductUrl = useCallback(async (url: string) => {
@@ -2129,15 +2136,24 @@ function Shell({
   }, [token]);
 
   const installAvailableUpdate = useCallback(async (fallbackUrl?: string) => {
+    if (updateInFlight.current) return;
+    updateInFlight.current = true;
     setUpdateBusy(true);
     setUpdateError(null);
+    setUpdateStatus({ state: "downloading", progress: 0, downloadedBytes: 0, totalBytes: 0 });
     try {
-      await downloadUpdate(token);
-      await installUpdate(token);
+      await downloadAndInstallUpdate(token, setUpdateStatus);
     } catch (error) {
+      updateInFlight.current = false;
       setUpdateBusy(false);
       const message = error instanceof Error ? error.message : String(error);
       setUpdateError(message);
+      setUpdateStatus(null);
+      notify({
+        level: "error", source: "update",
+        title: t("updates.installFailed", { defaultValue: "Install failed: {{error}}", error: message }),
+        key: "update:install-error",
+      });
       if (fallbackUrl) {
         try {
           await openProductUrl(fallbackUrl);
@@ -2146,7 +2162,7 @@ function Shell({
         }
       }
     }
-  }, [openProductUrl, token]);
+  }, [notify, openProductUrl, t, token]);
   installAvailableUpdateRef.current = () => installAvailableUpdate();
 
   const handleAnnouncementOpen = useCallback(
@@ -2164,16 +2180,18 @@ function Shell({
         return;
       }
       setUpdateBusy(true);
+      setUpdateError(null);
       try {
         const info = await checkVersion(token, true);
-        if (info.available) setAvailableUpdate(info);
+        setAvailableUpdate((current) =>
+          nextAvailableUpdate(current, info, readDismissedUpdateToast()),
+        );
         if (info.available && info.supported !== false) {
-          await downloadUpdate(token);
-          await installUpdate(token);
+          await installAvailableUpdate(url);
           return;
         }
-      } catch {
-        // updater missing or unreachable: the site URL is the remaining path
+      } catch (error) {
+        setUpdateError(error instanceof Error ? error.message : String(error));
       }
       setUpdateBusy(false);
       if (url) await openProductUrl(url);
@@ -2183,6 +2201,7 @@ function Shell({
 
   const skipAvailableUpdate = useCallback(async () => {
     const version = availableUpdate?.latestVersion;
+    if (version) dismissUpdateToast(version);
     setUpdateError(null);
     setAvailableUpdate(null);
     if (!version) return;
@@ -2192,6 +2211,13 @@ function Shell({
       // The banner remains dismissed for this session even if persistence fails.
     }
   }, [availableUpdate?.latestVersion, token]);
+
+  const dismissAvailableUpdate = useCallback(() => {
+    const version = availableUpdate?.latestVersion;
+    if (version) dismissUpdateToast(version);
+    setAvailableUpdate(null);
+    setUpdateError(null);
+  }, [availableUpdate?.latestVersion]);
 
   // Non-subscribed / BYOK users must configure a provider before chat works.
   // Managed-key subscribers get OpenRouter from the account; no banner.
@@ -4963,11 +4989,9 @@ function Shell({
           availableUpdate={availableUpdate}
           updateBusy={updateBusy}
           updateError={updateError}
+          updateStatus={updateStatus}
           onInstallUpdate={() => void installAvailableUpdate()}
-          onDismissUpdate={() => {
-            setAvailableUpdate(null);
-            setUpdateError(null);
-          }}
+          onDismissUpdate={dismissAvailableUpdate}
           onSkipUpdate={() => void skipAvailableUpdate()}
           onOpenAnnouncement={(item) => void handleAnnouncementOpen(item)}
           onReload={onRestart}

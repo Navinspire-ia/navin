@@ -14,6 +14,7 @@ import type {
   OutboundFileMention,
   OutboundMcpPresetMention,
 } from "@/lib/types";
+import { collapseUserDisplayLabel } from "@/lib/pasted-content";
 
 export const QUEUED_PROMPTS_STORAGE_PREFIX = "navin.webui.composerQueuedGuidance.v1:";
 export const QUEUED_PROMPTS_LIMIT = 20;
@@ -240,7 +241,7 @@ export function storeQueuedPrompts(storageKey: string, prompts: QueuedPrompt[]):
 
 export function queuedPromptLabel(prompt: QueuedPrompt, fallback = "File attachment"): string {
   const text = prompt.text.trim();
-  if (text) return text;
+  if (text) return collapseUserDisplayLabel(text) || text;
   return prompt.images?.map((img) => img.name).filter(Boolean).join(", ") || fallback;
 }
 

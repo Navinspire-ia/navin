@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -176,9 +177,18 @@ import {
 } from "@/lib/queued-prompts";
 import {
   clearComposerDraft,
-  readComposerDraft,
+  readComposerDraftState,
   writeComposerDraft,
 } from "@/lib/composer-draft";
+import {
+  allocatePasteToken,
+  collapseTextForComposer,
+  expandPastedContent,
+  extractInsertedText,
+  shouldCollapsePastedText,
+  splitPastedContentSegments,
+  type PastedContentMap,
+} from "@/lib/pasted-content";
 import {
   isSideChannelLifecycle,
   slashCommandLifecycle,
@@ -924,6 +934,7 @@ function ThreadComposerImpl({
 }: ThreadComposerProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
+  const [pastes, setPastes] = useState<PastedContentMap>({});
   const [internalTurnMode, setInternalTurnMode] =
     useState<ComposerTurnMode>("agent");
   const turnMode = turnModeProp ?? internalTurnMode;
@@ -1064,6 +1075,44 @@ function ThreadComposerImpl({
     onDragLeave,
     onDrop,
   } = useClipboardAndDrop(addFiles);
+
+  const absorbLongInsertion = useCallback((previous: string, next: string): string => {
+    const inserted = extractInsertedText(previous, next);
+    if (!inserted) return next;
+    const existing = Object.entries(pastes).find(([, body]) => body === inserted);
+    const token = existing?.[0] ?? allocatePasteToken(inserted.length, pastes);
+    if (!existing) {
+      setPastes((prev) => ({ ...prev, [token]: inserted }));
+    }
+    return next.replace(inserted, token);
+  }, [pastes]);
+
+  const handleComposerPaste = useCallback(
+    (event: ReactClipboardEvent) => {
+      onPaste(event);
+      if (event.defaultPrevented) return;
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (!shouldCollapsePastedText(text)) return;
+      event.preventDefault();
+      secondEnterPromptIdRef.current = null;
+      const token = allocatePasteToken(text.length, pastes);
+      setPastes((prev) => ({ ...prev, [token]: text }));
+      const el = textareaRef.current;
+      const current = el?.value ?? value;
+      const start = el?.selectionStart ?? current.length;
+      const end = el?.selectionEnd ?? current.length;
+      const next = `${current.slice(0, start)}${token}${current.slice(end)}`;
+      setValue(next);
+      setCursorPosition(start + token.length);
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(start + token.length, start + token.length);
+        fitTextareaHeight(el);
+      });
+    },
+    [onPaste, pastes, value],
+  );
 
   // A media tile elsewhere in the transcript asked to reuse an image the agent
   // already delivered. Re-reading the bytes turns it into an ordinary
@@ -1355,7 +1404,14 @@ function ThreadComposerImpl({
     () => splitCapabilityMentionSegments(value, cliApps, mcpPresets, pickedFiles),
     [cliApps, mcpPresets, pickedFiles, value],
   );
-  const hasMentionDecorations = mentionSegments.some(
+  const composerDecorations = useMemo(
+    () => mentionSegments.flatMap((segment) => {
+      if (segment.kind !== "text") return [segment];
+      return splitPastedContentSegments(segment.text);
+    }),
+    [mentionSegments],
+  );
+  const hasMentionDecorations = composerDecorations.some(
     (segment) => segment.kind !== "text",
   );
   const activeFileMentions = useMemo(() => {
@@ -1525,8 +1581,14 @@ function ThreadComposerImpl({
       const next = seed.replace
         ? seed.text
         : `${current}${current && !current.endsWith("\n") && !current.endsWith(" ") ? " " : ""}${seed.text}`;
-      caret = next.length;
-      return next;
+      if (!shouldCollapsePastedText(seed.text)) {
+        caret = next.length;
+        return next;
+      }
+      const collapsed = collapseTextForComposer(next);
+      queueMicrotask(() => setPastes((prev) => ({ ...prev, ...collapsed.pastes })));
+      caret = collapsed.text.length;
+      return collapsed.text;
     });
     requestAnimationFrame(() => {
       setCursorPosition(caret);
@@ -1544,7 +1606,10 @@ function ThreadComposerImpl({
     if (previousPendingQueueKeyRef.current === pendingQueueKey) return;
     previousPendingQueueKeyRef.current = pendingQueueKey;
     secondEnterPromptIdRef.current = null;
-    setValue(readComposerDraft(pendingQueueKey));
+    const draft = readComposerDraftState(pendingQueueKey);
+    const collapsed = collapseTextForComposer(draft.text, draft.pastes);
+    setValue(collapsed.text);
+    setPastes(collapsed.pastes);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
@@ -1560,10 +1625,10 @@ function ThreadComposerImpl({
   useEffect(() => {
     if (!pendingQueueKey) return;
     const handle = window.setTimeout(() => {
-      writeComposerDraft(pendingQueueKey, value);
+      writeComposerDraft(pendingQueueKey, value, pastes);
     }, 300);
     return () => window.clearTimeout(handle);
-  }, [pendingQueueKey, value]);
+  }, [pendingQueueKey, pastes, value]);
 
   const appendTranscription = useCallback((text: string) => {
     const transcript = text.trim();
@@ -1632,6 +1697,7 @@ function ThreadComposerImpl({
       if (command.command === "/stop" && isStreaming && onStop) {
         onStop();
         setValue("");
+        setPastes({});
         setSlashMenuDismissed(true);
         setCliAppMenuDismissed(false);
         setInlineError(null);
@@ -1701,6 +1767,7 @@ function ThreadComposerImpl({
 
   const clearComposerText = useCallback(() => {
     setValue("");
+    setPastes({});
     clearComposerDraft(pendingQueueKey);
     setInlineError(null);
     setSlashMenuDismissed(false);
@@ -1765,7 +1832,7 @@ function ThreadComposerImpl({
   ]);
 
   const queueGuidancePrompt = useCallback(() => {
-    const text = value.trim();
+    const text = expandPastedContent(value.trim(), pastes).trim();
     if (!canQueueGuidance || (!text && readyImages.length === 0)) return;
     if (utf8Bytes(text) > maxTextBytes) {
       setInlineError(textTooLargeMessage());
@@ -1810,6 +1877,7 @@ function ThreadComposerImpl({
     readyImages,
     t,
     textTooLargeMessage,
+    pastes,
     value,
   ]);
 
@@ -1822,11 +1890,13 @@ function ThreadComposerImpl({
   const editQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
     secondEnterPromptIdRef.current = null;
     setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-    setValue(prompt.text);
+    const collapsed = collapseTextForComposer(prompt.text);
+    setValue(collapsed.text);
+    setPastes(collapsed.pastes);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
-    setCursorPosition(prompt.text.length);
+    setCursorPosition(collapsed.text.length);
     if (prompt.images?.length) {
       restoreReadyImages(prompt.images as RestoredReadyImage[]);
     } else {
@@ -1990,16 +2060,17 @@ function ThreadComposerImpl({
     const live = textareaRef.current?.value ?? value;
     if (live !== value) setValue(live);
     const trimmed = live.trim();
+    const expanded = expandPastedContent(trimmed, pastes).trim();
     const canSendLive =
       !disabled
       && !modelNeedsSetup
       && !encoding
       && !hasErrors
-      && (trimmed.length > 0 || readyImages.length > 0);
+      && (expanded.length > 0 || readyImages.length > 0);
     if (!canSendLive) return;
     // Plan mode routes free text through /blueprint so the agent designs
     // first; explicit slash commands (including /forge) stay untouched.
-    const content = applyComposerTurnMode(trimmed, turnMode, {
+    const content = applyComposerTurnMode(expanded, turnMode, {
       startNow:
         Boolean(selectedDocumentTemplate)
         || isSimpleStartNowPrompt(trimmed),
@@ -2087,6 +2158,7 @@ function ThreadComposerImpl({
     textTooLargeMessage,
     setTurnMode,
     turnMode,
+    pastes,
     value,
   ]);
 
@@ -2171,10 +2243,22 @@ function ThreadComposerImpl({
     const el = e.currentTarget;
     if (el.value !== value) {
       secondEnterPromptIdRef.current = null;
-      setValue(el.value);
+      const next = absorbLongInsertion(value, el.value);
+      setValue(next);
       setSlashMenuDismissed(false);
       setCliAppMenuDismissed(false);
-      setCursorPosition(el.selectionStart ?? el.value.length);
+      const caret = next === el.value
+        ? (el.selectionStart ?? next.length)
+        : next.length;
+      setCursorPosition(caret);
+      if (next !== el.value) {
+        requestAnimationFrame(() => {
+          el.value = next;
+          el.setSelectionRange(caret, caret);
+          fitTextareaHeight(el);
+        });
+        return;
+      }
     }
     fitTextareaHeight(el);
   };
@@ -2531,7 +2615,7 @@ function ThreadComposerImpl({
         <div className="relative">
           {hasMentionDecorations ? (
             <ComposerCliMentionOverlay
-              segments={mentionSegments}
+              segments={composerDecorations}
               isHero={isHero}
               className={inputTextClasses}
             />
@@ -2544,10 +2628,22 @@ function ThreadComposerImpl({
             value={value}
             onChange={(e) => {
               secondEnterPromptIdRef.current = null;
-              setValue(e.target.value);
+              const next = absorbLongInsertion(value, e.target.value);
+              setValue(next);
               setSlashMenuDismissed(false);
               setCliAppMenuDismissed(false);
-              setCursorPosition(e.target.selectionStart ?? e.target.value.length);
+              const caret = next === e.target.value
+                ? (e.target.selectionStart ?? next.length)
+                : next.length;
+              setCursorPosition(caret);
+              if (next !== e.target.value) {
+                const el = e.target;
+                requestAnimationFrame(() => {
+                  el.value = next;
+                  el.setSelectionRange(caret, caret);
+                  fitTextareaHeight(el);
+                });
+              }
             }}
             onBlur={() => {
               secondEnterPromptIdRef.current = null;
@@ -2557,7 +2653,7 @@ function ThreadComposerImpl({
             onKeyUp={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
             onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
             onClick={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-            onPaste={onPaste}
+            onPaste={handleComposerPaste}
             rows={1}
             placeholder={resolvedPlaceholder}
             disabled={disabled}
@@ -3915,7 +4011,7 @@ function ComposerCliMentionOverlay({
   isHero,
   className,
 }: {
-  segments: CapabilityMentionSegment[];
+  segments: Array<CapabilityMentionSegment | { kind: "paste"; text: string }>;
   isHero: boolean;
   className: string;
 }) {
@@ -3930,6 +4026,16 @@ function ComposerCliMentionOverlay({
       {segments.map((segment, index) => {
         if (segment.kind === "text") {
           return <span key={`text-${index}`}>{segment.text}</span>;
+        }
+        if (segment.kind === "paste") {
+          return (
+            <span
+              key={`paste-${index}`}
+              className="rounded-sm bg-muted/70 text-muted-foreground"
+            >
+              {segment.text}
+            </span>
+          );
         }
         if (segment.kind === "cli") return (
           <CliAppMentionToken

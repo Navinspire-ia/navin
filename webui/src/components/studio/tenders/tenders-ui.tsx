@@ -15,6 +15,11 @@ export const BUTTON_STYLES: IButtonStyles = {
   root: { minHeight: 40, minWidth: 0, padding: "0 12px", cursor: "pointer", flexShrink: 0 },
   label: { whiteSpace: "nowrap" },
 };
+/** Header actions stay one readable word: do not shrink or clip the label. */
+export const HEADER_BUTTON_STYLES: IButtonStyles = {
+  root: { minHeight: 40, minWidth: "auto", padding: "0 12px", cursor: "pointer", flexShrink: 0 },
+  label: { whiteSpace: "nowrap", overflow: "visible" },
+};
 export const ICON_BUTTON_STYLES: IButtonStyles = {
   root: {
     height: 40,

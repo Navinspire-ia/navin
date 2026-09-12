@@ -8,14 +8,21 @@ from types import SimpleNamespace
 
 from navin.utils.tool_hints import (
     clip_transcript,
+    describe_explore_step,
     describe_tool_headline,
     describe_tool_line,
+    tool_cluster_kind,
     edit_group_key,
     exec_flags,
     extract_line_diff,
+    PREVIEW_ADD_BG,
+    PREVIEW_CTX_BG,
+    PREVIEW_DEL_BG,
+    format_preview_markup_line,
     format_seconds,
     format_tool_detail,
     format_tool_hints,
+    format_tool_preview_markup,
     format_turn_summary,
     humanize_shell_command,
     tool_target,
@@ -95,6 +102,32 @@ class DescribeHeadlineTests(unittest.TestCase):
         self.assertNotIn("timeout=", hint)
 
 
+class ExploreClusterTests(unittest.TestCase):
+    def test_kind_splits_explore_from_edits_and_runs(self) -> None:
+        self.assertEqual(tool_cluster_kind("read_file"), "explore")
+        self.assertEqual(tool_cluster_kind("grep"), "explore")
+        self.assertEqual(tool_cluster_kind("list_dir"), "explore")
+        self.assertEqual(tool_cluster_kind("edit_file"), "edit")
+        self.assertEqual(tool_cluster_kind("exec"), "")
+
+    def test_steps_look_like_cursor(self) -> None:
+        self.assertEqual(
+            describe_explore_step("read_file", {"path": "webui/src/hooks/useAccount.ts"}),
+            "Read useAccount.ts",
+        )
+        self.assertEqual(
+            describe_explore_step(
+                "grep",
+                {
+                    "pattern": "export class NavinClient",
+                    "path": "webui/src/lib/navin-client.ts",
+                },
+            ),
+            "Search export class NavinClient in navin-client.ts",
+        )
+        self.assertEqual(describe_explore_step("list_dir", {"path": "."}), "List .")
+
+
 class QuietToolLineTests(unittest.TestCase):
     def test_done_row_keeps_the_file_on_the_same_line(self) -> None:
         self.assertEqual(tool_verb("read_file"), "read")
@@ -147,6 +180,7 @@ class QuietToolLineTests(unittest.TestCase):
         )
         self.assertTrue(run.startswith("run  "))
         self.assertIn("python migrate.py", run)
+        self.assertNotIn("<<", run)
         self.assertNotEqual(describe_tool_line("exec", {"command": ""}), "run  \"")
         self.assertNotEqual(describe_tool_line("exec", {"command": "\""}), "run  \"")
         empty = describe_tool_line("exec", {"command": "   "})
@@ -161,9 +195,9 @@ class QuietToolLineTests(unittest.TestCase):
             {"command": "pytest -q"},
             result="PASS - no lint errors, tests green\n2 passed",
         )
-        self.assertIn("pytest", detail)
         self.assertIn("PASS", detail)
         self.assertIn("2 passed", detail)
+        self.assertNotIn("(no output)", detail)
 
         long_out = "\n".join(f"line {i} ALTER TABLE users" for i in range(40))
         full = format_tool_detail(
@@ -173,7 +207,7 @@ class QuietToolLineTests(unittest.TestCase):
         )
         self.assertIn("line 0 ALTER TABLE users", full)
         self.assertIn("line 39 ALTER TABLE users", full)
-        self.assertIn("psql -f migrate.sql", full)
+        self.assertIn("   1 ", full)
 
     def test_edit_line_shows_plus_and_minus(self) -> None:
         line = describe_tool_line(
@@ -183,6 +217,15 @@ class QuietToolLineTests(unittest.TestCase):
             removed=14,
         )
         self.assertEqual(line, "edit  +38 -14  migrate_main_to_rel_v2.py")
+        self.assertEqual(
+            describe_tool_line(
+                "edit_file",
+                {"path": "tests/test_tool_parameter_recovery.py"},
+                added=44,
+                removed=4,
+            ),
+            "edit  +44 -4  tests/test_tool_parameter_recovery.py",
+        )
         self.assertEqual(extract_line_diff(" - replace foo.py (+38/-14)"), (38, 14))
         self.assertEqual(extract_line_diff({"added": 12, "deleted": 3}), (12, 3))
         self.assertEqual(
@@ -198,6 +241,66 @@ class QuietToolLineTests(unittest.TestCase):
             ),
             "Edited 4 files, explored 1 file, ran 1 command +38 -14",
         )
+
+    def test_run_matches_edit_line_shape(self) -> None:
+        heredoc = ".venv/bin/python - <<'PY'\nimport json\nfrom pathlib import Path\nprint(1)\nPY\n"
+        line = describe_tool_line("exec", {"command": heredoc})
+        self.assertEqual(line, "run  +3  python")
+        self.assertEqual(
+            describe_tool_line("exec", {"command": "git status --short"}),
+            "run  git status",
+        )
+        self.assertEqual(
+            describe_tool_line(
+                "exec",
+                {"command": "pytest tests/test_ask_mode.py tests/test_plan_mode.py -q"},
+            ),
+            "run  pytest 2 files",
+        )
+        empty = format_tool_detail("exec", {"command": "true"}, result="(no output)")
+        self.assertEqual(empty, "")
+        script = format_tool_detail("exec", {"command": heredoc}, result="(no output)")
+        self.assertIn("   1 +import json", script)
+        self.assertNotIn("(no output)", script)
+        diff = format_tool_detail(
+            "exec",
+            {"command": "git diff"},
+            result=(
+                "@@ -8,2 +8,3 @@\n"
+                " import asyncio\n"
+                "+import queue\n"
+                " from pathlib import Path\n"
+            ),
+        )
+        self.assertIn("   8  import asyncio", diff)
+        self.assertIn("   9 +import queue", diff)
+        file_diff = format_tool_detail(
+            "edit_file",
+            {"path": "tests/test_tool_parameter_recovery.py"},
+            diff_text=(
+                "@@ -8,2 +8,3 @@\n"
+                " import asyncio\n"
+                "+import queue\n"
+                " from pathlib import Path\n"
+            ),
+        )
+        self.assertIn("   8  import asyncio", file_diff)
+        self.assertIn("   9 +import queue", file_diff)
+        self.assertNotIn("test_tool_parameter_recovery.py", file_diff.splitlines()[0])
+        painted = format_preview_markup_line(9, "add", "import queue", width=24)
+        self.assertIn(f"on {PREVIEW_ADD_BG}", painted)
+        self.assertIn("9 +import queue", painted)
+        self.assertIn(f"on {PREVIEW_DEL_BG}", format_preview_markup_line(8, "del", "old"))
+        self.assertIn(f"on {PREVIEW_CTX_BG}", format_preview_markup_line(8, "ctx", "keep"))
+        colored = format_tool_preview_markup(
+            "edit_file",
+            {"path": "foo.py"},
+            diff_text="@@ -8,1 +8,2 @@\n-old\n+new\n",
+        )
+        self.assertIn(f"on {PREVIEW_ADD_BG}", colored)
+        self.assertIn(f"on {PREVIEW_DEL_BG}", colored)
+        self.assertIn("8 -old", colored)
+        self.assertIn("8 +new", colored)
 
     def test_run_keeps_the_real_command(self) -> None:
         line = describe_tool_line(

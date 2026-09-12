@@ -13,6 +13,7 @@ import { TendersWizard } from "@/components/studio/tenders/TendersWizard";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import {
   BUTTON_STYLES,
+  HEADER_BUTTON_STYLES,
   ICON_BUTTON_STYLES,
   SPRING,
   Surface,
@@ -287,17 +288,19 @@ export function TendersWorkspace({
               view === "work" && !openId ? (
                 <PrimaryButton
                   text={tx("tenderBook", "Tender")}
+                  title={tx("tenderBook", "Tender")}
                   iconProps={{ iconName: "PageList" }}
                   onClick={() => openBook("pipeline", "all")}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="tenders-open-book"
                 />
               ) : (
                 <DefaultButton
                   text={tx("tenderBook", "Tender")}
+                  title={tx("tenderBook", "Tender")}
                   iconProps={{ iconName: "PageList" }}
                   onClick={() => openBook("pipeline", "all")}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="tenders-open-book"
                 />
               )
@@ -306,43 +309,51 @@ export function TendersWorkspace({
               <>
                 {live.loop?.enabled ? (
                   <PrimaryButton
-                    text={tx("pause", "Pause loop")}
+                    text={tx("pause", "Pause")}
+                    title={tx("pauseTitle", "Pause the loop")}
+                    ariaLabel={tx("pauseTitle", "Pause the loop")}
                     iconProps={{ iconName: "Pause" }}
                     onClick={() => void run("stop")}
                     disabled={Boolean(busy)}
-                    styles={BUTTON_STYLES}
+                    styles={HEADER_BUTTON_STYLES}
                     data-testid="tenders-pause-loop"
                   />
                 ) : (
                   <PrimaryButton
-                    text={tx("startLoop", "Start loop")}
+                    text={tx("startLoop", "Start")}
+                    title={tx("startLoopTitle", "Start the loop")}
+                    ariaLabel={tx("startLoopTitle", "Start the loop")}
                     iconProps={{ iconName: "Play" }}
                     onClick={() => {
                       setScheduleMode("start");
                       setScheduleOpen(true);
                     }}
                     disabled={Boolean(busy)}
-                    styles={BUTTON_STYLES}
+                    styles={HEADER_BUTTON_STYLES}
                     data-testid="tenders-start-loop"
                   />
                 )}
                 <DefaultButton
-                  text={tx("cycle", "Run cycle")}
+                  text={tx("cycle", "Run")}
+                  title={tx("cycleTitle", "Run a cycle")}
+                  ariaLabel={tx("cycleTitle", "Run a cycle")}
                   iconProps={{ iconName: "Sync" }}
                   onClick={() => void run("tick", { force: true })}
                   disabled={Boolean(busy)}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="tenders-run-cycle"
                 />
                 <PrimaryButton
-                  text={tx("collectNow", "Find official notices")}
+                  text={tx("collectNow", "Find")}
+                  title={tx("collectNowTitle", "Find official notices")}
+                  ariaLabel={tx("collectNowTitle", "Find official notices")}
                   iconProps={{ iconName: "Search" }}
                   onClick={() => {
                     openBook("pipeline", "all");
                     void run("collect");
                   }}
                   disabled={Boolean(busy)}
-                  styles={BUTTON_STYLES}
+                  styles={HEADER_BUTTON_STYLES}
                   data-testid="tenders-collect"
                 />
                 <FollowUpButton

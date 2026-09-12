@@ -242,11 +242,13 @@ class LintTool(_QualityTool):
                         "Fix the diagnostics manually."
                     )
                 after = await asyncio.to_thread(lint_file, root, cleaned)
-                return "\n".join([
+                from navin.quality.evidence import lint_evidence
+
+                return ToolResult("\n".join([
                     f"Auto-fix applied to {cleaned} via {', '.join(applied)}.",
                     "",
                     self._render(after, root),
-                ])
+                ]), verification=lint_evidence(after))
             return self._render(await asyncio.to_thread(lint_file, root, cleaned), root)
 
         if action == "changed":
@@ -262,7 +264,8 @@ class LintTool(_QualityTool):
 
             results = await asyncio.to_thread(_lint_each)
             header = f"Linted {len(changed)} modified file(s):\n"
-            return header + self._render(results, root)
+            rendered = self._render(results, root)
+            return ToolResult(header + rendered, verification=rendered.verification)
 
         if action == "project":
             results = await asyncio.to_thread(lint_project, root)
@@ -276,7 +279,9 @@ class LintTool(_QualityTool):
         return self.unknown_action(action)
 
     @staticmethod
-    def _render(results: list[Any], root: Path) -> str:
+    def _render(results: list[Any], root: Path) -> ToolResult:
+        from navin.quality.evidence import lint_evidence
+
         diagnostics = [d for r in results for d in r.diagnostics]
         errors = [d for d in diagnostics if d.severity == "error"]
         warnings = [d for d in diagnostics if d.severity == "warning"]
@@ -304,7 +309,7 @@ class LintTool(_QualityTool):
             lines.append("Not run:")
             for result in skipped:
                 lines.append(f"  {result.linter}: {result.skipped_reason}")
-        return "\n".join(lines)
+        return ToolResult("\n".join(lines), verification=lint_evidence(results))
 
 
 class TestRunTool(_QualityTool):
@@ -396,7 +401,12 @@ class TestRunTool(_QualityTool):
                 target=(target or None),
             )
             _record_test_outcomes(root, outcomes, target=target)
-            return "\n\n".join(outcome.render() for outcome in outcomes)
+            from navin.quality.evidence import test_evidence
+
+            return ToolResult(
+                "\n\n".join(outcome.render() for outcome in outcomes),
+                verification=test_evidence(outcomes),
+            )
 
         return self.unknown_action(action)
 
@@ -587,19 +597,18 @@ class VerifyTool(_QualityTool):
                 auto_fix=(action == "fix"),
             )
             _record_verify_report(root, report)
-            return report.render()
+            from navin.quality.evidence import verify_evidence
+
+            return ToolResult(report.render(), verification=verify_evidence(report))
 
         return self.unknown_action(action)
 
 
 def _record_verify_report(root: Path, report: Any) -> None:
     """Log this verify run so the board can demand real proof before 'done'."""
+    from navin.quality.evidence import verify_evidence
     from navin.quality.verification_log import record_verification
-    from navin.quality.verify import (
-        VERDICT_CLEAN,
-        VERDICT_LINT_WARNINGS,
-        VERDICT_NO_CHANGES,
-    )
+    from navin.quality.verify import VERDICT_NO_CHANGES
 
     if report.verdict == VERDICT_NO_CHANGES:
         return  # nothing was checked, so nothing is proven either way
@@ -608,13 +617,14 @@ def _record_verify_report(root: Path, report: Any) -> None:
     passed = sum(o.passed for o in ran)
     failed = sum(o.failed for o in ran)
     summary = f"verdict={report.verdict}"
+    evidence = verify_evidence(report)
     if ran:
         summary += f"; tests: {passed} passed, {failed} failed"
     record_verification(
         root,
         source="verify",
-        ok=report.verdict in (VERDICT_CLEAN, VERDICT_LINT_WARNINGS),
-        tests_ran=bool(ran),
+        ok=evidence.ok,
+        tests_ran=passed + failed > 0,
         summary=summary,
     )
 
@@ -625,21 +635,21 @@ def _record_test_outcomes(
     *,
     target: str | None = None,
 ) -> None:
-    """Log this test run; suites that did not run prove nothing and are skipped."""
+    """Log attempted runs too, so no-tests cannot leave an earlier green proof."""
+    from navin.quality.evidence import test_evidence
     from navin.quality.verification_log import record_verification
 
     ran = [o for o in outcomes if o.ran]
-    if not ran:
-        return
     passed = sum(o.passed for o in ran)
     failed = sum(o.failed for o in ran)
-    summary = f"tests: {passed} passed, {failed} failed"
+    evidence = test_evidence(outcomes)
+    summary = f"tests: {passed} passed, {failed} failed" if evidence.tests_ok is not None else "No tests ran."
     if target:
         summary += f" (target: {target})"
     record_verification(
         root,
         source="test_run",
-        ok=all(o.ok for o in ran),
-        tests_ran=True,
+        ok=evidence.ok,
+        tests_ran=passed + failed > 0,
         summary=summary,
     )

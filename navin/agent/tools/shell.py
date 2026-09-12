@@ -795,7 +795,7 @@ class _ExecCompletionAnnouncer:
 
 @tool_parameters(
     tool_parameters_schema(
-        command=StringSchema("The shell command to execute"),
+        command=StringSchema("The shell command to execute", min_length=1),
         cmd=StringSchema("Compatibility alias for command"),
         working_dir=StringSchema("Optional working directory for the command"),
         workdir=StringSchema("Compatibility alias for working_dir"),
@@ -878,6 +878,7 @@ class _ExecCompletionAnnouncer:
             default=False,
             nullable=True,
         ),
+        required=["command"],
     )
 )
 class ExecTool(Tool):
@@ -1048,6 +1049,21 @@ class ExecTool(Tool):
     @property
     def exclusive(self) -> bool:
         return True
+
+    def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        # Keep the legacy alias working while advertising one required field
+        # to the model. Validate before dispatch so exec({}) gets a bounded
+        # parameter-recovery attempt instead of an execution-error loop.
+        if not params.get("command") and params.get("cmd"):
+            params = {**params, "command": params["cmd"]}
+        return super().cast_params(params)
+
+    def validate_params(self, params: dict[str, Any]) -> list[str]:
+        errors = super().validate_params(params)
+        command = params.get("command")
+        if isinstance(command, str) and command and not command.strip():
+            errors.append("command must not be blank")
+        return errors
 
     async def execute(
         self, command: str | None = None, cmd: str | None = None,

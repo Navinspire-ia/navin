@@ -27,16 +27,29 @@ from navin.tui.brand import MARK, tide_text, wave_frame
 from navin.tui.markdown import install_path_styles
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
+from navin.utils.pasted_content import (
+    allocate_paste_token,
+    collapse_text_for_composer,
+    expand_pasted_content,
+    pasted_content_label,
+    should_collapse_pasted_text,
+    split_long_user_text,
+)
 from navin.utils.tool_hints import (
     CARD_ONLY_TOOLS,
     MAX_TRANSCRIPT_LINES,
+    PREVIEW_OPEN_LINES,
     clip_transcript,
+    describe_explore_step,
     describe_tool_line,
     edit_group_key,
     extract_line_diff,
     format_diff_suffix,
     format_tool_detail,
+    format_tool_preview_markup,
     format_turn_summary,
+    infer_run_stats,
+    tool_cluster_kind,
     tool_target,
     tool_verb,
 )
@@ -112,9 +125,13 @@ def tool_icon(name: str) -> str:
     return "•"
 
 
-def tool_ink_class(name: str) -> str:
+def tool_ink_class(name: str, arguments: dict | None = None) -> str:
     """CSS class for the tool family color (no Rich markup, so no double paint)."""
     verb = tool_verb(name)
+    if verb == "run":
+        target = tool_target(arguments or {})
+        if target.startswith("git"):
+            return "-ink-git"
     return {
         "read": "-ink-read",
         "list": "-ink-read",
@@ -371,6 +388,19 @@ class UserMessage(Vertical):
         background: $background;
         text-wrap: wrap;
     }
+    UserMessage > .user-paste-chip {
+        height: 1;
+        width: auto;
+        color: $text-muted;
+        background: $surface;
+        padding: 0 1;
+    }
+    UserMessage > .user-expand-body {
+        display: none;
+    }
+    UserMessage.-expanded > .user-expand-body {
+        display: block;
+    }
     """
 
     _BODY_CHUNK_LINES = 80
@@ -378,19 +408,37 @@ class UserMessage(Vertical):
     def __init__(self, text: str) -> None:
         super().__init__()
         self.raw_text = clip_transcript(display_user_text(text))
+        self._expanded = False
 
-    def compose(self) -> ComposeResult:
-        yield Static("you", classes="user-head")
-        text = self.raw_text
+    def _body_chunks(self, text: str, *extra_classes: str) -> ComposeResult:
         lines = text.splitlines(keepends=True) or ([text] if text else [""])
+        classes = " ".join(("user-body", *extra_classes))
         if len(lines) <= self._BODY_CHUNK_LINES:
-            yield Static(text, classes="user-body", markup=False)
+            yield Static(text, classes=classes, markup=False)
             return
         # Several Static children report height reliably. One huge Static is
         # often clipped on Windows Terminal, so the start of a paste vanishes.
         step = self._BODY_CHUNK_LINES
         for index in range(0, len(lines), step):
-            yield Static("".join(lines[index : index + step]), classes="user-body", markup=False)
+            yield Static("".join(lines[index : index + step]), classes=classes, markup=False)
+
+    def compose(self) -> ComposeResult:
+        yield Static("you", classes="user-head")
+        prefix, rest = split_long_user_text(self.raw_text)
+        if rest is None:
+            yield from self._body_chunks(self.raw_text)
+            return
+        if prefix:
+            yield Static(prefix, classes="user-body", markup=False)
+        yield Static(pasted_content_label(len(rest)), classes="user-paste-chip", markup=False)
+        yield from self._body_chunks(rest, "user-expand-body")
+
+    def on_click(self, event: events.Click) -> None:
+        if split_long_user_text(self.raw_text)[1] is None:
+            return
+        self._expanded = not self._expanded
+        self.set_class(self._expanded, "-expanded")
+        event.stop()
 
     def copy_text(self) -> str:
         return clip_transcript(self.raw_text)
@@ -480,14 +528,15 @@ class ToolCall(Vertical):
     ToolCall.-ink-git > .tool-head { color: #00C853; }
     ToolCall.-ink-ask > .tool-head { color: #FF4081; }
     ToolCall > .tool-body {
-        padding: 0 0 0 5;
-        color: #C8C8C8;
-        max-height: 80;
+        padding: 0;
+        color: #E8E8E8;
+        max-height: 34;
         overflow-y: auto;
-        border-left: vkey #3A3A3A;
-        background: $background;
+        background: #141414;
         text-style: none;
     }
+    ToolCall.-cluster { margin: 0; }
+    ToolCall.-cluster > .tool-body { padding: 0; }
     """
 
     ALLOW_SELECT = True
@@ -507,14 +556,23 @@ class ToolCall(Vertical):
         self.added = 0
         self.removed = 0
         self.edit_count = 1
+        self.diff_text = ""
         self._spin = 0
         self._open = False
+        self.cluster_kind = ""
+        self.tree_mark = ""
+        if tool_verb(name) in {"edit", "create"}:
+            self._open = True
+        if tool_verb(name) == "run":
+            self.added, self.removed = infer_run_stats(self.arguments)
+            if self.added or self.removed:
+                self._open = True
         self.add_class("-running")
-        self.add_class(tool_ink_class(name))
+        self.add_class(tool_ink_class(name, self.arguments))
 
     def compose(self) -> ComposeResult:
         yield Static(self._plain_head(), classes="tool-head", markup=False)
-        yield Static("", classes="tool-body", markup=False)
+        yield Static("", classes="tool-body", markup=True)
 
     def on_mount(self) -> None:
         self.set_interval(0.12, self._tick)
@@ -528,6 +586,15 @@ class ToolCall(Vertical):
             self.query_one(".tool-head", Static).update(self._plain_head())
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
+        self._notify_cluster()
+
+    def _notify_cluster(self) -> None:
+        node = self.parent
+        while node is not None:
+            if isinstance(node, ToolCluster):
+                node._refresh_head()
+                return
+            node = getattr(node, "parent", None)
 
     def _tick(self) -> None:
         if self.phase in {"start", "output"}:
@@ -543,12 +610,20 @@ class ToolCall(Vertical):
         return " ✓ "
 
     def _plain_head(self) -> str:
-        label = describe_tool_line(
-            self.tool_name,
-            self.arguments,
-            added=self.added,
-            removed=self.removed,
-        )
+        if self.cluster_kind == "explore":
+            label = describe_explore_step(self.tool_name, self.arguments)
+        else:
+            label = describe_tool_line(
+                self.tool_name,
+                self.arguments,
+                added=self.added,
+                removed=self.removed,
+            )
+        if self.cluster_kind:
+            mark = self.tree_mark or "  "
+            if self.phase == "error":
+                return f"{mark}{label}  x"
+            return f"{mark}{label}"
         if self.phase == "error":
             mark = "x "
         elif self.phase in {"start", "output"}:
@@ -578,13 +653,20 @@ class ToolCall(Vertical):
             self.result = result
             self.error = error
             # Live +/- for edits come from UiFileEdit so we do not double-count.
-            if tool_verb(self.tool_name) not in {"edit", "create"}:
+            if tool_verb(self.tool_name) == "run":
+                plus, minus = infer_run_stats(self.arguments, self.output_lines, result)
+                if plus or minus:
+                    self.set_diff(plus, minus)
+            elif tool_verb(self.tool_name) not in {"edit", "create"}:
                 plus, minus = extract_line_diff(result)
                 if plus or minus:
                     self.set_diff(plus, minus)
             self.remove_class("-running")
             self.add_class("-ok" if phase == "end" else "-error")
-            self.collapse()
+            if phase == "end":
+                self._reveal_if_preview()
+            else:
+                self.collapse()
         self._refresh_head()
         self._refresh_body()
 
@@ -618,19 +700,34 @@ class ToolCall(Vertical):
                 result=self.result,
                 error=self.error,
                 output_lines=self.output_lines,
+                diff_text=self.diff_text,
             )
         )
 
     def _refresh_body(self) -> None:
         if not self.is_mounted:
             return
-        text = self.copy_text()
         try:
             body = self.query_one(".tool-body", Static)
-            body.update(text)
-            body.display = self._open
         except Exception:  # noqa: BLE001
-            pass
+            return
+        width = max(0, int(body.size.width or 0))
+        text = format_tool_preview_markup(
+            self.tool_name,
+            self.arguments if isinstance(self.arguments, dict) else {},
+            result=self.result,
+            error=self.error,
+            output_lines=self.output_lines,
+            diff_text=self.diff_text,
+            limit=PREVIEW_OPEN_LINES,
+            width=width,
+        )
+        body.update(text)
+        body.display = self._open
+
+    def on_resize(self) -> None:
+        if self._open:
+            self._refresh_body()
 
     def set_diff(self, added: int, removed: int) -> None:
         self.added = max(0, int(added or 0))
@@ -642,6 +739,35 @@ class ToolCall(Vertical):
         self.removed += max(0, int(removed or 0))
         self._refresh_head()
         self._refresh_body()
+
+    def set_diff_text(self, text: str) -> None:
+        blob = (text or "").strip()
+        if not blob:
+            return
+        self.diff_text = blob
+        self._reveal_if_preview()
+        self._refresh_body()
+
+    def _has_preview(self) -> bool:
+        return bool(
+            format_tool_detail(
+                self.tool_name,
+                self.arguments if isinstance(self.arguments, dict) else {},
+                result=self.result,
+                error=self.error,
+                output_lines=self.output_lines,
+                diff_text=self.diff_text,
+                limit=2,
+            )
+        )
+
+    def _reveal_if_preview(self) -> None:
+        if self.cluster_kind == "explore":
+            return
+        if not self._has_preview():
+            return
+        self._open = True
+        self.add_class("-open")
 
     def collapse(self) -> None:
         self._open = False
@@ -659,6 +785,120 @@ class ToolCall(Vertical):
         event.stop()
 
 
+class ToolCluster(Vertical):
+    """Cursor-style group: ``Explored`` / ``Edited``, then the operations."""
+
+    TITLES = {"explore": "Explored", "edit": "Edited"}
+
+    DEFAULT_CSS = """
+    ToolCluster {
+        height: auto;
+        margin: 0;
+        padding: 0;
+        background: $background;
+    }
+    ToolCluster > .cluster-head {
+        height: 1;
+        color: $text-muted;
+        background: $background;
+        text-style: none;
+    }
+    ToolCluster > .cluster-head:hover { color: $foreground; }
+    ToolCluster > .cluster-body {
+        height: auto;
+        padding: 0;
+        background: $background;
+    }
+    ToolCluster.-collapsed > .cluster-body { display: none; }
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+        self.tools: list[ToolCall] = []
+        self._open = True
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._head_text(), classes="cluster-head", markup=False)
+        yield Vertical(classes="cluster-body")
+
+    def on_mount(self) -> None:
+        self.set_interval(0.2, self._tick)
+
+    def _tick(self) -> None:
+        if any(tool.phase in {"start", "output"} for tool in self.tools):
+            self._refresh_head()
+
+    def _head_text(self) -> str:
+        title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
+        if any(tool.phase in {"start", "output"} for tool in self.tools):
+            glyph = "◦"
+        elif any(tool.phase == "error" for tool in self.tools):
+            glyph = "x"
+        else:
+            glyph = "•"
+        extra = ""
+        if self.kind == "edit" and self.tools:
+            files = len(self.tools)
+            noun = "file" if files == 1 else "files"
+            extra = f"  {files} {noun}"
+            suffix = format_diff_suffix(
+                sum(tool.added for tool in self.tools),
+                sum(tool.removed for tool in self.tools),
+            )
+            if suffix:
+                extra += f"  {suffix}"
+        elif not self._open and len(self.tools) > 1:
+            extra = f"  {len(self.tools)}"
+        return f"{glyph} {title}{extra}"
+
+    def _refresh_head(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one(".cluster-head", Static).update(self._head_text())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _retree(self) -> None:
+        last = len(self.tools) - 1
+        for index, tool in enumerate(self.tools):
+            tool.tree_mark = "└ " if index == last else "├ "
+            tool._refresh_head()
+
+    async def add_call(self, widget: ToolCall) -> None:
+        widget.cluster_kind = self.kind
+        widget.add_class("-cluster")
+        self.tools.append(widget)
+        body = self.query_one(".cluster-body", Vertical)
+        await body.mount(widget)
+        self._retree()
+        if self.kind == "edit":
+            widget._reveal_if_preview()
+            widget._refresh_body()
+        self._refresh_head()
+
+    def toggle(self) -> None:
+        self._open = not self._open
+        self.set_class(not self._open, "-collapsed")
+        self._refresh_head()
+
+    def on_click(self, event: events.Click) -> None:
+        target = event.widget
+        classes = set(getattr(target, "classes", ()) or ())
+        if "cluster-head" in classes or target is self:
+            self.toggle()
+            event.stop()
+
+    def copy_text(self) -> str:
+        parts = [self._head_text()]
+        for tool in self.tools:
+            detail = tool.copy_text()
+            if detail:
+                parts.append(detail)
+        return clip_transcript("\n".join(parts))
+
+
 class ProgressLine(Static):
     DEFAULT_CSS = """
     ProgressLine {
@@ -671,6 +911,77 @@ class ProgressLine(Static):
 
     def __init__(self, text: str) -> None:
         super().__init__(f"· {escape(text)}", markup=True)
+
+
+def format_elapsed(seconds: float) -> str:
+    """Cursor-style clock: ``12s``, ``10m 54s``, ``1h 02m``."""
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def running_exec_count() -> int:
+    try:
+        from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
+
+        return DEFAULT_EXEC_SESSION_MANAGER.running_count()
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def format_working_line(*, elapsed_s: float, background: int = 0) -> str:
+    """Status shown in chat while a turn runs. Keys are Navin keys, not Cursor's."""
+    clock = format_elapsed(elapsed_s)
+    parts = [f"Working ({clock} • esc to interrupt)"]
+    if background == 1:
+        parts.append("1 background terminal running")
+        parts.append("/ps to view")
+    elif background > 1:
+        parts.append(f"{background} background terminals running")
+        parts.append("/ps to view")
+    return " • ".join(parts)
+
+
+class WorkingLine(Static):
+    """Live turn status, pinned under the transcript like Cursor's Working row."""
+
+    DEFAULT_CSS = """
+    WorkingLine {
+        height: 0;
+        min-height: 0;
+        margin: 0;
+        padding: 0 3;
+        color: $text-muted;
+        background: $background;
+        display: none;
+    }
+    WorkingLine.-visible {
+        display: block;
+        height: 1;
+        min-height: 1;
+        margin: 0 0 1 0;
+    }
+    WorkingLine:hover { color: $foreground; }
+    """
+
+    def set_line(self, text: str) -> None:
+        if text:
+            self.update(f"◦ {escape(text)}")
+            self.display = True
+            self.add_class("-visible")
+            return
+        self.update("")
+        self.display = False
+        self.remove_class("-visible")
+
+    def on_click(self) -> None:
+        if self.has_class("-visible"):
+            self.app.call_later(self.app.run_action, "stop_turn")
 
 
 class UpdateOffer(Static):
@@ -812,6 +1123,7 @@ class AssistantMessage(Vertical):
     }
     AssistantMessage > ReasoningBlock,
     AssistantMessage > ToolCall,
+    AssistantMessage > ToolCluster,
     AssistantMessage > ProgressLine,
     AssistantMessage > SubagentCard {
         margin: 1 0;
@@ -857,6 +1169,7 @@ class AssistantMessage(Vertical):
         self._last_body_paint = 0.0
         self._buffer: list[str] = []
         self._tools: dict[str, ToolCall] = {}
+        self._cluster: ToolCluster | None = None
         self._subagents: dict[str, SubagentCard] = {}
         self._reasoning: ReasoningBlock | None = None
         self.streamed = False
@@ -936,12 +1249,30 @@ class AssistantMessage(Vertical):
         if widget is None:
             widget = ToolCall(key, name, arguments)
             self._tools[key] = widget
-            await self.mount(widget, before=preview)
+            family = tool_cluster_kind(name)
+            if family:
+                cluster = await self._ensure_cluster(family)
+                await cluster.add_call(widget)
+            else:
+                self._cluster = None
+                await self.mount(widget, before=preview)
             if phase == "start":
                 return
         widget.apply(phase=phase, result=result, error=error, output=output)
 
-    def note_file_edit(self, path: str, added: int, removed: int) -> None:
+    async def _ensure_cluster(self, kind: str) -> ToolCluster:
+        current = self._cluster
+        if current is not None and current.kind == kind and current.is_mounted:
+            return current
+        preview = await self._ready_preview()
+        cluster = ToolCluster(kind)
+        self._cluster = cluster
+        await self.mount(cluster, before=preview)
+        return cluster
+
+    def note_file_edit(
+        self, path: str, added: int, removed: int, *, diff: str = ""
+    ) -> None:
         name = Path(path).name if path else ""
         raw = path.replace("\\", "/")
         group = edit_group_key("edit_file", {"path": path})
@@ -955,7 +1286,10 @@ class AssistantMessage(Vertical):
                 args = tool.arguments if isinstance(tool.arguments, dict) else {}
                 blob = " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
                 target = tool_target(args)
-                if (name and target == name) or (raw and raw in blob.replace("\\", "/")):
+                if (
+                    (name and (target == name or target.endswith("/" + name)))
+                    or (raw and raw in blob.replace("\\", "/"))
+                ):
                     match = tool
                     break
         if match is None:
@@ -966,6 +1300,8 @@ class AssistantMessage(Vertical):
         if match is None:
             return
         plus, minus = max(0, int(added or 0)), max(0, int(removed or 0))
+        if diff:
+            match.set_diff_text(diff)
         if plus == 0 and minus == 0:
             return
         if match.added == 0 and match.removed == 0:
@@ -1150,8 +1486,18 @@ class AssistantMessage(Vertical):
         for tool in self._tools.values():
             if tool.phase in {"start", "output"}:
                 tool.apply(phase="end")
-            else:
+            if tool.cluster_kind == "explore":
                 tool.collapse()
+                continue
+            # Edits / runs keep the numbered diff open. Do not fold it on finish.
+            if tool.diff_text or tool._has_preview() or tool_verb(tool.tool_name) in {
+                "edit",
+                "create",
+            }:
+                tool._reveal_if_preview()
+                tool._refresh_body()
+                continue
+            tool.collapse()
         foot = self.query_one(".assistant-foot", Static)
         if self._tools:
             summary = format_turn_summary(
@@ -1597,6 +1943,7 @@ class Composer(TextArea):
         self._eat_enter = 0
         self._last_paste = ""
         self._last_paste_at = 0.0
+        self._pastes: dict[str, str] = {}
 
     def _shell(self) -> ComposerShell | None:
         parent = self.parent
@@ -1617,11 +1964,13 @@ class Composer(TextArea):
         text = self.text
         return text.startswith("/") and "\n" not in text and " " not in text
 
+    def expand_for_submit(self) -> str:
+        """Put pasted bodies back so the model receives the full prompt."""
+        return expand_pasted_content(self.text, self._pastes)
+
     def _insert_paste(self, text: str, *, trailing_newline: bool = False) -> None:
         """Insert a paste once. A WT confirm + Ctrl+V must not double it."""
-        from navin.utils.tool_hints import clip_transcript
-
-        payload = clip_transcript(text)
+        payload = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         if not payload:
             return
         now = time.monotonic()
@@ -1629,13 +1978,19 @@ class Composer(TextArea):
             return
         self._last_paste = payload
         self._last_paste_at = now
+        if should_collapse_pasted_text(payload):
+            token = allocate_paste_token(len(payload), self._pastes)
+            self._pastes[token] = payload
+            insert = token
+        else:
+            insert = payload
         if trailing_newline or "\n" in payload:
             self._eat_enter += 1
         if not self.text.strip():
-            self.load_text(payload)
+            self.load_text(insert)
             self.move_cursor(self.document.end)
             return
-        self.insert(payload)
+        self.insert(insert)
 
     async def _on_paste(self, event: events.Paste) -> None:
         from navin.tui.clipboard import pick_paste_text
@@ -1659,7 +2014,7 @@ class Composer(TextArea):
                 return
             event.prevent_default()
             event.stop()
-            self.post_message(self.Submitted(self.text))
+            self.post_message(self.Submitted(self.expand_for_submit()))
             return
         if self.menu_open and self.is_slash_prefix and event.key in {"up", "down", "tab"}:
             event.prevent_default()
@@ -1749,10 +2104,13 @@ class Composer(TextArea):
             self.post_message(self.SlashTyping(None))
 
     def set_text(self, text: str) -> None:
-        self.load_text(text)
+        display, pastes = collapse_text_for_composer(text)
+        self._pastes = pastes
+        self.load_text(display)
         self.move_cursor(self.document.end)
 
     def clear_text(self) -> None:
+        self._pastes = {}
         self.load_text("")
 
 
@@ -1920,6 +2278,21 @@ class Transcript(VerticalScroll):
             self.scroll_end(animate=False)
 
 
+def compact_shortcut(key: str) -> str:
+    """Footer keys stay short: ctrl+p -> ^p, F2 stays F2."""
+    raw = (key or "").strip()
+    if not raw:
+        return ""
+    lower = raw.lower()
+    if lower.startswith("ctrl+shift+"):
+        rest = raw.split("+", 2)[-1]
+        return f"^{rest.upper() if len(rest) == 1 else rest}"
+    if lower.startswith("ctrl+"):
+        rest = raw.split("+", 1)[-1]
+        return f"^{rest.lower() if len(rest) == 1 else rest}"
+    return raw
+
+
 class DockHint(Static):
     """One quiet shortcut on the single footer line."""
 
@@ -1946,7 +2319,8 @@ class DockHint(Static):
 
     def _paint(self) -> None:
         if self.key:
-            self.update(f"[$text-muted]{escape(self.key)}[/]  {escape(self.label)}")
+            shown = compact_shortcut(self.key)
+            self.update(f"[$text-muted]{escape(shown)}[/] {escape(self.label)}")
         elif self.action:
             self.update(escape(self.label))
         else:
@@ -1965,7 +2339,7 @@ class DockBar(Horizontal):
         width: 1fr;
         height: 1;
         min-height: 1;
-        padding: 0 1;
+        padding: 0;
         background: $background;
         overflow: hidden;
     }

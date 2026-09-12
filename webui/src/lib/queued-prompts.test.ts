@@ -291,6 +291,9 @@ describe("prompt summaries", () => {
       }),
     ).toBe("one.png, two.png");
     expect(queuedPromptLabel({ id: "a", text: "  hello  " })).toBe("hello");
+    expect(queuedPromptLabel({ id: "a", text: "z".repeat(1148) })).toBe(
+      "[Pasted Content 1148 chars]",
+    );
     expect(queuedPromptLabel({ id: "a", text: "" }, "Attachment")).toBe("Attachment");
   });
 

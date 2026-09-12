@@ -63,8 +63,8 @@ BUDGET_EXHAUSTED_FINALIZATION_PROMPT = (
     "the user. Do not call or request tools. Do not claim the task is complete "
     "unless the evidence above clearly shows it is complete. Structure the "
     "reply as: (1) what was done - concrete files, commands, and board steps; "
-    "(2) what remains; (3) the best next step (e.g. ask the user to reply "
-    "'continue'). Keep it scannable and specific - no vague 'I worked on it'."
+    "(2) what remains; (3) the execution constraint preventing further work. "
+    "Keep it scannable and specific - no vague 'I worked on it'."
 )
 
 LENGTH_RECOVERY_PROMPT = (
@@ -87,31 +87,46 @@ DELIVERY_CONTINUE_PROMPT = (
 )
 
 VERIFY_BEFORE_DONE_CONTINUE_PROMPT = (
-    "You edited code but have not verified the result yet. Before claiming "
-    "Build/Debug work is done: re-run the failing repro if this is a debug "
-    "turn, then run `verify action=check` (or `lint` and `test_run` if verify "
-    "is unavailable), attach evidence, and close with a short summary. Do not "
-    "narrate success without those checks."
+    "You edited code but have not verified the current result yet. Finish the "
+    "accepted development task: add or adapt meaningful tests for the requested "
+    "behavior, including the reported bug and relevant failure cases. Use "
+    "existing tests when they already cover the change; do not create boilerplate "
+    "tests for a reversible text/style edit. Execute the relevant tests after "
+    "the last code/test change, then run the appropriate lint/type/build checks "
+    "with `verify action=check` or the project's equivalent. Reproduce the user "
+    "flow in Preview when relevant. Fix failures, check the acceptance criteria, "
+    "then report what changed and the actual results. A discovery call, a test "
+    "still running or a result from before the last edit is not validation. "
+    "Continue without asking the user to resume."
 )
 
 VERIFY_FAILED_CONTINUE_PROMPT = (
     "Verification failed (lint errors and/or failing tests). You may not claim "
-    "the Build/Debug turn is done while verify is red. Run "
+    "the task is done while checks are red. Fix the reported cause and run "
     "`verify action=fix` (or targeted lint/test fixes), re-run "
     "`verify action=check`, and only then summarize with green evidence. "
-    "Keep the patch minimal and in-scope."
+    "Keep the patch minimal and in-scope. Keep repairing while making progress; "
+    "do not remove assertions, skip failing tests or weaken acceptance criteria "
+    "just to get green results. If an external blocker prevents a check, report "
+    "the exact blocker and unfinished validation rather than claiming completion."
 )
 
 NO_PROGRESS_CONTINUE_PROMPT = (
-    "You have been searching the codebase without making an edit or running "
-    "a check. Stop exploring. Either apply the fix now or answer the user "
-    "from evidence already in this turn. Do not call read_file, grep, "
-    "list_dir, or find_files again unless you need one new path."
+    "Your recent calls only repeated operations already blocked by the tool "
+    "loop guard. Use the existing results and change the arguments, tool or "
+    "approach to continue the task. Do not repeat the blocked calls."
+)
+
+NO_PROGRESS_FINALIZATION_PROMPT = (
+    "Repeated blocked tool calls produced no new result even after a request "
+    "to change approach. Explain the specific failed operation and remaining "
+    "work using the tool evidence above. Do not claim completion or blame a "
+    "time limit. Name any concrete input needed to resolve the blocker."
 )
 
 NO_PROGRESS_STOP_FALLBACK = (
-    "I searched without making progress. Here is what I know so far; "
-    "reply to continue with a narrower target."
+    "The same blocked tool calls kept repeating without a new result. "
+    "The task is unfinished; completed work has been preserved."
 )
 
 
@@ -144,8 +159,13 @@ def build_verify_failed_message(
 
 
 def build_no_progress_continue_message(custom: str | None = None) -> dict[str, str]:
-    """Nudge once when a turn has only been searching."""
+    """Request a different approach after repeated blocked calls."""
     return {"role": "user", "content": custom or NO_PROGRESS_CONTINUE_PROMPT}
+
+
+def build_no_progress_finalization_message() -> dict[str, str]:
+    """Explain an actual repeated-call blocker without inventing a time cap."""
+    return {"role": "user", "content": NO_PROGRESS_FINALIZATION_PROMPT}
 
 
 def empty_tool_result_message(tool_name: str) -> str:

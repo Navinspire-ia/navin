@@ -110,6 +110,15 @@ class UiFileEdit(UiEvent):
     kind: str = ""
     added: int = 0
     removed: int = 0
+    diff: str = ""
+
+
+def _file_edit_diff_text(payload: dict[str, Any]) -> str:
+    raw = payload.get("diff")
+    if isinstance(raw, dict):
+        text = raw.get("text")
+        return text if isinstance(text, str) else ""
+    return raw if isinstance(raw, str) else ""
 
 
 @dataclass(frozen=True)
@@ -319,6 +328,13 @@ class TuiRuntime:
     @property
     def turn_active(self) -> bool:
         return self.status.turn_active
+
+    @property
+    def turn_elapsed_s(self) -> float:
+        started = self._turn_started_at
+        if started is None:
+            return 0.0
+        return max(0.0, time.monotonic() - started)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -605,6 +621,7 @@ class TuiRuntime:
                         kind=str(payload.get("kind") or payload.get("op") or ""),
                         added=int(payload.get("added") or payload.get("lines_added") or 0),
                         removed=int(payload.get("removed") or payload.get("lines_removed") or 0),
+                        diff=_file_edit_diff_text(payload),
                     )
                 )
         text = (msg.content or "").strip()

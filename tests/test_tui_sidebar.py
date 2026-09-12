@@ -247,6 +247,16 @@ class FitPathTests(unittest.TestCase):
         self.assertNotIn("dep...loy", out)
 
 
+class CompactShortcutTests(unittest.TestCase):
+    def test_ctrl_becomes_caret(self) -> None:
+        from navin.tui.widgets import compact_shortcut
+
+        self.assertEqual(compact_shortcut("ctrl+p"), "^p")
+        self.assertEqual(compact_shortcut("ctrl+b"), "^b")
+        self.assertEqual(compact_shortcut("ctrl+shift+g"), "^G")
+        self.assertEqual(compact_shortcut("F2"), "F2")
+
+
 class DockBarTests(unittest.IsolatedAsyncioTestCase):
     async def test_path_and_shortcuts_share_one_row(self) -> None:
         from textual.app import App, ComposeResult
@@ -272,6 +282,8 @@ class DockBarTests(unittest.IsolatedAsyncioTestCase):
             cmds = dock.query_one("#dock-commands", DockHint)
             self.assertEqual(cmds.key, "ctrl+p")
             self.assertEqual(cmds.label, "commands")
+            self.assertIn("^p", str(cmds.content))
+            self.assertNotIn("ctrl+p", str(cmds.content))
             self.assertTrue(any(h.key == "ctrl+b" for h in dock.query(DockHint)))
             dock.set_panel(True)
             self.assertTrue(dock.has_class("-hidden"))

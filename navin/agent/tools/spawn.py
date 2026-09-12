@@ -103,7 +103,8 @@ class SpawnTool(Tool):
         return (
             "Spawn a subagent to handle a task in the background, or review how "
             "finished ones ended. Several can run at once, so start independent "
-            "tasks together rather than one at a time. Each reports back on its "
+            "tasks together. A queued reply means the task is waiting for a "
+            "slot: report running and queued counts separately. Each reports back on its "
             "own when done. They share one working tree unless you set "
             "isolate=true, so give overlapping edits their own checkout. For "
             "deliverables or existing projects, inspect the workspace first and "

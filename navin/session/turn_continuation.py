@@ -34,17 +34,9 @@ _GOAL_CONTINUATION_SENDER = "system:continuation"
 _GOAL_CONTINUATION_ROUNDS_KEY = "_sustained_goal_continuation_rounds"
 _BOARD_CONTINUATION_ROUNDS_KEY = "_session_board_continuation_rounds"
 _TURN_CONTINUATION_ROUNDS_KEY = "_turn_budget_continuation_rounds"
-_MAX_GOAL_CONTINUATION_ROUNDS = 12
-# Forge/cruise builds hit the per-slice step budget often; chain quietly so
-# long builds keep going without the user babysitting "continue". The counters
-# reset on every real user message, so these caps only bound a SINGLE prompt:
-# they exist to stop a model looping forever on itself, never to stop work.
-# Real spend is bounded by the usage budget (soft modes + hard key cap).
-_MAX_BOARD_CONTINUATION_ROUNDS = 40
-# Every other turn that exhausts its tool budget mid-task auto-resumes too:
-# a hard "max iterations" stop mid-work is never an acceptable user outcome,
-# whatever the model or provider.
-_MAX_TURN_CONTINUATION_ROUNDS = 20
+# Round counters schedule coherence checkpoints; they never limit how much
+# work one request may need. The runner reports actual tool/model failures,
+# and /stop cancels the whole run, including its queued continuation slices.
 _STRIPPED_INBOUND_META_KEYS = {
     INTERNAL_CONTINUATION_PENDING_META,
     "goal_requested",
@@ -73,29 +65,6 @@ def ends_with_user_question(final_content: str | None) -> bool:
         return False
     last = lines[-1].rstrip("*_`) \u00bb\u201d\"'")
     return last.endswith(("?", "؟"))
-
-
-# Tools that move a task forward on top of the runner's own progress set:
-# board mutations chain /forge tasks, git records the work, spawn delegates it.
-_EXTRA_PROGRESS_TOOLS = frozenset({"board", "git", "spawn", "cron"})
-
-
-def turn_made_progress(tools_used: Any) -> bool:
-    """True when the turn called at least one tool that changes something.
-
-    A turn that only read, searched and thought until its budget ran out has
-    nothing a continuation could build on; the same reads would run again.
-    ``None`` means the caller did not track tool use, which is not evidence of
-    circling, so it counts as progress.
-    """
-    if tools_used is None:
-        return True
-    if not tools_used:
-        return False
-    from navin.agent.runner import PROGRESS_TOOL_NAMES
-
-    progress = PROGRESS_TOOL_NAMES | _EXTRA_PROGRESS_TOOLS
-    return any(str(name) in progress for name in tools_used)
 
 
 def is_goal_continuation_inbound(metadata: Mapping[str, Any] | None) -> bool:
@@ -142,17 +111,14 @@ def should_stream_budget_response(
     message_metadata: Mapping[str, Any] | None = None,
     session_key: str | None = None,
     final_content: str | None = None,
-    tools_used: Any = None,
 ) -> bool:
     """Return whether the budget-boundary response should be sent to the user."""
     if stop_reason != "max_iterations":
         return True
-    # Mirrors the gates in maybe_continue_turn: a final question, or a round
-    # that changed nothing, is delivered, never suppressed in favour of a
-    # continuation that will not be scheduled.
+    # A real question is delivered, never hidden by a continuation. A slice
+    # of successful reads or custom tools may be essential work, so tool
+    # names alone must not turn a scheduling boundary into a hard stop.
     if ends_with_user_question(final_content):
-        return True
-    if tools_used is not None and not turn_made_progress(tools_used):
         return True
     return should_finalize_on_max_iterations(
         pending_queue_available=pending_queue_available,
@@ -171,15 +137,15 @@ def should_finalize_on_max_iterations(
 ) -> bool:
     """Return whether a max-iteration boundary should produce a final response.
 
-    When a sustained goal or an incomplete forge board can continue internally,
-    the current runner slice should stop without spending an extra no-tools
-    finalization call. The next queued continuation slice owns the eventual
-    user-visible response.
+    Every unfinished interactive task can continue internally. A slice should
+    end without a no-tools finalization call; the eventual completed or blocked
+    turn owns the user-visible response.
     """
     return not (
-        pending_queue_available
-        and _any_continuation_available(
-            session_metadata,
+        _continuation_available(
+            stop_reason="max_iterations",
+            pending_queue_available=pending_queue_available,
+            session_metadata=session_metadata,
             message_metadata=message_metadata,
             session_key=session_key,
         )
@@ -213,19 +179,6 @@ async def maybe_continue_turn(ctx: Any) -> bool:
         )
         _park_board_after_hard_stop(ctx)
         return False
-    # A whole budget spent without one call that changes anything (an edit, a
-    # command, a test, a board move) is a model circling, not work in
-    # progress. Re-queuing it buys another identical round, and the caps above
-    # would let that repeat for hours; hand the transcript back instead.
-    if not turn_made_progress(getattr(ctx, "tools_used", None)):
-        logger.info(
-            "Turn budget reached without a progress tool call; delivering the "
-            "result instead of scheduling a {} continuation",
-            kind,
-        )
-        _park_board_after_hard_stop(ctx)
-        return False
-
     metadata = _internal_continuation_metadata(
         ctx.msg.metadata,
         kind=kind,
@@ -293,14 +246,9 @@ def _continuation_kind(
         message_metadata=message_metadata,
     ):
         return _GOAL_CONTINUATION_KIND
-    if _board_continuation_available(
-        session_metadata,
-        session_key=session_key,
-    ):
+    if _board_continuation_available(session_key=session_key):
         return _BOARD_CONTINUATION_KIND
-    if _turn_budget_continuation_available(session_metadata):
-        return _TURN_CONTINUATION_KIND
-    return None
+    return _TURN_CONTINUATION_KIND
 
 
 def _continuation_available(
@@ -323,25 +271,6 @@ def _continuation_available(
     )
 
 
-def _any_continuation_available(
-    session_metadata: Mapping[str, Any] | None,
-    *,
-    message_metadata: Mapping[str, Any] | None = None,
-    session_key: str | None = None,
-) -> bool:
-    return (
-        _goal_continuation_available(
-            session_metadata,
-            message_metadata=message_metadata,
-        )
-        or _board_continuation_available(
-            session_metadata,
-            session_key=session_key,
-        )
-        or _turn_budget_continuation_available(session_metadata)
-    )
-
-
 def clear_internal_continuation_state(metadata: MutableMapping[str, Any]) -> None:
     """Reset policy bookkeeping once its owning runtime mode is inactive."""
     if not sustained_goal_active(metadata):
@@ -349,16 +278,12 @@ def clear_internal_continuation_state(metadata: MutableMapping[str, Any]) -> Non
 
 
 def reset_goal_continuation_rounds(metadata: MutableMapping[str, Any]) -> None:
-    """Start a newly created or replaced goal with a fresh continuation budget."""
+    """Start a new goal with fresh checkpoint counters."""
     metadata.pop(_GOAL_CONTINUATION_ROUNDS_KEY, None)
 
 
 def reset_budget_continuation_rounds(metadata: MutableMapping[str, Any]) -> None:
-    """Fresh continuation budget for a new user-initiated turn.
-
-    Called when a genuine (non-continuation) message starts a turn so the
-    round caps bound a single prompt's autonomy, not the whole session.
-    """
+    """Restart checkpoint numbering for a new user-initiated turn."""
     metadata.pop(_BOARD_CONTINUATION_ROUNDS_KEY, None)
     metadata.pop(_TURN_CONTINUATION_ROUNDS_KEY, None)
 
@@ -387,48 +312,20 @@ def _goal_continuation_available(
     session_metadata: Mapping[str, Any] | None,
     *,
     message_metadata: Mapping[str, Any] | None = None,
-    max_rounds: int = _MAX_GOAL_CONTINUATION_ROUNDS,
 ) -> bool:
     if not sustained_goal_turn(session_metadata, message_metadata=message_metadata):
         return False
-    if not sustained_goal_active(session_metadata):
-        return False
-    return _rounds_remaining(session_metadata, _GOAL_CONTINUATION_ROUNDS_KEY, max_rounds)
+    return sustained_goal_active(session_metadata)
 
 
 def _board_continuation_available(
-    session_metadata: Mapping[str, Any] | None,
     *,
     session_key: str | None = None,
-    max_rounds: int = _MAX_BOARD_CONTINUATION_ROUNDS,
 ) -> bool:
     """True when this chat still has focused board work mid-build."""
     from navin.board import session_focus
 
-    if not session_focus.touched(session_key):
-        return False
-    return _rounds_remaining(session_metadata, _BOARD_CONTINUATION_ROUNDS_KEY, max_rounds)
-
-
-def _turn_budget_continuation_available(
-    session_metadata: Mapping[str, Any] | None,
-    *,
-    max_rounds: int = _MAX_TURN_CONTINUATION_ROUNDS,
-) -> bool:
-    """Catch-all: any turn stopped by max_iterations may quietly resume."""
-    return _rounds_remaining(session_metadata, _TURN_CONTINUATION_ROUNDS_KEY, max_rounds)
-
-
-def _rounds_remaining(
-    session_metadata: Mapping[str, Any] | None,
-    key: str,
-    max_rounds: int,
-) -> bool:
-    try:
-        rounds = int((session_metadata or {}).get(key) or 0)
-    except (TypeError, ValueError):
-        rounds = 0
-    return rounds < max(0, max_rounds)
+    return session_focus.touched(session_key)
 
 
 def _increment_continuation_round(
@@ -510,10 +407,14 @@ def _board_continuation_prompt(round_number: int = 0) -> str:
     prompt = (
         "Continue the active build after the previous turn reached its "
         "tool-call budget. Resume the board checklist: claim the current "
-        "ready step, implement it, validate with verify/test_run, and move "
+        "ready step, implement it, add or adapt tests for its acceptance "
+        "criteria, execute them after the last edit with verify/test_run, and move "
         "it done with evidence. For UI apps start the server and call "
         "open_preview when ready. Do not mention the continuation boundary "
-        "to the user. Keep going until the focused plan is complete."
+        "to the user. If a task lacks acceptance criteria, fill them from "
+        "the accepted user request and continue the authorized work without "
+        "asking for plan approval again. Keep going until the focused plan "
+        "is complete."
     )
     if round_number and round_number % _BOARD_CHECKPOINT_EVERY == 0:
         prompt += (

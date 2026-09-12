@@ -124,7 +124,7 @@ class ToolRegistry:
         self,
         name: str,
         params: Any,
-    ) -> tuple[Tool | None, Any, str | None]:
+    ) -> tuple[Tool | None, Any, ToolResult | None]:
         """Resolve, cast, and validate one tool call."""
         tool = self._tools.get(name)
         if not tool:
@@ -156,7 +156,8 @@ class ToolRegistry:
                     f"Error: Tool '{name}' parameters must be a JSON object, got "
                     f"{type(params).__name__}. Send arguments as one valid JSON "
                     "object with double-quoted keys and strings, matching the "
-                    f"tool schema.{required_hint}"
+                    f"tool schema.{required_hint}",
+                    recovery_hint=self._parameter_recovery_hint(tool),
                 )
             )
 
@@ -164,9 +165,29 @@ class ToolRegistry:
         errors = tool.validate_params(cast_params)
         if errors:
             return tool, cast_params, (
-                ToolResult.error(f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors))
+                ToolResult.error(
+                    f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors),
+                    recovery_hint=self._parameter_recovery_hint(tool),
+                )
             )
         return tool, cast_params, None
+
+    @staticmethod
+    def _parameter_recovery_hint(tool: Tool) -> str:
+        """Explain how to retry a rejected call without inventing its values."""
+        hint = (
+            f"No tool was executed. Reissue '{tool.name}' with one complete "
+            "JSON object matching its schema."
+        )
+        schema = tool.parameters or {}
+        properties = schema.get("properties", {})
+        required = []
+        for name in schema.get("required", []):
+            field_type = properties.get(name, {}).get("type")
+            required.append(f"{name} ({field_type})" if isinstance(field_type, str) else str(name))
+        if required:
+            hint += " Required fields: " + ", ".join(required) + "."
+        return hint + " Supply the actual values; do not repeat the same invalid arguments."
 
     @classmethod
     def _coerce_argument_value(cls, value: Any) -> Any:
@@ -272,7 +293,9 @@ class ToolRegistry:
         hint = "\n\n[Analyze the error above and try a different approach.]"
         tool, params, error = self.prepare_call(name, params)
         if error:
-            return ToolResult.error(str(error) + hint)
+            return ToolResult.error(
+                str(error) + tool_error_hint(error), recovery_hint=error.recovery_hint,
+            )
 
         try:
             assert tool is not None  # guarded by prepare_call()

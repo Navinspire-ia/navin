@@ -179,6 +179,18 @@ class ClipboardTests(unittest.TestCase):
             self.assertEqual(read_clipboard(), "copied")
 
 
+class FileEditDiffTextTests(unittest.TestCase):
+    def test_reads_unified_diff_payload(self) -> None:
+        from navin.tui.runtime import _file_edit_diff_text
+
+        self.assertEqual(
+            _file_edit_diff_text({"diff": {"format": "unified", "text": "@@ -1 +1 @@\n+ok\n"}}),
+            "@@ -1 +1 @@\n+ok\n",
+        )
+        self.assertEqual(_file_edit_diff_text({"diff": "raw"}), "raw")
+        self.assertEqual(_file_edit_diff_text({}), "")
+
+
 class MacosBindingsTests(unittest.TestCase):
     def test_app_and_composer_bind_command_keys(self) -> None:
         from navin.tui.app import NavinApp

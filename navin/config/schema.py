@@ -1146,11 +1146,18 @@ class ResourcesConfig(Base):
 
     The concurrency limit was a fixed number, so the same value applied to a
     laptop, to a 64-core server and to a container capped at one core and one
-    gigabyte. Sizing it from what is actually available lets a big host run
-    everything it can hold, and stops a small one from swapping.
+    gigabyte. Measurements limit large waves while a configurable floor keeps
+    a few independent tasks running together on a busy host.
     """
 
     enabled: bool = True  # False keeps the plain configured limit, unmeasured
+    min_concurrent_agents: int = Field(
+        default=5,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices("minConcurrentAgents", "min_concurrent_agents"),
+        serialization_alias="minConcurrentAgents",
+    )  # Always bounded by the configured and licensed concurrency ceilings
     max_utilisation: float = Field(
         default=0.70,
         ge=0.1,
