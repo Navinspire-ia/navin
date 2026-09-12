@@ -189,6 +189,7 @@ import {
   splitPastedContentSegments,
   type PastedContentMap,
 } from "@/lib/pasted-content";
+import { applyDeskChatCommand } from "@/lib/desk-chat-command";
 import {
   isSideChannelLifecycle,
   slashCommandLifecycle,
@@ -314,6 +315,8 @@ interface ThreadComposerProps {
     nonce: number;
     files?: ProjectFileMatch[];
     replace?: boolean;
+    /** Prefix or swap the Studio desk slash command without wiping a real draft. */
+    ensureCommand?: string;
     mediaTemplate?: { id: string; title?: string; kind?: string; format?: string };
     /** Full reference selection (max 6); replaces the current one. */
     mediaTemplates?: { id: string; title?: string; kind?: string; format?: string }[];
@@ -1573,14 +1576,16 @@ function ThreadComposerImpl({
     if (seed.localFiles?.length) {
       addFiles(seed.localFiles);
     }
-    if (!seed.text && !seed.replace) {
+    if (!seed.text && !seed.replace && !seed.ensureCommand) {
       return;
     }
     let caret = 0;
     setValue((current) => {
-      const next = seed.replace
-        ? seed.text
-        : `${current}${current && !current.endsWith("\n") && !current.endsWith(" ") ? " " : ""}${seed.text}`;
+      const next = seed.ensureCommand
+        ? applyDeskChatCommand(current, seed.ensureCommand)
+        : seed.replace
+          ? seed.text
+          : `${current}${current && !current.endsWith("\n") && !current.endsWith(" ") ? " " : ""}${seed.text}`;
       if (!shouldCollapsePastedText(seed.text)) {
         caret = next.length;
         return next;

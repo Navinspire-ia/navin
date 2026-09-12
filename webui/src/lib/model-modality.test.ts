@@ -18,6 +18,8 @@ describe("isVisionChatModel", () => {
       "openai/gpt-4o",
       "openai/gpt-4.1-mini",
       "openai/gpt-5",
+      "openai/gpt-6-astra",
+      "deepseek/deepseek-v4.1-flash",
       "anthropic/claude-3.5-sonnet",
       "anthropic/claude-sonnet-4.5",
       "google/gemini-3.6-flash",

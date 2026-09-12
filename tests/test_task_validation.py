@@ -14,6 +14,7 @@ import pytest
 
 from navin.agent.code_validation import CodeValidationState
 from navin.agent.loop import AgentLoop
+from navin.agent.progress_hook import AgentProgressHook
 from navin.agent.runner import AgentLoopGuard, AgentRunner, AgentRunSpec, _is_test_command
 from navin.agent.subagent import SubagentManager
 from navin.agent.tools.base import ToolResult
@@ -23,7 +24,7 @@ from navin.agent.tools.quality import VerifyTool
 from navin.agent.tools.shell import ExecTool
 from navin.board.store import ProjectBoardStore
 from navin.bus.events import InboundMessage
-from navin.bus.outbound_events import StreamedResponseEvent
+from navin.bus.outbound_events import StreamDeltaEvent, StreamedResponseEvent
 from navin.bus.queue import MessageBus
 from navin.providers.base import LLMResponse
 from navin.quality.evidence import VerificationEvidence
@@ -60,7 +61,7 @@ def test_invalid_input_is_rejected(price, percent):
 '''
 
 
-@pytest.mark.parametrize("surface", ["cli", "desktop"])
+@pytest.mark.parametrize("surface", ["cli", "desktop", "desktop_stream"])
 def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, surface):
     """No Build metadata: a premature final must still lead to real validation."""
     async def run():
@@ -79,6 +80,7 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
         loop.tools.register(RunTestsTool(workspace=tmp_path))
         loop.tools.register(VerifyTool(workspace=tmp_path))
         task = None
+        deltas = []
         key = "cli:direct" if surface == "cli" else "websocket:acceptance-tests"
         request = "Implement discounted_total: round to cents and reject negative prices or percentages outside 0..100."
         try:
@@ -88,11 +90,13 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
                 task = asyncio.create_task(loop.run())
                 await loop.bus.publish_inbound(InboundMessage(
                     channel="websocket", sender_id="user", chat_id="acceptance-tests",
-                    content=request, metadata={"_wants_stream": False},
+                    content=request, metadata={"_wants_stream": surface == "desktop_stream"},
                 ))
                 async with asyncio.timeout(45):
                     while True:
                         response = await loop.bus.consume_outbound()
+                        if isinstance(response.event, StreamDeltaEvent):
+                            deltas.append(response.event.content)
                         if response.event is None or isinstance(response.event, StreamedResponseEvent):
                             break
             assert response.content == "Done: discounts and invalid input verified by 5 passing tests."
@@ -103,8 +107,11 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
             assert any("5 passed" in output for output in outputs)
             assert any("PASS" in output and "Lint: clean" in output for output in outputs)
             assert key not in loop._loop_guards
-            if surface == "desktop":
+            if surface != "cli":
                 assert session.metadata["_turn_budget_continuation_rounds"] == 2
+            if surface == "desktop_stream":
+                assert "The function is done." not in "".join(deltas)
+                assert "5 passing tests" in "".join(deltas)
         finally:
             loop.stop()
             if task:
@@ -137,6 +144,10 @@ def edited_state():
     ("exec", {"command": "pytest; echo done"}, "1 failed\nExit code: 0"),
     ("exec", {"command": "pytest | tee result.txt"}, "1 failed\nExit code: 0"),
     ("exec", {"command": "pytest -q"}, "no tests ran\nExit code: 0"),
+    ("exec", {"command": "pytest -q"}, "3 skipped\nExit code: 0"),
+    ("exec", {"command": "go test ./..."}, "? example.com/app [no test files]\nExit code: 0"),
+    ("exec", {"command": "go test -list ."}, "TestApp\nExit code: 0"),
+    ("exec", {"command": "npm test -- --listTests=true"}, "app.test.js\nExit code: 0"),
 ])
 def test_discovery_lint_and_masked_test_results_cannot_prove_behavior(name, params, result):
     state = edited_state()
@@ -215,12 +226,19 @@ def test_zero_executed_tests_cannot_provide_green_evidence(outcomes):
     assert suite_evidence(outcomes).tests_ok is None
 
 
-def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path):
+@pytest.mark.parametrize("streaming", [False, True, "progress"])
+def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path, streaming):
     async def run():
+        published = []
+
+        async def on_stream(text):
+            published.append(text)
+
         provider = ScriptedProvider([
             tool_call("write_file", path="pricing.py", content=_PRICING),
             *(LLMResponse(content="Done, everything works.") for _ in range(3)),
         ])
+        provider.supports_progress_deltas = streaming == "progress"
         guard = AgentLoopGuard()
         messages = [{"role": "user", "content": "Implement a discount calculator."}]
         for _ in range(4):
@@ -229,6 +247,8 @@ def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path)
                 runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
                 workspace=tmp_path, max_iterations=1, max_tool_result_chars=4_000,
                 finalize_on_max_iterations=False, loop_guard=guard, validate_code_changes=True,
+                hook=AgentProgressHook(on_stream=on_stream if streaming is True else None),
+                progress_callback=on_stream if streaming == "progress" else None,
             ))
             messages = result.messages
             if result.stop_reason != "max_iterations":
@@ -239,6 +259,7 @@ def test_repeated_unverified_final_answers_fail_honestly_across_slices(tmp_path)
         assert "task is not validated" in result.final_content
         assert "Done, everything works" not in result.final_content
         assert "pricing.py" in result.final_content
+        assert not published, "Unverified success claims must not leak into a streamed answer"
         assert (tmp_path / "pricing.py").read_text() == _PRICING
     asyncio.run(run())
 

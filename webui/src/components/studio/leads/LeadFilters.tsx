@@ -141,7 +141,9 @@ export function LeadFilters({
           />
         </div>
         <DefaultButton
-          text={tx("clearFilters", "Clear filters")}
+          text={tx("clearFilters", "Clear")}
+          title={tx("clearFiltersTitle", "Clear filters")}
+          ariaLabel={tx("clearFiltersTitle", "Clear filters")}
           disabled={!active && !query}
           onClick={() => {
             onChange(emptyLeadFilter());

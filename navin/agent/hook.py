@@ -36,6 +36,8 @@ class AgentHookContext:
     # What the loop asked the model to spend on reasoning for this step, so
     # the usage it reports can be checked against the request.
     requested_reasoning_effort: str | None = None
+    # UI evidence is persisted separately from the model-facing tool output.
+    file_edit_events: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

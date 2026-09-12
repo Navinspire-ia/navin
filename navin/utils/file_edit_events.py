@@ -1,7 +1,7 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""File-edit activity helpers for WebUI progress events."""
+"""File-edit activity shared by terminal and desktop progress events."""
 
 from __future__ import annotations
 
@@ -11,11 +11,39 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-TRACKED_FILE_EDIT_TOOLS = frozenset({"write_file", "edit_file", "apply_patch"})
+TRACKED_FILE_EDIT_TOOLS = frozenset({"write_file", "edit_file", "apply_patch", "manage_files", "git"})
 _MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 _MAX_DIFF_LINES = 500
 _MAX_DIFF_LINE_CHARS = 1200
 _DIFF_CONTEXT_LINES = 3
+
+
+def file_edit_details(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the wire aliases once for every terminal renderer."""
+    def count(*keys: str) -> int:
+        for key in keys:
+            if payload.get(key) is not None:
+                try:
+                    return max(0, int(payload[key]))
+                except (TypeError, ValueError, OverflowError):
+                    return 0
+        return 0
+
+    raw_diff = payload.get("diff")
+    diff = raw_diff.get("text") if isinstance(raw_diff, dict) else raw_diff
+    return {
+        "path": str(payload.get("path") or payload.get("absolute_path") or ""),
+        "kind": str(payload.get("operation") or payload.get("kind") or payload.get("op") or ""),
+        "added": count("added", "lines_added"),
+        "removed": count("deleted", "removed", "lines_removed"),
+        "diff": diff if isinstance(diff, str) else "",
+        "call_id": str(payload.get("call_id") or ""),
+        "tool": str(payload.get("tool") or "edit_file"),
+        "phase": str(payload.get("phase") or "end"),
+        "error": str(payload["error"]) if payload.get("error") else None,
+        "truncated": bool(raw_diff.get("truncated")) if isinstance(raw_diff, dict) else False,
+        "binary": bool(payload.get("binary")),
+    }
 
 
 @dataclass(slots=True)
@@ -338,10 +366,66 @@ def resolve_file_edit_paths(
         return []
     if tool_name == "apply_patch":
         return _resolve_apply_patch_paths(tool, workspace, params)
+    if tool_name == "manage_files":
+        return _resolve_manage_paths(tool, workspace, params)
+    if tool_name == "git":
+        # Only an explicit worktree restore changes file contents. Unstaging
+        # and ordinary git reads must never appear as file edits.
+        if params.get("action") != "restore" or params.get("staged"):
+            return []
+        paths = params.get("paths")
+        if not isinstance(paths, list):
+            return []
+        return [
+            path for raw in paths
+            if isinstance(raw, str)
+            and (path := _resolve_single_path(tool, workspace, raw)) is not None
+            and path.is_file()
+        ]
     if tool_name not in {"write_file", "edit_file"}:
         return []
     path = _resolve_single_path(tool, workspace, params.get("path"))
     return [path] if path is not None else []
+
+
+def _resolve_manage_paths(tool: Any, workspace: Path | None, params: dict[str, Any]) -> list[Path]:
+    from navin.agent.tools.file_manage import _files_under
+
+    def resolve(raw: Any) -> Path | None:
+        path = _resolve_single_path(tool, workspace, raw)
+        check = getattr(tool, "_refuse_protected", None)
+        if path is not None and callable(check):
+            check(raw, path)
+        return path
+
+    try:
+        action = params.get("action")
+        if action == "delete":
+            raw_paths = params.get("paths")
+            if not isinstance(raw_paths, list):
+                return []
+            paths = [file for raw in raw_paths if (path := resolve(raw)) is not None for file in _files_under(path)]
+        elif action in {"move", "copy"}:
+            source, destination = resolve(params.get("path")), resolve(params.get("destination"))
+            if source is None or destination is None:
+                return []
+            if destination.is_dir():
+                destination /= source.name
+            arriving = _files_under(source)
+            paths = _files_under(destination)
+            paths.extend(destination if source.is_file() else destination / file.relative_to(source) for file in arriving)
+            if action == "move":
+                paths.extend(arriving)
+        else:
+            return []
+        check_size = getattr(tool, "_refuse_oversized", None)
+        if callable(check_size):
+            check_size(paths, str(action))
+        return paths
+    except (OSError, ValueError):
+        # The tool reports its own invalid/protected/oversized-path error.
+        # An observer must not walk that tree or change execution policy.
+        return []
 
 
 def _resolve_apply_patch_paths(
@@ -453,6 +537,16 @@ def build_file_edit_end_event(
             or after.oversized
             or after.unreadable
         )
+    if not tracker.before.exists and after.exists:
+        operation = "create"
+    elif tracker.before.exists and not after.exists:
+        operation = "delete"
+    elif tracker.before.countable and after.countable and tracker.before.text == after.text:
+        operation = "unchanged"
+    elif tracker.tool == "git":
+        operation = "restore"
+    else:
+        operation = "edit"
     payload = _event_payload(
         tracker,
         phase="end",
@@ -461,7 +555,7 @@ def build_file_edit_end_event(
         deleted=deleted,
         approximate=False,
         binary=binary,
-        operation="delete" if tracker.before.exists and not after.exists else None,
+        operation=operation,
     )
     if diff_payload is not None:
         payload["diff"] = diff_payload

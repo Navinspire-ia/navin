@@ -132,6 +132,7 @@ class ReasoningLadderTest(unittest.TestCase):
         "mistral-large-latest",
         "claude-sonnet-4-6",
         "gpt-5.1",
+        "gpt-6-astra",
         "gemini-3-flash-preview",
         "grok-4-6",
         "kimi-k3",
@@ -259,6 +260,8 @@ class CheckReasoningEffortTest(unittest.TestCase):
     def test_auto_and_accepted_levels_pass(self):
         _check_reasoning_effort("", "MiniMax", "MiniMax-M3")
         _check_reasoning_effort("high", "openai", "gpt-5.1")
+        _check_reasoning_effort("max", "openai", "gpt-6-astra")
+        _check_reasoning_effort("max", "openai_codex", "openai-codex/gpt-6-astra")
         _check_reasoning_effort("high", "mon-gateway", "un-modele-inconnu")
 
     def test_refusal_names_the_level_the_pair_and_the_accepted_ladder(self):

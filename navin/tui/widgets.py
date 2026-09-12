@@ -10,11 +10,12 @@ import contextlib
 import json
 import re
 import time
-from pathlib import Path
 from typing import Any
 
 from rich.markup import escape
+from rich.text import Text
 from textual import events, on
+from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -39,16 +40,18 @@ from navin.utils.tool_hints import (
     CARD_ONLY_TOOLS,
     MAX_TRANSCRIPT_LINES,
     PREVIEW_OPEN_LINES,
+    activity_head_text,
+    activity_label,
+    activity_path_key,
     clip_transcript,
     describe_explore_step,
-    describe_tool_line,
     edit_group_key,
-    extract_line_diff,
-    format_diff_suffix,
+    file_operation_label,
+    format_preview_markup_line,
     format_tool_detail,
     format_tool_preview_markup,
     format_turn_summary,
-    infer_run_stats,
+    preview_rows,
     tool_cluster_kind,
     tool_target,
     tool_verb,
@@ -504,7 +507,7 @@ class ReasoningBlock(Vertical):
         self.toggle()
 
 
-class ToolCall(Vertical):
+class ToolCall(Vertical, can_focus=True):
     """One tool invocation: header line + expandable result."""
 
     DEFAULT_CSS = """
@@ -516,31 +519,58 @@ class ToolCall(Vertical):
     }
     ToolCall > .tool-head {
         background: $background;
+        color: $foreground;
+        height: auto;
         text-style: none;
     }
-    ToolCall.-ink-read > .tool-head { color: #FF6B2C; }
-    ToolCall.-ink-search > .tool-head { color: #FF2E93; }
-    ToolCall.-ink-run > .tool-head { color: #FFB000; }
-    ToolCall.-ink-edit > .tool-head { color: #FF3B30; }
-    ToolCall.-ink-check > .tool-head { color: #00C853; }
-    ToolCall.-ink-web > .tool-head { color: #E040FB; }
-    ToolCall.-ink-board > .tool-head { color: #7C4DFF; }
-    ToolCall.-ink-git > .tool-head { color: #00C853; }
-    ToolCall.-ink-ask > .tool-head { color: #FF4081; }
-    ToolCall > .tool-body {
+    ToolCall:focus > .tool-head { background: $surface; }
+    ToolCall.-error > .tool-head { color: $error; }
+    ToolCall.-cancelled > .tool-head { color: $warning; }
+    ToolCall > .tool-output {
+        height: auto;
+        max-height: 34;
+        overflow-x: hidden;
+        overflow-y: auto;
+        scrollbar-size-vertical: 1;
+        scrollbar-gutter: stable;
+        background: $surface;
+    }
+    ToolCall .tool-body {
+        height: auto;
         padding: 0;
         color: #E8E8E8;
-        max-height: 34;
-        overflow-y: auto;
-        background: #141414;
+        background: $surface;
         text-style: none;
     }
+    ToolCall > .tool-more {
+        height: 1;
+        min-height: 1;
+        min-width: 0;
+        width: auto;
+        margin: 0;
+        padding: 0 1;
+        border: none;
+        background: $surface;
+        color: $text-muted;
+        text-style: none;
+    }
+    ToolCall > .tool-more:hover, ToolCall > .tool-more:focus {
+        background: $panel;
+        color: $foreground;
+    }
     ToolCall.-cluster { margin: 0; }
-    ToolCall.-cluster > .tool-body { padding: 0; }
     """
 
     ALLOW_SELECT = True
     SPINNER_STEPS = 12
+    BINDINGS = [
+        Binding("enter,space", "toggle", "Expand / collapse", show=False),
+        Binding("f", "show_full", "Full output", show=False),
+        Binding("pageup", "page_output(-1)", "Previous output page", show=False),
+        Binding("pagedown", "page_output(1)", "Next output page", show=False),
+        Binding("home", "output_edge(False)", "Start of output", show=False),
+        Binding("end", "output_edge(True)", "End of output", show=False),
+    ]
 
     def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
         super().__init__()
@@ -553,29 +583,39 @@ class ToolCall(Vertical):
         self.result: Any = None
         self.error: str | None = None
         self.output_lines: list[str] = []
+        self._output_buffer = ""
         self.added = 0
         self.removed = 0
         self.edit_count = 1
         self.diff_text = ""
+        self.file_path = ""
+        self.file_operation = ""
+        self.file_recorded = False
+        self.file_truncated = False
+        self.file_binary = False
+        self._show_full = False
         self._spin = 0
         self._open = False
         self.cluster_kind = ""
         self.tree_mark = ""
         if tool_verb(name) in {"edit", "create"}:
             self._open = True
-        if tool_verb(name) == "run":
-            self.added, self.removed = infer_run_stats(self.arguments)
-            if self.added or self.removed:
-                self._open = True
         self.add_class("-running")
         self.add_class(tool_ink_class(name, self.arguments))
 
     def compose(self) -> ComposeResult:
         yield Static(self._plain_head(), classes="tool-head", markup=False)
-        yield Static("", classes="tool-body", markup=True)
+        with VerticalScroll(classes="tool-output"):
+            yield Static("", classes="tool-body", markup=False)
+        yield Button("Show full output", classes="tool-more", compact=True)
 
     def on_mount(self) -> None:
         self.set_interval(0.12, self._tick)
+        self.watch(self.app, "theme", self._theme_changed, init=False)
+        self._refresh_head()
+        self._refresh_body()
+
+    def _theme_changed(self, _theme: str) -> None:
         self._refresh_head()
         self._refresh_body()
 
@@ -583,7 +623,9 @@ class ToolCall(Vertical):
         if not self.is_mounted:
             return
         try:
-            self.query_one(".tool-head", Static).update(self._plain_head())
+            self.query_one(".tool-head", Static).update(
+                activity_head_text(self._plain_head(), dark=self.app.current_theme.dark)
+            )
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
         self._notify_cluster()
@@ -613,29 +655,28 @@ class ToolCall(Vertical):
         if self.cluster_kind == "explore":
             label = describe_explore_step(self.tool_name, self.arguments)
         else:
-            label = describe_tool_line(
+            label = activity_label(
                 self.tool_name,
                 self.arguments,
+                phase=self.phase,
                 added=self.added,
                 removed=self.removed,
+                operation=self.file_operation,
+                path=self.file_path,
+                counts_known=not self.file_binary,
             )
         if self.cluster_kind:
             mark = self.tree_mark or "  "
-            if self.phase == "error":
-                return f"{mark}{label}  x"
+            if self.cluster_kind == "explore" and self.phase in {"error", "cancelled"}:
+                label += "  (failed)" if self.phase == "error" else "  (cancelled)"
             return f"{mark}{label}"
-        if self.phase == "error":
-            mark = "x "
+        if self.phase in {"error", "cancelled"}:
+            mark = "× "
         elif self.phase in {"start", "output"}:
             mark = f"{self._status_glyph().strip()} "
         else:
-            mark = "* "
-        tail = ""
-        if self.phase == "error" and self.error:
-            err = self.error.splitlines()[0]
-            short = "timed out" if "timed out" in err.lower() else err[:40]
-            tail = f"  {short}"
-        return f"{mark}{label}{tail}"
+            mark = "• "
+        return f"{mark}{label}".replace("\n", "\n  │ ")
 
     def _head_text(self) -> str:
         return self._plain_head()
@@ -644,29 +685,20 @@ class ToolCall(Vertical):
         self, *, phase: str, result: Any = None, error: str | None = None, output: str | None = None
     ) -> None:
         if output:
-            self.output_lines.extend(output.splitlines())
-            self.output_lines = self.output_lines[-MAX_TRANSCRIPT_LINES:]
+            self._output_buffer += output
+            self.output_lines = self._output_buffer.splitlines()[-MAX_TRANSCRIPT_LINES:]
+            if len(self._output_buffer.splitlines()) > MAX_TRANSCRIPT_LINES:
+                self._output_buffer = "\n".join(self.output_lines) + ("\n" if output.endswith("\n") else "")
         if phase == "output":
             self.phase = "output"
-        elif phase in {"end", "error"}:
+        elif phase in {"end", "error", "cancelled"}:
             self.phase = phase
             self.result = result
             self.error = error
-            # Live +/- for edits come from UiFileEdit so we do not double-count.
-            if tool_verb(self.tool_name) == "run":
-                plus, minus = infer_run_stats(self.arguments, self.output_lines, result)
-                if plus or minus:
-                    self.set_diff(plus, minus)
-            elif tool_verb(self.tool_name) not in {"edit", "create"}:
-                plus, minus = extract_line_diff(result)
-                if plus or minus:
-                    self.set_diff(plus, minus)
             self.remove_class("-running")
-            self.add_class("-ok" if phase == "end" else "-error")
-            if phase == "end":
-                self._reveal_if_preview()
-            else:
-                self.collapse()
+            self.remove_class("-ok", "-error", "-cancelled")
+            self.add_class("-ok" if phase == "end" else f"-{phase}")
+            self._reveal_if_preview()
         self._refresh_head()
         self._refresh_body()
 
@@ -685,15 +717,8 @@ class ToolCall(Vertical):
         self.phase = "start"
 
     def copy_text(self) -> str:
-        prefix = ""
-        if self.edit_count > 1:
-            diff = format_diff_suffix(self.added, self.removed)
-            prefix = f"{self.edit_count} edits"
-            if diff:
-                prefix = f"{prefix}  {diff}"
-            prefix += "\n"
         return clip_transcript(
-            prefix
+            self._plain_head() + "\n"
             + format_tool_detail(
                 self.tool_name,
                 self.arguments if isinstance(self.arguments, dict) else {},
@@ -702,6 +727,7 @@ class ToolCall(Vertical):
                 output_lines=self.output_lines,
                 diff_text=self.diff_text,
             )
+            + ("\nDiff truncated by source." if self.file_truncated else "")
         )
 
     def _refresh_body(self) -> None:
@@ -709,9 +735,15 @@ class ToolCall(Vertical):
             return
         try:
             body = self.query_one(".tool-body", Static)
+            viewport = self.query_one(".tool-output", VerticalScroll)
         except Exception:  # noqa: BLE001
             return
-        width = max(0, int(body.size.width or 0))
+        width = max(0, int(viewport.scrollable_content_region.width or 0))
+        rows = preview_rows(
+            self.tool_name, self.arguments, result=self.result, error=self.error,
+            output_lines=self.output_lines, diff_text=self.diff_text,
+        )
+        limit = MAX_TRANSCRIPT_LINES if self._show_full else PREVIEW_OPEN_LINES
         text = format_tool_preview_markup(
             self.tool_name,
             self.arguments if isinstance(self.arguments, dict) else {},
@@ -719,11 +751,35 @@ class ToolCall(Vertical):
             error=self.error,
             output_lines=self.output_lines,
             diff_text=self.diff_text,
-            limit=PREVIEW_OPEN_LINES,
+            limit=limit,
             width=width,
+            dark=self.app.current_theme.dark,
         )
-        body.update(text)
-        body.display = self._open
+        note = ""
+        if self.file_truncated:
+            note = "Diff truncated by source. Counts cover the whole change."
+        elif self.file_binary:
+            note = "Preview and line counts unavailable (binary, large or unreadable file)."
+        elif self.file_recorded and not rows:
+            if self.file_operation == "unchanged":
+                note = "No content changes."
+            elif self.added or self.removed:
+                note = "Diff unavailable in this saved activity."
+            else:
+                note = "Empty file."
+        if note:
+            text += ("\n" if text else "") + format_preview_markup_line(
+                None, "meta", note, width=width, dark=self.app.current_theme.dark,
+            )
+        # Rich escapes and Textual escapes are different. Pass styled text,
+        # so an unmatched '[' in code cannot consume a closing style tag.
+        body.update(Text.from_markup(text))
+        body.display = self._open and bool(text)
+        viewport.display = body.display
+        more = self.query_one(".tool-more", Button)
+        more.display = self._open and len(rows) > PREVIEW_OPEN_LINES
+        more.label = "Show less" if self._show_full else f"… +{len(rows) - PREVIEW_OPEN_LINES} lines · Show all"
+        more.tooltip = "F expands the full output. Enter folds this activity."
 
     def on_resize(self) -> None:
         if self._open:
@@ -741,7 +797,7 @@ class ToolCall(Vertical):
         self._refresh_body()
 
     def set_diff_text(self, text: str) -> None:
-        blob = (text or "").strip()
+        blob = (text or "").strip("\n")
         if not blob:
             return
         self.diff_text = blob
@@ -749,7 +805,7 @@ class ToolCall(Vertical):
         self._refresh_body()
 
     def _has_preview(self) -> bool:
-        return bool(
+        return self.file_recorded or bool(
             format_tool_detail(
                 self.tool_name,
                 self.arguments if isinstance(self.arguments, dict) else {},
@@ -762,7 +818,7 @@ class ToolCall(Vertical):
         )
 
     def _reveal_if_preview(self) -> None:
-        if self.cluster_kind == "explore":
+        if self.cluster_kind == "explore" and self.phase not in {"error", "cancelled"}:
             return
         if not self._has_preview():
             return
@@ -780,12 +836,53 @@ class ToolCall(Vertical):
         self.set_class(self._open, "-open")
         self._refresh_body()
 
-    def on_click(self, event: events.Click) -> None:
+    def action_toggle(self) -> None:
         self.toggle()
+
+    def action_show_full(self) -> None:
+        self._show_full = not self._show_full
+        self._open = True
+        self._refresh_body()
+
+    def action_page_output(self, direction: int) -> None:
+        viewport = self.query_one(".tool-output", VerticalScroll)
+        if not viewport.display or not viewport.max_scroll_y:
+            raise SkipAction()
+        if direction < 0:
+            viewport.scroll_page_up(animate=False)
+        else:
+            viewport.scroll_page_down(animate=False)
+
+    def action_output_edge(self, end: bool) -> None:
+        self._show_full = True
+        self._open = True
+        self._refresh_body()
+
+        def scroll() -> None:
+            viewport = self.query_one(".tool-output", VerticalScroll)
+            if end:
+                viewport.scroll_end(animate=False)
+                more = self.query_one(".tool-more", Button)
+                (more if more.display else viewport).scroll_visible(animate=False)
+            else:
+                viewport.scroll_home(animate=False)
+                self.scroll_visible(animate=False, top=True)
+
+        self.call_after_refresh(scroll)
+
+    @on(Button.Pressed, ".tool-more")
+    def _more_pressed(self, event: Button.Pressed) -> None:
+        self.action_show_full()
         event.stop()
 
+    def on_click(self, event: events.Click) -> None:
+        if event.widget is self or "tool-head" in getattr(event.widget, "classes", ()):
+            self.focus()
+            self.toggle()
+            event.stop()
 
-class ToolCluster(Vertical):
+
+class ToolCluster(Vertical, can_focus=True):
     """Cursor-style group: ``Explored`` / ``Edited``, then the operations."""
 
     TITLES = {"explore": "Explored", "edit": "Edited"}
@@ -798,12 +895,13 @@ class ToolCluster(Vertical):
         background: $background;
     }
     ToolCluster > .cluster-head {
-        height: 1;
+        height: auto;
         color: $text-muted;
         background: $background;
         text-style: none;
     }
     ToolCluster > .cluster-head:hover { color: $foreground; }
+    ToolCluster:focus > .cluster-head { background: $surface; }
     ToolCluster > .cluster-body {
         height: auto;
         padding: 0;
@@ -811,6 +909,7 @@ class ToolCluster(Vertical):
     }
     ToolCluster.-collapsed > .cluster-body { display: none; }
     """
+    BINDINGS = [Binding("enter,space", "toggle", "Expand / collapse", show=False)]
 
     def __init__(self, kind: str) -> None:
         super().__init__()
@@ -831,23 +930,34 @@ class ToolCluster(Vertical):
 
     def _head_text(self) -> str:
         title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
+        confirmed = [tool for tool in self.tools if tool.file_recorded]
+        if self.kind == "edit":
+            operations = {file_operation_label(tool.file_operation) for tool in confirmed}
+            if len(operations) == 1:
+                title = next(iter(operations))
+            elif not confirmed:
+                title = "Editing" if any(tool.phase in {"start", "output"} for tool in self.tools) else "Edits"
         if any(tool.phase in {"start", "output"} for tool in self.tools):
             glyph = "◦"
-        elif any(tool.phase == "error" for tool in self.tools):
-            glyph = "x"
+        elif any(tool.phase in {"error", "cancelled"} for tool in self.tools):
+            glyph = "×"
         else:
             glyph = "•"
         extra = ""
         if self.kind == "edit" and self.tools:
-            files = len(self.tools)
+            files = len({activity_path_key(tool.file_path) or tool.group_key or tool.call_id for tool in confirmed or self.tools})
             noun = "file" if files == 1 else "files"
-            extra = f"  {files} {noun}"
-            suffix = format_diff_suffix(
-                sum(tool.added for tool in self.tools),
-                sum(tool.removed for tool in self.tools),
-            )
-            if suffix:
-                extra += f"  {suffix}"
+            extra = f" {files} {noun}"
+            if any(tool.file_recorded and not tool.file_binary and tool.file_operation != "unchanged" for tool in self.tools):
+                extra += f" (+{sum(tool.added for tool in self.tools)} -{sum(tool.removed for tool in self.tools)})"
+            if any(tool.file_binary for tool in confirmed):
+                extra += " · some line counts unavailable"
+            failures = sum(tool.phase == "error" for tool in self.tools)
+            cancelled = sum(tool.phase == "cancelled" for tool in self.tools)
+            if failures:
+                extra += f" · {failures} failed"
+            if cancelled:
+                extra += f" · {cancelled} cancelled"
         elif not self._open and len(self.tools) > 1:
             extra = f"  {len(self.tools)}"
         return f"{glyph} {title}{extra}"
@@ -856,7 +966,9 @@ class ToolCluster(Vertical):
         if not self.is_mounted:
             return
         try:
-            self.query_one(".cluster-head", Static).update(self._head_text())
+            self.query_one(".cluster-head", Static).update(
+                activity_head_text(self._head_text(), dark=self.app.current_theme.dark)
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -882,6 +994,9 @@ class ToolCluster(Vertical):
         self._open = not self._open
         self.set_class(not self._open, "-collapsed")
         self._refresh_head()
+
+    def action_toggle(self) -> None:
+        self.toggle()
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
@@ -962,7 +1077,7 @@ class WorkingLine(Static):
     }
     WorkingLine.-visible {
         display: block;
-        height: 1;
+        height: auto;
         min-height: 1;
         margin: 0 0 1 0;
     }
@@ -1169,6 +1284,7 @@ class AssistantMessage(Vertical):
         self._last_body_paint = 0.0
         self._buffer: list[str] = []
         self._tools: dict[str, ToolCall] = {}
+        self._file_tools: dict[tuple[str, str], ToolCall] = {}
         self._cluster: ToolCluster | None = None
         self._subagents: dict[str, SubagentCard] = {}
         self._reasoning: ReasoningBlock | None = None
@@ -1240,16 +1356,13 @@ class AssistantMessage(Vertical):
             return
         preview = await self._ready_preview()
         key = call_id or f"{name}:{len(self._tools)}"
-        widget = self._tools.get(key)
-        group = edit_group_key(name, arguments if isinstance(arguments, dict) else {})
-        if widget is None and group:
-            widget = next((row for row in self._tools.values() if row.group_key == group), None)
-            if widget is not None:
-                widget.adopt(key, arguments if isinstance(arguments, dict) else {})
-        if widget is None:
+        widgets = [tool for tool in self._tools.values() if key in tool.call_ids]
+        if not widgets:
             widget = ToolCall(key, name, arguments)
             self._tools[key] = widget
             family = tool_cluster_kind(name)
+            if name == "manage_files" and arguments.get("action") in {"delete", "move", "copy"}:
+                family = "edit"
             if family:
                 cluster = await self._ensure_cluster(family)
                 await cluster.add_call(widget)
@@ -1258,7 +1371,11 @@ class AssistantMessage(Vertical):
                 await self.mount(widget, before=preview)
             if phase == "start":
                 return
-        widget.apply(phase=phase, result=result, error=error, output=output)
+            widgets = [widget]
+        for widget in widgets:
+            if phase == "start":
+                continue
+            widget.apply(phase=phase, result=result, error=error, output=output)
 
     async def _ensure_cluster(self, kind: str) -> ToolCluster:
         current = self._cluster
@@ -1270,44 +1387,44 @@ class AssistantMessage(Vertical):
         await self.mount(cluster, before=preview)
         return cluster
 
-    def note_file_edit(
-        self, path: str, added: int, removed: int, *, diff: str = ""
+    async def note_file_edit(
+        self, path: str, added: int, removed: int, *, diff: str = "",
+        call_id: str = "", kind: str = "", phase: str = "end",
+        tool: str = "edit_file", error: str | None = None,
+        truncated: bool = False, binary: bool = False,
     ) -> None:
-        name = Path(path).name if path else ""
-        raw = path.replace("\\", "/")
-        group = edit_group_key("edit_file", {"path": path})
-        match: ToolCall | None = None
-        if group:
-            match = next((tool for tool in self._tools.values() if tool.group_key == group), None)
-        if match is None:
-            for tool in self._tools.values():
-                if tool_verb(tool.tool_name) not in {"edit", "create"}:
-                    continue
-                args = tool.arguments if isinstance(tool.arguments, dict) else {}
-                blob = " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
-                target = tool_target(args)
-                if (
-                    (name and (target == name or target.endswith("/" + name)))
-                    or (raw and raw in blob.replace("\\", "/"))
-                ):
-                    match = tool
-                    break
-        if match is None:
-            for tool in reversed(list(self._tools.values())):
-                if tool_verb(tool.tool_name) in {"edit", "create"}:
-                    match = tool
-                    break
-        if match is None:
+        if not path:
             return
-        plus, minus = max(0, int(added or 0)), max(0, int(removed or 0))
-        if diff:
-            match.set_diff_text(diff)
-        if plus == 0 and minus == 0:
+        file_key = (call_id, activity_path_key(path))
+        match = self._file_tools.get(file_key)
+        if match is None:
+            match = next((
+                row for row in self._tools.values()
+                if not row.file_path and (
+                    (call_id and call_id in row.call_ids)
+                    or (not call_id and row.group_key == edit_group_key(tool, {"path": path}))
+                )
+            ), None)
+        if match is None:
+            # A patch can change several files, and a replay can deliver the
+            # file event before the tool event. Give every file its own row.
+            key = call_id or f"file:{len(self._tools)}"
+            match = ToolCall(key, tool, {"path": path})
+            self._tools[f"{key}:file:{len(self._tools)}"] = match
+            cluster = await self._ensure_cluster("edit")
+            await cluster.add_call(match)
+        self._file_tools[file_key] = match
+        match.file_path = path
+        match.file_truncated = truncated
+        match.file_binary = binary
+        if phase == "start":
+            match._refresh_head()
             return
-        if match.added == 0 and match.removed == 0:
-            match.set_diff(plus, minus)
-            return
-        match.add_diff(plus, minus)
+        match.file_recorded = phase == "end"
+        match.file_operation = kind if phase == "end" else ""
+        match.set_diff(added if phase == "end" else 0, removed if phase == "end" else 0)
+        match.diff_text = diff.strip("\n") if phase == "end" else ""
+        match.apply(phase=phase, error=error)
 
     async def progress(self, text: str) -> None:
         preview = await self._ready_preview()
@@ -1485,7 +1602,7 @@ class AssistantMessage(Vertical):
         await self.reveal()
         for tool in self._tools.values():
             if tool.phase in {"start", "output"}:
-                tool.apply(phase="end")
+                tool.apply(phase="cancelled", error="Interrupted before a result was received.")
             if tool.cluster_kind == "explore":
                 tool.collapse()
                 continue
@@ -1500,9 +1617,33 @@ class AssistantMessage(Vertical):
             tool.collapse()
         foot = self.query_one(".assistant-foot", Static)
         if self._tools:
+            completed = [
+                tool for tool in self._tools.values() if tool.phase == "end"
+                and (tool.file_recorded or tool_verb(tool.tool_name) not in {"edit", "create"})
+            ]
+            files: dict[str, tuple[int, int]] = {}
+            other = []
+            for tool in completed:
+                if tool.file_recorded:
+                    if tool.file_operation == "unchanged":
+                        continue
+                    key = activity_path_key(tool.file_path)
+                    plus, minus = files.get(key, (0, 0))
+                    files[key] = plus + tool.added, minus + tool.removed
+                else:
+                    other.append((tool.tool_name, 0, 0))
+            summary_rows = [("edit_file", plus, minus) for plus, minus in files.values()] + other
             summary = format_turn_summary(
-                [(tool.tool_name, tool.added, tool.removed) for tool in self._tools.values()]
-            )
+                summary_rows
+            ) if summary_rows else "No completed operations"
+            failed = sum(tool.phase == "error" for tool in self._tools.values())
+            cancelled = sum(tool.phase == "cancelled" for tool in self._tools.values())
+            if failed:
+                summary += f" · {failed} failed"
+            if cancelled:
+                summary += f" · {cancelled} cancelled"
+            if any(tool.file_binary for tool in completed):
+                summary += " · some line counts unavailable"
             foot.update(summary)
             foot.add_class("-visible")
         else:
@@ -1940,9 +2081,10 @@ class Composer(TextArea):
         )
         self.menu_open = False
         self.shortcut_keys: set[str] = set()
-        self._eat_enter = 0
         self._last_paste = ""
         self._last_paste_at = 0.0
+        self._last_paste_source = ""
+        self._paste_generation = 0
         self._pastes: dict[str, str] = {}
 
     def _shell(self) -> ComposerShell | None:
@@ -1968,50 +2110,40 @@ class Composer(TextArea):
         """Put pasted bodies back so the model receives the full prompt."""
         return expand_pasted_content(self.text, self._pastes)
 
-    def _insert_paste(self, text: str, *, trailing_newline: bool = False) -> None:
+    def _insert_paste(self, text: str, *, source: str = "clipboard") -> None:
         """Insert a paste once. A WT confirm + Ctrl+V must not double it."""
         payload = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         if not payload:
             return
         now = time.monotonic()
-        if payload == self._last_paste and now - self._last_paste_at < 1.5:
+        if (payload == self._last_paste and source != self._last_paste_source
+                and now - self._last_paste_at < 1.5):
             return
+        self._paste_generation += 1
         self._last_paste = payload
         self._last_paste_at = now
+        self._last_paste_source = source
         if should_collapse_pasted_text(payload):
             token = allocate_paste_token(len(payload), self._pastes)
             self._pastes[token] = payload
             insert = token
         else:
             insert = payload
-        if trailing_newline or "\n" in payload:
-            self._eat_enter += 1
         if not self.text.strip():
             self.load_text(insert)
             self.move_cursor(self.document.end)
             return
-        self.insert(insert)
+        self.replace(insert, *self.selection, maintain_selection_offset=False)
 
     async def _on_paste(self, event: events.Paste) -> None:
-        from navin.tui.clipboard import pick_paste_text
-
-        # WT "Paste anyway" can send a truncated blob. Prefer our full copy.
-        raw = pick_paste_text(self.app.clipboard, event.text or "")
         event.prevent_default()
         event.stop()
-        self._insert_paste(
-            raw,
-            trailing_newline=(event.text or "").endswith("\n")
-            or (event.text or "").endswith("\r"),
-        )
+        # Bracketed paste contains literal newlines, not Enter key events.
+        # Trust its payload instead of replacing it with an older local copy.
+        self._insert_paste(event.text or "", source="terminal")
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
-            if self._eat_enter:
-                self._eat_enter -= 1
-                event.prevent_default()
-                event.stop()
-                return
             event.prevent_default()
             event.stop()
             self.post_message(self.Submitted(self.expand_for_submit()))
@@ -2056,10 +2188,23 @@ class Composer(TextArea):
 
     def action_paste_any(self) -> None:
         """Paste OS clipboard (Windows / WSL) or the in-app clipboard."""
+        self.run_worker(self._paste_from_clipboard(), group="clipboard", exclusive=True)
+
+    async def _paste_from_clipboard(self) -> None:
         from navin.tui.clipboard import pick_paste_text, read_clipboard
 
-        text = pick_paste_text(self.app.clipboard, read_clipboard())
-        self._insert_paste(text, trailing_newline="\n" in text)
+        generation = self._paste_generation
+        try:
+            os_text = await asyncio.to_thread(read_clipboard)
+        except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
+            os_text = ""
+        if generation != self._paste_generation:
+            return
+        text = pick_paste_text(self.app.clipboard, os_text)
+        if text:
+            self._insert_paste(text)
+        else:
+            self.notify("No clipboard text available. Use your terminal's Paste command.", timeout=3)
 
     def action_find(self) -> None:
         self.post_message(self.FindRequested())
@@ -2110,6 +2255,9 @@ class Composer(TextArea):
         self.move_cursor(self.document.end)
 
     def clear_text(self) -> None:
+        self._paste_generation += 1
+        self._last_paste = ""
+        self._last_paste_at = 0.0
         self._pastes = {}
         self.load_text("")
 

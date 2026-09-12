@@ -809,12 +809,16 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
-| `Ctrl+C` / `Cmd+C` | Copy the selection (does not quit) |
+| `Ctrl+C` | Stop active work; otherwise clear the prompt, then the screen |
+| `Cmd+C` / `Ctrl+Insert` | Copy the selection |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
 | `Ctrl+V` / `Cmd+V` | Paste |
 | `Ctrl+A` | Select all in the prompt |
 | `Ctrl+F` | Find in the conversation (Enter next, Esc close) |
 | `PageUp` / `PageDown` / `Ctrl+Up` / `Ctrl+Down` | Scroll the conversation |
+| `Enter` / `Space` on a focused activity | Expand / collapse the activity |
+| `F` on a focused activity | Show the full output or diff |
+| `PageUp` / `PageDown` / `Home` / `End` on expanded output | Scroll within the output |
 | Zoom | Terminal zoom: `Ctrl++` / `Ctrl+-` (Windows Terminal / the host) |
 | `Ctrl+Q` | Quit |
 

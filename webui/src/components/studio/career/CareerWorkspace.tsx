@@ -672,6 +672,7 @@ export function CareerWorkspace({
   const hasOffers = activeScored.length > 0;
   const showWizard = careerShowsWizard({ deskReady, wizardComplete, view, hasOffers });
   const showDesk = careerShowsDesk({ deskReady, wizardComplete, view, hasOffers });
+  const canLeaveSetup = wizardComplete || hasOffers;
 
   useEffect(() => {
     if (deskReady && !wizardComplete && view === "work" && !(jobId || "").trim() && !hasOffers) {
@@ -1075,7 +1076,7 @@ export function CareerWorkspace({
                 </motion.button>
               ))}
             </div>
-            {showDesk ? (
+            {showDesk || (showWizard && canLeaveSetup) ? (
               pane === "offers" && view === "work" ? (
                 <PrimaryButton
                   text={tx("offerBook", "Offers")}
@@ -1170,7 +1171,10 @@ export function CareerWorkspace({
               ariaLabel={tx("settings", "Settings")}
               title={tx("profileConfig", "Profile setup")}
               iconProps={{ iconName: "Settings" }}
-              onClick={openSetup}
+              onClick={() => {
+                if (showWizard && canLeaveSetup) openOffers();
+                else openSetup();
+              }}
               checked={showWizard}
               styles={ICON_BUTTON_STYLES}
               data-testid="career-open-setup"
@@ -1284,6 +1288,7 @@ export function CareerWorkspace({
                   onSave={saveWizard}
                   onSeed={onSeed}
                   onSecret={async (name, value) => Boolean(await run("secret", { name, value }))}
+                  onLeave={canLeaveSetup ? () => openOffers() : undefined}
                 />
               ) : null}
               {showDesk && pane === "offers" ? (
@@ -2227,8 +2232,7 @@ function OffersPane({
             onChange={setFacet}
             leading={listTabs}
             trailing={
-              <DefaultButton
-                text={tx("export", "Export")}
+              <IconButton
                 iconProps={{ iconName: "Download" }}
                 disabled={!filtered.length}
                 title={
@@ -2236,6 +2240,7 @@ function OffersPane({
                     ? tx("exportHint", "Exports every filtered offer, not only this page.")
                     : tx("exportEmpty", "Nothing to export. Change the filters.")
                 }
+                ariaLabel={tx("export", "Export")}
                 menuProps={{
                   ...OFFER_ROW_MENU,
                   items: [
@@ -2256,7 +2261,7 @@ function OffersPane({
                   ],
                 }}
                 data-testid="career-export"
-                styles={BUTTON_STYLES}
+                styles={ICON_BUTTON_STYLES}
               />
             }
           />

@@ -82,7 +82,9 @@ class FileEditActivityHook(AgentHook):
         key = self._tool_call_key(tool_call)
         trackers = self._trackers_by_call.get(key, [])
         if trackers:
-            await self._emit([build_file_edit_end_event(tracker) for tracker in trackers])
+            events = [build_file_edit_end_event(tracker) for tracker in trackers]
+            context.file_edit_events[tool_call.id] = events
+            await self._emit(events)
             self._trackers_by_call.pop(key, None)
 
     async def on_execute_tool_error(
@@ -96,9 +98,11 @@ class FileEditActivityHook(AgentHook):
         key = self._tool_call_key(tool_call)
         trackers = self._trackers_by_call.get(key, [])
         if trackers:
-            await self._emit([
+            events = [
                 build_file_edit_error_event(tracker, str(error)) for tracker in trackers
-            ])
+            ]
+            context.file_edit_events[tool_call.id] = events
+            await self._emit(events)
             self._trackers_by_call.pop(key, None)
 
     async def on_finally(self, context: AgentRunHookContext) -> None:
@@ -110,13 +114,12 @@ class FileEditActivityHook(AgentHook):
             for tracker in trackers
         ]
         self._trackers_by_call.clear()
-        await self._emit([
-            build_file_edit_error_event(
-                tracker,
-                "Task interrupted before this tool finished.",
-            )
-            for tracker in trackers
-        ])
+        events = []
+        for tracker in trackers:
+            event = build_file_edit_error_event(tracker, "Task interrupted before this tool finished.")
+            event.update(phase="cancelled", status="cancelled")
+            events.append(event)
+        await self._emit(events)
 
     async def _emit(self, events: list[dict[str, Any]]) -> None:
         if self._on_progress is not None:

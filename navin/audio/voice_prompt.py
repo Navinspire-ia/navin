@@ -38,8 +38,8 @@ _SHORT_UTTERANCE_WORDS = 3
 # keys (managed Navin key included) these non-reasoning flash models answer in
 # about 1-2 s and return the sentence, not a thinking trace.
 _FAST_REWRITE_MODELS: dict[str, tuple[str, ...]] = {
-    "navin": ("google/gemini-3.7-flash", "deepseek/deepseek-v4-flash"),
-    "openrouter": ("google/gemini-3.7-flash", "deepseek/deepseek-v4-flash"),
+    "navin": ("google/gemini-3.7-flash", "deepseek/deepseek-v4.1-flash"),
+    "openrouter": ("google/gemini-3.7-flash", "deepseek/deepseek-v4.1-flash"),
 }
 # The fast candidates are cheap (a few hundred tokens): this many start at
 # once, the rest join one by one when those stay silent.

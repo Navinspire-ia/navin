@@ -159,7 +159,7 @@ def _is_test_command(command: str) -> bool:
     # Shell fallbacks, later commands and pipes can hide a failing test exit.
     if re.search(r"\|\||(?<!&);|(?<!\|)\|(?!\|)", command):
         return False
-    if re.search(r"(?:^|\s)--(?:collect-only|listTests|list-tests|list|help|version|dry-run)(?:\s|$)", command):
+    if re.search(r"(?:^|\s)--?(?:collect-only|listTests|list-tests|list|help|version|dry-run)(?=[=\s]|$)", command):
         return False
     command = command.replace("\\", "/")
     for simple in re.split(r"\s*(?:&&|\|\||;|\|)\s*", command):
@@ -454,9 +454,6 @@ class AgentRunSpec:
     requires_tool_delivery: bool = False
     # Explicit workflows require checks after every workspace edit.
     requires_verify_before_done: bool = False
-    # CLI, desktop and their delegated work enable this regardless of module.
-    # Source edits require tests; config/style edits require appropriate checks.
-    validate_code_changes: bool = False
     # Paths, branches, services or files the user named in the request. A
     # turn whose first look-around batches touch none of them is reminded
     # once where to look (see navin.agent.scope_anchor).
@@ -509,6 +506,9 @@ class AgentRunSpec:
     # (evals and ephemeral jobs) retain the finite default.
     continue_on_max_iterations: bool = False
     loop_guard: AgentLoopGuard | None = None
+    # CLI, desktop and their delegated work enable this regardless of module.
+    # Source edits require tests; config/style edits require appropriate checks.
+    validate_code_changes: bool = False
 
 
 @dataclass(slots=True)
@@ -1018,7 +1018,7 @@ class AgentRunner:
                         "responses was executed."
                     )
                 completed_tool_results: list[dict[str, Any]] = []
-                for tool_call, result in zip(response.tool_calls, results):
+                for tool_call, result, tool_event in zip(response.tool_calls, results, new_events):
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -1030,6 +1030,9 @@ class AgentRunner:
                             result,
                         ),
                     }
+                    if edits := context.file_edit_events.get(tool_call.id):
+                        tool_message["_file_edits"] = edits
+                    tool_message["_tool_status"] = tool_event.get("status")
                     messages.append(tool_message)
                     completed_tool_results.append(tool_message)
                 if fatal_error is not None:
@@ -1517,11 +1520,22 @@ class AgentRunner:
         )
 
         progress_state: dict[str, bool] | None = None
+        # A premature "done" must not reach CLI/desktop as a visible final
+        # while the completion gate is still waiting for tests. Tool-bound
+        # commentary is released as soon as the response contains real calls.
+        defer_unverified_text = bool(
+            spec.loop_guard and spec.loop_guard.validation.pending
+            and not spec.read_only_tools and not spec.plan_read_only
+        )
+        deferred_text: list[str] = []
 
         if wants_streaming:
             thinking_buf = ""
 
             async def _stream(delta: str) -> None:
+                if defer_unverified_text:
+                    deferred_text.append(delta)
+                    return
                 if delta:
                     context.streamed_content = True
                 await hook.on_stream(context, delta)
@@ -1539,6 +1553,7 @@ class AgentRunner:
                     await hook.emit_reasoning(incremental)
 
             async def _stream_recover() -> None:
+                deferred_text.clear()
                 await hook.on_stream_end(context, resuming=True)
 
             coro = spec.runtime.provider.chat_stream_with_retry(
@@ -1569,8 +1584,11 @@ class AgentRunner:
                     if progress_state["reasoning_open"]:
                         await hook.emit_reasoning_end()
                         progress_state["reasoning_open"] = False
-                    context.streamed_content = True
-                    await spec.progress_callback(incremental)
+                    if defer_unverified_text:
+                        deferred_text.append(incremental)
+                    else:
+                        context.streamed_content = True
+                        await spec.progress_callback(incremental)
 
             coro = spec.runtime.provider.chat_stream_with_retry(
                 **kwargs,
@@ -1647,6 +1665,12 @@ class AgentRunner:
                 messages, response.content,
             )
             return await self._request_no_tools(spec, fallback_messages)
+        if deferred_text and response.should_execute_tools:
+            context.streamed_content = True
+            if wants_streaming:
+                await hook.on_stream(context, "".join(deferred_text))
+            elif wants_progress_streaming:
+                await spec.progress_callback("".join(deferred_text))
         return response
 
     @staticmethod

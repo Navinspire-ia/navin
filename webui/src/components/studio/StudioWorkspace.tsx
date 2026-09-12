@@ -1702,6 +1702,7 @@ function leadsSeedText(command: string, card: StudioCard): string {
 export function StudioWorkspace({
   module,
   chatOpen,
+  onToggleChat,
   onRun,
   onSeed,
   projectPath,
@@ -1711,6 +1712,7 @@ export function StudioWorkspace({
 }: {
   module: StudioModule;
   chatOpen?: boolean;
+  onToggleChat?: () => void;
   onRun?: (
     text: string,
     documentTemplate?: { category: string; name: string; title?: string },
@@ -2064,14 +2066,29 @@ export function StudioWorkspace({
         ) : (
           <span />
         )}
-        {onSelectProject ? (
-          <div className="flex min-w-0 items-center justify-end">
-            <DevProjectSelector
-              projectPath={projectPath ?? null}
-              projectName={projectName}
-              recentProjects={recentProjects ?? []}
-              onSelectProject={onSelectProject}
-            />
+        {onToggleChat || onSelectProject ? (
+          <div className="flex min-w-0 items-center justify-end gap-1">
+            {onToggleChat ? (
+              <button
+                type="button"
+                aria-label={chatOpen ? tx("studio.hideChat", "Hide chat") : tx("studio.chat", "Chat")}
+                title={chatOpen ? tx("studio.hideChat", "Hide chat") : tx("studio.chat", "Chat")}
+                aria-pressed={Boolean(chatOpen)}
+                onClick={onToggleChat}
+                data-testid="studio-toggle-chat"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              >
+                <FluentIcon iconName={chatOpen ? "ChatSolid" : "Chat"} aria-hidden />
+              </button>
+            ) : null}
+            {onSelectProject ? (
+              <DevProjectSelector
+                projectPath={projectPath ?? null}
+                projectName={projectName}
+                recentProjects={recentProjects ?? []}
+                onSelectProject={onSelectProject}
+              />
+            ) : null}
           </div>
         ) : (
           <span />

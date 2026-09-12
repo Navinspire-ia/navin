@@ -7,7 +7,7 @@ The Navin site publishes its managed models at ``/api/models``: one slug per
 model, a tier (light / executor / main / expert) and the default model, all
 served by OpenRouter. Paid plans use ``byPlan[plan]``:
 
-- Flash → free OpenRouter (Ultra / Super / Omni) + DeepSeek V4 Flash,
+- Flash → free OpenRouter (Ultra / Super / Omni) + DeepSeek V4.1 Flash,
   MiniMax M3, GLM 4.7 Flash, Qwen3.7 Flash, GLM 5.3 Flash (default)
 - Plus / Pro / Ultra / Team / Enterprise → catalogue complet (hors Flash-only),
   default GLM 5.3 Flash (same chat default as Flash)
@@ -70,10 +70,13 @@ FLASH_DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 DEFAULT_MANAGED_MODEL = FLASH_DEFAULT_MODEL
 # Grok 4.6 is Plus+ only (vision / Montage default), never a Flash picker row.
 PLUS_VISION_MODEL = "x-ai/grok-4.6"
-FLASH_EXCLUDED_SLUGS = frozenset({PLUS_VISION_MODEL, "x-ai/grok-4.5"})
+ASTRA_MODEL = "openai/gpt-6-astra"
+DS_V41_FLASH = "deepseek/deepseek-v4.1-flash"
+DS_V4_FLASH = "deepseek/deepseek-v4-flash"
+FLASH_EXCLUDED_SLUGS = frozenset({PLUS_VISION_MODEL, "x-ai/grok-4.5", ASTRA_MODEL})
 # Dropped from every Navin subscription catalog (Free / Flash / Plus+).
 OX_ALPHA_MODEL = "stealth/ox-alpha"
-SUBSCRIPTION_EXCLUDED_SLUGS = frozenset({OX_ALPHA_MODEL})
+SUBSCRIPTION_EXCLUDED_SLUGS = frozenset({OX_ALPHA_MODEL, DS_V4_FLASH})
 # Montage / vision Plus+ stays on Grok 4.6. Flash falls to MiMo.
 DEFAULT_VISION_MODEL = PLUS_VISION_MODEL
 # Economy multimodal (native omnimodal, strong cost/perf).
@@ -116,8 +119,8 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
             "tier": "main",
         },
         {
-            "slug": "deepseek/deepseek-v4-flash",
-            "name": "DeepSeek V4 Flash",
+            "slug": DS_V41_FLASH,
+            "name": "DeepSeek V4.1 Flash",
             "tier": "executor",
         },
         {
@@ -143,6 +146,11 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
         {
             "slug": "anthropic/claude-fable-5.1",
             "name": "Claude Fable 5.1",
+            "tier": "expert",
+        },
+        {
+            "slug": ASTRA_MODEL,
+            "name": "GPT-6 Astra",
             "tier": "expert",
         },
     ],
@@ -191,8 +199,8 @@ FALLBACK_CATALOG_PAYLOAD: dict[str, object] = {
                     "tier": "executor",
                 },
                 {
-                    "slug": "deepseek/deepseek-v4-flash",
-                    "name": "DeepSeek V4 Flash",
+                    "slug": DS_V41_FLASH,
+                    "name": "DeepSeek V4.1 Flash",
                     "tier": "executor",
                 },
                 {
@@ -501,40 +509,40 @@ FLASH_ROLE_TIERS: dict[str, str] = {
 # First match present in the catalog wins. Free / stealth slugs are skipped.
 PAID_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
     "deep": ("qwen/qwen3.8-max", "moonshotai/kimi-k3", "x-ai/grok-4.6"),
-    "dev": ("z-ai/glm-5.3-flash", "z-ai/glm-5.2", "deepseek/deepseek-v4-flash"),
-    "fast": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
-    "code": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
-    "search": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
+    "dev": ("z-ai/glm-5.3-flash", "z-ai/glm-5.2", DS_V41_FLASH),
+    "fast": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
+    "code": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
+    "search": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
     "plan": (
         "z-ai/glm-5.3-flash",
         "google/gemini-3.7-flash",
         "google/gemini-3.6-flash",
     ),
-    "docs": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
+    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
     "review": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "z-ai/glm-5.2"),
     "security": ("z-ai/glm-5.3-flash", "z-ai/glm-5.3", "x-ai/grok-4.6"),
 }
 
 FLASH_ROLE_DEFAULTS: dict[str, tuple[str, ...]] = {
     "deep": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
-    "dev": ("z-ai/glm-5.3-flash", "deepseek/deepseek-v4-flash"),
+    "dev": ("z-ai/glm-5.3-flash", DS_V41_FLASH),
     "fast": (
-        "deepseek/deepseek-v4-flash",
+        DS_V41_FLASH,
         "qwen/qwen3.7-flash",
         "z-ai/glm-4.7-flash",
     ),
     "code": (
-        "deepseek/deepseek-v4-flash",
+        DS_V41_FLASH,
         "qwen/qwen3.7-flash",
         "z-ai/glm-4.7-flash",
     ),
     "search": (
-        "deepseek/deepseek-v4-flash",
+        DS_V41_FLASH,
         "qwen/qwen3.7-flash",
         "z-ai/glm-4.7-flash",
     ),
     "plan": ("z-ai/glm-5.3-flash", "minimax/minimax-m3"),
-    "docs": ("deepseek/deepseek-v4-flash", "z-ai/glm-5.3-flash"),
+    "docs": (DS_V41_FLASH, "z-ai/glm-5.3-flash"),
     "review": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
     "security": ("minimax/minimax-m3", "z-ai/glm-5.3-flash"),
 }
@@ -852,9 +860,9 @@ def parse_catalog(payload: object, *, plan: str | None = None) -> Catalog:
         default_model = text_models[0].slug
     if default_model in media_slugs or is_media_model_slug(default_model):
         preferred = (
-            (FLASH_DEFAULT_MODEL, "deepseek/deepseek-v4-flash")
+            (FLASH_DEFAULT_MODEL, DS_V41_FLASH)
             if plan_key == "flash"
-            else (DEFAULT_MANAGED_MODEL, PLUS_VISION_MODEL, "deepseek/deepseek-v4-flash")
+            else (DEFAULT_MANAGED_MODEL, PLUS_VISION_MODEL, DS_V41_FLASH)
         )
         default_model = next(
             (m.slug for m in text_models if m.slug in preferred),
@@ -1509,7 +1517,7 @@ def sync_managed_catalog(
 
     Best-effort by design: a gateway must boot on a plane. When the remote
     catalog is unreachable (or not deployed yet), the embedded fallback is
-    applied so paid activations still get DeepSeek V4 Flash + task routes.
+    applied so paid activations still get DeepSeek V4.1 Flash + task routes.
     Returns True only when the catalog was applied and saved.
 
     *min_interval_s*: skip the network fetch when a recent attempt already ran

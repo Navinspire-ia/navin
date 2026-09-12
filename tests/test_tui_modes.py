@@ -216,8 +216,8 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             await _pilot.pause()
             tool.apply(phase="error", error="boom")
             await _pilot.pause()
-            self.assertIn("list", tool._head_text())
-            self.assertIn("list  .", tool._head_text())
+            self.assertIn("List", tool._head_text())
+            self.assertIn("Failed: List .", tool._head_text())
             self.assertNotIn("args:", tool._head_text())
             self.assertNotIn("{", tool._head_text())
             tool.apply(phase="end", result="PASS - no lint errors\n2 passed")
@@ -274,7 +274,7 @@ class ToolColorTests(unittest.TestCase):
         tool.phase = "end"
         head = tool._head_text()
         self.assertNotIn("[/dim]", head)
-        self.assertIn("edit", head)
+        self.assertIn("Edit", head)
         self.assertNotIn("apply_patch", head)
         self.assertNotIn("{", head)
         body = format_tool_detail(
@@ -366,7 +366,7 @@ class ToolClusterTests(unittest.IsolatedAsyncioTestCase):
                 None,
                 None,
             )
-            block.note_file_edit("navin/tui/app.py", 1, 0, diff=diff)
+            await block.note_file_edit("navin/tui/app.py", 1, 0, diff=diff, call_id="e1", kind="edit")
             await block.finish(latency_ms=12, model="glm", preset=None)
             cluster = block.query_one(ToolCluster)
             self.assertEqual(cluster.kind, "edit")
@@ -378,7 +378,7 @@ class ToolClusterTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(tool.query_one(".tool-body").display)
             body = str(tool.query_one(".tool-body").content)
             self.assertIn("import queue", body)
-            self.assertIn("on #0F6B38", body)
+            self.assertTrue(any("on #0f6b38" in str(span.style).lower() for span in tool.query_one(".tool-body").content.spans))
 
 
 class UpdateOfferTests(unittest.IsolatedAsyncioTestCase):
@@ -420,7 +420,7 @@ class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
         from textual.app import App
         from textual.widgets import OptionList
 
-        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.screens import PickerScreen, PickItem
         from navin.tui.theme import NAVIN_DARK
 
         items = [
@@ -447,7 +447,7 @@ class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
         from textual.app import App
         from textual.widgets import OptionList
 
-        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.screens import PickerScreen, PickItem
         from navin.tui.theme import NAVIN_DARK
 
         items = [
@@ -472,7 +472,7 @@ class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
     async def test_f2_asks_to_rename_the_highlighted_chat(self) -> None:
         from textual.app import App
 
-        from navin.tui.screens import RENAME_PREFIX, PickItem, PickerScreen
+        from navin.tui.screens import RENAME_PREFIX, PickerScreen, PickItem
         from navin.tui.theme import NAVIN_DARK
 
         items = [
@@ -500,7 +500,7 @@ class PickerScreenTests(unittest.IsolatedAsyncioTestCase):
         from textual.app import App
         from textual.widgets import OptionList
 
-        from navin.tui.screens import PickItem, PickerScreen
+        from navin.tui.screens import PickerScreen, PickItem
         from navin.tui.theme import NAVIN_DARK
 
         items = [
