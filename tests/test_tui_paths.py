@@ -64,7 +64,7 @@ class MarkdownPathStyleTests(unittest.TestCase):
         )
         styled = restyle_inline_code(content)
         styles = [span.style for span in styled.spans]
-        self.assertEqual(styles, [".code_path", ".code_inline"])
+        self.assertEqual(styles, [".code_path", ".code_command"])
 
     def test_theme_exposes_path_green(self) -> None:
         self.assertEqual(NAVIN_DARK.variables["path"], PATH_INK)
