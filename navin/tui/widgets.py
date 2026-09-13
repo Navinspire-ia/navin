@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from rich.markup import escape
+from rich.rule import Rule
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
@@ -1255,7 +1256,7 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-preview {
         margin: 0 0 1 0;
         padding: 0;
-        color: $accent;
+        color: $foreground;
         background: $background;
     }
     AssistantMessage > .assistant-body {
@@ -1288,11 +1289,18 @@ class AssistantMessage(Vertical):
         margin: 1 0;
     }
     AssistantMessage > .assistant-foot.-visible { display: block; }
+    AssistantMessage > .assistant-finish {
+        height: 1;
+        margin: 1 0;
+        color: $text-muted;
+        display: none;
+    }
+    AssistantMessage > .assistant-finish.-visible { display: block; }
     AssistantMessage > .assistant-body Markdown { margin: 0; padding: 0; background: transparent; }
     AssistantMessage > .assistant-body MarkdownFence {
         margin: 0 0 1 0;
         padding: 0 1;
-        color: #E8E8E8;
+        color: $foreground;
         background: $panel;
     }
     AssistantMessage > .assistant-body MarkdownH1,
@@ -1315,6 +1323,15 @@ class AssistantMessage(Vertical):
     }
     AssistantMessage > .assistant-body MarkdownBlock:light > .code_path {
         color: #2D6A4F;
+        background: transparent;
+    }
+    AssistantMessage > .assistant-body MarkdownBlock > .code_command,
+    AssistantMessage > .assistant-body MarkdownBlock:dark > .code_command {
+        color: #D7BA7D;
+        background: transparent;
+    }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .code_command {
+        color: #805B20;
         background: transparent;
     }
     """
@@ -1343,6 +1360,7 @@ class AssistantMessage(Vertical):
             head = f"{self.bot_icon} {head}"
         yield Static(head, classes="assistant-head", markup=False)
         yield Static("", classes="assistant-preview", markup=True)
+        yield Static(Rule("finish", characters="─", align="left", style=""), classes="assistant-finish")
         yield Markdown("", classes="assistant-body")
         yield Static("", classes="assistant-foot", markup=True)
 
@@ -1591,7 +1609,9 @@ class AssistantMessage(Vertical):
     async def delta(self, text: str) -> None:
         if not text:
             return
+        await self._composed.wait()
         self.finished = False
+        self.query_one(".assistant-finish", Static).remove_class("-visible")
         self.streamed = True
         self._buffer.append(text)
         if self._stream is not None:
@@ -1652,6 +1672,7 @@ class AssistantMessage(Vertical):
         await self._composed.wait()
         await self.stream_end()
         self.finished = True
+        self.query_one(".assistant-finish", Static).set_class(bool(self.text.strip()), "-visible")
         await self.reveal()
         for tool in self._tools.values():
             if tool.phase in {"start", "output"}:
@@ -2020,7 +2041,7 @@ class ComposerShell(Vertical):
     ComposerShell {
         height: auto;
         background: $panel;
-        padding: 0 2;
+        padding: 1 2 0 2;
         border-left: wide $foreground 35%;
     }
     ComposerShell > TideRule { margin: 0; height: 1; }
@@ -2149,6 +2170,7 @@ class Composer(TextArea):
         min-height: 2;
         border: none !important;
         background: $panel;
+        color: $foreground;
         padding: 0 0 0 0;
         scrollbar-size-vertical: 1;
     }
@@ -2234,6 +2256,7 @@ class Composer(TextArea):
             classes="-textual-compact",
         )
         self.menu_open = False
+        self._last_slash_prefix: str | None = None
         self.shortcut_keys: set[str] = set()
         self._last_paste = ""
         self._last_paste_at = 0.0
@@ -2397,10 +2420,10 @@ class Composer(TextArea):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         text = self.text
-        if text.startswith("/") and "\n" not in text and " " not in text:
-            self.post_message(self.SlashTyping(text))
-        else:
-            self.post_message(self.SlashTyping(None))
+        prefix = text if text.startswith("/") and "\n" not in text and " " not in text else None
+        if prefix != self._last_slash_prefix:
+            self._last_slash_prefix = prefix
+            self.post_message(self.SlashTyping(prefix))
 
     def set_text(self, text: str) -> None:
         display, pastes = collapse_text_for_composer(text)
