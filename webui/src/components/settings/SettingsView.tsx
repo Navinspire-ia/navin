@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { ConnectedAccounts } from "./ConnectedAccounts";
 import {
   useCallback,
   useEffect,
@@ -2400,10 +2401,13 @@ export function SettingsView({
         );
       case "account":
         return (
+          <div className="grid min-w-0 gap-8">
           <AccountSettings
             onOpenProviders={() => selectSection("providers")}
             usage={settings.usage}
           />
+          <ConnectedAccounts />
+          </div>
         );
       case "appearance":
         return (

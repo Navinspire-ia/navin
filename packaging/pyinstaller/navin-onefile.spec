@@ -59,6 +59,8 @@ hiddenimports = (
     # Linux / Windows / macOS; named so a later narrowing of collect_submodules
     # ("navin") cannot drop them from the sidecar.
     + collect_submodules("navin.career")
+    + collect_submodules("navin.accounts")
+    + collect_submodules("keyring.backends")
     + collect_submodules("navin.leads")
     + collect_submodules("navin.marketing")
     + collect_submodules("navin.tenders")
@@ -90,6 +92,8 @@ if sys.platform == "win32":
 
 datas = (
     collect_data_files("navin", include_py_files=False)
+    # keyring discovers the OS vault backends through distribution entry points.
+    + copy_metadata("keyring")
     + copy_metadata("prompt_toolkit")
     + collect_data_files("wcwidth", include_py_files=False)
     + bundle_contents.template_data()
@@ -98,6 +102,13 @@ datas = (
     + bundle_contents.ffmpeg_data()
     + bundle_contents.typescript_data()
 )
+# Public client identities belong in the installed app; user tokens never do.
+from navin.accounts.publisher import bundle_registration
+
+publisher_data = bundle_registration(Path(SPECPATH).resolve().parents[1] / "build" / "mail-oauth")
+datas = [(source, destination) for source, destination in datas
+         if not (destination == "navin/accounts" and Path(source).name == "publisher.json")]
+datas += publisher_data
 if _HAS_TEXTUAL:
     datas += collect_data_files("textual", include_py_files=False)
     datas += copy_metadata("textual")

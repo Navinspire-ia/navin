@@ -76,8 +76,20 @@ def _watch_should_send(value: Any) -> bool:
 
 
 def handle_tenders_action(action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    body = body if isinstance(body, dict) else {}
+    from filelock import FileLock, Timeout
+
     store = _store()
+    if normalize_tenders_action(action, default="snapshot") == "stop":
+        return _handle_tenders_action(store, action, body)
+    try:
+        with FileLock(str(store.root / "lifecycle.lock"), timeout=0):
+            return _handle_tenders_action(store, action, body)
+    except Timeout:
+        raise TenderError("A tender operation is in progress. Try again after it finishes.", status=409) from None
+
+
+def _handle_tenders_action(store: TenderStore, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = body if isinstance(body, dict) else {}
     act = normalize_tenders_action(action, default="snapshot")
     from navin.agent.tools.context import is_heartbeat_turn
 
@@ -90,6 +102,19 @@ def handle_tenders_action(action: str, body: dict[str, Any] | None = None) -> di
         )
     if act in {"snapshot", "status"}:
         return snapshot(store)
+    if act == "archive_reset":
+        from navin.desk_archive import archive_reset
+
+        receipt = archive_reset(store, module="tenders", confirmed=body.get("confirmed") is True)
+        return {**snapshot(store), "archive_receipt": receipt}
+    if act == "archive_download":
+        from navin.desk_archive import download_archive
+
+        try:
+            file = download_archive(store.root, str(body.get("id") or ""))
+        except ValueError as exc:
+            raise TenderError(str(exc), status=400) from None
+        return {**snapshot(store), "archive_file": file}
     if act == "get":
         tid = str(body.get("id") or "").strip()
         if not tid:

@@ -29,6 +29,9 @@ def run_guard(workspace: Path | str, deps: PipelineDeps | None = None) -> dict[s
     if not settings.enabled:
         return {"status": "skipped", "reason": "skills-evolve flag off", "checked": [], "retired": []}
     deps = deps or default_deps(settings)
+    if deps.execution is not None:
+        from navin.skills_evolve.execution_pipeline import execution_guard
+        return execution_guard(workspace, deps)
     checked: list[dict[str, Any]] = []
     retired: list[str] = []
     for record in list_drafts(workspace):

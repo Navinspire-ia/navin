@@ -139,6 +139,7 @@ export function CareerWizard({
   onSeed,
   onSecret,
   onLeave,
+  onCompanySetup,
 }: {
   desk: CareerDesk;
   track: CareerTrack;
@@ -150,6 +151,7 @@ export function CareerWizard({
   onSeed?: (text: string) => void;
   onSecret?: (name: string, value: string) => Promise<boolean>;
   onLeave?: () => void;
+  onCompanySetup?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const reduceMotion = useReducedMotion();
@@ -542,7 +544,7 @@ export function CareerWizard({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setKind("company")}
+                  onClick={() => { if (onCompanySetup) onCompanySetup(); else setKind("company"); }}
                   className={cn(
                     "min-h-28 rounded-2xl px-5 py-4 text-left outline outline-1 transition-colors",
                     kind === "company"
@@ -552,7 +554,7 @@ export function CareerWizard({
                 >
                   <p className="text-base font-semibold">{tx("wizard.company", "Company")}</p>
                   <p className="mt-2 text-pretty text-sm text-muted-foreground">
-                    {tx("wizard.companyHint", "Portage or agency. Several talent profiles.")}
+                    {tx("wizard.companyProspectingHint", "Missions, projets et profils. Avec ou sans vivier interne.")}
                   </p>
                 </button>
               </div>

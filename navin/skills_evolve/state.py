@@ -78,7 +78,14 @@ def agi_state(workspace: Path | str, *, journal_limit: int = 30) -> dict[str, An
     workspace = Path(workspace)
     settings = read_settings(workspace)
     try:
-        battery = load_battery().describe()
+        if settings.exam_model == "execution":
+            from navin.skills_evolve.execution_tasks import tasks
+            cases = tasks("description")
+            battery = {"version": "execution-v1", "evaluation_kind": "execution", "fresh_holdout": True,
+                       "total_cases": len(cases), "suites": [{"id": name, "title": name.title(),
+                       "cases": sum(case.suite == name for case in cases)} for name in dict.fromkeys(case.suite for case in cases)]}
+        else:
+            battery = load_battery().describe()
     except BatteryInvalidError as exc:
         battery = {"version": None, "error": str(exc), "suites": []}
     drafts = [_draft_payload(workspace, record) for record in list_drafts(workspace)] if settings.enabled else []
@@ -104,6 +111,8 @@ def agi_update(workspace: Path | str, fields: dict[str, Any]) -> dict[str, Any]:
         update_settings(workspace, fields)
     except ValueError as exc:
         raise AgiActionError(str(exc)) from exc
+    from navin.skills_evolve.jobs import resume_jobs
+    resume_jobs(Path(workspace))
     return agi_state(workspace)
 
 

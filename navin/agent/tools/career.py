@@ -24,6 +24,13 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
             "LinkedIn MCP search_jobs (never fetch). "
             "import stores a pasted LinkedIn or closed-board offer (never fetch). "
             "match/rescore scores. prepare/cv/write tailors the master CV to that mission "
+            "search_candidates searches configured platforms even with an empty saved pool; pass id to use an offer's requirements. "
+            "candidates only reads the saved pool (brief filters it); prospecting_reuse is only for an explicit request to reuse saved candidates. "
+            "prospecting_search finds missions/candidates; prospecting_match searches candidates for an offer id. "
+            "prospecting_config accepts criteria in payload; prospecting_dossier accepts id,candidate_id,stage,interest,availability,note,contract. "
+            "criteria.role_priorities maps selected role labels to percentages (0-100); 0 pauses that role, missing values share the remainder, and totals are normalized. "
+            "These priorities allocate mission and candidate searches across runs; matching a specific offer keeps its requirements. "
+            "Only record interest/availability as confirmed when the user provides candidate confirmation. "
             "(reorder, keywords, cover, Word pack). download returns the .docx. "
             "watch reports new Perfect/Good matches and due follow-ups (heartbeat). "
             "start/stop/schedule/tick run the desk hunt loop on a wall-clock "
@@ -76,6 +83,15 @@ from navin.agent.tools.schema import StringSchema, tool_parameters_schema
                 "archive",
                 "unarchive",
                 "delete",
+                "candidates",
+                "search_candidates",
+                "prospecting_reuse",
+                "prospecting_search",
+                "prospecting_match",
+                "prospecting_config",
+                "prospecting_dossier",
+                "prospecting_automate",
+                "candidate_cv",
             ],
         ),
         id=StringSchema("Opportunity id (job-...) or a local file name for action=read."),
@@ -171,18 +187,17 @@ class CareerTool(Tool):
             "CV, strengths, gaps, projects, company, talents, channels, pipeline. "
             "Call status or dossier first to load every stored fact. "
             "status lists every stored offer: live, favorite and archive. "
-            "Studio filters are UI-only and never hide an offer from this chat. "
+            "Company criteria are mandatory search constraints; do not recommend offers with search_scope.eligible=false. "
             "read returns cv.md / dossier.md / book.md / profile.json from disk. "
             "Search/collect/find/loop use the same store: profile.source_ids plus "
             "local secrets.json (wizard action=secret) or process env. "
-            "Search always runs remotive, published ATS, web search (company "
-            "careers + public ATS boards), scrape on open hosts, and LinkedIn "
-            "official portals. Adzuna, Jooble and USAJOBS are extra and run only "
-            "when that source is enabled and a key is on file. Never invent a "
-            "scrape for a keyed API. "
+            "Company search/collect/find use prospecting.criteria: selected sources/platforms, countries, roles, minimum day rate, work mode and posting age. "
+            "For candidate requests use search_candidates (with offer id when available) or prospecting_match; never stop at an empty saved pool. "
+            "Report platform access errors and partial searches; do not claim no candidates exist when a platform was not searched. "
+            "Solo searches use enabled profile.source_ids and available credentials. Never invent a scrape for a keyed API. "
             "After mcp_linkedin_search_jobs / get_saved_jobs, call career ingest "
             "(via=linkedin-mcp) so those jobs enter the book. Never scrape. "
-            "Preferred markets (primary/secondary/excluded) change the match score. "
+            "Do not broaden configured markets or relax minimum rates, work modes or the 30-day publication limit. "
             "Autonomous hunt is start/stop/schedule/tick (desk loop: same store "
             "as Studio #/career, Tauri, navin career, and "
             "python -m navin.career.desk_cli). "
@@ -198,7 +213,7 @@ class CareerTool(Tool):
 
     def call_read_only(self, arguments: Any) -> bool:
         action = str((arguments or {}).get("action") or "").strip().lower()
-        return action in {"status", "dossier", "snapshot", "read", "book"}
+        return action in {"status", "dossier", "snapshot", "read", "book", "candidates", "candidate_cv"}
 
     async def execute(self, **kwargs: Any) -> Any:
         from navin.career.dossier import format_agent_status
@@ -272,6 +287,17 @@ class CareerTool(Tool):
             if not isinstance(parsed, dict) or not isinstance(parsed.get("mailbox"), dict):
                 return ToolResult.error("payload.mailbox must be an object")
             body = parsed
+        elif action.startswith("prospecting_"):
+            try:
+                body = json.loads(str(kwargs.get("payload") or "{}"))
+            except json.JSONDecodeError:
+                return ToolResult.error("payload must be JSON")
+            if not isinstance(body, dict):
+                return ToolResult.error("payload must be an object")
+            if kwargs.get("id"):
+                body["id"] = kwargs["id"]
+            if kwargs.get("brief"):
+                body["query"] = kwargs["brief"]
         elif action in {"ingest", "hits"}:
             raw_hits = str(kwargs.get("hits") or kwargs.get("payload") or "").strip()
             if raw_hits:
@@ -293,6 +319,7 @@ class CareerTool(Tool):
                 "stage": kwargs.get("stage") or "",
                 "brief": kwargs.get("brief") or "",
                 "query": kwargs.get("brief") or "",
+                "countries": [item.strip().upper() for item in str(kwargs.get("countries") or "").split(",") if item.strip()],
                 "track": kwargs.get("track") or "",
                 "body": kwargs.get("body") or "",
                 "url": kwargs.get("url") or "",

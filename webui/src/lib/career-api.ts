@@ -102,6 +102,8 @@ export interface CareerCv {
 }
 
 export interface CareerOpportunity {
+  search_scope?: { eligible: boolean; reason: string };
+  source_links?: { id: string; source: string; url: string }[];
   id: string;
   source: string;
   title: string;
@@ -215,6 +217,7 @@ export interface CareerInboxItem {
 }
 
 export interface CareerMailbox {
+  account_id?: string;
   enabled: boolean;
   sender_name: string;
   sender_email: string;
@@ -304,7 +307,7 @@ export interface CareerMailboxStatus {
   enabled?: boolean;
   smtp_password_set?: boolean;
   imap_password_set?: boolean;
-  checks?: { smtp?: CareerMailCheck; imap?: CareerMailCheck };
+  checks?: { smtp?: CareerMailCheck; imap?: CareerMailCheck; oauth?: CareerMailCheck };
   sync?: CareerMailSync;
   accepted?: number;
   failed?: number;
@@ -365,6 +368,7 @@ export interface CareerChannels {
 }
 
 export interface CareerProfile {
+  company_prospecting?: boolean;
   mailbox?: CareerMailbox;
   track?: CareerTrack | string;
   account_kind?: "solo" | "company" | string;
@@ -508,6 +512,10 @@ export interface CareerUserEmployer {
 }
 
 export interface CareerDesk {
+  candidate_file?: import("./desk-archive").ArchiveFile;
+  archives?: import("./desk-archive").DeskArchive[];
+  archive_file?: import("./desk-archive").ArchiveFile;
+  prospecting?: import("./career-prospecting").ProspectingState;
   mailbox_status?: CareerMailboxStatus;
   mail_draft?: CareerMailDraft;
   mail_receipt?: CareerMailReceipt;

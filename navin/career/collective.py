@@ -74,6 +74,9 @@ def _text(raw: str) -> str:
 
 
 def default_http_get(url: str, timeout: float = 20.0) -> str:
+    from navin.career.http_pacing import pace_public_request
+
+    pace_public_request("collective.work", MIN_INTERVAL_S)
     locale = "en" if "/jobs/en" in url else "fr"
     req = urllib.request.Request(
         url,

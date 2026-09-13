@@ -18,6 +18,8 @@ from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any, Callable
 
+from filelock import Timeout
+
 from navin.career.errors import CareerError
 from navin.career.mail import (
     TRANSPORT_TIMEOUT_S,
@@ -127,6 +129,10 @@ def classify_reply(text: str) -> str:
 def _thread(message: EmailMessage, outbox: dict[str, Any]) -> dict[str, Any] | None:
     references = set(MESSAGE_ID.findall(" ".join(str(message.get(key) or "") for key in ("In-Reply-To", "References"))))
     rows = [row for row in outbox.values() if row.get("status") in {"accepted", "unknown", "sending"}]
+    direct = set(MESSAGE_ID.findall(str(message.get("In-Reply-To") or "")))
+    direct_matches = [row for row in rows if row.get("message_id") in direct]
+    if len(direct_matches) == 1:
+        return direct_matches[0]
     matches = [row for row in rows if row.get("message_id") in references]
     if len(matches) == 1:
         return matches[0]
@@ -138,11 +144,22 @@ def _thread(message: EmailMessage, outbox: dict[str, Any]) -> dict[str, Any] | N
     # recipient are required; a shared company address alone is ambiguous.
     matches = [row for row in rows if sender == str(row.get("recipient") or "").casefold()
                and f"[{row.get('application_id')}]" in subject]
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) == 1:
+        return matches[0]
+    # New subject-only sourcing replies can still identify exactly one dossier.
+    # Select its most recent message, never a different candidate or mission.
+    if matches and all(r.get("sourcing_kind") for r in matches) and len({(r.get("opportunity_id"), r.get("candidate_id")) for r in matches}) == 1:
+        return max(matches, key=lambda r: float(r.get("accepted_at") or r.get("attempted_at") or 0))
+    return None
 
 
 def _record_reply(store: CareerStore, state: dict[str, Any], account: str, uid: int, raw: bytes, record: dict[str, Any]) -> bool:
     message = BytesParser(policy=policy.default).parsebytes(raw)
+    if record.get("sourcing_kind"):
+        from navin.career.sourcing_mail import record_sourcing_reply
+
+        identity = _hash([record["application_id"], str(message.get("Message-ID") or hashlib.sha256(raw).hexdigest())])
+        return record_sourcing_reply(store, state, message, record, _message_text(message), identity)
     parsed_id = MESSAGE_ID.findall(str(message.get("Message-ID") or ""))
     message_id = parsed_id[0] if len(parsed_id) == 1 else "sha256:" + hashlib.sha256(raw).hexdigest()
     # Deduplication survives UIDVALIDITY changes and moved/reimported messages.
@@ -194,12 +211,16 @@ def _record_reply(store: CareerStore, state: dict[str, Any], account: str, uid: 
 
 def sync_mailbox(
     store: CareerStore, *, force: bool = True, imap_factory: IMAPFactory | None = None,
-    now: float | None = None,
+    now: float | None = None, deadline: float | None = None,
 ) -> dict[str, Any]:
     config = normalize_mailbox(store.load_profile().get("mailbox"))
     clock = time.time() if now is None else now
     if not config["enabled"] or not config["read_replies"]:
         return {"status": "disabled", "received": 0, "reason": "mail_reply_sync_disabled"}
+    if config.get("account_id"):
+        from navin.accounts.career import sync_replies
+
+        return sync_replies(store, config, force=force, now=now, deadline=deadline)
     result: dict[str, Any] = {"status": "complete", "received": 0, "scanned": 0, "skipped_large": 0, "checked_at": clock}
     with mail_lock(store):
         state = load_mail_state(store)
@@ -227,6 +248,9 @@ def sync_mailbox(
                 raise CareerError("mail_imap_search_failed")
             uids = sorted({int(value) for part in data or [] if isinstance(part, bytes) for value in part.split() if value.isdigit() and int(value) >= first_uid})
             for uid in uids[:MAX_MESSAGES_PER_SYNC]:
+                if deadline is not None and time.monotonic() >= deadline:
+                    result["status"] = "partial"
+                    break
                 latest = normalize_mailbox(store.load_profile().get("mailbox"))
                 if not latest["enabled"] or not latest["read_replies"] or _hash(latest) != _hash(config):
                     raise CareerError("mail_configuration_changed")
@@ -236,15 +260,16 @@ def sync_mailbox(
                 headers = BytesParser(policy=policy.default).parsebytes(_literal(header_data))
                 record = _thread(headers, state["outbox"])
                 if record:
+                    max_bytes = 24 * 1024 * 1024 if record.get("sourcing_kind") else MAX_MESSAGE_BYTES
                     size_match = re.search(rb"RFC822\.SIZE\s+(\d+)", b" ".join(part[0] for part in header_data or [] if isinstance(part, tuple)))
-                    if size_match and int(size_match[1]) > MAX_MESSAGE_BYTES:
+                    if size_match and int(size_match[1]) > max_bytes:
                         result["skipped_large"] += 1
                     else:
-                        status, message_data = client.uid("fetch", str(uid), f"(BODY.PEEK[]<0.{MAX_MESSAGE_BYTES + 1}>)")
+                        status, message_data = client.uid("fetch", str(uid), f"(BODY.PEEK[]<0.{max_bytes + 1}>)")
                         if status != "OK":
                             raise CareerError("mail_imap_fetch_failed")
                         raw = _literal(message_data)
-                        if len(raw) > MAX_MESSAGE_BYTES:
+                        if len(raw) > max_bytes:
                             result["skipped_large"] += 1
                         elif raw and _record_reply(store, state, account, uid, raw, record):
                             result["received"] += 1
@@ -252,7 +277,7 @@ def sync_mailbox(
                 checkpoint["last_uid"] = uid
                 # Cursor is persisted only after the related reply and its event.
                 save_mail_state(store, state)
-            result["has_more"] = len(uids) > MAX_MESSAGES_PER_SYNC
+            result["has_more"] = len(uids) > result["scanned"]
         except Exception as exc:
             result.update({"status": "failed", "error": "mail_imap_command_failed" if isinstance(exc, imaplib.IMAP4.error) else _error_code(exc)})
         finally:
@@ -268,9 +293,14 @@ def sync_mailbox(
 
 
 def poll_replies(store: CareerStore) -> dict[str, Any]:
-    """Trusted gateway/loop polling; does not authorize outbound applications."""
+    """Poll replies and advance company dossiers with their saved sending opt-ins."""
     try:
         result = sync_mailbox(store, force=False)
+        if store.load_profile().get("company_prospecting") and store.load_loop().get("enabled"):
+            from navin.career.sourcing_mail import run_sourcing_cycle
+
+            with suppress(CareerError, Timeout):
+                result["company_cycle"] = run_sourcing_cycle(store, automatic=True, sync_result=dict(result))
         with suppress(CareerError):
             flush_mail_notifications(store)
         return result

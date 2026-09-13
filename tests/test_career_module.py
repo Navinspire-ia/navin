@@ -569,19 +569,13 @@ class CareerScoreTest(unittest.TestCase):
         )
         self.assertTrue(job_is_relevant({"title": "AI Engineer remote Dubai"}, profile))
 
-    def test_search_scope_starts_on_gulf_maghreb_and_europe(self) -> None:
+    def test_selected_search_scope_never_adds_default_markets(self) -> None:
         from navin.career.sources import DEFAULT_SEARCH_COUNTRIES, expand_search_countries
 
         scope = expand_search_countries(["FR", "BE"])
-        self.assertIn("AE", scope)
-        self.assertIn("QA", scope)
-        self.assertIn("SA", scope)
-        self.assertIn("MA", scope)
-        self.assertIn("TN", scope)
-        self.assertIn("ES", scope)
-        self.assertTrue(scope.index("FR") < scope.index("AE") or "FR" in ["FR", "BE"])
-        self.assertEqual(scope[:2], ["FR", "BE"])
-        self.assertTrue(set(DEFAULT_SEARCH_COUNTRIES) <= set(scope) | {"FR", "BE"})
+        self.assertEqual(scope, ["FR", "BE"])
+        self.assertEqual(expand_search_countries(), list(DEFAULT_SEARCH_COUNTRIES))
+        self.assertEqual(expand_search_countries(["FR"], ["FR"]), [])
 
 
 class CareerApiTest(unittest.TestCase):

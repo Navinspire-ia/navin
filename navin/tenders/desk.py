@@ -111,6 +111,7 @@ def _loop_payload(store: TenderStore) -> dict[str, Any]:
 
 
 def snapshot(store: TenderStore | None = None) -> dict[str, Any]:
+    from navin.desk_archive import list_archives
     store = store or TenderStore()
     from navin.tenders.retention import apply_retention, retention_days
 
@@ -154,6 +155,7 @@ def snapshot(store: TenderStore | None = None) -> dict[str, Any]:
     )
     return {
         "profile": public,
+        "archives": list_archives(store.root),
         "wizard_ready": wizard_ready(profile),
         "tenders": tenders,
         "kpis": kpis,
@@ -240,23 +242,34 @@ def _auto_draft(store: TenderStore, rows: list[dict[str, Any]]) -> list[dict[str
 
 
 def run_collect(store: TenderStore | None = None) -> dict[str, Any]:
+    from navin.improvement import tenders as improvement
+    from navin.tenders.brief import build_brief
+
     store = store or TenderStore()
     profile = store.load_profile()
     try:
         collect_days = int(profile.get("collect_days") or 30)
     except (TypeError, ValueError):
         collect_days = 30
-    result = collect(
-        countries=list(profile.get("countries") or []),
-        extra_enabled=list(profile.get("enabled_sources") or []),
-        crafts=list(profile.get("crafts") or []),
-        tender_types=list(profile.get("tender_types") or []),
-        project_types=list(profile.get("project_types") or []),
-        source_ids=list(profile.get("source_ids") or []),
-        custom_sources=list(profile.get("custom_sources") or []),
-        sam_key=store.get_secret("sam_gov"),
-        collect_days=collect_days,
-    )
+    brief = build_brief(countries=list(profile.get("countries") or []), crafts=list(profile.get("crafts") or []),
+                        project_types=list(profile.get("project_types") or []), tender_types=list(profile.get("tender_types") or []), days=collect_days)
+    experiment, search_brief = improvement.begin(store, profile, brief)
+    try:
+        result = collect(
+            countries=list(profile.get("countries") or []),
+            extra_enabled=list(profile.get("enabled_sources") or []),
+            crafts=list(profile.get("crafts") or []),
+            tender_types=list(profile.get("tender_types") or []),
+            project_types=list(profile.get("project_types") or []),
+            source_ids=list(profile.get("source_ids") or []),
+            custom_sources=list(profile.get("custom_sources") or []),
+            sam_key=store.get_secret("sam_gov"),
+            collect_days=collect_days,
+            brief=search_brief,
+        )
+    except Exception:
+        improvement.finish(experiment, [], [], failed=True)
+        raise
     incoming = result["tenders"]
     known_ids = {str(row.get("id")) for row in store.load_tenders() if row.get("id")}
     for row in incoming:
@@ -274,6 +287,7 @@ def run_collect(store: TenderStore | None = None) -> dict[str, Any]:
         row["stage"] = "go" if decision["go"] else "no-go"
         row["matched"] = True
     store.upsert_tenders(incoming)
+    improvement.finish(experiment, incoming, result.get("reports", []))
     if result.get("discovered_sources"):
         store.merge_discoveries(result["discovered_sources"])
     fresh = [row for row in incoming if str(row.get("id")) not in known_ids]

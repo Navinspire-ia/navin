@@ -1,11 +1,16 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DESK_PANEL_STYLES } from "../desk-panel";
+import { Children, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Customizer,
+  Dropdown,
   DefaultButton,
+  Dialog,
+  DialogFooter,
+  DialogType,
   Icon,
   IconButton,
   MessageBar,
@@ -18,6 +23,7 @@ import {
   Toggle,
   createTheme,
   type IContextualMenuItem,
+  type IButtonProps,
 } from "@fluentui/react";
 import "@/lib/fluent-icons";
 import { useTranslation } from "react-i18next";
@@ -30,6 +36,9 @@ import type { CareerLoopSchedule } from "@/lib/career-api";
 import { browserTimeZone } from "@/lib/trading-loop-schedule";
 import { CareerFilters } from "@/components/studio/career/CareerFilters";
 import { CareerWizard } from "@/components/studio/career/CareerWizard";
+import { CareerProspecting, type ProspectTab } from "./CareerProspecting";
+import { prospectingError } from "@/lib/career-prospecting";
+import { DeskReset } from "../DeskReset";
 import {
   CareerMailAccountSummary, CareerMailCompose, CareerMailReceiptView, CareerMailSettings, careerMailError,
 } from "@/components/studio/career/CareerMailPanel";
@@ -395,6 +404,18 @@ export function CareerWorkspace({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
   const [mailSettingsOpen, setMailSettingsOpen] = useState(false);
+  const [prospectPanel, setProspectPanel] = useState<{ tab: ProspectTab; offer: string } | null>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerWidth, setHeaderWidth] = useState(0);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const observer = new ResizeObserver(() => setHeaderWidth(header.clientWidth));
+    observer.observe(header);
+    setHeaderWidth(header.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+  const [resetOpen, setResetOpen] = useState(false);
   const [mailOfferId, setMailOfferId] = useState("");
   const [mailPreview, setMailPreview] = useState<CareerMailDraft | null>(null);
 
@@ -512,7 +533,8 @@ export function CareerWorkspace({
         if (isAbortError(err) || signal?.aborted) return null;
         const status = err instanceof ApiError ? err.status : 0;
         if (!status || status >= 500) setApiOffline(true);
-        setError(careerMailError((err as Error).message || tx("actionFailed", "Career action failed."), i18n.language.startsWith("fr")));
+        const french = i18n.language.startsWith("fr");
+        setError(prospectingError(careerMailError((err as Error).message || tx("actionFailed", "Career action failed."), french), french));
         return null;
       } finally {
         if (!signal?.aborted) setBusy("");
@@ -616,11 +638,14 @@ export function CareerWorkspace({
   const scoredRows = useMemo(() => {
     return mergedRows
       .filter((row) => {
+        if (row.archived) return true;
         if (isJobListingPage(row.title || "", row.url || "")) return false;
         const stage = row.stage || "discovered";
         if (["applied", "replied", "interview", "offer", "won"].includes(stage)) {
           /* keep in-flight offers even if the title is a weak match */
-        } else if (!jobIsRelevant(row, profileForScore)) {
+        } else if (desk.profile.company_prospecting && row.search_scope?.eligible === false && !row.archived && !row.favorite) {
+          return false;
+        } else if (!desk.profile.company_prospecting && !jobIsRelevant(row, profileForScore)) {
           return false;
         }
         if (row.source === "remotive" || row.remote === "remote") return true;
@@ -629,7 +654,7 @@ export function CareerWorkspace({
       })
       .map((row) => scoreOpportunity(row, profileForScore))
       .sort((a, b) => Number(b.match_score || 0) - Number(a.match_score || 0));
-  }, [mergedRows, profileForScore, track]);
+  }, [mergedRows, profileForScore, track, desk.profile.company_prospecting]);
 
   const activeScored = useMemo(() => activeOffers(scoredRows), [scoredRows]);
   const rows = useMemo(() => {
@@ -714,6 +739,17 @@ export function CareerWorkspace({
   };
 
   const searchLive = async (text: string, mode: "search" | "find" = "search") => {
+    if (desk.profile.company_prospecting) {
+      setSearchNote("");
+      const result = await run("search", { query: text.trim(), track });
+      if (result) {
+        const last = result.prospecting?.last_run;
+        setSearchNote(last?.status === "complete"
+          ? tx("companyOfferSearchDone", "Offer search complete: {{count}} new offers. Source details are available in Tracking.", { count: last?.offers || 0 })
+          : tx("companyOfferSearchPartial", "Offer search partial: {{count}} new offers. Check source status in Tracking.", { count: last?.offers || 0 }));
+      }
+      return;
+    }
     const query = text.trim() || titles;
     const searchTitle = query.split(",")[0].trim() || query;
     const searchProfile = {
@@ -1006,6 +1042,10 @@ export function CareerWorkspace({
   };
 
   const openSetup = () => {
+    if (desk.profile.account_kind === "company") {
+      setProspectPanel({ tab: "criteria", offer: "" });
+      return;
+    }
     stayOnSetup.current = true;
     setView("setup");
   };
@@ -1021,6 +1061,36 @@ export function CareerWorkspace({
     if (result) setScheduleOpen(false);
   };
 
+  const headerNavigation = <>
+            <DefaultButton text={lang === "fr" ? "Missions" : "Missions"} iconProps={{ iconName: "PageList" }} styles={HEADER_BUTTON_STYLES} onClick={() => openOffers()} data-testid="career-open-offers" />
+            {showDesk && <PrimaryButton text={tx("search", "Search offers")} iconProps={{ iconName: "Search" }} disabled={Boolean(busy)} styles={HEADER_BUTTON_STYLES}
+              data-testid="career-search" onClick={() => {
+                if (desk.profile.company_prospecting) {
+                  setProspectPanel(null);
+                  openOffers({ view: "inbox", bucket: "all" });
+                  void searchLive("");
+                } else {
+                  const text = `${titles} ${track} ${primary} ${workMode} ${minRate ? `${minRate}/day` : ""} ${stack}`;
+                  void searchLive(text, "find");
+                  onSeed?.(`/career Find missions for: ${text}. Call career action=status first, then career action=find with this brief. Do not invent offers or experience.\n\n`);
+                  openOffers({ view: "inbox", bucket: "all" });
+                }
+              }} />}
+            <DefaultButton text={tx("candidatePool", "Profils")} iconProps={{ iconName: "People" }} styles={HEADER_BUTTON_STYLES}
+              onClick={() => { setError(""); setProspectPanel({ tab: "profiles", offer: "" }); }} data-testid="career-profiles" />
+            <DefaultButton text={lang === "fr" ? "Suivi" : "Tracking"} title={tx("companyTracking", "Suivi société")} iconProps={{ iconName: "ViewDashboard" }} styles={HEADER_BUTTON_STYLES}
+              onClick={() => { setError(""); setProspectPanel({ tab: "dashboard", offer: "" }); }} data-testid="career-company-dashboard" />
+            <DefaultButton text={tx("companyProspecting", "Société")} iconProps={{ iconName: "CityNext" }} styles={HEADER_BUTTON_STYLES}
+              onClick={() => { setError(""); setProspectPanel({ tab: "criteria", offer: "" }); }} data-testid="career-company" />
+            <DefaultButton text={lang === "fr" ? "Horaires" : "Schedule"} iconProps={{ iconName: "Calendar" }} styles={HEADER_BUTTON_STYLES}
+              onClick={() => { setScheduleMode(desk.loop?.enabled ? "edit" : "start"); setScheduleOpen(true); }} data-testid="career-schedule-open" />
+            <DefaultButton text="Emails" iconProps={{ iconName: "Mail" }} styles={HEADER_BUTTON_STYLES}
+              onClick={() => { setError(""); setMailSettingsOpen(true); }} data-testid="career-mail-open" />
+  </>;
+  const headerButtons = Children.toArray(headerNavigation.props.children) as ReactElement<IButtonProps & { "data-testid": string }>[];
+  const visibleHeaderButtons = Math.min(headerButtons.length, Math.max(0, Math.floor((headerWidth - 530) / 115)));
+  const quickIconStyles = headerWidth < 520 ? { ...ICON_BUTTON_STYLES, root: { width: 26, minWidth: 26, height: 36 } } : ICON_BUTTON_STYLES;
+
   return (
     <Customizer settings={{ theme: fluentTheme }}>
       <div
@@ -1028,209 +1098,56 @@ export function CareerWorkspace({
           "flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background",
           chatOpen ? "pr-0" : "",
         )}
+        data-desk-scroll-host
         style={{ paddingRight: NOTIFICATION_GUTTER, WebkitFontSmoothing: "antialiased" }}
       >
-        <header className="flex shrink-0 flex-nowrap items-center gap-x-3 px-5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)]">
-          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <h1
-              className="shrink-0 whitespace-nowrap text-xl font-semibold tracking-tight"
-              data-testid="career-title"
-            >
-              {tx("title", "Navin Career")}
-            </h1>
-            {!showWizard && desk.profile?.display_name ? (
-              <p className="max-w-[10rem] shrink-0 truncate text-sm font-medium text-muted-foreground">
-                {desk.profile.display_name}
-              </p>
-            ) : null}
-            <div
-              className="flex shrink-0 items-center gap-1.5"
-              role="tablist"
-              aria-label={tx("tracksAria", "Career tracks")}
-            >
-              {(["freelance", "jobs"] as const).map((id) => (
-                <motion.button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={track === id}
-                  whileTap={reduceMotion ? undefined : { scale: 0.96 }}
-                  className={cn(
-                    "min-h-9 cursor-pointer rounded-full px-3.5 text-sm font-medium outline outline-1 transition-[background-color,color] duration-150",
-                    track === id
-                      ? "bg-indigo-600 text-white outline-indigo-600"
-                      : "bg-background text-foreground outline-black/10 hover:bg-muted/50 dark:outline-white/10",
-                  )}
-                  onClick={() => {
-                    setTrack(id);
-                    if (pane === "pipeline" || pane === "interviews") {
-                      setPane(id === "freelance" ? "pipeline" : "interviews");
-                    }
-                    void run("profile", {
-                      track: id,
-                      engagement: id === "freelance" ? "freelance" : "permanent",
-                    });
-                  }}
-                >
-                  {id === "freelance" ? tx("trackFreelance", "Freelance") : tx("trackJobs", "Jobs")}
-                </motion.button>
-              ))}
-            </div>
-            {showDesk || (showWizard && canLeaveSetup) ? (
-              pane === "offers" && view === "work" ? (
-                <PrimaryButton
-                  text={tx("offerBook", "Offers")}
-                  title={tx("offerBook", "Offers")}
-                  iconProps={{ iconName: "PageList" }}
-                  onClick={() => openOffers()}
-                  styles={HEADER_BUTTON_STYLES}
-                  data-testid="career-open-offers"
-                />
-              ) : (
-                <DefaultButton
-                  text={tx("offerBook", "Offers")}
-                  title={tx("offerBook", "Offers")}
-                  iconProps={{ iconName: "PageList" }}
-                  onClick={() => openOffers()}
-                  styles={HEADER_BUTTON_STYLES}
-                  data-testid="career-open-offers"
-                />
-              )
-            ) : null}
-            {showDesk ? (
-              desk.loop?.enabled ? (
-                <PrimaryButton
-                  text={tx("pause", "Pause")}
-                  title={tx("pauseTitle", "Pause the loop")}
-                  ariaLabel={tx("pauseTitle", "Pause the loop")}
-                  iconProps={{ iconName: "Pause" }}
-                  onClick={() => void run("stop")}
-                  styles={HEADER_BUTTON_STYLES}
-                  data-testid="career-pause-loop"
-                />
-              ) : (
-                <PrimaryButton
-                  text={tx("startLoop", "Start")}
-                  title={tx("startLoopTitle", "Start the loop")}
-                  ariaLabel={tx("startLoopTitle", "Start the loop")}
-                  iconProps={{ iconName: "Play" }}
-                  onClick={() => {
-                    setScheduleMode("start");
-                    setScheduleOpen(true);
-                  }}
-                  disabled={Boolean(busy)}
-                  styles={HEADER_BUTTON_STYLES}
-                  data-testid="career-start-loop"
-                />
-              )
-            ) : null}
-            {showDesk ? (
-              <DefaultButton
-                text={tx("cycle", "Run")}
-                title={tx("cycleTitle", "Run a cycle")}
-                ariaLabel={tx("cycleTitle", "Run a cycle")}
-                iconProps={{ iconName: "Sync" }}
-                onClick={() => void run("tick", { force: true })}
-                disabled={Boolean(busy)}
-                styles={HEADER_BUTTON_STYLES}
-              />
-            ) : null}
-            {showDesk ? (
-              <PrimaryButton
-                text={tx("findMission", "Find")}
-                title={tx("findMissionTitle", "Find me a mission")}
-                ariaLabel={tx("findMissionTitle", "Find me a mission")}
-                iconProps={{ iconName: "Search" }}
-                disabled={Boolean(busy)}
-                onClick={() => {
-                  const text = `${titles} ${track} ${primary} ${workMode} ${minRate ? `${minRate}/day` : ""} ${stack}`;
-                  void searchLive(text, "find");
-                  onSeed?.(
-                    `/career Find missions for: ${text}. Call career action=status first (full local book). Then career action=find with this brief. Ingest LinkedIn MCP search_jobs hits (never scrape). Do not invent offers or experience.\n\n`,
-                  );
-                  openOffers({ view: "inbox", bucket: "all" });
-                }}
-                styles={HEADER_BUTTON_STYLES}
-              />
-            ) : null}
+        <header ref={headerRef} data-testid="career-header" className="flex shrink-0 flex-nowrap items-center gap-1 px-2 py-3 sm:gap-2 sm:px-5">
+          <div className="min-w-0 shrink-0" style={{ width: headerWidth < 520 ? 76 : undefined }}>
+            <h1 className="truncate text-lg font-semibold tracking-tight" data-testid="career-title">{tx("title", "Navin Career")}</h1>
+            {!showWizard && desk.profile?.display_name && <p className="truncate text-xs text-muted-foreground">{desk.profile.display_name}</p>}
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            {onToggleChat ? (
-              <IconButton
-                ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                title={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
-                iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
-                onClick={onToggleChat}
-                aria-pressed={Boolean(chatOpen)}
-                checked={Boolean(chatOpen)}
-                styles={ICON_BUTTON_STYLES}
-                data-testid="career-toggle-chat"
-              />
-            ) : null}
-            <IconButton
-              ariaLabel={tx("settings", "Settings")}
-              title={tx("profileConfig", "Profile setup")}
-              iconProps={{ iconName: "Settings" }}
-              onClick={() => {
-                if (showWizard && canLeaveSetup) openOffers();
-                else openSetup();
-              }}
-              checked={showWizard}
-              styles={ICON_BUTTON_STYLES}
-              data-testid="career-open-setup"
-            />
-            <IconButton
-              ariaLabel={tx("refresh", "Refresh")}
-              title={tx("refresh", "Refresh")}
-              iconProps={{ iconName: "Refresh" }}
-              disabled={Boolean(busy)}
-              onClick={() => void refreshDesk()}
-              styles={ICON_BUTTON_STYLES}
-              data-testid="career-refresh"
-            />
+          <Dropdown ariaLabel={tx("tracksAria", "Career tracks")} selectedKey={track}
+            styles={{ root: { width: headerWidth < 520 ? 80 : 115, flexShrink: 0 }, title: { height: 40, lineHeight: 38, fontSize: headerWidth < 520 ? 11 : undefined }, caretDownWrapper: { height: 40, lineHeight: 38 } }}
+            options={[{ key: "freelance", text: tx("trackFreelance", "Freelance") }, { key: "jobs", text: tx("trackJobs", "Jobs") }]}
+            onChange={(_, option) => {
+              const id = option?.key as CareerTrack;
+              setTrack(id);
+              if (pane === "pipeline" || pane === "interviews") setPane(id === "freelance" ? "pipeline" : "interviews");
+              void run("profile", { track: id, engagement: id === "freelance" ? "freelance" : "permanent" });
+            }} />
+          <div className="order-last ml-auto flex shrink-0 items-center" data-testid="career-quick-actions" style={{ gap: headerWidth < 600 ? 0 : 4 }}>
+            {onToggleChat && <IconButton ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")} title={tx("chat", "Chat")} iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }} onClick={onToggleChat}
+              checked={Boolean(chatOpen)} styles={quickIconStyles} data-testid="career-toggle-chat" />}
+            <IconButton ariaLabel={desk.loop?.enabled ? tx("pause", "Pause") : tx("startLoop", "Start")} title={desk.loop?.enabled ? tx("pause", "Pause") : tx("startLoop", "Start")}
+              iconProps={{ iconName: desk.loop?.enabled ? "Pause" : "Play" }} disabled={Boolean(busy) && !desk.loop?.enabled} styles={quickIconStyles}
+              data-testid={desk.loop?.enabled ? "career-pause-loop" : "career-start-loop"} onClick={() => {
+                if (desk.loop?.enabled) void run("stop");
+                else { setScheduleMode("start"); setScheduleOpen(true); }
+              }} />
+            <IconButton ariaLabel={tx("refresh", "Refresh")} title={tx("refresh", "Refresh")} iconProps={{ iconName: "Refresh" }} disabled={Boolean(busy)} styles={quickIconStyles}
+              onClick={() => void refreshDesk()} data-testid="career-refresh" />
+            <IconButton ariaLabel={lang === "fr" ? "Vider les offres" : "Clear offers"} title={lang === "fr" ? "Vider les offres" : "Clear offers"} iconProps={{ iconName: "Archive" }} disabled={Boolean(busy)} styles={quickIconStyles}
+              onClick={() => { setError(""); setResetOpen(true); }} data-testid="career-reset" />
+          </div>
+          <div className="flex min-w-0 shrink-0 flex-nowrap items-center gap-1.5" data-testid="career-navigation">
+            {headerButtons.slice(0, visibleHeaderButtons)}
+            <IconButton ariaLabel={lang === "fr" ? "Menu Carrière" : "Career menu"} title={lang === "fr" ? "Plus" : "More"}
+              iconProps={{ iconName: "More" }} styles={quickIconStyles} data-testid="career-menu"
+              menuProps={{ items: [
+                ...headerButtons.slice(visibleHeaderButtons).map(button => ({
+                  key: button.props["data-testid"], text: button.props.text, iconProps: button.props.iconProps,
+                  disabled: button.props.disabled, onClick: button.props.onClick as IContextualMenuItem["onClick"],
+                })),
+                ...(showDesk ? panes.map(item => ({
+                  key: `career-pane-${item.id}`, text: tx(`pane.${item.id}`, item.id),
+                  iconProps: { iconName: item.icon }, secondaryText: badgeFor(item.id) ? String(badgeFor(item.id)) : undefined,
+                  canCheck: true, checked: pane === item.id, onClick: () => { setPane(item.id); },
+                })) : []),
+                { key: "cycle", text: tx("cycleTitle", "Run a cycle"), disabled: Boolean(busy), iconProps: { iconName: "Sync" }, onClick: () => { void run("tick", { force: true }); } },
+              ] }} />
           </div>
         </header>
 
-        {showDesk ? (
-        <nav
-          className="shrink-0 overflow-x-auto px-5 shadow-[0_1px_0_rgba(15,23,42,0.06)] dark:shadow-[0_1px_0_rgba(255,255,255,0.08)]"
-          aria-label={tx("panesAria", "Career panes")}
-        >
-          <div className="mx-auto flex w-full min-w-max max-w-6xl items-stretch justify-end gap-0.5 py-1">
-            {panes.map((item) => {
-              const selectedPane = pane === item.id;
-              const badge = badgeFor(item.id);
-              return (
-                <motion.button
-                  key={item.id}
-                  type="button"
-                  whileTap={reduceMotion ? undefined : { scale: 0.96 }}
-                  onClick={() => {
-                    setPane(item.id);
-                  }}
-                  data-testid={`career-pane-${item.id}`}
-                  className={cn(
-                    "relative inline-flex min-h-14 min-w-[5.2rem] shrink-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl px-2.5 py-1.5 text-center transition-[background-color,color,box-shadow] duration-150",
-                    selectedPane
-                      ? "bg-indigo-500/16 font-medium text-foreground shadow-[0_6px_16px_rgba(15,23,42,0.08)]"
-                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                >
-                  <Icon iconName={item.icon} className="text-[18px] text-indigo-600 dark:text-indigo-300" aria-hidden />
-                  <span className="text-[11px] leading-none tracking-wide">
-                    {tx(`pane.${item.id}`, item.id)}
-                  </span>
-                  {badge ? (
-                    <span className="absolute right-1 top-1 rounded-full bg-indigo-500/25 px-1 text-[10px] tabular-nums leading-4">
-                      {badge}
-                    </span>
-                  ) : null}
-                </motion.button>
-              );
-            })}
-          </div>
-        </nav>
-        ) : null}
 
         <div
           data-testid="career-scroll"
@@ -1255,7 +1172,7 @@ export function CareerWorkspace({
             <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
               <ProgressIndicator
                 className="min-w-0 flex-1"
-                label={`${tx("working", "Working")} - ${busy}`}
+                label={tx("working", "Working")}
               />
               <DefaultButton
                 text={tx("stopSearch", "Stop search")}
@@ -1289,17 +1206,30 @@ export function CareerWorkspace({
                   onSeed={onSeed}
                   onSecret={async (name, value) => Boolean(await run("secret", { name, value }))}
                   onLeave={canLeaveSetup ? () => openOffers() : undefined}
+                  onCompanySetup={() => setProspectPanel({ tab: "criteria", offer: "" })}
                 />
               ) : null}
               {showDesk && pane === "offers" ? (
                 <OffersPane
                   tx={tx}
+                  error={error}
                   rows={rows}
                   allRows={scoredRows}
                   domainHints={domainHints}
                   selected={selected}
                   onSelect={selectOffer}
                   onOfferAction={(id, action) => void handleOfferAction(id, action)}
+                  onEmptyArchive={async () => {
+                    const result = await run("empty_archive", { confirmed: true });
+                    if (!result) return false;
+                    setLocalRows(current => current.filter(row => !row.archived));
+                    if (selected?.archived) setSelectedId("");
+                    return true;
+                  }}
+                  onMatch={id => {
+                    setError(""); setProspectPanel({ tab: "matches", offer: id });
+                    void run("prospecting_match", { id });
+                  }}
                   archiveAfterDays={
                     retentionDays({
                       archive_after_days: desk.profile.archive_after_days ?? desk.retention?.archive_after_days,
@@ -1448,6 +1378,23 @@ export function CareerWorkspace({
           onDismiss={() => setScheduleOpen(false)}
           onSubmit={(schedule, runNow) => void submitSchedule(schedule, runNow)}
         />
+        {prospectPanel && <CareerProspecting key={`${prospectPanel.tab}-${prospectPanel.offer}`} desk={desk}
+          initialTab={prospectPanel.tab} offerId={prospectPanel.offer} busy={Boolean(busy)} error={error} onRun={async (action, body) => {
+            const result = await run(action, body);
+            if (result && body?.activate_company) { stayOnSetup.current = false; setView("work"); }
+            return result;
+          }}
+          token={token || ""} onMail={() => setMailSettingsOpen(true)} onSchedule={() => { setScheduleMode(desk.loop?.enabled ? "edit" : "start"); setScheduleOpen(true); }}
+          onDismiss={() => setProspectPanel(null)} />}
+        <DeskReset open={resetOpen} module="career" archives={desk.archives || []} busy={Boolean(busy)} error={error}
+          onDismiss={() => setResetOpen(false)} onDownload={async id => (await run("archive_download", { id }))?.archive_file}
+          onReset={async () => {
+            const result = await run("archive_reset", { confirmed: true });
+            if (!result) return false;
+            setLocalRows([]); setLocalApps([]); setLocalInbox([]); setLocalFollowup(""); setSelectedId("");
+            setSearchNote(""); setPane("offers"); stayOnSetup.current = false; setView("work"); setResetOpen(false);
+            return true;
+          }} />
         <CareerMailSettings
           key={mailSettingsOpen ? "mail-settings-open" : "mail-settings-closed"}
           open={mailSettingsOpen}
@@ -1544,6 +1491,14 @@ function OfferDetail({
         <OfferBadges row={row} copy={copy} />
       </div>
       <OfferFactsRow facts={offerFacts(row, copy, locale, track)} />
+      {row.url && <div className="rounded-xl border border-border p-3">
+        <DefaultButton text={locale.startsWith("fr") ? "Ouvrir l'annonce d'origine" : "Open original listing"}
+          iconProps={{ iconName: "OpenInNewWindow" }} styles={BUTTON_STYLES} data-testid="career-original-link"
+          onClick={() => openOfficialCareerUrl(token, row.url || "")} />
+        <p className="mt-2 break-all text-xs text-muted-foreground">{row.url}</p>
+        {(row.source_links?.length || 0) > 1 && <div className="mt-2 flex flex-wrap gap-2">{row.source_links?.filter(link => link.url !== row.url).map(link =>
+          <DefaultButton key={link.url} text={link.source || "Source"} title={link.url} styles={BUTTON_STYLES} onClick={() => openOfficialCareerUrl(token, link.url)} />)}</div>}
+      </div>}
       <p className="max-h-64 overflow-auto whitespace-pre-wrap text-pretty text-sm leading-relaxed">
         {description || tx("noDescription", "No description stored. Open the original URL.")}
       </p>
@@ -1915,6 +1870,7 @@ function OfferCard({
   listView,
   onSelect,
   onOfferAction,
+  onMatch,
 }: {
   row: CareerOpportunity;
   tx: Tx;
@@ -1926,6 +1882,7 @@ function OfferCard({
   listView: OfferListView;
   onSelect: (id: string) => void;
   onOfferAction: (id: string, action: OfferRowAction) => void;
+  onMatch?: (id: string) => void;
 }) {
   const starred = Boolean(row.favorite) && !row.archived;
   const facts = offerFacts(row, copy, locale, track);
@@ -1992,6 +1949,8 @@ function OfferCard({
           <h3 className="text-balance text-lg font-semibold leading-snug hover:underline">{row.title}</h3>
         </button>
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {onMatch && <DefaultButton text={tx("searchCandidates", "Search profiles")} iconProps={{ iconName: "People" }}
+            onClick={() => onMatch(row.id)} styles={BUTTON_STYLES} />}
           {tags.map((tag) => (
             <span key={tag} className="rounded-md bg-amber-300/30 px-1.5 py-0.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
               {tag}
@@ -2044,12 +2003,15 @@ function OfferCard({
 
 function OffersPane({
   tx,
+  error,
   rows,
   allRows,
   domainHints,
   selected,
   onSelect,
   onOfferAction,
+  onEmptyArchive,
+  onMatch,
   archiveAfterDays,
   deleteAfterDays,
   searchNote,
@@ -2072,12 +2034,15 @@ function OffersPane({
   track = "freelance",
 }: {
   tx: Tx;
+  error: string;
   rows: CareerOpportunity[];
   allRows: CareerOpportunity[];
   domainHints: string[];
   selected: CareerOpportunity | null;
   onSelect: (id: string) => void;
   onOfferAction: (id: string, action: OfferRowAction) => void;
+  onEmptyArchive: () => Promise<boolean>;
+  onMatch?: (id: string) => void;
   archiveAfterDays: number;
   deleteAfterDays: number;
   searchNote?: string;
@@ -2100,6 +2065,7 @@ function OffersPane({
   track?: CareerTrack;
 }) {
   const [page, setPage] = useState(1);
+  const [confirmEmptyArchive, setConfirmEmptyArchive] = useState(false);
   const [facet, setFacet] = useState<OfferFacetFilter>(emptyOfferFilter);
   const favorites = useMemo(() => favoriteOffers(allRows), [allRows]);
   const archived = useMemo(() => archivedOffers(allRows), [allRows]);
@@ -2124,8 +2090,8 @@ function OffersPane({
 
   const copy = factsCopy(tx);
   const listTabs = (
-    <div className="flex shrink-0 flex-nowrap items-center gap-2">
-      <div className="flex flex-nowrap gap-1.5" role="group" aria-label={tx("bucketAria", "Match filters")}>
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={tx("bucketAria", "Match filters")}>
         {(["all", "perfect", "good", "skip"] as const).map((id) => (
           <button
             key={id}
@@ -2142,7 +2108,7 @@ function OffersPane({
           </button>
         ))}
       </div>
-      <div className="flex flex-nowrap gap-1.5" role="tablist" aria-label={tx("listViews", "Offer lists")}>
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label={tx("listViews", "Offer lists")}>
         {(
           [
             { id: "inbox" as const, label: "resultsTitle", fallback: "Offers", count: rows.length },
@@ -2184,6 +2150,7 @@ function OffersPane({
 
       {pool.length === 0 ? (
         <Surface className="space-y-4 p-6">
+          {listTabs}
           <h3 className="text-balance text-lg font-semibold">
             {listView === "favorites"
               ? tx("favoritesEmptyTitle", "No favorites yet")
@@ -2232,6 +2199,9 @@ function OffersPane({
             onChange={setFacet}
             leading={listTabs}
             trailing={
+              <>
+              {listView === "archive" && <DefaultButton text={tx("emptyArchive", "Empty archive")} iconProps={{ iconName: "Delete" }}
+                disabled={busy} onClick={() => setConfirmEmptyArchive(true)} styles={BUTTON_STYLES} />}
               <IconButton
                 iconProps={{ iconName: "Download" }}
                 disabled={!filtered.length}
@@ -2263,6 +2233,7 @@ function OffersPane({
                 data-testid="career-export"
                 styles={ICON_BUTTON_STYLES}
               />
+              </>
             }
           />
           {listView !== "inbox" ? (
@@ -2312,10 +2283,11 @@ function OffersPane({
                 listView={listView}
                 onSelect={onSelect}
                 onOfferAction={onOfferAction}
+                onMatch={onMatch}
               />
             ))}
           </div>
-          <Panel
+          <Panel styles={DESK_PANEL_STYLES}
             isOpen={Boolean(selected)}
             isLightDismiss
             type={PanelType.medium}
@@ -2355,6 +2327,19 @@ function OffersPane({
           ) : null}
         </div>
       )}
+      <Dialog hidden={!confirmEmptyArchive} onDismiss={() => { if (!busy) setConfirmEmptyArchive(false); }}
+        modalProps={{ isBlocking: true }} dialogContentProps={{ type: DialogType.normal,
+          closeButtonAriaLabel: tx("emptyArchiveClose", "Close"),
+          title: tx("emptyArchiveTitle", "Empty the archive?"),
+          subText: tx("emptyArchiveConfirm", "All {{count}} archived offers and their candidate matches will be permanently deleted, including offers hidden by the current filters.", { count: archived.length }) }}>
+        {error && <MessageBar messageBarType={MessageBarType.error}>{error}</MessageBar>}
+        <DialogFooter>
+          <DefaultButton text={tx("emptyArchiveCancel", "Cancel")} disabled={busy} onClick={() => setConfirmEmptyArchive(false)} />
+          <PrimaryButton text={tx("emptyArchive", "Empty archive")} disabled={busy} onClick={async () => {
+            if (await onEmptyArchive()) setConfirmEmptyArchive(false);
+          }} />
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }
@@ -2714,7 +2699,7 @@ function ApplicationsPane({
           </Surface>
         );
       })}
-      <Panel
+      <Panel styles={DESK_PANEL_STYLES}
         isOpen={Boolean(open)}
         isLightDismiss
         type={PanelType.medium}

@@ -82,6 +82,7 @@ CODE_BUILD_ALLOWED_TOOLS: frozenset[str] = frozenset(
         "list_exec_sessions",
         "git",
         "verify",
+        "improvement",
         "lint",
         "test_run",
         "code_review",

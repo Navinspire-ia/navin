@@ -16,6 +16,7 @@ from navin.career.errors import CareerError
 def default_mailbox() -> dict[str, Any]:
     return {
         "enabled": False,
+        "account_id": "",
         "sender_name": "",
         "sender_email": "",
         "smtp_host": "",
@@ -44,7 +45,7 @@ def normalize_mailbox(raw: Any) -> dict[str, Any]:
     for key in ("enabled", "read_replies", "auto_send"):
         result[key] = result[key] is True
     for key in (
-        "sender_name", "sender_email", "smtp_host", "smtp_username",
+        "account_id", "sender_name", "sender_email", "smtp_host", "smtp_username",
         "imap_host", "imap_username", "imap_folder",
     ):
         result[key] = str(result[key] or "").strip()[:254]
@@ -87,6 +88,13 @@ def email_address(value: Any) -> str:
 
 
 def validate_mailbox(config: dict[str, Any], *, protocol: str = "smtp") -> None:
+    if config.get("account_id"):
+        from navin.accounts.store import AccountStore
+
+        account = AccountStore().account(config["account_id"])
+        if account["email"].casefold() != str(config.get("sender_email") or "").casefold():
+            raise CareerError("The sender address does not match the connected account.")
+        return
     if protocol == "smtp":
         email_address(config.get("sender_email"))
     for key in (f"{protocol}_host", f"{protocol}_username"):

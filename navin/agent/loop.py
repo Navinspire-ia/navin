@@ -804,6 +804,9 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
+        if self._hook_factories:
+            from navin.improvement.skills import resume_learning_in_background
+            resume_learning_in_background(workspace, self.sessions)
         self.turn_recovery = TurnRecovery(self.sessions)
         self.tools = ToolRegistry()
         # One file-read/write tracker per logical session. The tool registry is

@@ -257,6 +257,24 @@
     height: 0;
   }
 
+  /* Fluent portals sit outside desk containers, including company forms and country menus. */
+  html.native-host :is(.ms-Panel-scrollableContent, .ms-Modal-scrollableContent, .ms-Callout-main, .ms-ComboBox-optionsContainerWrapper, .ms-Dropdown-itemsWrapper) {
+    scrollbar-width: thin !important;
+    scrollbar-gutter: stable !important;
+    scrollbar-color: var(--scrollbar-thumb-hover) transparent !important;
+  }
+
+  html.native-host :is(.ms-Panel-scrollableContent, .ms-Modal-scrollableContent, .ms-Callout-main, .ms-ComboBox-optionsContainerWrapper, .ms-Dropdown-itemsWrapper)::-webkit-scrollbar {
+    display: block !important;
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  html.native-host :is(.ms-Panel-scrollableContent, .ms-Modal-scrollableContent, .ms-Callout-main, .ms-ComboBox-optionsContainerWrapper, .ms-Dropdown-itemsWrapper)::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb-hover) !important;
+    border-radius: 8px;
+  }
+
   /*
    * The chat model picker and the Questions card must keep a visible,
    * usable scrollbar even when the desktop chrome (`native-host` /

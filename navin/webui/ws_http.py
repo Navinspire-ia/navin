@@ -1004,6 +1004,8 @@ class GatewayHTTPHandler:
             return await self._handle_tenders(request)
         if re.match(r"^/api/career$", got):
             return await self._handle_career(request)
+        if re.match(r"^/api/accounts$", got):
+            return await self._handle_accounts(request)
         if re.match(r"^/api/leads$", got):
             return await self._handle_leads(request)
         if re.match(r"^/api/trading$", got):
@@ -2696,6 +2698,26 @@ class GatewayHTTPHandler:
             self._log.exception("leads desk failed action={}", action)
             return _http_error(500, str(exc) or "leads desk failed")
         return _http_json_response(payload)
+
+    async def _handle_accounts(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.accounts.store import AccountError
+        from navin.webui.accounts_api import handle_accounts_action
+
+        query = _parse_query(request.path)
+        action = (_query_first(query, "action") or "snapshot").strip()
+        try:
+            raw = file_body_from_headers(request.headers) or "{}"
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                return _http_error(400, "invalid account payload")
+            payload = await asyncio.to_thread(handle_accounts_action, action, body)
+            return _http_json_response(payload)
+        except AccountError as exc:
+            return _http_error(exc.status, exc.message)
+        except (ValueError, WebUIFilePreviewError):
+            return _http_error(400, "invalid account payload")
 
     async def _handle_career(self, request: WsRequest) -> Response:
         """Navin Career desk (Freelance + Jobs). Same store as the `career` tool."""

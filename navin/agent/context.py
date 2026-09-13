@@ -140,6 +140,11 @@ class ContextBuilder:
         disabled = set(self.skills.disabled_skills)
         if extra_disabled_skills:
             disabled.update(extra_disabled_skills)
+        from navin.improvement.skills import excluded_skills
+        try:
+            disabled.update(excluded_skills(root, session_metadata))
+        except (OSError, ValueError, TypeError):
+            pass
         same_root = (
             root.expanduser().resolve(strict=False)
             == self.workspace.expanduser().resolve(strict=False)
@@ -149,7 +154,7 @@ class ContextBuilder:
         # from the gateway's default workspace (identity.md promises this and
         # the Brain panel edits the project file).
         memory_store = self.memory if same_root else MemoryStore(root)
-        if same_root and not extra_disabled_skills:
+        if same_root and disabled == set(self.skills.disabled_skills):
             skills = self.skills
         else:
             skills = SkillsLoader(
@@ -209,6 +214,11 @@ class ContextBuilder:
         owned = skills.owned_skills()
         owned_names = [entry["name"] for entry in owned[:MAX_OWNED_PRELOAD]]
         mentioned = skills.mentioned_skill_names(current_message or "")
+        from navin.improvement.skills import applicable_skills
+        try:
+            learned = applicable_skills(root, current_message, session_metadata)
+        except (OSError, ValueError, TypeError):
+            learned = []
         seen_active: set[str] = set(action_skills.requested if action_skills else ())
 
         def _take(names: Sequence[str] | None) -> list[str]:
@@ -224,7 +234,7 @@ class ContextBuilder:
         if slim_skill_preload:
             # Mentioned $skills first: the user named the playbook for this task.
             body_names = _take(
-                [name for name in always_skills if name == "memory"] + list(mentioned)
+                [name for name in always_skills if name == "memory"] + list(mentioned) + learned
             )
             suggested = _take(
                 [name for name in always_skills if name != "memory"]
@@ -254,7 +264,7 @@ class ContextBuilder:
                 blocks.append(bodies)
             parts.append("# Active Skills\n\n" + "\n\n".join(blocks))
         else:
-            active_skills = _take(list(always_skills) + list(skill_names or []))
+            active_skills = _take(list(always_skills) + list(skill_names or []) + learned)
             active_skills.extend(_take(owned_names))
             active_skills.extend(_take(mentioned))
             if active_skills:

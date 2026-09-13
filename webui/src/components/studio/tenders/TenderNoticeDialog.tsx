@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { DefaultButton, Dialog, DialogFooter, DialogType, PrimaryButton } from "@fluentui/react";
+import { DESK_MODAL_STYLES } from "../desk-panel";
 
 import { NoticeGoButtons } from "@/components/studio/tenders/NoticeGoButtons";
 import { TenderFactsRow } from "@/components/studio/tenders/TenderFactsRow";
@@ -128,9 +129,9 @@ export function TenderNoticeDialog({
     <Dialog
       hidden={false}
       onDismiss={onDismiss}
-      minWidth={640}
+      minWidth="min(640px, calc(100vw - 24px))"
       maxWidth={920}
-      modalProps={{ isBlocking: true, dragOptions: undefined }}
+      modalProps={{ isBlocking: true, dragOptions: undefined, styles: DESK_MODAL_STYLES }}
       dialogContentProps={{
         type: DialogType.largeHeader,
         title: tx("readStep", "1. This notice"),

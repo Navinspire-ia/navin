@@ -109,6 +109,8 @@ SHA256SUMS*.txt
 /navin/update/default_base_url.txt
 # Written by the packaging scripts: the extras compiled into that build.
 /navin/bundled_extras.txt
+# Shared desktop OAuth registration, imported locally or staged by release CI.
+/navin/accounts/publisher.json
 build/
 *.manifest
 # The generic Python template ignores *.spec for the specs PyInstaller

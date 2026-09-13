@@ -114,7 +114,9 @@ def employers_payload(store: CareerStore, profile: dict[str, Any]) -> dict[str, 
 
 def snapshot(store: CareerStore) -> dict[str, Any]:
     from navin.career.mail import load_mail_state, mailbox_status, public_receipt
+    from navin.career.prospecting import prospecting_snapshot
     from navin.career.retention import apply_retention, retention_days
+    from navin.desk_archive import list_archives
 
     apply_retention(store)
     profile = store.load_profile()
@@ -123,7 +125,14 @@ def snapshot(store: CareerStore) -> dict[str, Any]:
     _ensure_store_files(store, profile)
     write_local_index(store, profile)
     rows = store.load_opportunities()
-    live = [row for row in rows if not row.get("archived")]
+    prospecting = prospecting_snapshot(store)
+    if profile.get("company_prospecting"):
+        from navin.career.scope import offer_rejection
+
+        for row in rows:
+            reason = offer_rejection(row, prospecting["criteria"])
+            row["search_scope"] = {"eligible": not reason, "reason": reason}
+    live = [row for row in rows if not row.get("archived") and row.get("search_scope", {}).get("eligible", True)]
     apps = store.load_applications()
     # The durable SMTP receipt survives a later preparation or stale scrape write.
     receipts = load_mail_state(store)["outbox"]
@@ -141,6 +150,8 @@ def snapshot(store: CareerStore) -> dict[str, Any]:
     kpis = _kpis(live, apps, inbox)
     return {
         "profile": public_profile,
+        "prospecting": prospecting,
+        "archives": list_archives(store.root),
         "mailbox_status": mailbox_status(store),
         "opportunities": rows,
         "applications": apps,
@@ -275,12 +286,22 @@ def ingest_hits(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, list):
         raw = body.get("hits") if isinstance(body.get("hits"), list) else []
     profile = store.load_profile()
+    from navin.career.prospecting import prospecting_snapshot
+    from navin.career.scope import offer_rejection
+
+    criteria = prospecting_snapshot(store)["criteria"] if profile.get("company_prospecting") else None
     incoming: list[dict[str, Any]] = []
     for row in raw[:80]:
         if not isinstance(row, dict):
             continue
         job = _normalize_ingest_row(row, body, profile)
         if not job:
+            continue
+        for key in ("daily_rate_min", "daily_rate_max", "salary_min", "salary_max", "posted_at", "published_at"):
+            if key in row:
+                job[key] = row[key]
+        enrich_facts(job)
+        if criteria and offer_rejection(job, criteria):
             continue
         incoming.append(score_opportunity(job, profile))
     if incoming:
@@ -649,6 +670,8 @@ def find_mission(store: CareerStore, brief: str) -> dict[str, Any]:
     if not text:
         raise CareerError("brief is required")
     profile = store.load_profile()
+    if profile.get("company_prospecting"):
+        return run_search(store, {"query": text})
     if "freelance" in text.lower() or "tjm" in text.lower() or "€" in text or "/day" in text.lower():
         profile["track"] = "freelance"
         profile["engagement"] = "freelance"

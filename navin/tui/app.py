@@ -423,6 +423,9 @@ class NavinApp(App[None]):
         self.runtime = TuiRuntime(config, session_id=session_id, on_event=self._on_runtime_event)
         self.slash_rows: list[dict[str, Any]] = []
         self._current: AssistantMessage | None = None
+        self._last_speaker: str | None = None
+        self._render_token = 0
+        self._history_lock = asyncio.Lock()
         self._pending_approvals: dict[str, ApprovalCard] = {}
         self._pending_choices: dict[str, ChoiceCard] = {}
         self._activity: list[str] = []
@@ -485,7 +488,7 @@ class NavinApp(App[None]):
     def _tick_spinner(self) -> None:
         if self.runtime.status.turn_active:
             self._spin += 1
-            self._set_status()
+            self._set_status(animation_only=True)
         self._refresh_working_line()
         key = self.runtime.session_key
         if self._queue_visible_session != key:
@@ -654,13 +657,14 @@ class NavinApp(App[None]):
     def composer(self) -> Composer:
         return self.query_one(Composer)
 
-    def _set_status(self, extra: str = "") -> None:
+    def _set_status(self, extra: str = "", *, animation_only: bool = False) -> None:
         st = self.runtime.status
         mode = get_mode(self.prefs.mode)
-        reasoning = ""
-        if self._engine_ready:
+        reasoning = getattr(self, "_reasoning_label", "")
+        if self._engine_ready and not animation_only:
             with contextlib.suppress(Exception):
                 reasoning = self.runtime.reasoning_details()[0]
+                self._reasoning_label = reasoning
         try:
             self.query_one("#composer-shell", ComposerShell).set_busy(st.turn_active)
         except Exception:  # noqa: BLE001 - shell not mounted yet
@@ -679,10 +683,11 @@ class NavinApp(App[None]):
             )
         except Exception:  # noqa: BLE001 - meta not mounted yet
             pass
-        with contextlib.suppress(Exception):
-            self.query_one("#dock", DockBar).set_panel(self.prefs.sidebar)
-        with contextlib.suppress(Exception):
-            self.query_one(Sidebar).set_panel_label(self.prefs.sidebar)
+        if not animation_only:
+            with contextlib.suppress(Exception):
+                self.query_one("#dock", DockBar).set_panel(self.prefs.sidebar)
+            with contextlib.suppress(Exception):
+                self.query_one(Sidebar).set_panel_label(self.prefs.sidebar)
 
     def _render_mode(self) -> None:
         self._refresh_side()
@@ -827,34 +832,75 @@ class NavinApp(App[None]):
 
     async def _ensure_assistant(self) -> AssistantMessage:
         if self._current is None:
-            self._current = AssistantMessage(self._model_label())
+            self._current = AssistantMessage(
+                self._model_label(), show_head=self._last_speaker != "assistant"
+            )
+            self._last_speaker = "assistant"
             await self.transcript.add(self._current)
             return self._current
         if self._current.finished:
+            self._current.hide_finish()
             self._current.finished = False
         return self._current
 
+    def _invalidate_history(self) -> int:
+        """Stop any in-flight history paint (session switch, clear, reload)."""
+        self._render_token += 1
+        return self._render_token
+
     async def _render_history(self) -> None:
+        token = self._invalidate_history()
+        async with self._history_lock:
+            if token != self._render_token:
+                return
+            await self._paint_history(token)
+
+    async def _paint_history(self, token: int) -> None:
+        def stale() -> bool:
+            return token != self._render_token
+
         rows, older = self.runtime.history()
+        if stale():
+            return
         if older:
             await self._note(
                 f"{older} older messages not shown. PageUp / Ctrl+Up scrolls this chat.",
                 "quiet",
             )
+            if stale():
+                return
         if not rows:
             return
         show_tools = self.prefs.show_tools
-        for row in rows:
+        last_assistant = max(
+            (i for i, row in enumerate(rows) if row["role"] != "user"), default=-1
+        )
+        prev_role: str | None = None
+
+        for row_index, row in enumerate(rows):
+            if stale():
+                return
             if row["role"] == "user":
-                await self.transcript.add(UserMessage(row["content"]))
+                await self.transcript.add(
+                    UserMessage(row["content"], show_head=prev_role != "user")
+                )
+                if stale():
+                    return
+                prev_role = "user"
                 continue
             meta = row.get("metadata") or {}
             block = AssistantMessage(
-                self._model_label(str(meta.get("model") or "") or None)
+                self._model_label(str(meta.get("model") or "") or None),
+                show_head=prev_role != "assistant",
             )
+            prev_role = "assistant"
             await self.transcript.add(block)
+            if stale() or not block.is_attached:
+                return
             await block.set_text(row.get("content") or "")
             for tool in row.get("tools") or []:
+                if stale() or not block.is_attached:
+                    return
                 result = tool.get("result")
                 name = str(tool.get("name") or "tool")
                 args = tool.get("arguments") or {}
@@ -870,6 +916,8 @@ class NavinApp(App[None]):
                 )
                 edits = tool.get("file_edits") or []
                 for payload in edits if show_tools else []:
+                    if stale() or not block.is_attached:
+                        return
                     event = UiFileEdit.from_payload(payload)
                     await block.note_file_edit(
                         event.path, event.added, event.removed, diff=event.diff,
@@ -885,11 +933,16 @@ class NavinApp(App[None]):
                     await block.note_file_edit(
                         path, plus, minus, call_id=str(tool.get("id") or name), kind="edit",
                     )
+            if stale() or not block.is_attached:
+                return
             await block.finish(
                 latency_ms=meta.get("latency_ms"),
                 model=meta.get("model"),
                 preset=meta.get("model_preset"),
+                rule=row_index == last_assistant,
             )
+        if stale():
+            return
         self.transcript.scroll_end(animate=False)
 
     # -- composer ---------------------------------------------------------
@@ -939,7 +992,7 @@ class NavinApp(App[None]):
         if text.startswith("/") and await self._run_tui_slash(text):
             return
         if text.lower() in {"stop", "/stop"} and self.runtime.turn_active:
-            await self.action_stop_turn()
+            await self._request_stop("/stop")
             return
         key = self.runtime.session_key
         ordinary_prompt = not text.startswith("/") or text.split(None, 1)[0].lower() in ROUTING_COMMANDS
@@ -955,7 +1008,8 @@ class NavinApp(App[None]):
         await self._send_prompt(text, inbound, followup=followup)
 
     async def _send_prompt(self, text: str, inbound: str, *, followup: bool = False, restore_input: bool = True) -> bool:
-        user = UserMessage(text)
+        user = UserMessage(text, show_head=self._last_speaker != "user")
+        self._last_speaker = "user"
         await self.transcript.add(user)
         if followup and self._current is not None:
             self.transcript.move_child(self._current, after=user)
@@ -1129,7 +1183,6 @@ class NavinApp(App[None]):
         if isinstance(event, UiStreamDelta):
             block = await self._ensure_assistant()
             await block.delta(event.text)
-            self.transcript.follow()
             return
         if isinstance(event, UiStreamEnd):
             if self._current is not None:
@@ -1216,6 +1269,7 @@ class NavinApp(App[None]):
             if block is None:
                 block = await self._ensure_assistant()
             elif block.finished:
+                block.hide_finish()
                 block.finished = False
             if not (event.streamed and block.streamed) and block.text.strip() != event.text.strip():
                 await block.set_text(event.text, render_as=event.render_as)
@@ -1374,39 +1428,53 @@ class NavinApp(App[None]):
         await self._note("\n".join(lines))
 
     async def action_stop_turn(self) -> None:
+        if len(self.screen_stack) > 1:
+            return
         menu = self.query_one(SlashMenu)
         if menu.visible_menu:
             menu.hide()
+            self.composer.menu_open = False
+            return
+        bar = self.query_one(FindBar)
+        if bar.display:
+            bar.hide()
+            self.composer.focus()
             return
         if self._pending_choices:
             card = next(iter(self._pending_choices.values()))
             if card.allow_skip:
                 card.answer(skipped=True)
                 return
+        await self._request_stop("Esc")
+
+    async def _request_stop(self, source: str) -> None:
         if self.runtime.turn_active:
             self._queue_paused.add(self.runtime.session_key)
             await self._refresh_queue()
             await self.runtime.stop_turn()
             self._refresh_working_line()
-            await self._note("[$warning]stop requested[/]", "warning")
+            await self._note(f"[$warning]Stop requested ({escape(source)})[/]", "warning")
             return
         self.composer.focus()
 
     async def action_interrupt_or_clear(self) -> None:
-        """Copy selected text first; otherwise cancel work or clear input."""
+        """Copy or clear the focused input before considering a task interrupt."""
         selected = self._selected_text()
         if selected:
             self.copy_to_clipboard(selected)
             return
+        if len(self.screen_stack) > 1 or isinstance(self.focused, Input):
+            raise SkipAction()
+        if isinstance(self.focused, TextArea) and not isinstance(self.focused, Composer):
+            raise SkipAction()
         active = self.runtime.turn_active
+        had_input = bool(self.composer.text)
+        had_menu = self.query_one(SlashMenu).visible_menu
         self.composer.clear_text()
         self.query_one(SlashMenu).hide()
         self.composer.menu_open = False
-        if active:
-            self._queue_paused.add(self.runtime.session_key)
-            await self._refresh_queue()
-            await self.runtime.stop_turn()
-            await self._note("[$warning]stop requested[/]", "warning")
+        if active and not had_input and not had_menu:
+            await self._request_stop("Ctrl+C")
         self._refresh_working_line()
         self.composer.focus()
 
@@ -1415,23 +1483,28 @@ class NavinApp(App[None]):
             return
         await self.submit_text("/new")
         self._current = None
+        self._last_speaker = None
         self._activity.clear()
         self._refresh_side()
 
     async def action_clear_transcript(self) -> None:
-        had_chat = any(
-            isinstance(widget, (UserMessage, AssistantMessage))
-            for widget in self.transcript.children
-        )
-        await self.transcript.remove_children()
-        self._current = None
-        if had_chat:
-            await self._note(
-                "Screen cleared. Ctrl+L again reloads this chat.",
-                "quiet",
+        self._invalidate_history()
+        async with self._history_lock:
+            had_chat = any(
+                isinstance(widget, (UserMessage, AssistantMessage))
+                for widget in self.transcript.children
             )
-            return
-        await self._render_history()
+            await self.transcript.remove_children()
+            self._current = None
+            self._last_speaker = None
+            if had_chat:
+                await self._note(
+                    "Screen cleared. Ctrl+L again reloads this chat.",
+                    "quiet",
+                )
+                return
+            token = self._invalidate_history()
+            await self._paint_history(token)
 
     def action_toggle_sidebar(self) -> None:
         self.prefs.sidebar = not self.prefs.sidebar
@@ -1880,11 +1953,7 @@ class NavinApp(App[None]):
         self.prefs.mode = mode_id
         self.prefs.mode_explicit = True
         self.prefs.save()
-        if self.runtime.turn_active:
-            await self.runtime.stop_turn()
-            self.runtime.status.turn_active = False
-            self._current = None
-            self._set_status()
+        # Routing applies when submitting the next prompt. Keep current work alive.
         self._render_mode()
 
     async def _pick_theme(self) -> None:
@@ -1989,15 +2058,22 @@ class NavinApp(App[None]):
         await self._note(f"chat name -> {escape(name)}", "success")
 
     async def _switch_session(self, key: str) -> None:
-        await self.runtime.switch_session(key)
-        self.prefs.last_session = key
-        self.prefs.save()
-        await self.transcript.remove_children()
-        self._current = None
-        self._activity.clear()
-        await self._render_history()
-        self._refresh_side()
-        await self._note(f"session → [b]{escape(key)}[/b]")
+        # Abort the boot (or previous) history paint before tearing widgets down.
+        # Opening another session while the first one is still loading used to
+        # crash with NoMatches on .assistant-preview / .assistant-foot.
+        self._invalidate_history()
+        async with self._history_lock:
+            await self.runtime.switch_session(key)
+            self.prefs.last_session = key
+            self.prefs.save()
+            await self.transcript.remove_children()
+            self._current = None
+            self._last_speaker = None
+            self._activity.clear()
+            token = self._invalidate_history()
+            await self._paint_history(token)
+            self._refresh_side()
+            await self._note(f"session → [b]{escape(key)}[/b]")
 
     async def action_open_tools(self) -> None:
         if not self._engine_ready:

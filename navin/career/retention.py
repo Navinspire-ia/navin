@@ -137,6 +137,16 @@ def delete_offer(store: CareerStore, oid: str) -> dict[str, Any]:
     return removed
 
 
+def empty_archive(store: CareerStore) -> list[str]:
+    """Remove every archived opportunity, independent of visible UI filters."""
+    rows = store.load_opportunities()
+    removed = [str(row["id"]) for row in rows if is_archived(row)]
+    if removed:
+        store.save_opportunities([row for row in rows if not is_archived(row)])
+        store.append_journal({"kind": "empty_archive", "text": f"Deleted {len(removed)} archived offers"})
+    return removed
+
+
 def _positive_days(value: Any, default: int) -> int:
     try:
         days = int(value)

@@ -140,7 +140,7 @@ export function FacetSearchChip({
           }}
           styles={{ calloutMain: { borderRadius: 12 } }}
         >
-          <div className={cn("p-2", width === "lg" ? "w-[24rem]" : "w-[19rem]")} data-testid={testId ? `${testId}-menu` : undefined}>
+          <div className={cn("p-2", width === "lg" ? "w-[24rem]" : "w-[19rem]")} style={{ maxWidth: "calc(100vw - 24px)", maxHeight: "calc(100dvh - 48px)", overflowY: "auto", overscrollBehavior: "contain" }} data-testid={testId ? `${testId}-menu` : undefined}>
             <SearchBox
               placeholder={copy.searchPlaceholder}
               value={query}

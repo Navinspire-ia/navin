@@ -55,7 +55,7 @@ _MAX_SETTINGS_BYTES = 16 * 1024
 # Corridor stages a project can switch individually once the master is on.
 STAGES = ("draft", "promote_project", "publish_harness")
 
-EXAM_MODELS = ("lexical", "llm")
+EXAM_MODELS = ("execution",)
 AUTHORS = ("auto", "template", "llm")
 
 DEFAULT_FAILURE_THRESHOLD = 3
@@ -70,7 +70,7 @@ class SkillsEvolveSettings:
     publish_harness: bool = False
     failure_threshold: int = DEFAULT_FAILURE_THRESHOLD
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    exam_model: str = "lexical"
+    exam_model: str = "execution"
     author: str = "auto"
 
     def feature(self, name: str | None) -> bool:
@@ -122,7 +122,8 @@ def _normalize(raw: Any) -> SkillsEvolveSettings:
     )
     values["max_attempts"] = _clamp_int(raw.get("max_attempts"), DEFAULT_MAX_ATTEMPTS, 1, 5)
     exam_model = raw.get("exam_model")
-    values["exam_model"] = exam_model if exam_model in EXAM_MODELS else "lexical"
+    # Migrate old text-only evaluators to actual executions on the next read.
+    values["exam_model"] = exam_model if exam_model in EXAM_MODELS else "execution"
     author = raw.get("author")
     values["author"] = author if author in AUTHORS else "auto"
     return SkillsEvolveSettings(enabled=isinstance(enabled, bool) and enabled, **values)

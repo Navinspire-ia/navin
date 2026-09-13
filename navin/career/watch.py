@@ -36,6 +36,11 @@ def pending_alerts(store: CareerStore) -> list[dict[str, Any]]:
     if not titles and not profile.get("wizard_complete"):
         return []
     events: list[dict[str, Any]] = []
+    criteria = None
+    if profile.get("company_prospecting"):
+        from navin.career.prospecting import prospecting_snapshot
+
+        criteria = prospecting_snapshot(store)["criteria"]
     for row in store.load_opportunities():
         oid = str(row.get("id") or "")
         title = str(row.get("title") or "").strip()
@@ -48,6 +53,10 @@ def pending_alerts(store: CareerStore) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             score = 0.0
         if score >= STRONG_SCORE and stage in OPEN_STAGES and "match" not in sent:
+            from navin.career.scope import offer_rejection
+
+            if criteria and offer_rejection(row, criteria):
+                continue
             events.append(
                 {
                     "id": oid,

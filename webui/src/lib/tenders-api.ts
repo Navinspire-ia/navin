@@ -321,6 +321,8 @@ export interface AlertDeliverySnapshot {
 }
 
 export interface TenderDesk {
+  archives?: import("./desk-archive").DeskArchive[];
+  archive_file?: import("./desk-archive").ArchiveFile;
   profile: TenderProfile;
   wizard_ready?: boolean;
   catalog_by_zone?: TenderZoneGroup[];
