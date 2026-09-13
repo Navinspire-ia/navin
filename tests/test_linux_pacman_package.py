@@ -32,6 +32,7 @@ DEPENDS = (
     "hicolor-icon-theme",
     "adwaita-icon-theme",
     "noto-fonts-emoji",
+    "gnome-keyring",
 )
 
 

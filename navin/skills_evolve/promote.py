@@ -127,6 +127,7 @@ def promote_draft(
     actor: str = "auto",
     force: bool = False,
     verify: bool = True,
+    require_execution: bool = True,
 ) -> DraftRecord:
     """Copy the draft into the project layer, verify, roll back on failure.
 
@@ -146,6 +147,9 @@ def promote_draft(
     markdown = read_draft_markdown(workspace, name)
     if not markdown:
         raise DraftError(f"draft {name} has no SKILL.md")
+    if actor != HUMAN and require_execution:
+        from navin.skills_evolve.execution_pipeline import validate_promotion
+        validate_promotion(workspace, record, markdown)
 
     target = project_skill_file(workspace, name)
     previous = target.read_text(encoding="utf-8") if target.is_file() else None

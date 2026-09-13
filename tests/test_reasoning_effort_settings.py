@@ -361,5 +361,190 @@ class SaveRefusalEndToEndTest(unittest.TestCase):
         self.assertEqual(len(saved), 1)
 
 
+class ModelConfigurationActivationTest(unittest.TestCase):
+    """Saving a preference must never move the chat default.
+
+    Regression: an effort-only save (composer Effort picker on a plan tier,
+    TUI model form Thinking save) was treated as "make this the active chat
+    model"; the flipped default then made the resolver drop the user's manual
+    selection, so the next turn ran the default model instead of the pick.
+    """
+
+    def _config(self):
+        from navin.config.schema import Config, ModelPresetConfig
+
+        config = Config()
+        config.agents.defaults.provider = "openai"
+        config.agents.defaults.model = "gpt-5.1"
+        config.providers.openai.api_key = "sk-test"
+        config.model_presets["fast"] = ModelPresetConfig(
+            label="Fast", model="gpt-5-mini", provider="openai"
+        )
+        return config
+
+    def _update(self, config, query, *, tiers=()):
+        saved = []
+        with (
+            patch.object(settings_api, "load_config", return_value=config),
+            patch.object(settings_api, "save_config", side_effect=saved.append),
+            patch.object(settings_api, "settings_payload", return_value={}),
+            patch.object(settings_api, "TIERS", tiers),
+        ):
+            settings_api.update_model_configuration(query)
+        return saved
+
+    def test_effort_only_save_keeps_the_chat_default(self):
+        config = self._config()
+        self._update(config, {"name": ["fast"], "reasoning_effort": ["high"]})
+        self.assertIsNone(config.agents.defaults.model_preset)
+        self.assertFalse(config.agents.defaults.model_preset_user_pinned)
+        self.assertEqual(config.model_presets["fast"].reasoning_effort, "high")
+
+    def test_effort_only_save_on_a_plan_tier_keeps_the_chat_default(self):
+        config = self._config()
+        self._update(
+            config,
+            {"name": ["fast"], "reasoning_effort": ["medium"]},
+            tiers=("fast",),
+        )
+        self.assertIsNone(config.agents.defaults.model_preset)
+        self.assertEqual(config.model_presets["fast"].reasoning_effort, "medium")
+
+    def test_visibility_save_does_not_activate(self):
+        config = self._config()
+        self._update(config, {"name": ["fast"], "enabled": ["false"]})
+        self.assertIsNone(config.agents.defaults.model_preset)
+        self.assertFalse(config.model_presets["fast"].enabled)
+
+    def test_click_then_save_still_activates(self):
+        """The legacy click-a-row-then-Save shape keeps making it the default."""
+        config = self._config()
+        self._update(
+            config,
+            {
+                "name": ["fast"],
+                "label": ["Fast"],
+                "model": ["gpt-5-mini"],
+                "provider": ["openai"],
+            },
+        )
+        self.assertEqual(config.agents.defaults.model_preset, "fast")
+        self.assertTrue(config.agents.defaults.model_preset_user_pinned)
+
+    def test_click_then_save_still_activates_a_plan_tier(self):
+        config = self._config()
+        self._update(
+            config,
+            {
+                "name": ["fast"],
+                "label": ["Fast"],
+                "model": ["gpt-5-mini"],
+                "provider": ["openai"],
+            },
+            tiers=("fast",),
+        )
+        self.assertEqual(config.agents.defaults.model_preset, "fast")
+
+    def test_tui_form_save_does_not_activate(self):
+        """The TUI model form posts the full row (enabled included) on save."""
+        config = self._config()
+        self._update(
+            config,
+            {
+                "name": ["fast"],
+                "label": ["Fast"],
+                "model": ["gpt-5-mini"],
+                "provider": ["openai"],
+                "context_window_tokens": ["200000"],
+                "reasoning_effort": ["low"],
+                "enabled": ["true"],
+            },
+        )
+        self.assertIsNone(config.agents.defaults.model_preset)
+        self.assertEqual(config.model_presets["fast"].reasoning_effort, "low")
+
+
+class EffortChangeKeepsTheSelectedModelTest(unittest.TestCase):
+    """End to end: an effort-only save never drops the picked chat model.
+
+    The TUI model pick lives in the resolver's in-memory selection; the
+    resolver drops that selection when the on-disk default changes. A
+    misfiring activation on an effort save flipped the default, so the next
+    turn ran the default model instead of the user's pick.
+    """
+
+    def test_composer_effort_save_keeps_the_selected_preset(self):
+        import asyncio
+        import tempfile
+
+        from navin.agent.loop import AgentLoop
+        from navin.bus.events import InboundMessage
+        from navin.bus.queue import MessageBus
+        from navin.config.loader import (
+            get_config_path,
+            load_config,
+            save_config,
+            set_config_path,
+        )
+        from navin.config.schema import Config, ModelPresetConfig
+        from navin.providers.factory import (
+            load_provider_snapshot_allowing_unconfigured,
+        )
+
+        old = get_config_path()
+        tmp = Path(tempfile.mkdtemp())
+        set_config_path(tmp / "config.json")
+        try:
+            config = Config()
+            config.agents.defaults.workspace = str(tmp)
+            config.agents.defaults.provider = "openai"
+            config.agents.defaults.model = "gpt-5.1"
+            config.providers.openai.api_key = "sk-test"
+            config.model_presets["mini"] = ModelPresetConfig(
+                label="Mini", model="gpt-5-mini", provider="openai"
+            )
+            save_config(config)
+
+            async def run():
+                loop = AgentLoop.from_config(
+                    load_config(),
+                    MessageBus(),
+                    provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
+                )
+                loop._mcp_servers = {}
+                loop.set_model_preset("mini")
+                self.assertEqual(loop.model_preset, "mini")
+                # The TUI model form posts the full row on save; the user
+                # only changed the Thinking level.
+                settings_api.update_model_configuration(
+                    {
+                        "name": ["mini"],
+                        "label": ["Mini"],
+                        "model": ["gpt-5-mini"],
+                        "provider": ["openai"],
+                        "context_window_tokens": ["200000"],
+                        "reasoning_effort": ["high"],
+                        "enabled": ["true"],
+                    }
+                )
+                self.assertEqual(
+                    load_config().agents.defaults.model_preset, None
+                )
+                msg = InboundMessage(
+                    channel="cli",
+                    sender_id="user",
+                    chat_id="direct",
+                    content="salut",
+                    metadata={"_wants_stream": True, "reasoning_effort": "high"},
+                )
+                runtime = loop.runtime_for_inbound(msg)
+                self.assertEqual(runtime.model_preset, "mini")
+                self.assertEqual(loop.model_preset, "mini")
+
+            asyncio.run(run())
+        finally:
+            set_config_path(old)
+
+
 if __name__ == "__main__":
     unittest.main()

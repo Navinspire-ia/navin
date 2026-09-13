@@ -412,6 +412,11 @@ def contracts_track(contracts: list[str], wanted: str = "") -> str:
 
 def normalize_remote(*values: Any) -> str:
     """remote | hybrid | onsite | "" out of flags, labels and free text."""
+    evidence = " ".join(_clean(value) for value in values if value is not None and not isinstance(value, bool))
+    if re.search(r"\b(no remote|not remote|remote (?:is )?not (?:allowed|available)|sans t[ée]l[ée]travail|t[ée]l[ée]travail (?:interdit|non autoris[ée]))\b", evidence, re.I):
+        return "onsite"
+    if _HYBRID_RE.search(evidence):
+        return "hybrid"
     for value in values:
         if value is True:
             return "remote"

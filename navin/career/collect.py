@@ -14,9 +14,9 @@ from typing import Any
 
 from loguru import logger
 
+from navin.career.collective import search_collective_jobs
 from navin.career.employers import collect_employers
 from navin.career.feeds import FEED_IDS, collect_feeds
-from navin.career.collective import search_collective_jobs
 from navin.career.freework import search_freework_jobs
 from navin.career.linkedin import search_linkedin_jobs
 from navin.career.matching import job_is_relevant, score_opportunity
@@ -198,13 +198,15 @@ def _guess_track(title: str, profile_track: str) -> str:
     return "jobs"
 
 
-def _fetch_remotive(query: str) -> list[dict[str, Any]]:
+def _fetch_remotive(query: str, *, strict: bool = False) -> list[dict[str, Any]]:
     url = f"{_REMOTIVE}?search={urllib.parse.quote(query)}"
     req = urllib.request.Request(url, headers={"User-Agent": "NavinCareer/1.0 (+https://navin.ai)"})
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        if strict:
+            raise RuntimeError("Remotive unavailable") from None
         logger.info("career remotive fetch skipped: {}", exc)
         return []
     jobs = payload.get("jobs") if isinstance(payload, dict) else None
@@ -364,6 +366,9 @@ def _company_from_title(title: str) -> str:
 
 
 def _hit_to_job(hit: dict[str, str], *, country: str, track: str) -> dict[str, Any] | None:
+    from navin.career.normalize import normalize_remote
+    from navin.career.scope import publication_day
+
     title = clean_job_text(str(hit.get("title") or "")).strip()
     url = str(hit.get("url") or "").strip()
     snippet = clean_job_text(str(hit.get("snippet") or "")).strip()
@@ -386,13 +391,14 @@ def _hit_to_job(hit: dict[str, str], *, country: str, track: str) -> dict[str, A
         "url": url,
         "track": _guess_track(title, track),
         "stage": "discovered",
-        "remote": "remote" if "remote" in f"{title} {snippet}".lower() else "",
+        "remote": normalize_remote(title, snippet),
+        "posted_at": publication_day(hit.get("posted_at") or hit.get("date")),
         "ingest": "search_snippet",
         "attribution": "Web search",
     }
 
 
-def _search_ddg_html(query: str, limit: int = 6) -> list[dict[str, str]]:
+def _search_ddg_html(query: str, limit: int = 6, *, strict: bool = False) -> list[dict[str, str]]:
     data = urllib.parse.urlencode({"q": query}).encode("utf-8")
     req = urllib.request.Request(
         _DDG_HTML,
@@ -408,9 +414,17 @@ def _search_ddg_html(query: str, limit: int = 6) -> list[dict[str, str]]:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        if strict:
+            from navin.career.errors import CareerError
+
+            raise CareerError("Web search is temporarily unavailable.") from None
         logger.info("career web search skipped: {}", exc)
         return []
     if "anomaly-modal" in body:
+        if strict:
+            from navin.career.errors import CareerError
+
+            raise CareerError("Web search was limited by the provider. Other sources will continue.")
         return []
     links = _DDG_RESULT_RE.findall(body)
     snippets = [_strip_tags(item) for item in _DDG_SNIPPET_RE.findall(body)]
@@ -426,16 +440,18 @@ def _search_ddg_html(query: str, limit: int = 6) -> list[dict[str, str]]:
     return rows
 
 
-def _search_ddgs(query: str, limit: int = 6) -> list[dict[str, str]]:
+def _search_ddgs(query: str, limit: int = 6, *, strict: bool = False) -> list[dict[str, str]]:
     try:
         from ddgs import DDGS
     except ImportError:
-        return _search_ddg_html(query, limit)
+        return _search_ddg_html(query, limit, strict=strict)
     try:
         raw = DDGS(timeout=10).text(query, max_results=limit)
     except Exception as exc:
         logger.info("career ddgs skipped: {}", exc)
-        return _search_ddg_html(query, limit)
+        return _search_ddg_html(query, limit, strict=strict)
+    if not raw:
+        return _search_ddg_html(query, limit, strict=strict)
     rows: list[dict[str, str]] = []
     for item in raw or []:
         if not isinstance(item, dict):
@@ -486,6 +502,10 @@ def collect(
     countries: list[str] | None = None,
 ) -> dict[str, Any]:
     profile = store.load_profile()
+    if profile.get("company_prospecting"):
+        from navin.career.prospecting import search_company
+
+        return search_company(store, query=query, track=track, countries=countries)
     titles = [str(item) for item in (profile.get("titles") or [])]
     role = (query or "").strip() or (titles[0] if titles else "Data Engineer")
     search_title = role.split(",")[0].strip() or role

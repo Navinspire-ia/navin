@@ -1,0 +1,530 @@
+{
+  "missions": [
+    {
+      "id": "linkedin",
+      "name": "LinkedIn Jobs",
+      "markets": "International",
+      "provider": "",
+      "url": "https://www.linkedin.com/jobs/",
+      "mode": "feed"
+    },
+    {
+      "id": "google_jobs",
+      "name": "Google Jobs",
+      "markets": "International",
+      "provider": "serpapi",
+      "url": "https://serpapi.com/google-jobs-api",
+      "mode": "feed"
+    },
+    {
+      "id": "brave_jobs",
+      "name": "Brave Search",
+      "markets": "International",
+      "provider": "brave",
+      "url": "https://search.brave.com",
+      "mode": "feed"
+    },
+    {
+      "id": "public_jobs",
+      "name": "Recherche web",
+      "markets": "International",
+      "provider": "",
+      "url": "https://duckduckgo.com",
+      "mode": "feed"
+    },
+    {
+      "id": "freework",
+      "name": "Free-Work",
+      "markets": "FR GB",
+      "provider": "",
+      "url": "https://www.free-work.com",
+      "mode": "feed"
+    },
+    {
+      "id": "collective",
+      "name": "Collective.work",
+      "markets": "FR BE CH LU MA TN ES IT NL DE GB",
+      "provider": "",
+      "url": "https://app.collective.work/talent/jobs",
+      "mode": "feed"
+    },
+    {
+      "id": "freelancescope",
+      "name": "FreelanceScope",
+      "markets": "FR",
+      "provider": "",
+      "url": "https://www.freelancescope.fr/missions",
+      "mode": "feed"
+    },
+    {
+      "id": "remotive",
+      "name": "Remotive",
+      "markets": "International",
+      "provider": "",
+      "url": "https://remotive.com",
+      "mode": "feed"
+    },
+    {
+      "id": "jobicy",
+      "name": "Jobicy",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "remoteok",
+      "name": "Remote OK",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "himalayas",
+      "name": "Himalayas",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "weworkremotely",
+      "name": "We Work Remotely",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "arbeitnow",
+      "name": "Arbeitnow",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "hn-hiring",
+      "name": "Hacker News Hiring",
+      "markets": "International",
+      "provider": "",
+      "url": "",
+      "mode": "feed"
+    },
+    {
+      "id": "bayt",
+      "name": "Bayt",
+      "markets": "SA OM AE BH QA KW MA",
+      "provider": "serpapi",
+      "url": "https://bayt.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "gulftalent",
+      "name": "GulfTalent",
+      "markets": "SA OM AE BH QA KW",
+      "provider": "serpapi",
+      "url": "https://gulftalent.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "naukrigulf",
+      "name": "NaukriGulf",
+      "markets": "SA OM AE BH QA KW",
+      "provider": "serpapi",
+      "url": "https://naukrigulf.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "rekrute",
+      "name": "ReKrute",
+      "markets": "MA",
+      "provider": "serpapi",
+      "url": "https://rekrute.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "emploi_ma",
+      "name": "Emploi.ma",
+      "markets": "MA",
+      "provider": "serpapi",
+      "url": "https://emploi.ma",
+      "mode": "indexed"
+    },
+    {
+      "id": "indeed",
+      "name": "Indeed",
+      "markets": "International",
+      "provider": "serpapi",
+      "url": "https://indeed.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "hellowork_jobs",
+      "name": "HelloWork",
+      "markets": "FR",
+      "provider": "serpapi",
+      "url": "https://hellowork.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "apec_jobs",
+      "name": "APEC",
+      "markets": "FR",
+      "provider": "serpapi",
+      "url": "https://apec.fr",
+      "mode": "indexed"
+    },
+    {
+      "id": "francetravail_jobs",
+      "name": "France Travail",
+      "markets": "FR",
+      "provider": "serpapi",
+      "url": "https://candidat.francetravail.fr",
+      "mode": "indexed"
+    },
+    {
+      "id": "welcometojungle",
+      "name": "Welcome to the Jungle",
+      "markets": "Europe US",
+      "provider": "serpapi",
+      "url": "https://welcometothejungle.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "freelancermap_jobs",
+      "name": "freelancermap",
+      "markets": "International",
+      "provider": "serpapi",
+      "url": "https://freelancermap.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "freelancede_jobs",
+      "name": "freelance.de",
+      "markets": "DE CH AT",
+      "provider": "serpapi",
+      "url": "https://freelance.de",
+      "mode": "indexed"
+    },
+    {
+      "id": "reed_jobs",
+      "name": "Reed",
+      "markets": "GB",
+      "provider": "serpapi",
+      "url": "https://reed.co.uk",
+      "mode": "indexed"
+    },
+    {
+      "id": "cvlibrary_jobs",
+      "name": "CV-Library",
+      "markets": "GB",
+      "provider": "serpapi",
+      "url": "https://cv-library.co.uk",
+      "mode": "indexed"
+    },
+    {
+      "id": "dice_jobs",
+      "name": "Dice",
+      "markets": "US",
+      "provider": "serpapi",
+      "url": "https://dice.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "seek_jobs",
+      "name": "SEEK",
+      "markets": "AU",
+      "provider": "serpapi",
+      "url": "https://seek.com.au",
+      "mode": "indexed"
+    },
+    {
+      "id": "jobbank_jobs",
+      "name": "Guichet-Emplois",
+      "markets": "CA",
+      "provider": "serpapi",
+      "url": "https://jobbank.gc.ca",
+      "mode": "indexed"
+    },
+    {
+      "id": "wellfound_jobs",
+      "name": "Wellfound",
+      "markets": "International",
+      "provider": "serpapi",
+      "url": "https://wellfound.com",
+      "mode": "indexed"
+    },
+    {
+      "id": "freelancer_jobs",
+      "name": "Freelancer.com",
+      "markets": "International",
+      "provider": "serpapi",
+      "url": "https://freelancer.com",
+      "mode": "indexed"
+    }
+  ],
+  "platforms": [
+    {
+      "id": "linkedin",
+      "name": "LinkedIn",
+      "url": "https://linkedin.com",
+      "markets": "International",
+      "access": "partner",
+      "indexed_profiles": true,
+      "profile_path": "/in/",
+      "domain": "linkedin.com"
+    },
+    {
+      "id": "freework",
+      "name": "Turnover-IT / Free-Work",
+      "url": "https://free-work.com",
+      "markets": "FR, GB",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "free-work.com"
+    },
+    {
+      "id": "cvlibrary",
+      "name": "CV-Library",
+      "url": "https://cv-library.co.uk",
+      "markets": "GB",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "cv-library.co.uk"
+    },
+    {
+      "id": "resumelibrary",
+      "name": "Resume-Library",
+      "url": "https://resume-library.com",
+      "markets": "US",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "resume-library.com"
+    },
+    {
+      "id": "dice",
+      "name": "Dice",
+      "url": "https://dice.com",
+      "markets": "US",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "dice.com"
+    },
+    {
+      "id": "seek",
+      "name": "SEEK Talent Search",
+      "url": "https://seek.com.au",
+      "markets": "AU",
+      "access": "restricted",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "seek.com.au"
+    },
+    {
+      "id": "malt",
+      "name": "Malt",
+      "url": "https://malt.fr",
+      "markets": "Europe",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/profile/",
+      "domain": "malt.fr"
+    },
+    {
+      "id": "freelancermap",
+      "name": "freelancermap",
+      "url": "https://freelancermap.com",
+      "markets": "Europe, CH, International",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/profile/",
+      "domain": "freelancermap.com"
+    },
+    {
+      "id": "freelancede",
+      "name": "freelance.de",
+      "url": "https://freelance.de",
+      "markets": "DE",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/Freelancer/",
+      "domain": "freelance.de"
+    },
+    {
+      "id": "jellow",
+      "name": "Jellow",
+      "url": "https://jellow.nl",
+      "markets": "BE, NL",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "jellow.nl"
+    },
+    {
+      "id": "lesbonsfreelances",
+      "name": "LesBonsFreelances",
+      "url": "https://lesbonsfreelances.com",
+      "markets": "FR",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/freelance/",
+      "domain": "lesbonsfreelances.com"
+    },
+    {
+      "id": "freelanceinformatique",
+      "name": "Freelance Informatique",
+      "url": "https://freelance-informatique.fr",
+      "markets": "FR",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "freelance-informatique.fr"
+    },
+    {
+      "id": "peopleperhour",
+      "name": "PeoplePerHour",
+      "url": "https://peopleperhour.com",
+      "markets": "GB, International",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/freelancer/",
+      "domain": "peopleperhour.com"
+    },
+    {
+      "id": "workhoppers",
+      "name": "Workhoppers",
+      "url": "https://workhoppers.com",
+      "markets": "CA",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "workhoppers.com"
+    },
+    {
+      "id": "contra",
+      "name": "Contra",
+      "url": "https://contra.com",
+      "markets": "International",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "contra.com"
+    },
+    {
+      "id": "freelancer",
+      "name": "Freelancer.com",
+      "url": "https://freelancer.com",
+      "markets": "International",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/u/",
+      "domain": "freelancer.com"
+    },
+    {
+      "id": "upwork",
+      "name": "Upwork",
+      "url": "https://upwork.com",
+      "markets": "International",
+      "access": "restricted",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "upwork.com"
+    },
+    {
+      "id": "apec",
+      "name": "APEC / Candidapec",
+      "url": "https://apec.fr",
+      "markets": "FR",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "apec.fr"
+    },
+    {
+      "id": "hellowork",
+      "name": "HelloWork",
+      "url": "https://hellowork.com",
+      "markets": "FR",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "hellowork.com"
+    },
+    {
+      "id": "francetravail",
+      "name": "France Travail",
+      "url": "https://francetravail.fr",
+      "markets": "FR",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "francetravail.fr"
+    },
+    {
+      "id": "ictjob",
+      "name": "ICTjob.be",
+      "url": "https://ictjob.be",
+      "markets": "BE",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "ictjob.be"
+    },
+    {
+      "id": "jobroom",
+      "name": "Job-Room",
+      "url": "https://job-room.ch",
+      "markets": "CH",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "job-room.ch"
+    },
+    {
+      "id": "adem",
+      "name": "ADEM JobBoard",
+      "url": "https://adem.public.lu",
+      "markets": "LU",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "adem.public.lu"
+    },
+    {
+      "id": "reed",
+      "name": "Reed CV Search",
+      "url": "https://reed.co.uk",
+      "markets": "GB",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "reed.co.uk"
+    },
+    {
+      "id": "wellfound",
+      "name": "Wellfound",
+      "url": "https://wellfound.com",
+      "markets": "US, International",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "wellfound.com"
+    },
+    {
+      "id": "jobbank",
+      "name": "Guichet-Emplois",
+      "url": "https://jobbank.gc.ca",
+      "markets": "CA",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "jobbank.gc.ca"
+    }
+  ]
+}

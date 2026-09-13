@@ -2869,7 +2869,13 @@ def update_model_configuration(query: QueryParams) -> dict[str, Any]:
             changed = True
         modality = (getattr(preset, "modality", None) or "text").strip().lower()
         model_slug = (getattr(preset, "model", None) or "").strip()
-        wants_activate = enabled_update is None or any(
+        # Activation is the legacy "click a row, then Save" flow: that request
+        # carries label / model / provider and no visibility field. Preference
+        # and visibility saves (composer Effort picker, context window, hide
+        # / show, the TUI model form) must never move the chat default:
+        # changing the Thinking level of the model in use is not a model
+        # switch.
+        wants_activate = enabled_update is None and any(
             value is not None
             for value in (
                 _query_first_alias(query, "label", "displayName"),
@@ -2967,8 +2973,14 @@ def update_model_configuration(query: QueryParams) -> dict[str, Any]:
     ):
         changed = True
 
-    if config.agents.defaults.model_preset != name and (
-        label is not None or model is not None or provider is not None
+    # Same activation rule as the plan-tier branch above: only the legacy
+    # click-then-Save shape (identity fields, no visibility flag) activates.
+    # The TUI model form always sends enabled, so saving the Thinking level
+    # of a non-default model keeps that model non-default.
+    if (
+        config.agents.defaults.model_preset != name
+        and enabled_update is None
+        and (label is not None or model is not None or provider is not None)
     ):
         modality = (getattr(preset, "modality", None) or "text").strip().lower()
         if modality in _MEDIA_MODALITIES:

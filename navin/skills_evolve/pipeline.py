@@ -34,7 +34,7 @@ from typing import Any
 
 from loguru import logger
 
-from navin.skills_evolve.author import Author, DraftBrief, select_author
+from navin.skills_evolve.author import Author, DraftBrief
 from navin.skills_evolve.battery import Battery, ExamTamperedError, load_battery
 from navin.skills_evolve.drafts import (
     DraftError,
@@ -69,13 +69,20 @@ class PipelineDeps:
     model_factory: ModelFactory
     battery: Battery
     budget: ExamBudget = field(default_factory=ExamBudget)
+    execution: Any | None = None
 
 
 def default_deps(settings: SkillsEvolveSettings, *, config_path: Any = None) -> PipelineDeps:
+    from navin.providers.factory import load_provider_snapshot
+    from navin.skills_evolve.author import LLMAuthor
+    from navin.skills_evolve.execution import ExecutionEvaluator
+
+    snapshot = load_provider_snapshot(config_path)
     return PipelineDeps(
-        author=select_author(settings.author, config_path=config_path),
+        author=LLMAuthor(snapshot=snapshot, strict=True),
         model_factory=model_factory_for(settings.exam_model),
         battery=load_battery(),
+        execution=ExecutionEvaluator(snapshot, snapshot_loader=lambda: load_provider_snapshot(config_path)),
     )
 
 
@@ -211,6 +218,9 @@ def run_pipeline(
     if not settings.feature("draft"):
         return PipelineResult(name=brief.name, status="skipped", reason="skills-evolve flag off")
     deps = deps or default_deps(settings)
+    if deps.execution is not None:
+        from navin.skills_evolve.execution_pipeline import run_execution_pipeline
+        return run_execution_pipeline(workspace, brief, deps, max_attempts=max_attempts)
     attempts_max = max(1, max_attempts or settings.max_attempts)
 
     try:
@@ -292,7 +302,9 @@ def run_pipeline(
             journal(workspace, "kept", name=name, status="eligible", score=best_report.score)
             if settings.feature("promote_project"):
                 try:
-                    promote_draft(workspace, name, actor="auto")
+                    # Explicitly injected text evaluators support offline
+                    # compatibility tests. The production factory uses execution.
+                    promote_draft(workspace, name, actor="auto", require_execution=False)
                     result.status = "promoted"
                     result.promoted = True
                 except PromotionError as exc:
@@ -343,6 +355,20 @@ def reexamine_draft(workspace: Path | str, name: str, deps: PipelineDeps | None 
     if record is None or not markdown:
         raise DraftError(f"no draft named {name}")
     deps = deps or default_deps(settings)
+    if deps.execution is not None:
+        from dataclasses import replace
+
+        from navin.skills_evolve.execution_pipeline import execution_guard, run_execution_pipeline
+        if record.status == "promoted":
+            checked = execution_guard(workspace, deps)
+            return PipelineResult(name, "retired" if name in checked["retired"] else "promoted")
+        class ExistingDraft:
+            def draft(self, _brief):
+                return markdown
+            def revise(self, _markdown, _feedback, _attempt):
+                return markdown
+        return run_execution_pipeline(workspace, DraftBrief.from_dict({**record.origin, "name": name}),
+                                      replace(deps, author=ExistingDraft()), max_attempts=1)
     baseline = baseline_report(workspace, deps, exclude=name if record.status == "promoted" else None)
     report, verdict = examine_markdown(workspace, name, markdown, deps, baseline)
     record.attempts += 1

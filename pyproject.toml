@@ -51,6 +51,7 @@ dependencies = [
     "dulwich>=0.22.0,<1.0.0",
     "pyyaml>=6.0,<7.0.0",
     "filelock>=3.25.2",
+    "keyring>=25.6.0,<26.0.0",
     "packaging>=24.0",
     # The vendoring scripts verify downloads against this bundle: build hosts
     # without a usable system trust store would otherwise fail on TLS.

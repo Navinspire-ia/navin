@@ -179,7 +179,7 @@ export function NoticeFilters({
   return (
     <Surface className="min-w-0 space-y-3 p-3 sm:p-4" data-testid="notice-filters">
       <div
-        className="flex flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex flex-wrap items-center gap-2"
         data-testid="notice-filters-toolbar"
       >
         {leading}

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DESK_MODAL_STYLES } from "../desk-panel";
 import {
   Callout,
   DefaultButton,
@@ -157,7 +158,7 @@ export function FollowUpButton({
           onDismiss={() => setOpen(false)}
           styles={{ calloutMain: { borderRadius: 12 } }}
         >
-          <div className="grid w-[24rem] gap-3 p-4" data-testid="tenders-follow-up-panel">
+          <div className="grid max-h-[calc(100dvh-48px)] w-[24rem] max-w-[calc(100vw-24px)] gap-3 overflow-y-auto overscroll-contain p-4" data-testid="tenders-follow-up-panel">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-200">
                 {label}
@@ -688,7 +689,7 @@ export function NoticesPane({
   };
   const listTabs = (
     <div
-      className="flex shrink-0 flex-nowrap items-center gap-1.5"
+      className="flex min-w-0 flex-wrap items-center gap-1.5"
       role="tablist"
       aria-label={tx("listViews", "Notice lists")}
       data-testid="tenders-notice-chips"
@@ -889,6 +890,7 @@ export function NoticesPane({
         hidden={!pendingDelete}
         onDismiss={() => setPendingDelete(null)}
         modalProps={{
+          styles: DESK_MODAL_STYLES,
           isBlocking: true,
           dragOptions: undefined,
         }}

@@ -126,6 +126,15 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("salut bro", user.query_one(".user-body", Static).content)
             self.assertEqual(bot.query_one(".assistant-head", Static).content, "navin")
 
+        hidden = UserMessage("encore", show_head=False)
+        class Host1b(App):
+            def compose(self) -> ComposeResult:
+                yield hidden
+
+        app1b = Host1b()
+        async with app1b.run_test(size=(80, 10)) as _pilot:
+            self.assertEqual(len(app1b.query(UserMessage).first().query(".user-head")), 0)
+
         labeled = AssistantMessage("glm-5.3-flash")
         class Host2(App):
             def compose(self) -> ComposeResult:

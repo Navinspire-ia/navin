@@ -16,10 +16,42 @@ never the real user config.
 
 from __future__ import annotations
 
-import pytest
+import sys
+from pathlib import Path
 
-from navin.config import loader
-from navin.providers import reasoning_control
+# The bundled interpreter ships its own copy of the navin package through a
+# PyInstaller FrozenImporter that sits in sys.meta_path ahead of PathFinder,
+# so sys.path alone cannot make the workspace checkout win. Intercept navin*
+# imports and route them to this repository instead.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+
+
+class _WorkspaceNavinFinder:
+    """Resolve navin* from the workspace checkout, never from the bundle."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "navin" and not fullname.startswith("navin."):
+            return None
+        import importlib.machinery
+
+        if fullname == "navin":
+            return importlib.machinery.PathFinder.find_spec(fullname, [_REPO_ROOT])
+        parent = fullname.rpartition(".")[0]
+        parent_mod = sys.modules.get(parent)
+        parent_path = getattr(parent_mod, "__path__", None)
+        if parent_path is None:
+            return None
+        return importlib.machinery.PathFinder.find_spec(fullname, list(parent_path))
+
+
+for _stale in [m for m in sys.modules if m == "navin" or m.startswith("navin.")]:
+    del sys.modules[_stale]
+sys.meta_path.insert(0, _WorkspaceNavinFinder())
+
+import pytest  # noqa: E402
+
+from navin.config import loader  # noqa: E402
+from navin.providers import reasoning_control  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

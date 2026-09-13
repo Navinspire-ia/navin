@@ -5422,6 +5422,12 @@
       "title": "Marketing visual quality control"
     },
     "career": {
+      "companyProspecting": "Company",
+      "resetDesk": "Start over",
+      "candidatePool": "Profiles",
+      "searchCandidates": "Search profiles",
+      "companyTracking": "Company tracking",
+      "platformApis": "Platforms and APIs",
       "cvProfile": "Profile",
       "cvSkills": "Skills",
       "cvStrengths": "Strengths",
@@ -5549,6 +5555,11 @@
       "listViews": "Offer lists",
       "favoritesHint": "Starred offers stay here until you archive or delete them. Auto-archive still runs after {{days}} days.",
       "archiveHint": "Offers move here after {{archive}} days, or when you archive them. They are deleted after {{purge}} days.",
+      "emptyArchive": "Empty archive",
+      "emptyArchiveCancel": "Cancel",
+      "emptyArchiveClose": "Close",
+      "emptyArchiveTitle": "Empty the archive?",
+      "emptyArchiveConfirm": "All {{count}} archived offers and their candidate matches will be permanently deleted, including offers hidden by the current filters.",
       "favoritesEmptyTitle": "No favorites yet",
       "favoritesEmptyBody": "Open a row menu and choose Favorite to build this list.",
       "archiveEmptyTitle": "Archive is empty",
@@ -5655,6 +5666,8 @@
       "mcpJobs": "Jobs",
       "mcpConfirmNote": "Needs your confirmation",
       "search": "Search offers",
+      "companyOfferSearchDone": "Offer search complete: {{count}} new offers. Source details are available in Tracking.",
+      "companyOfferSearchPartial": "Offer search partial: {{count}} new offers. Check source status in Tracking.",
       "rescore": "Rescore",
       "openLinkedIn": "Open in LinkedIn",
       "emptyHeadline": "No offers yet. Save the profile, then search authorized sources.",
@@ -5979,6 +5992,7 @@
       }
     },
     "tenders": {
+      "resetDesk": "Start over",
       "title": "Tenders",
       "chat": "Chat",
       "hideChat": "Hide chat",

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from navin.career.store import CareerStore, _atomic_write_text
@@ -249,6 +250,18 @@ def format_agent_status(snap: dict[str, Any], store: CareerStore | None = None) 
         f"applications {counts['applications']} | interviews {counts['interviews']}."
     )
     lines.append(f"Book lists {len(offers)} offer(s): live {live_n}, favorite {fav_n}, archive {arch_n}.")
+    prospecting = snap.get("prospecting") or {}
+    if prospecting:
+        criteria = prospecting.get("criteria") or {}
+        lines.append("Company search constraints: " + json.dumps({key: criteria.get(key) for key in
+            ("roles", "skills", "countries", "profile_countries", "sources", "platforms", "sale_rate", "min_rate", "currency", "work_mode", "max_age_days")}, ensure_ascii=False))
+        lines.append(f"Saved candidate pool: {len(prospecting.get('candidates', []))}. An empty pool does not mean no candidates exist on the platforms.")
+        lines.append("For a candidate search, call search_candidates or prospecting_match with the offer id. Search configured platforms even when no candidate is saved. Use prospecting_reuse only when the user asks for the saved pool.")
+        lines.append("Do not recommend offers whose search_scope.eligible is false; they are historical records outside the current criteria.")
+        for oid, group in prospecting.get("matches", {}).items():
+            for match in group.get("results", []):
+                lines.append(f"Dossier {oid} / {match['candidate']['id']} ({match['candidate']['name']}): "
+                             f"score {match['score']}%, {match['stage']}; {match.get('next_action', '')}")
     if paths:
         lines.append("Local files: " + ", ".join(f"{key}={value}" for key, value in paths.items()))
     lines.append("")
@@ -270,6 +283,7 @@ def format_agent_status(snap: dict[str, Any], store: CareerStore | None = None) 
                 f"{row.get('country') or '-'} | {_offer_domain(row)} | {row.get('remote') or '-'} | "
                 f"{posted} | {money} | {row.get('match_score') if row.get('match_score') is not None else '-'}% | "
                 f"{row.get('stage') or '-'} | {row.get('source') or '-'}{_offer_flags(row)}"
+                + (f" | outside search scope: {row['search_scope']['reason']}" if row.get("search_scope", {}).get("eligible") is False else "")
             )
         lines.append("")
         lines.append("Use career action=status to reload this full book. Use career action=read file=book for the same list.")

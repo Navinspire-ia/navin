@@ -32,6 +32,8 @@ CAREER_SECRET_NAMES = frozenset(
         "JOBOPPORTUNITIES_API_KEY",
         "CAREER_SMTP_PASSWORD",
         "CAREER_IMAP_PASSWORD",
+        "CAREER_SERPAPI_KEY",
+        "CAREER_BRAVE_KEY",
     }
 )
 
@@ -365,6 +367,9 @@ def normalize_profile(raw: dict[str, Any] | None) -> dict[str, Any]:
                     "id": str(item.get("id") or uuid.uuid4().hex[:8]),
                     "name": str(item.get("name") or ""),
                     "headline": str(item.get("headline") or ""),
+                    "email": str(item.get("email") or ""),
+                    "phone": str(item.get("phone") or ""),
+                    "residence_country": str(item.get("residence_country") or ""),
                     "titles": _split(item.get("titles")),
                     "master_cv": str(item.get("master_cv") or ""),
                     "experiences": _normalize_experiences(item.get("experiences")),
@@ -471,21 +476,41 @@ class CareerStore:
         _atomic_write(self.jobs_path, rows)
 
     def upsert_opportunities(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from navin.career.duplicates import same_mission, source_links
+
         existing = self.load_opportunities()
         by_id = {row["id"]: row for row in existing}
         by_url: dict[str, str] = {}
         for row in existing:
-            key = normalize_job_url(str(row.get("url") or ""))
-            if key:
-                by_url[key] = str(row["id"])
+            for link in source_links(row):
+                key = normalize_job_url(link["url"])
+                if key:
+                    by_url[key] = str(row["id"])
         for row in incoming:
             if not isinstance(row, dict) or not row.get("id"):
                 continue
             url_key = normalize_job_url(str(row.get("url") or ""))
+            linked_id = next((by_url[normalize_job_url(link["url"])] for link in source_links(row)
+                              if normalize_job_url(link["url"]) in by_url), None)
+            if linked_id:
+                row = {**row, "id": linked_id}
             if url_key and url_key in by_url:
                 row = {**row, "id": by_url[url_key]}
+            elif row["id"] not in by_id:
+                duplicate = next((old for old in by_id.values() if same_mission(old, row)), None)
+                if duplicate:
+                    row = {**row, "source_links": source_links(row), "id": duplicate["id"]}
             prev = by_id.get(row["id"]) or {}
             merged = {**prev, **row}
+            merged["source_links"] = source_links(prev, row)
+            if len(merged["source_links"]) <= 1:
+                merged.pop("source_links")
+            if prev:
+                # Keep the original contact and user tracking when another board
+                # republishes the offer with incomplete or conflicting metadata.
+                for field in ("url", "source", "application_email", "contact", "favorite", "archived", "archived_at"):
+                    if field in prev:
+                        merged[field] = prev[field]
             if prev.get("stage") in {"applied", "replied", "interview", "offer", "won", "rejected"}:
                 merged["stage"] = prev["stage"]
             merged["favorite"] = bool(merged.get("favorite"))
@@ -496,8 +521,8 @@ class CareerStore:
                 merged["created_at"] = prev.get("created_at") or _now()
             merged["description"] = html_to_text(str(merged.get("description") or ""))[:4000]
             by_id[row["id"]] = merged
-            if url_key:
-                by_url[url_key] = str(merged["id"])
+            for link in source_links(merged):
+                by_url[normalize_job_url(link["url"])] = str(merged["id"])
         rows = list(by_id.values())
         self.save_opportunities(rows)
         return rows

@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { ActivityPane, DeskSkeleton, DossierPane, FollowUpButton, NoticesPane } from "@/components/studio/tenders/TendersDesk";
 import type { NoticeListView, PipelineFilter } from "@/components/studio/tenders/pipeline";
 import { TendersWizard } from "@/components/studio/tenders/TendersWizard";
+import { DeskReset } from "../DeskReset";
 import { TradingLoopSchedulePanel } from "@/components/studio/trading/TradingLoopSchedulePanel";
 import {
   BUTTON_STYLES,
@@ -89,6 +90,7 @@ export function TendersWorkspace({
   const [openId, setOpenId] = useState(noticeId || "");
   const stayOnSetup = useRef(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
 
   const openBook = useCallback(
@@ -271,6 +273,7 @@ export function TendersWorkspace({
           "flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-background",
           chatOpen ? "pr-0" : "",
         )}
+        data-desk-scroll-host
         style={{
           paddingRight: NOTIFICATION_GUTTER,
           WebkitFontSmoothing: "antialiased",
@@ -367,6 +370,9 @@ export function TendersWorkspace({
             ) : null}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            <IconButton ariaLabel={tx("resetDesk", "Recommencer à zéro")} title={tx("resetDesk", "Recommencer à zéro")}
+              iconProps={{ iconName: "Archive" }} disabled={Boolean(busy)} styles={ICON_BUTTON_STYLES}
+              onClick={() => { setError(""); setResetOpen(true); }} />
             {onToggleChat ? (
               <IconButton
                 ariaLabel={chatOpen ? tx("hideChat", "Hide chat") : tx("chat", "Chat")}
@@ -597,6 +603,17 @@ export function TendersWorkspace({
           onDismiss={() => setScheduleOpen(false)}
           onSubmit={(schedule, runNow) => void submitSchedule(schedule, runNow)}
         />
+        <DeskReset open={resetOpen} module="tenders" archives={live.archives || []} busy={Boolean(busy)} error={error}
+          onDismiss={() => setResetOpen(false)} onReset={async () => {
+            const ok = await run("archive_reset", { confirmed: true });
+            if (ok) { setOpenId(""); setView("setup"); setBookView("pipeline"); setBookFilter("all"); setResetOpen(false); }
+            return ok;
+          }} onDownload={async id => {
+            setBusy("archive_download"); setError("");
+            try { return (await postTenders(token || "", "archive_download", { id })).archive_file; }
+            catch (err) { setError((err as Error).message); return undefined; }
+            finally { setBusy(""); }
+          }} />
       </div>
     </Customizer>
   );

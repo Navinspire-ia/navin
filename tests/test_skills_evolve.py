@@ -256,7 +256,7 @@ class FlagOffTest(_Workspace):
         self.assertEqual(state["drafts"], [])
         self.assertEqual(state["pending_jobs"], [])
         self.assertEqual(state["journal"], [])
-        self.assertEqual(state["battery"]["version"], load_battery().version)
+        self.assertEqual(state["battery"]["version"], "execution-v1")
         self.assertFalse((self.workspace / ".navin").exists())
 
     def test_default_factories_include_the_hook_once_after_the_journal(self) -> None:
@@ -308,9 +308,9 @@ class SettingsTest(_Workspace):
         self.assertFalse(settings_path(self.workspace).exists())
 
     def test_write_settings_round_trip(self) -> None:
-        write_settings(self.workspace, SkillsEvolveSettings(enabled=True, exam_model="llm", failure_threshold=2))
+        write_settings(self.workspace, SkillsEvolveSettings(enabled=True, exam_model="execution", failure_threshold=2))
         stored = read_settings(self.workspace)
-        self.assertEqual((stored.enabled, stored.exam_model, stored.failure_threshold), (True, "llm", 2))
+        self.assertEqual((stored.enabled, stored.exam_model, stored.failure_threshold), (True, "execution", 2))
 
 
 # --------------------------------------------------------------------------

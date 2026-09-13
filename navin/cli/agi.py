@@ -62,7 +62,7 @@ def _tone(value: Any) -> str:
 
 def create_agi_app(*, console: Console) -> typer.Typer:
     agi_app = typer.Typer(
-        help="AGI: skills evolution and memory switches for a project.",
+        help="AGI: skills evolution, memory and measured strategy improvement.",
         no_args_is_help=True,
     )
 
@@ -125,6 +125,7 @@ def create_agi_app(*, console: Console) -> typer.Typer:
     def status(project: str | None = project_option, as_json: bool = json_option) -> None:
         """Flag, stages, battery version, drafts and pending jobs."""
         from navin.cognition import cognition_state
+        from navin.improvement.control import control as improvement_control
         from navin.policy.settings import read_settings as read_policy_settings
         from navin.transfer.settings import read_settings as read_transfer_settings
         from navin.world_model.settings import read_settings as read_world_settings
@@ -135,10 +136,11 @@ def create_agi_app(*, console: Console) -> typer.Typer:
         world = read_world_settings(workspace).as_dict()
         policy = read_policy_settings(workspace).as_dict()
         transfer = read_transfer_settings(workspace).as_dict()
+        improvement = improvement_control(workspace)
         if as_json:
             console.print_json(
                 json.dumps(
-                    {"skills_evolve": state, "memory": memory, "world_model": world, "policy": policy, "transfer": transfer},
+                    {"skills_evolve": state, "memory": memory, "world_model": world, "policy": policy, "transfer": transfer, "improvement": improvement},
                     ensure_ascii=False,
                 )
             )
@@ -164,6 +166,7 @@ def create_agi_app(*, console: Console) -> typer.Typer:
             ("memory", memory["enabled"], "episodic memory master (.navin/cognition.json)"),
             ("  episodes", memory["episodes"], "journal each turn"),
             ("  recall", memory["recall"], "recall tool"),
+            *((f"improve/{module}", value["enabled"], value.get("error", "measured strategy comparisons (navin agi improve)")) for module, value in improvement.items()),
         ]
         for name, value, meaning in rows:
             tone = _tone(value)
@@ -412,12 +415,14 @@ def create_agi_app(*, console: Console) -> typer.Typer:
         _action(project, "discard", name, actor="human")
         console.print(f"[green]discarded[/green] {escape(name)}")
 
+    from navin.cli.improvement import create_improvement_app
     from navin.cli.policy import create_policy_app
     from navin.cli.transfer import create_transfer_app
     from navin.cli.world import create_world_app
 
     agi_app.add_typer(create_world_app(console=console), name="world")
     agi_app.add_typer(create_policy_app(console=console), name="policy")
+    agi_app.add_typer(create_improvement_app(console=console), name="improve")
     agi_app.add_typer(create_transfer_app(console=console), name="transfer")
 
     return agi_app

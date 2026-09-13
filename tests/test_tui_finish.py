@@ -70,6 +70,60 @@ def test_finish_separates_activity_and_answer_once(theme, width):
     asyncio.run(run(), debug=True)
 
 
+def test_events_on_removed_block_do_not_crash():
+    """Session switch removes transcript children; late events must be ignored."""
+    async def run():
+        app = FinishHost()
+        async with app.run_test(size=(80, 24)) as pilot:
+            block = app.block
+            await block.set_text("Answer before the switch.")
+            await pilot.pause()
+            await block.remove()
+            await pilot.pause()
+            # The exact crash from the field report: NoMatches on a removed block.
+            await block.tool_event("run", "exec", "end", {"command": "pytest"}, "ok", None, None)
+            await block.note_file_edit("src/app.ts", 3, 1, diff="-a\n+b")
+            await block.progress("working...")
+            await block.subagent("t-1", "audit", "end", "done", None, 1, True, None)
+            await block.delta(" more")
+            await block.set_text("Late text.")
+            await block.finish(latency_ms=5, model=None, preset=None)
+            await pilot.pause()
+    asyncio.run(run(), debug=True)
+
+
+def test_finish_survives_missing_chrome_while_still_attached():
+    """History replay can finish a block after session switch tore its children."""
+    async def run():
+        app = FinishHost()
+        async with app.run_test(size=(80, 24)) as pilot:
+            block = app.block
+            await block.tool_event("run", "exec", "end", {"command": "pytest"}, "ok", None, None)
+            await block.set_text("Answer before the switch.")
+            await pilot.pause()
+            for node in list(block.query(".assistant-foot, .assistant-finish, .assistant-preview")):
+                await node.remove()
+            await block.finish(latency_ms=5, model=None, preset=None)
+            block.hide_finish()
+            await pilot.pause()
+    asyncio.run(run(), debug=True)
+
+
+def test_ready_helpers_return_none_when_detached():
+    async def run():
+        app = FinishHost()
+        async with app.run_test(size=(80, 24)) as pilot:
+            block = app.block
+            await pilot.pause()
+            assert await block._ready_preview() is not None
+            assert await block._ready_body() is not None
+            await block.remove()
+            await pilot.pause()
+            assert await block._ready_preview() is None
+            assert await block._ready_body() is None
+    asyncio.run(run(), debug=True)
+
+
 def test_typing_keeps_cursor_inside_prompt_without_rebuilding_slash_menu():
     async def run():
         app = FinishHost()

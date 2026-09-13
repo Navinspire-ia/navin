@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { DESK_PANEL_STYLES } from "../desk-panel";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChoiceGroup,
@@ -105,7 +106,7 @@ export function TradingLoopSchedulePanel({
   );
 
   return (
-    <Panel
+    <Panel styles={DESK_PANEL_STYLES}
       isOpen={open}
       isLightDismiss
       type={PanelType.medium}

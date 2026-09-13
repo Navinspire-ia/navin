@@ -362,8 +362,8 @@ export function applyOfferFilter(
     }
     if (minDayRate != null) {
       const day = offerDayRate(row);
-      const top = day.max || day.min;
-      if (!top || top < minDayRate) return false;
+      const floor = day.min || day.max;
+      if (!floor || floor < minDayRate) return false;
     }
     if (minSalary != null) {
       const year = offerSalary(row);

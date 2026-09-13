@@ -5420,6 +5420,12 @@
       "title": "Controle qualite visuel Marketing"
     },
     "career": {
+      "companyProspecting": "Société",
+      "resetDesk": "Recommencer à zéro",
+      "candidatePool": "Profils",
+      "searchCandidates": "Rechercher des profils",
+      "companyTracking": "Suivi société",
+      "platformApis": "Plateformes et API",
       "cvProfile": "Profil",
       "cvSkills": "Compétences",
       "cvStrengths": "Points forts",
@@ -5547,6 +5553,11 @@
       "listViews": "Listes d'offres",
       "favoritesHint": "Les offres etoilees restent ici jusqu'a archivage ou suppression. L'archivage auto tourne apres {{days}} jours.",
       "archiveHint": "Les offres arrivent ici apres {{archive}} jours, ou quand vous les archivez. Elles sont supprimees apres {{purge}} jours.",
+      "emptyArchive": "Vider l'archive",
+      "emptyArchiveCancel": "Annuler",
+      "emptyArchiveClose": "Fermer",
+      "emptyArchiveTitle": "Vider l'archive ?",
+      "emptyArchiveConfirm": "Les {{count}} offres archivées et leurs correspondances avec les profils seront supprimées définitivement, y compris les offres masquées par les filtres actuels.",
       "favoritesEmptyTitle": "Aucun favori",
       "favoritesEmptyBody": "Ouvrez le menu d'une ligne et choisissez Favori pour construire cette liste.",
       "archiveEmptyTitle": "Archives vides",
@@ -5653,6 +5664,8 @@
       "mcpJobs": "Jobs",
       "mcpConfirmNote": "Demande votre confirmation",
       "search": "Chercher des offres",
+      "companyOfferSearchDone": "Recherche d'offres terminée : {{count}} nouvelle(s) offre(s). Le détail des sources est disponible dans Suivi.",
+      "companyOfferSearchPartial": "Recherche d'offres partielle : {{count}} nouvelle(s) offre(s). Consultez l'état des sources dans Suivi.",
       "rescore": "Rescorer",
       "openLinkedIn": "Ouvrir dans LinkedIn",
       "emptyHeadline": "Aucune offre. Enregistrez le profil, puis lancez une recherche autorisee.",
@@ -5977,6 +5990,7 @@
       }
     },
     "tenders": {
+      "resetDesk": "Recommencer à zéro",
       "title": "Tenders",
       "chat": "Chat",
       "hideChat": "Masquer le chat",

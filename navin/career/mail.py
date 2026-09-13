@@ -136,6 +136,10 @@ def configure_mailbox(store: CareerStore, body: dict[str, Any]) -> dict[str, Any
 
 
 def _smtp_connection(config: dict[str, Any]) -> Any:
+    if config.get("account_id"):
+        from navin.accounts.career import ApiMailTransport
+
+        return ApiMailTransport(config)
     context = ssl.create_default_context()
     if config["smtp_security"] == "ssl":
         client = smtplib.SMTP_SSL(config["smtp_host"], config["smtp_port"], timeout=TRANSPORT_TIMEOUT_S, context=context)
@@ -177,7 +181,19 @@ def _error_code(exc: Exception) -> str:
 
 
 def test_mailbox(store: CareerStore, *, smtp_factory: SMTPFactory | None = None, imap_factory: Any = None) -> dict[str, Any]:
-    """Authenticate and check the folder. This action never sends a message."""
+    """Check the connected account without sending a message."""
+    config = normalize_mailbox(store.load_profile().get("mailbox"))
+    if config.get("account_id"):
+        from navin.accounts.oauth import access_token
+        from navin.accounts.store import AccountStore
+
+        access_token(AccountStore(), config["account_id"])
+        result = {"oauth": {"status": "connected", "checked_at": time.time()}}
+        with mail_lock(store):
+            state = load_mail_state(store)
+            state.update({"checks": result, "checks_identity": _account_identity(store, config)})
+            save_mail_state(store, state)
+        return result
     from navin.career.mailbox import check_imap
 
     config = normalize_mailbox(store.load_profile().get("mailbox"))
@@ -378,7 +394,7 @@ def send_application(
             raise CareerError("mail_account_disabled")
         validate_mailbox(config)
         password = store.get_secret("CAREER_SMTP_PASSWORD")
-        if not password:
+        if not password and not config.get("account_id"):
             raise CareerError("mail_smtp_password_required")
         draft, files = _draft(store, oid, recipient)
         address = email_address(draft["recipient"])
@@ -421,7 +437,12 @@ def send_application(
         save_mail_state(store, state)
         client, data_started = None, False
         try:
-            client = (smtp_factory or _smtp_connection)(config)
+            if config.get("account_id") and not smtp_factory:
+                from navin.accounts.career import ApiMailTransport
+
+                client = ApiMailTransport(config, approved=not automatic)
+            else:
+                client = (smtp_factory or _smtp_connection)(config)
             client.login(config["smtp_username"], password)
             code, _ = client.mail(config["sender_email"])
             if code != 250:
