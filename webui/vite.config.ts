@@ -6,15 +6,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** A mid-session optimize-deps rewrite answers 504 on the old hashed URLs.
- *  Desktop webviews often miss Vite's HMR reload, so the chunk stays dead.
- *  Reload at most once per window: each 504 used to broadcast another
- *  full-reload, the tab requested the same stale URL, got 504 again, and
- *  the page blinked every second. */
+/** Recover stale dependency URLs and caches removed while Vite is running.
+ *  A reload alone cannot rebuild missing files: Vite still holds their old
+ *  metadata in memory. Restart the optimizer in that case, then let Vite
+ *  reload clients. Throttle recovery so parallel failures do not loop. */
 const OPTIMIZE_DEP_RELOAD_MIN_MS = 15_000;
 
-function recoverOutdatedOptimizeDep(): Plugin {
-  let lastFullReloadAt = 0;
+export function recoverOutdatedOptimizeDep(): Plugin {
+  let lastRecoveryAt = -Infinity;
+  let restarting = false;
   return {
     name: "navin-recover-outdated-optimize-dep",
     configureServer(server: ViteDevServer) {
@@ -24,17 +24,24 @@ function recoverOutdatedOptimizeDep(): Plugin {
           next();
           return;
         }
-        const origEnd = res.end.bind(res);
-        res.end = ((...args: Parameters<typeof origEnd>) => {
-          if (res.statusCode === 504) {
-            const now = Date.now();
-            if (now - lastFullReloadAt >= OPTIMIZE_DEP_RELOAD_MIN_MS) {
-              lastFullReloadAt = now;
-              server.ws.send({ type: "full-reload", path: "*" });
-            }
+        res.once("finish", () => {
+          if (res.statusCode !== 504 || res.statusMessage !== "Outdated Optimize Dep") return;
+          const now = Date.now();
+          if (restarting || now - lastRecoveryAt < OPTIMIZE_DEP_RELOAD_MIN_MS) return;
+          lastRecoveryAt = now;
+          const metadata = path.join(server.config.cacheDir, "deps", "_metadata.json");
+          if (!fs.existsSync(metadata)) {
+            restarting = true;
+            server.config.logger.warn("Dependency cache is missing; rebuilding it before reloading modules.");
+            void server.restart(true).catch((error: unknown) => {
+              server.config.logger.error(`Dependency cache recovery failed: ${String(error)}`);
+            }).finally(() => {
+              restarting = false;
+            });
+          } else {
+            server.ws.send({ type: "full-reload", path: "*" });
           }
-          return origEnd(...args);
-        }) as typeof res.end;
+        });
         next();
       });
     },
@@ -733,16 +740,21 @@ export default defineConfig(({ mode }) => {
         "@xterm/xterm",
         "@xterm/addon-fit",
         "@xterm/addon-webgl",
+        "@tiptap/core",
+        "@tiptap/pm/state",
+        "@tiptap/pm/view",
         "@tiptap/react",
         "@tiptap/starter-kit",
         "@tiptap/extension-highlight",
         "@tiptap/extension-code-block-lowlight",
         "@tiptap/extension-image",
+        "@tiptap/extension-placeholder",
         "@tiptap/extension-table",
         "@tiptap/extension-task-list",
         "@tiptap/extension-task-item",
         "@tiptap/extension-text-style",
         "lowlight",
+        "tiptap-markdown",
         // Same trap as xterm/tiptap: Studio, Montage, Meeting and CRM lazy-load
         // Fluent icons + three/R3F. Discovering them mid-session rewrites the
         // dep hash and the tab still holding `@fluentui_font-icons-mdl2.js` /
@@ -800,6 +812,8 @@ export default defineConfig(({ mode }) => {
           "./src/components/studio/career/CareerScene.tsx",
           "./src/components/studio/trading/TradingScene.tsx",
           "./src/components/studio/leads/LeadsScene.tsx",
+          "./src/components/studio/leads/LeadsWorkspace.tsx",
+          "./src/components/notes/NotesWorkbench.tsx",
           "./src/components/studio/marketing/MarketingWorkspace.tsx",
           "./src/components/studio/MarketingQA.tsx",
           "./src/components/montage/TimelineSpatialPreview.tsx",
