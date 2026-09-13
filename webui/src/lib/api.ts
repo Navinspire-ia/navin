@@ -4299,7 +4299,7 @@ export type AgiState = {
   publish_harness: boolean;
   failure_threshold: number;
   max_attempts: number;
-  exam_model: "lexical" | "llm";
+  exam_model: "execution";
   author: "auto" | "template" | "llm";
   settings_file: string;
   drafts_dir: string;

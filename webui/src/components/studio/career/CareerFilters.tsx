@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { DESK_PANEL_STYLES } from "../desk-panel";
 import { useState, type ReactNode } from "react";
 import {
   DefaultButton,
@@ -185,7 +186,7 @@ export function CareerFilters({
   });
   return (
     <div className={cn(SURFACE, "min-w-0 space-y-3 p-3 sm:p-4")} data-testid="career-filters">
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-testid="career-filters-toolbar">
+      <div className="flex flex-wrap items-center gap-2" data-testid="career-filters-toolbar">
         {leading}
         <div className="min-w-[11rem] flex-1">
           <TextField
@@ -311,7 +312,7 @@ export function CareerFilters({
         />
       </div>
       {open ? (
-        <Panel
+        <Panel styles={DESK_PANEL_STYLES}
           isOpen
           isLightDismiss
           type={PanelType.medium}

@@ -550,5 +550,13 @@
   {
     "id": "pl-pracuj",
     "url": "https://www.pracuj.pl/praca/Data+Engineer"
+  },
+  {
+    "id": "li-LU",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Luxembourg&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "lu-adem",
+    "url": "https://adem.public.lu/"
   }
 ]

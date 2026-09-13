@@ -284,6 +284,8 @@ class ExamReport:
     failed: bool = False
     reason: str | None = None
     duration_ms: int = 0
+    evaluation_kind: str = "text"
+    metrics: tuple[dict[str, Any], ...] = ()
 
     @property
     def score(self) -> int:
@@ -308,6 +310,8 @@ class ExamReport:
             "failed": self.failed,
             "reason": self.reason,
             "duration_ms": self.duration_ms,
+            "evaluation_kind": self.evaluation_kind,
+            "metrics": list(self.metrics),
         }
         if with_outcomes:
             data["outcomes"] = [outcome.as_dict() for outcome in self.outcomes]
@@ -325,9 +329,14 @@ class ExamReport:
             passed=int(data.get("passed", 0)),
             total=int(data.get("total", 0)),
             suites=suites,
+            outcomes=tuple(CaseOutcome(str(row["id"]), str(row["suite"]), bool(row["passed"]),
+                                       tuple(row.get("missing", [])), tuple(row.get("forbidden", [])), str(row.get("prompt", "")))
+                           for row in data.get("outcomes", []) if isinstance(row, dict)),
             failed=bool(data.get("failed", False)),
             reason=data.get("reason"),
             duration_ms=int(data.get("duration_ms", 0)),
+            evaluation_kind=str(data.get("evaluation_kind", "text")),
+            metrics=tuple(data.get("metrics", [])),
         )
 
 

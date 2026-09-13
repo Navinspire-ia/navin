@@ -20,8 +20,10 @@ from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -61,6 +63,9 @@ from navin.utils.tool_hints import (
 )
 
 install_path_styles()
+
+# Coalesce bursts without making input or the engine wait for each paint.
+STREAM_FRAME_SECONDS = 1 / 30
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -376,22 +381,21 @@ class UserMessage(Vertical):
     DEFAULT_CSS = """
     UserMessage {
         height: auto;
-        margin: 1 2 0 2;
-        padding: 0 1 0 1;
-        border-left: vkey $secondary;
-        background: $background;
+        margin: 1 2 1 2;
+        padding: 0 1;
+        background: $surface;
     }
     UserMessage > .user-head {
         height: 1;
         color: $text-muted;
-        background: $background;
+        background: $surface;
     }
     UserMessage > .user-body {
         height: auto;
         min-height: 1;
         color: $foreground;
         padding: 0;
-        background: $background;
+        background: $surface;
         text-wrap: wrap;
     }
     UserMessage > .user-paste-chip {
@@ -411,10 +415,11 @@ class UserMessage(Vertical):
 
     _BODY_CHUNK_LINES = 80
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, *, show_head: bool = True) -> None:
         super().__init__()
         self.raw_text = clip_transcript(display_user_text(text))
         self._expanded = False
+        self._show_head = show_head
 
     def _body_chunks(self, text: str, *extra_classes: str) -> ComposeResult:
         lines = text.splitlines(keepends=True) or ([text] if text else [""])
@@ -429,7 +434,8 @@ class UserMessage(Vertical):
             yield Static("".join(lines[index : index + step]), classes=classes, markup=False)
 
     def compose(self) -> ComposeResult:
-        yield Static("you", classes="user-head")
+        if self._show_head:
+            yield Static("you", classes="user-head")
         prefix, rest = split_long_user_text(self.raw_text)
         if rest is None:
             yield from self._body_chunks(self.raw_text)
@@ -479,6 +485,7 @@ class ReasoningBlock(Vertical):
         self._buffer: list[str] = []
         self._open = False
         self._done = False
+        self._paint_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("◌ thinking…", classes="reasoning-head")
@@ -486,25 +493,34 @@ class ReasoningBlock(Vertical):
 
     def append(self, text: str) -> None:
         self._buffer.append(text)
+        if self._paint_timer is None:
+            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._paint)
+
+    def _paint(self) -> None:
+        self._paint_timer = None
+        if not self.is_attached:
+            return
         joined = "".join(self._buffer)
-        body = self.query_one(".reasoning-body", Static)
-        body.update(escape(joined[-6000:]))
+        if self._open:
+            self.query_one(".reasoning-body", Static).update(escape(joined[-6000:]))
         words = len(joined.split())
         self.query_one(".reasoning-head", Static).update(
-            f"[$accent]◌ thinking…[/] [dim]({words} words, click or press r to expand)[/dim]"
+            ("[$success]✓[/] [$accent]reasoning[/]" if self._done else "[$accent]◌ thinking…[/]")
+            + f" [dim]({words} words, click to toggle)[/dim]"
         )
 
     def finish(self) -> None:
         self._done = True
-        joined = "".join(self._buffer)
-        words = len(joined.split())
-        self.query_one(".reasoning-head", Static).update(
-            f"[$success]✓[/] [$accent]reasoning[/] [dim]({words} words, click to toggle)[/dim]"
-        )
+        if self._paint_timer is not None:
+            self._paint_timer.stop()
+        self._paint()
 
     def toggle(self) -> None:
         self._open = not self._open
         self.set_class(self._open, "-open")
+        if self._paint_timer is not None:
+            self._paint_timer.stop()
+        self._paint()
 
     def on_click(self) -> None:
         self.toggle()
@@ -608,6 +624,9 @@ class ToolCall(Vertical, can_focus=True):
         self._open = False
         self.cluster_kind = ""
         self.tree_mark = ""
+        self._spin_timer: Timer | None = None
+        self._output_timer: Timer | None = None
+        self._painted_head: tuple[str, bool] | None = None
         if tool_verb(name) in {"edit", "create"}:
             self._open = True
         self.add_class("-running")
@@ -621,7 +640,8 @@ class ToolCall(Vertical, can_focus=True):
         yield Button("Show full output", classes="tool-more", compact=True)
 
     def on_mount(self) -> None:
-        self.set_interval(0.12, self._tick)
+        if not self.cluster_kind:
+            self._spin_timer = self.set_interval(0.12, self._tick)
         self.watch(self.app, "theme", self._theme_changed, init=False)
         self._refresh_head()
         self._refresh_body()
@@ -630,16 +650,18 @@ class ToolCall(Vertical, can_focus=True):
         self._refresh_head()
         self._refresh_body()
 
-    def _refresh_head(self) -> None:
+    def _refresh_head(self, *, notify_cluster: bool = True) -> None:
         if not self.is_mounted:
             return
         try:
-            self.query_one(".tool-head", Static).update(
-                activity_head_text(self._plain_head(), dark=self.app.current_theme.dark)
-            )
+            key = (self._plain_head(), self.app.current_theme.dark)
+            if key != self._painted_head:
+                self.query_one(".tool-head", Static).update(activity_head_text(key[0], dark=key[1]))
+                self._painted_head = key
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
-        self._notify_cluster()
+        if notify_cluster:
+            self._notify_cluster()
 
     def _notify_cluster(self) -> None:
         node = self.parent
@@ -652,7 +674,7 @@ class ToolCall(Vertical, can_focus=True):
     def _tick(self) -> None:
         if self.phase in {"start", "output"}:
             self._spin = (self._spin + 1) % self.SPINNER_STEPS
-            self._refresh_head()
+            self._refresh_head(notify_cluster=False)
 
     def _status_glyph(self) -> str:
         # Three cells wide in every state so the tool names stay aligned.
@@ -712,8 +734,9 @@ class ToolCall(Vertical, can_focus=True):
                 self._output_buffer = output
             else:
                 self._output_buffer += output
-            self.output_lines = self._output_buffer.splitlines()[-MAX_TRANSCRIPT_LINES:]
-            if len(self._output_buffer.splitlines()) > MAX_TRANSCRIPT_LINES:
+            lines = self._output_buffer.splitlines()
+            self.output_lines = lines[-MAX_TRANSCRIPT_LINES:]
+            if len(lines) > MAX_TRANSCRIPT_LINES:
                 self._output_buffer = "\n".join(self.output_lines) + ("\n" if output.endswith("\n") else "")
         if phase == "output":
             self.phase = "output"
@@ -721,10 +744,24 @@ class ToolCall(Vertical, can_focus=True):
             self.phase = phase
             self.result = result
             self.error = error
+            if self._spin_timer is not None:
+                self._spin_timer.pause()
             self.remove_class("-running")
             self.remove_class("-ok", "-error", "-cancelled")
             self.add_class("-ok" if phase == "end" else f"-{phase}")
             self._reveal_if_preview()
+        if phase == "output":
+            if self._output_timer is None:
+                self._output_timer = self.set_timer(STREAM_FRAME_SECONDS, self._paint_output)
+            return
+        if self._output_timer is not None:
+            self._output_timer.stop()
+        self._paint_output()
+
+    def _paint_output(self) -> None:
+        self._output_timer = None
+        if not self.is_attached:
+            return
         self._refresh_head()
         self._refresh_body()
 
@@ -741,6 +778,8 @@ class ToolCall(Vertical, can_focus=True):
         self.add_class("-running")
         self.remove_class("-ok")
         self.phase = "start"
+        if self._spin_timer is not None:
+            self._spin_timer.resume()
 
     def copy_text(self) -> str:
         return clip_transcript(
@@ -773,6 +812,12 @@ class ToolCall(Vertical, can_focus=True):
             body = self.query_one(".tool-body", Static)
             viewport = self.query_one(".tool-output", VerticalScroll)
         except Exception:  # noqa: BLE001
+            return
+        if not self._open:
+            body.display = False
+            self.query_one(".tool-command", Static).display = False
+            viewport.display = False
+            self.query_one(".tool-more", Button).display = False
             return
         width = max(0, int(viewport.scrollable_content_region.width or 0))
         rows = preview_rows(
@@ -959,19 +1004,15 @@ class ToolCluster(Vertical, can_focus=True):
         self.kind = kind
         self.tools: list[ToolCall] = []
         self._open = True
+        self._painted_head: tuple[str, bool] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._head_text(), classes="cluster-head", markup=False)
         yield Vertical(classes="cluster-body")
 
     def on_mount(self) -> None:
-        self.set_interval(0.2, self._tick)
         self.watch(self.app, "theme", lambda _: self._refresh_head(), init=False)
         self._refresh_head()
-
-    def _tick(self) -> None:
-        if any(tool.phase in {"start", "output"} for tool in self.tools):
-            self._refresh_head()
 
     def _head_text(self) -> str:
         title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
@@ -1011,17 +1052,20 @@ class ToolCluster(Vertical, can_focus=True):
         try:
             head = self.query_one(".cluster-head", Static)
             head.display = self.kind != "edit" or len(self.tools) > 1 or not self._open
-            head.update(
-                activity_head_text(self._head_text(), dark=self.app.current_theme.dark)
-            )
+            key = (self._head_text(), self.app.current_theme.dark)
+            if key != self._painted_head:
+                head.update(activity_head_text(key[0], dark=key[1]))
+                self._painted_head = key
         except Exception:  # noqa: BLE001
             pass
 
     def _retree(self) -> None:
         last = len(self.tools) - 1
-        for index, tool in enumerate(self.tools):
+        # Appending changes only the old tail and the new tail.
+        for index in range(max(0, last - 1), last + 1):
+            tool = self.tools[index]
             tool.tree_mark = "• " if self.kind == "edit" and last == 0 else "└ " if index == last else "├ "
-            tool._refresh_head()
+            tool._refresh_head(notify_cluster=False)
 
     async def add_call(self, widget: ToolCall) -> None:
         widget.cluster_kind = self.kind
@@ -1242,8 +1286,7 @@ class AssistantMessage(Vertical):
     AssistantMessage {
         height: auto;
         margin: 0 2;
-        padding: 0 1 0 1;
-        border-left: vkey $primary;
+        padding: 0 1;
         background: $background;
     }
     AssistantMessage > .assistant-head {
@@ -1266,6 +1309,7 @@ class AssistantMessage(Vertical):
         overflow: hidden;
         display: none;
         background: $background;
+        color: $foreground;
     }
     AssistantMessage.-open > .assistant-preview {
         display: none;
@@ -1307,6 +1351,7 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownH2,
     AssistantMessage > .assistant-body MarkdownH3 { margin: 0 0 1 0; padding: 0; background: transparent; border: none; }
     AssistantMessage > .assistant-body MarkdownParagraph { margin: 0 0 1 0; }
+    AssistantMessage > .assistant-body MarkdownBlock { color: $foreground; }
     AssistantMessage > .assistant-body MarkdownBulletList,
     AssistantMessage > .assistant-body MarkdownOrderedList { margin: 0 0 1 0; }
     AssistantMessage > .assistant-body MarkdownListItem MarkdownParagraph { margin: 0; }
@@ -1336,13 +1381,15 @@ class AssistantMessage(Vertical):
     }
     """
 
-    def __init__(self, bot_name: str = "navin", bot_icon: str = MARK) -> None:
+    def __init__(self, bot_name: str = "navin", bot_icon: str = MARK, *, show_head: bool = True) -> None:
         super().__init__()
         self.bot_name = bot_name
+        self._show_head = show_head
         icon = (bot_icon or "").strip()
         self.bot_icon = "" if icon in {"≈", "~"} else icon
-        self._stream: Any = None
-        self._last_body_paint = 0.0
+        self._paint_timer: Timer | None = None
+        self._paint_lock = asyncio.Lock()
+        self._painted_markdown = ""
         self._buffer: list[str] = []
         self._tools: dict[str, ToolCall] = {}
         self._file_tools: dict[tuple[str, str], ToolCall] = {}
@@ -1358,7 +1405,8 @@ class AssistantMessage(Vertical):
         head = self.bot_name.lower()
         if self.bot_icon:
             head = f"{self.bot_icon} {head}"
-        yield Static(head, classes="assistant-head", markup=False)
+        if self._show_head:
+            yield Static(head, classes="assistant-head", markup=False)
         yield Static("", classes="assistant-preview", markup=True)
         yield Static(Rule("finish", characters="─", align="left", style=""), classes="assistant-finish")
         yield Markdown("", classes="assistant-body")
@@ -1367,20 +1415,40 @@ class AssistantMessage(Vertical):
     def on_mount(self) -> None:
         self._composed.set()
 
-    async def _ready_body(self) -> Markdown:
+    async def _ready_body(self) -> Markdown | None:
         await self._composed.wait()
-        return self.query_one(".assistant-body", Markdown)
+        if not self.is_attached:
+            return None
+        try:
+            return self.query_one(".assistant-body", Markdown)
+        except NoMatches:
+            return None
 
-    async def _ready_preview(self) -> Static:
+    async def _ready_preview(self) -> Static | None:
         await self._composed.wait()
-        return self.query_one(".assistant-preview", Static)
+        if not self.is_attached:
+            return None
+        try:
+            return self.query_one(".assistant-preview", Static)
+        except NoMatches:
+            return None
+
+    def _query_static(self, selector: str) -> Static | None:
+        if not self.is_attached:
+            return None
+        try:
+            return self.query_one(selector, Static)
+        except NoMatches:
+            return None
 
     # -- reasoning --------------------------------------------------------
 
     async def reasoning(self, text: str, *, end: bool = False, visible: bool = True) -> None:
-        if not visible:
+        if not visible or not self.is_attached:
             return
         preview = await self._ready_preview()
+        if preview is None:
+            return
         if end:
             if self._reasoning is not None:
                 self._reasoning.finish()
@@ -1418,7 +1486,11 @@ class AssistantMessage(Vertical):
             return
         if (name or "").lower() in CARD_ONLY_TOOLS:
             return
+        if not self.is_attached:
+            return
         preview = await self._ready_preview()
+        if preview is None:
+            return
         key = call_id or f"{name}:{len(self._tools)}"
         widgets = [tool for tool in self._tools.values() if key in tool.call_ids]
         if not widgets:
@@ -1429,6 +1501,8 @@ class AssistantMessage(Vertical):
                 family = "edit"
             if family:
                 cluster = await self._ensure_cluster(family)
+                if cluster is None:
+                    return
                 await cluster.add_call(widget)
             else:
                 self._cluster = None
@@ -1448,11 +1522,13 @@ class AssistantMessage(Vertical):
                 continue
             widget.apply(phase=phase, result=result, error=error, output=output, percent=percent, output_mode=output_mode)
 
-    async def _ensure_cluster(self, kind: str) -> ToolCluster:
+    async def _ensure_cluster(self, kind: str) -> ToolCluster | None:
         current = self._cluster
         if current is not None and current.kind == kind and current.is_mounted:
             return current
         preview = await self._ready_preview()
+        if preview is None:
+            return None
         cluster = ToolCluster(kind)
         self._cluster = cluster
         await self.mount(cluster, before=preview)
@@ -1464,7 +1540,7 @@ class AssistantMessage(Vertical):
         tool: str = "edit_file", error: str | None = None,
         truncated: bool = False, binary: bool = False,
     ) -> None:
-        if not path:
+        if not path or not self.is_attached:
             return
         file_key = (call_id, activity_path_key(path))
         match = self._file_tools.get(file_key)
@@ -1483,6 +1559,8 @@ class AssistantMessage(Vertical):
             match = ToolCall(key, tool, {"path": path})
             self._tools[f"{key}:file:{len(self._tools)}"] = match
             cluster = await self._ensure_cluster("edit")
+            if cluster is None:
+                return
             await cluster.add_call(match)
         self._file_tools[file_key] = match
         match.file_path = path
@@ -1498,7 +1576,11 @@ class AssistantMessage(Vertical):
         match.apply(phase=phase, error=error)
 
     async def progress(self, text: str) -> None:
+        if not self.is_attached:
+            return
         preview = await self._ready_preview()
+        if preview is None:
+            return
         await self.mount(ProgressLine(text), before=preview)
 
     async def subagent(
@@ -1512,7 +1594,11 @@ class AssistantMessage(Vertical):
         done: bool,
         error: str | None,
     ) -> None:
+        if not self.is_attached:
+            return
         preview = await self._ready_preview()
+        if preview is None:
+            return
         card = self._subagents.get(task_id)
         if card is None:
             card = SubagentCard(task_id)
@@ -1595,39 +1681,66 @@ class AssistantMessage(Vertical):
             event.stop()
 
     async def _paint_body(self, *, force: bool = False) -> None:
-        """Preview always. Full markdown only when open or forced at end."""
-        self._refresh_preview()
-        if not self._open and not force:
+        """Append only the changed markdown; serialize final and scheduled paints."""
+        async with self._paint_lock:
+            self._refresh_preview()
+            if not self._open and not force:
+                return
+            body = await self._ready_body()
+            if body is None:
+                return
+            text = readable_assistant_markdown(self.text) if force else self.text
+            if text == self._painted_markdown:
+                return
+            if not force and text.startswith(self._painted_markdown):
+                await body.append(text[len(self._painted_markdown):])
+            else:
+                await body.update(text)
+            self._painted_markdown = text
+
+    async def _flush_stream(self) -> None:
+        if not self.is_attached:
+            self._paint_timer = None
             return
-        now = time.monotonic()
-        if not force and now - self._last_body_paint < 0.07:
-            return
-        self._last_body_paint = now
-        body = await self._ready_body()
-        await body.update(readable_assistant_markdown(self.text))
+        count = len(self._buffer)
+        try:
+            if not self._open and looks_like_client_prompt(self.text):
+                self._open = True
+                self.add_class("-open")
+                self._sync_layers()
+            await self._paint_body()
+            transcript = self.parent
+            if isinstance(transcript, Transcript):
+                transcript.follow()
+        finally:
+            self._paint_timer = None
+        if len(self._buffer) != count and self.is_attached:
+            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
+
+    def hide_finish(self) -> None:
+        """Remove the end-of-turn rule; the block continues with new content."""
+        rule = self._query_static(".assistant-finish")
+        if rule is not None:
+            rule.remove_class("-visible")
 
     async def delta(self, text: str) -> None:
-        if not text:
+        if not text or not self.is_attached:
             return
         await self._composed.wait()
-        self.finished = False
-        self.query_one(".assistant-finish", Static).remove_class("-visible")
+        if self.finished:
+            self.finished = False
+            self.hide_finish()
         self.streamed = True
         self._buffer.append(text)
-        if self._stream is not None:
-            with contextlib.suppress(Exception):
-                await self._stream.stop()
-            self._stream = None
-        if looks_like_client_prompt(self.text):
-            await self.reveal()
-            return
-        await self._paint_body(force=False)
+        if len(self._buffer) == 1 and not self._open:
+            self._refresh_preview()
+        if self._paint_timer is None:
+            self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
 
     async def stream_end(self) -> None:
-        if self._stream is not None:
-            with contextlib.suppress(Exception):
-                await self._stream.stop()
-            self._stream = None
+        if self._paint_timer is not None:
+            self._paint_timer.stop()
+            self._paint_timer = None
         if looks_like_client_prompt(self.text):
             await self.reveal()
             return
@@ -1635,10 +1748,14 @@ class AssistantMessage(Vertical):
             await self._paint_body(force=self._open)
 
     async def set_text(self, text: str, *, render_as: str = "markdown") -> None:
+        if not self.is_attached:
+            return
         await self.stream_end()
         self._buffer = [text]
         if self.finished or looks_like_client_prompt(text):
             body = await self._ready_body()
+            if body is None:
+                return
             if render_as == "text":
                 text = (
                     "```text\n" + text + "\n```"
@@ -1649,6 +1766,7 @@ class AssistantMessage(Vertical):
                 self.set_class(True, "-open")
                 self._sync_layers()
                 await body.update(text)
+                self._painted_markdown = text
                 return
             await self.reveal()
             return
@@ -1656,6 +1774,8 @@ class AssistantMessage(Vertical):
         if not self._open:
             return
         body = await self._ready_body()
+        if body is None:
+            return
         if render_as == "text":
             text = (
                 "```text\n" + text + "\n```"
@@ -1663,17 +1783,29 @@ class AssistantMessage(Vertical):
                 else text
             )
             await body.update(text)
+            self._painted_markdown = text
             return
-        await body.update(readable_assistant_markdown(text))
+        await self._paint_body(force=True)
 
     async def finish(
-        self, *, latency_ms: int | None, model: str | None, preset: str | None
+        self, *, latency_ms: int | None, model: str | None, preset: str | None,
+        rule: bool = True,
     ) -> None:
+        if not self.is_attached:
+            return
         await self._composed.wait()
+        if not self.is_attached:
+            return
         await self.stream_end()
+        if not self.is_attached:
+            return
         self.finished = True
-        self.query_one(".assistant-finish", Static).set_class(bool(self.text.strip()), "-visible")
+        rule_widget = self._query_static(".assistant-finish")
+        if rule_widget is not None:
+            rule_widget.set_class(rule and bool(self.text.strip()), "-visible")
         await self.reveal()
+        if not self.is_attached:
+            return
         for tool in self._tools.values():
             if tool.phase in {"start", "output"}:
                 tool.apply(phase="cancelled", error="Interrupted before a result was received.")
@@ -1689,7 +1821,9 @@ class AssistantMessage(Vertical):
                 tool._refresh_body()
                 continue
             tool.collapse()
-        foot = self.query_one(".assistant-foot", Static)
+        foot = self._query_static(".assistant-foot")
+        if foot is None:
+            return
         if self._tools:
             completed = [
                 tool for tool in self._tools.values() if tool.phase == "end"
@@ -2111,6 +2245,10 @@ class ComposerMeta(Horizontal):
         context_window: int = 0,
         reasoning: str = "",
     ) -> None:
+        def update(widget: Static, value: str) -> None:
+            if widget.content != value:
+                widget.update(value)
+
         name, slug_provider = split_model_slug(model)
         provider = provider or slug_provider
         mode_w = self.query_one("#meta-mode", Static)
@@ -2118,29 +2256,29 @@ class ComposerMeta(Horizontal):
         model_w = self.query_one("#meta-model", Static)
         context_w = self.query_one("#meta-context", Static)
         reasoning_w = self.query_one("#meta-reasoning", Static)
-        reasoning_w.update(f"Reasoning {reasoning or 'Auto'}")
+        update(reasoning_w, f"Reasoning {reasoning or 'Auto'}")
         reasoning_w.tooltip = "Choose native reasoning effort (Ctrl+Shift+R)"
         if context_window > 0:
             percent = max(0, min(100, round(context_used * 100 / context_window)))
-            context_w.update(f"Context {percent}%")
+            update(context_w, f"Context {percent}%")
             context_w.tooltip = f"{context_used:,} / {context_window:,} tokens used in the latest request"
         else:
-            context_w.update("Context --")
+            update(context_w, "Context --")
             context_w.tooltip = "Context usage is not available yet"
         if extra:
-            mode_w.update(extra)
-            sep_w.update("")
-            model_w.update("")
+            update(mode_w, extra)
+            update(sep_w, "")
+            update(model_w, "")
             return
         prefix = f"{wave_frame(spin)} " if busy else ""
-        mode_w.update(f"[$primary]{prefix}{escape(mode)}[/]")
+        update(mode_w, f"[$primary]{prefix}{escape(mode)}[/]")
         if name:
-            sep_w.update("·")
+            update(sep_w, "·")
             tail = f"  [dim]{escape(provider)}[/]" if provider else ""
-            model_w.update(f"{escape(name)}{tail}")
+            update(model_w, f"{escape(name)}{tail}")
         else:
-            sep_w.update("·")
-            model_w.update("no model")
+            update(sep_w, "·")
+            update(model_w, "no model")
 
     def on_click(self, event: events.Click) -> None:
         target = event.widget
@@ -2579,6 +2717,7 @@ class Transcript(VerticalScroll):
     """
 
     auto_follow = reactive(True)
+    _follow_pending = False
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
@@ -2596,11 +2735,16 @@ class Transcript(VerticalScroll):
 
     async def add(self, widget: Any) -> None:
         await self.mount(widget)
-        if self.auto_follow:
-            self.scroll_end(animate=False)
+        self.follow()
 
     def follow(self) -> None:
-        if self.auto_follow:
+        if self.auto_follow and not self._follow_pending:
+            self._follow_pending = True
+            self.call_after_refresh(self._follow_after_refresh)
+
+    def _follow_after_refresh(self) -> None:
+        self._follow_pending = False
+        if self.is_attached and self.auto_follow:
             self.scroll_end(animate=False)
 
 

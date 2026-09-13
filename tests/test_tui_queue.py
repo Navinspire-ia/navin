@@ -118,7 +118,10 @@ def test_queued_prompts_stay_in_their_session(tmp_path):
             original = app.runtime.session_key
             await app.submit_text("for the first session")
             await app.runtime.switch_session("cli:other")
-            await pilot.pause()
+            for _ in range(50):
+                if not app.query_one(PromptQueue).display:
+                    break
+                await pilot.pause(0.05)
             assert not app.query_one(PromptQueue).display
             assert app.runtime.bus.inbound_size == 0
             assert app._queued_prompts[original][0].text == "for the first session"

@@ -76,6 +76,8 @@ class DraftRecord:
     published_at: str | None = None
     forced_by: str | None = None
     note: str | None = None
+    generation: int = 0
+    execution_evidence: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -133,6 +135,9 @@ class DraftRecord:
             "published_at": self.published_at,
             "forced_by": self.forced_by,
             "note": self.note,
+            "generation": self.generation,
+            "evaluation_kind": (self.best or {}).get("evaluation_kind", "text"),
+            "execution_evidence": self.execution_evidence,
         }
 
 

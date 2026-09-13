@@ -192,6 +192,8 @@ describe("career result filters", () => {
     it("applies day rate and yearly salary floors on the posted ranges", () => {
       const filter = emptyOfferFilter();
       filter.minDayRate = "500";
+      expect(applyOfferFilter(board, filter)).toEqual([]);
+      filter.minDayRate = "400";
       expect(applyOfferFilter(board, filter).map((row) => row.id)).toEqual(["mission"]);
       filter.minDayRate = "700";
       expect(applyOfferFilter(board, filter)).toEqual([]);

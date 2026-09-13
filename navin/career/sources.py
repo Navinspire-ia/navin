@@ -54,16 +54,23 @@ MARKETS: dict[str, dict[str, Any]] = {
     "BE": {
         "label": "Belgium",
         "langs": ("fr", "nl", "en"),
-        "cities": ("Bruxelles", "Brussel", "Antwerp", "Liege"),
+        "cities": ("Bruxelles", "Brussel", "Brussels", "Antwerp", "Liege"),
         "aliases": ("freelance", "contractor", "consultant"),
         "domains": ("ictjob.be", "vdab.be", "leforem.be", "actiris.brussels", "jobat.be", "stepstone.be"),
     },
     "CH": {
         "label": "Switzerland",
         "langs": ("fr", "de", "en"),
-        "cities": ("Zurich", "Geneva", "Lausanne", "Basel"),
+        "cities": ("Zurich", "Geneva", "Genève", "Lausanne", "Basel"),
         "aliases": ("freelance", "contract", "contractor", "consultant", "Freiberuflich", "Temporar"),
         "domains": ("jobs.ch", "jobscout24.ch", "swissdevjobs.ch"),
+    },
+    "LU": {
+        "label": "Luxembourg",
+        "langs": ("fr", "de", "en"),
+        "cities": ("Luxembourg", "Esch-sur-Alzette"),
+        "aliases": ("freelance", "mission", "contract", "consultant"),
+        "domains": ("adem.public.lu",),
     },
     "GB": {
         "label": "United Kingdom",
@@ -1031,6 +1038,7 @@ def is_open_scrape_url(url: str) -> bool:
 
 
 CLOSED_FETCH_HOSTS = (
+    "adem.public.lu",
     "linkedin.com",
     "lnkd.in",
     "indeed.com",
@@ -1302,7 +1310,7 @@ def expand_search_countries(
     excluded: list[str] | None = None,
     extra: list[str] | None = None,
 ) -> list[str]:
-    """Profile markets first, then Gulf / Maghreb / core Europe. Never search excluded."""
+    """Use the selected markets; use defaults only when no scope was supplied."""
     blocked = {str(item).strip().upper() for item in (excluded or []) if str(item).strip()}
     seen: set[str] = set()
     out: list[str] = []
@@ -1316,8 +1324,9 @@ def expand_search_countries(
 
     for item in list(selected or []) + list(extra or []):
         push(item)
-    for item in DEFAULT_SEARCH_COUNTRIES:
-        push(item)
+    if not selected and not extra:
+        for item in DEFAULT_SEARCH_COUNTRIES:
+            push(item)
     return out
 
 
@@ -1434,6 +1443,9 @@ def _country_boards(country: str, q: str) -> list[dict[str, str]]:
             {"id": "ch-jobs", "label": "jobs.ch", "url": f"https://www.jobs.ch/en/vacancies/?term={enc}", "country": "CH", "kind": "board"},
             {"id": "ch-scout", "label": "JobScout24", "url": f"https://www.jobscout24.ch/en?q={enc}", "country": "CH", "kind": "board"},
             {"id": "ch-swissdev", "label": "SwissDevJobs", "url": f"https://swissdevjobs.ch/jobs?q={enc}", "country": "CH", "kind": "board"},
+        ],
+        "LU": [
+            {"id": "lu-adem", "label": "ADEM", "url": "https://adem.public.lu/", "country": "LU", "kind": "board"},
         ],
         "GB": [
             {"id": "gb-jobserve", "label": "JobServe", "url": f"https://www.jobserve.com/gb/en/JobSearch.aspx?shid={enc}", "country": "GB", "kind": "board"},

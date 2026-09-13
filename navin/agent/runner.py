@@ -509,6 +509,7 @@ class AgentRunSpec:
     # CLI, desktop and their delegated work enable this regardless of module.
     # Source edits require tests; config/style edits require appropriate checks.
     validate_code_changes: bool = False
+    learning_evaluation: bool = False
 
 
 @dataclass(slots=True)
@@ -739,8 +740,11 @@ class AgentRunner:
         return True
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+        from navin.improvement import code as code_improvement
+
         hook = spec.hook or AgentHook()
         messages = list(spec.initial_messages)
+        experiment = await code_improvement.begin(spec, messages)
         # The deepcopies below exist to isolate hook callbacks from the live
         # conversation. A bare AgentHook is a documented no-op: nothing reads
         # the context, so paying several full-history deep copies per run for
@@ -766,12 +770,14 @@ class AgentRunner:
             await hook.before_run(context)
             result = await self._run_core(spec, hook, messages)
         except asyncio.CancelledError as exc:
+            await code_improvement.finish(experiment, spec)
             context.messages = _snapshot(messages)
             context.stop_reason = "cancelled"
             context.error = None
             context.exception = exc
             raise
         except Exception as exc:
+            await code_improvement.finish(experiment, spec)
             context.messages = _snapshot(messages)
             context.stop_reason = "error"
             context.error = f"Error: {type(exc).__name__}: {exc}"
@@ -779,6 +785,8 @@ class AgentRunner:
             await hook.on_error(context)
             raise
         else:
+            await code_improvement.finish(experiment, spec, result)
+            code_improvement.remove_guidance(experiment, result.messages)
             context.messages = _snapshot(result.messages)
             context.final_content = result.final_content
             context.tools_used = list(result.tools_used)
@@ -793,6 +801,7 @@ class AgentRunner:
             await hook.after_run(context)
             return result
         finally:
+            code_improvement.remove_guidance(experiment, messages)
             reset_turn_policy(policy_token)
             context.messages = _snapshot(messages)
             if context.exception is None:

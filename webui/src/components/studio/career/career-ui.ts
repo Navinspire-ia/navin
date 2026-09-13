@@ -132,6 +132,7 @@ export const MARKET_PRESETS = [
   "FR",
   "BE",
   "CH",
+  "LU",
   "GB",
   "US",
   "CA",

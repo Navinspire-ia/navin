@@ -47,6 +47,7 @@ class DraftBrief:
     count: int = 0
     summary: str | None = None
     hints: list[str] = field(default_factory=list)
+    module: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -58,6 +59,8 @@ class DraftBrief:
         clean.setdefault("name", "draft")
         clean.setdefault("description", "Skill drafted by Navin")
         brief = cls(**clean)
+        from navin.command.modules import normalize_product_module
+        brief.module = normalize_product_module(brief.module)
         if brief.family not in FAMILIES:
             brief.family = family_for_tool(brief.tool)
         if not isinstance(brief.hints, list):
@@ -260,7 +263,7 @@ class TemplateAuthor:
 
 
 class LLMAuthor:
-    """The configured provider writes and revises; the template is the net."""
+    """The configured provider writes and revises; strict execution never substitutes a template."""
 
     DRAFT_PROMPT = (
         "Write a Navin skill file (SKILL.md) named {name}. It must start with YAML "
@@ -272,32 +275,37 @@ class LLMAuthor:
         "Context:\n{context}"
     )
     REVISE_PROMPT = (
-        "Here is a Navin skill file (SKILL.md). It was examined against a fixed battery "
-        "and some situations were not covered, or a forbidden practice appeared. Revise "
-        "the body so the workflow addresses each situation and remove anything forbidden. "
+        "Here is a Navin skill file (SKILL.md). Revise its workflow using the observed "
+        "failures and measured execution feedback. Improve general procedures, not fixture-specific "
+        "answers. Preserve useful earlier corrections and all user permissions. "
         "Keep the frontmatter name unchanged. Reply with the full file only.\n\n"
         "Feedback (JSON):\n{feedback}\n\nFile:\n{markdown}"
     )
 
-    def __init__(self, *, snapshot: Any | None = None, config_path: Any = None) -> None:
+    def __init__(self, *, snapshot: Any | None = None, config_path: Any = None, strict: bool = False) -> None:
         if snapshot is None:
             from navin.providers.factory import load_provider_snapshot
 
             snapshot = load_provider_snapshot(config_path)
         self._provider = snapshot.provider
         self._model = snapshot.model
+        self._strict = strict
         self._fallback = TemplateAuthor()
 
     def _ask(self, prompt: str) -> str | None:
+        import asyncio
+
         from navin.skills_evolve.exam import _run_sync
 
         try:
             response = _run_sync(
-                self._provider.chat_with_retry(
-                    [{"role": "user", "content": prompt}], model=self._model, temperature=0.2
-                )
+                asyncio.wait_for(self._provider.chat_with_retry(
+                    [{"role": "user", "content": prompt}], model=self._model, temperature=0.2, max_tokens=6000
+                ), timeout=120)
             )
         except Exception as exc:  # noqa: BLE001 - the template takes over
+            if self._strict:
+                raise RuntimeError("The skill author is unavailable; no template was substituted.") from exc
             logger.warning("skills-evolve LLM author failed: {}", exc)
             return None
         content = getattr(response, "content", None)
@@ -322,6 +330,8 @@ class LLMAuthor:
         answer = self._ask(self.DRAFT_PROMPT.format(name=brief.name, context=context))
         if self._valid(answer, brief.name):
             return answer  # type: ignore[return-value]
+        if self._strict:
+            raise ValueError("The generated skill is invalid; it was not adopted.")
         return self._fallback.draft(brief)
 
     def revise(self, markdown: str, feedback: list[dict[str, Any]], attempt: int) -> str:
@@ -333,6 +343,8 @@ class LLMAuthor:
         )
         if name and self._valid(answer, name):
             return answer  # type: ignore[return-value]
+        if self._strict:
+            raise ValueError("The revised skill is invalid; the accepted version remains active.")
         return self._fallback.revise(markdown, feedback, attempt)
 
 

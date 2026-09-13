@@ -1,10 +1,11 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { DESK_PANEL_STYLES } from "../desk-panel";
 import { useEffect, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { ConnectedAccounts } from "@/components/settings/ConnectedAccounts";
 import {
-  DefaultButton, Dropdown, MessageBar, MessageBarType, Panel, PanelType,
+  ChoiceGroup, DefaultButton, Dropdown, MessageBar, MessageBarType, Panel, PanelType,
   PrimaryButton, ProgressIndicator, TextField, Toggle,
 } from "@fluentui/react";
 import { DocumentGenerationNotice } from "@/components/studio/DocumentGenerationNotice";
@@ -102,7 +103,7 @@ export function CareerMailAccountSummary({ profile, status, french, busy, onSett
         <dl className="grid gap-3 text-sm sm:grid-cols-3">
           <div><dt className="text-muted-foreground">{french ? "Envoi automatique" : "Automatic sending"}</dt><dd>{config.auto_send ? `${config.max_per_day} / ${french ? "jour" : "day"}, score ≥ ${config.min_match_score}` : (french ? "Désactivé" : "Disabled")}</dd></div>
           <div><dt className="text-muted-foreground">{french ? "Relève des réponses" : "Reply sync"}</dt><dd>{config.read_replies ? `${config.poll_interval_minutes} min` : (french ? "Désactivée" : "Disabled")}</dd></div>
-          <div><dt className="text-muted-foreground">{french ? "Acceptées par SMTP" : "Accepted by SMTP"}</dt><dd>{status?.accepted || 0}</dd></div>
+          <div><dt className="text-muted-foreground">{french ? "Acceptées par le fournisseur" : "Accepted by provider"}</dt><dd>{status?.accepted || 0}</dd></div>
         </dl>
       ) : null}
       {sync?.checked_at ? <p className="text-xs text-muted-foreground">{french ? "Dernière relève" : "Last sync"}: {new Date(sync.checked_at * 1000).toLocaleString(french ? "fr-FR" : "en-GB")} · {sync.received || 0} {french ? "nouvelle(s) réponse(s)" : "new replies"}</p> : null}
@@ -122,23 +123,35 @@ export function CareerMailSettings({ open, profile, status, french, busy, error,
   error: string; loopEnabled: boolean; onDismiss: () => void; onSchedule: () => void; run: MailAction;
 }) {
   const [form, setForm] = useState<CareerMailbox>({ ...DEFAULT_MAILBOX, sender_name: profile.display_name || "", sender_email: profile.email || "", ...profile.mailbox });
+  const [connection, setConnection] = useState<"direct" | "oauth">(profile.mailbox?.account_id ? "oauth" : "direct");
   const [smtpPassword, setSmtpPassword] = useState("");
   const [imapPassword, setImapPassword] = useState("");
   const [saved, setSaved] = useState(false);
-  const set = <K extends keyof CareerMailbox>(key: K, value: CareerMailbox[K]) => { setSaved(false); setForm((current) => ({ ...current, [key]: value })); };
-  const save = async () => {
-    const result = await run("mail_config", { mailbox: form, smtp_password: smtpPassword, imap_password: imapPassword });
-    if (result) { setSmtpPassword(""); setImapPassword(""); setSaved(true); }
+  const [dirty, setDirty] = useState(false);
+  const text = (fr: string, en: string) => french ? fr : en;
+  const changed = () => { setSaved(false); setDirty(true); };
+  const set = <K extends keyof CareerMailbox>(key: K, value: CareerMailbox[K]) => { changed(); setForm(current => ({ ...current, [key]: value })); };
+  const save = async (next = form, method = connection) => {
+    const mailbox = { ...next, account_id: method === "direct" ? "" : next.account_id };
+    const result = await run("mail_config", { mailbox,
+      ...(method === "direct" ? { smtp_password: smtpPassword, imap_password: imapPassword } : {}),
+    });
+    if (result) {
+      setForm(result.profile.mailbox || mailbox); setSaved(true); setDirty(false);
+      setSmtpPassword(""); setImapPassword("");
+    }
     return result;
   };
-  const test = async () => { if (await save()) await run("mail_test"); };
-  const text = (fr: string, en: string) => french ? fr : en;
-  const reduced = useReducedMotion();
-  return (
-    <Panel isOpen={open} onDismiss={onDismiss} isLightDismiss={!busy} type={PanelType.medium} headerText={text("Courrier professionnel", "Professional mail")} closeButtonAriaLabel={text("Fermer", "Close")}>
-      <div className="grid gap-5 pb-8" data-testid="career-mail-settings">
-        <p className="text-sm text-muted-foreground">{text("Utilisez les paramètres SMTP/IMAP de votre messagerie et, si requis, son mot de passe d'application.", "Use your mail provider's SMTP/IMAP settings and its app password, if required.")}</p>
-        <Toggle label={text("Activer ce compte pour les candidatures", "Enable this account for applications")} checked={form.enabled} onChange={(_, checked) => set("enabled", Boolean(checked))} disabled={busy} />
+  return <Panel styles={DESK_PANEL_STYLES} isOpen={open} onDismiss={onDismiss} isLightDismiss={!busy} type={PanelType.medium}
+    headerText={text("Courrier professionnel", "Professional mail")} closeButtonAriaLabel={text("Fermer", "Close")}>
+    <div className="grid gap-5 pb-8" data-testid="career-mail-settings">
+      <ChoiceGroup label={text("Connexion à votre messagerie", "Mail connection")} selectedKey={connection} disabled={busy}
+        options={[{ key: "direct", text: text("Connexion directe SMTP/IMAP", "Direct SMTP/IMAP connection") },
+          { key: "oauth", text: text("Google ou Microsoft dans le navigateur", "Google or Microsoft in the browser") }]}
+        onChange={(_, option) => { if (option) { setConnection(option.key as "direct" | "oauth"); changed(); } }} />
+      {connection === "direct" ? <>
+        <p className="text-sm text-muted-foreground">{text("Connectez votre propre boîte depuis cette installation de Navin, avec les paramètres SMTP/IMAP de votre messagerie. Aucune application OAuth à créer pour cette connexion.", "Connect your own mailbox from this Navin installation using your provider's SMTP/IMAP settings. No OAuth application registration is needed for this connection.")}</p>
+        <p className="text-sm text-muted-foreground">{text("Selon votre messagerie, utilisez un mot de passe d'application. Certains comptes imposent la connexion Google ou Microsoft dans le navigateur.", "Depending on your mail provider, use an app password. Some accounts require Google or Microsoft sign-in in the browser.")}</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField label={text("Nom de l'expéditeur", "Sender name")} value={form.sender_name} onChange={(_, value) => set("sender_name", value || "")} disabled={busy} />
           <TextField label={text("Adresse professionnelle", "Professional email")} type="email" value={form.sender_email} onChange={(_, value) => set("sender_email", value || "")} disabled={busy} />
@@ -151,42 +164,50 @@ export function CareerMailSettings({ open, profile, status, french, busy, error,
             <Dropdown label={text("Sécurité SMTP", "SMTP security")} selectedKey={form.smtp_security} options={[{ key: "starttls", text: "STARTTLS" }, { key: "ssl", text: "TLS" }]} onChange={(_, option) => option && set("smtp_security", option.key as "ssl" | "starttls")} disabled={busy} />
             <TextField label={text("Identifiant SMTP", "SMTP username")} value={form.smtp_username} onChange={(_, value) => set("smtp_username", value || "")} disabled={busy} autoComplete="username" />
           </div>
-          <TextField label={text("Mot de passe SMTP", "SMTP password")} type="password" autoComplete="new-password" value={smtpPassword} onChange={(_, value) => { setSaved(false); setSmtpPassword(value || ""); }} disabled={busy} placeholder={status?.smtp_password_set ? text("Enregistré. Laisser vide pour le conserver.", "Saved. Leave blank to keep it.") : ""} />
+          <TextField label={text("Mot de passe SMTP", "SMTP password")} type="password" autoComplete="new-password" value={smtpPassword} onChange={(_, value) => { changed(); setSmtpPassword(value || ""); }} disabled={busy} placeholder={status?.smtp_password_set ? text("Enregistré. Laisser vide pour le conserver.", "Saved. Leave blank to keep it.") : ""} />
         </fieldset>
         <fieldset className="grid gap-3 border-0 p-0">
           <legend className="mb-2 font-semibold">{text("Réception IMAP", "IMAP replies")}</legend>
-          <Toggle label={text("Relever les réponses à mes candidatures", "Sync replies to my applications")} checked={form.read_replies} onChange={(_, checked) => set("read_replies", Boolean(checked))} disabled={busy} />
+          <p className="text-xs text-muted-foreground">{text("Facultatif si vous utilisez uniquement l'envoi d'emails.", "Optional if you only send emails.")}</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <TextField label={text("Serveur IMAP", "IMAP server")} value={form.imap_host} onChange={(_, value) => set("imap_host", value || "")} disabled={busy} placeholder="imap.example.com" />
             <TextField label={text("Port IMAP", "IMAP port")} type="number" min={1} max={65535} value={String(form.imap_port)} onChange={(_, value) => set("imap_port", Number(value || 993))} disabled={busy} />
             <Dropdown label={text("Sécurité IMAP", "IMAP security")} selectedKey={form.imap_security} options={[{ key: "ssl", text: "TLS" }, { key: "starttls", text: "STARTTLS" }]} onChange={(_, option) => option && set("imap_security", option.key as "ssl" | "starttls")} disabled={busy} />
-            <TextField label={text("Identifiant IMAP", "IMAP username")} value={form.imap_username} onChange={(_, value) => set("imap_username", value || "")} disabled={busy} />
-            <TextField label={text("Dossier", "Folder")} value={form.imap_folder} onChange={(_, value) => set("imap_folder", value || "")} disabled={busy} />
-            <TextField label={text("Relève toutes les (minutes)", "Sync every (minutes)")} type="number" min={1} max={60} value={String(form.poll_interval_minutes)} onChange={(_, value) => set("poll_interval_minutes", Number(value || 5))} disabled={busy} />
+            <TextField label={text("Identifiant IMAP", "IMAP username")} value={form.imap_username} onChange={(_, value) => set("imap_username", value || "")} disabled={busy} autoComplete="username" />
+            <TextField label={text("Dossier IMAP", "IMAP folder")} value={form.imap_folder} onChange={(_, value) => set("imap_folder", value || "")} disabled={busy} />
           </div>
-          <TextField label={text("Mot de passe IMAP", "IMAP password")} type="password" autoComplete="new-password" value={imapPassword} onChange={(_, value) => { setSaved(false); setImapPassword(value || ""); }} disabled={busy} placeholder={status?.imap_password_set ? text("Enregistré. Laisser vide pour le conserver.", "Saved. Leave blank to keep it.") : ""} />
+          <TextField label={text("Mot de passe IMAP", "IMAP password")} type="password" autoComplete="new-password" value={imapPassword} onChange={(_, value) => { changed(); setImapPassword(value || ""); }} disabled={busy} placeholder={status?.imap_password_set ? text("Enregistré. Laisser vide pour le conserver.", "Saved. Leave blank to keep it.") : ""} />
         </fieldset>
-        <motion.div layout={!reduced} transition={reduced ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 }} className="grid gap-3 rounded-xl bg-indigo-500/5 p-4">
-          <Toggle label={text("Autoriser l'envoi automatique après la chasse", "Allow automatic sending after each hunt")} checked={form.auto_send} onChange={(_, checked) => set("auto_send", Boolean(checked))} disabled={busy} data-testid="career-mail-auto-send" />
-          <p className="text-sm text-muted-foreground">{text("Chaque candidature utilise un CV adapté à l'offre, sa lettre et une adresse de candidature publiée. Les documents incomplets restent à relire.", "Each application uses a CV tailored to the offer, its cover letter and a published application address. Incomplete documents remain available for review.")}</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <TextField label={text("Score minimum sur 100", "Minimum match score out of 100")} type="number" min={0} max={100} value={String(form.min_match_score)} onChange={(_, value) => set("min_match_score", Number(value || 0))} disabled={busy} />
-            <TextField label={text("Candidatures maximum par jour", "Maximum applications per day")} type="number" min={1} max={25} value={String(form.max_per_day)} onChange={(_, value) => set("max_per_day", Number(value || 1))} disabled={busy} />
-          </div>
-          <TextField label={text("Domaines destinataires autorisés, facultatif", "Allowed recipient domains, optional")} description={text("Séparés par des virgules. Vide : toute adresse publiée dans une offre éligible.", "Comma-separated. Leave empty to allow published addresses on eligible offers.")} value={form.allowed_recipient_domains.join(", ")} onChange={(_, value) => set("allowed_recipient_domains", (value || "").split(",").map((item) => item.trim()))} disabled={busy} />
-          {form.auto_send && !loopEnabled ? <DefaultButton styles={BUTTON} disabled={busy} text={text("Enregistrer et programmer la boucle", "Save and schedule the loop")} onClick={() => void save().then((result) => { if (result) onSchedule(); })} /> : null}
-        </motion.div>
-        {busy ? <ProgressIndicator label={text("Opération en cours...", "Working...")} /> : null}
-        {error ? <MessageBar messageBarType={MessageBarType.error}>{careerMailError(error, french)}</MessageBar> : null}
-        {saved && !error ? <MessageBar messageBarType={MessageBarType.success}>{text("Paramètres enregistrés.", "Settings saved.")}</MessageBar> : null}
-        {Object.entries(status?.checks || {}).map(([protocol, check]) => check ? <MessageBar key={protocol} messageBarType={check.status === "connected" ? MessageBarType.success : MessageBarType.error}>{protocol.toUpperCase()}: {check.status === "connected" ? text("authentification vérifiée", "authentication verified") : careerMailError(check.error || "mail_transport_failed", french)}</MessageBar> : null)}
+        <p className="text-xs text-muted-foreground">{text("Les identifiants sont enregistrés sur cet ordinateur. La vérification teste la connexion sans envoyer d'email.", "Credentials are stored on this computer. Checking the connection does not send an email.")}</p>
+      </> : <ConnectedAccounts selectedId={form.account_id} onSelect={account => {
+        const next = { ...form, account_id: account.id, sender_email: account.email, sender_name: account.name,
+          enabled: true, read_replies: account.permissions.read_mail, auto_send: false };
+        void save(next, "oauth");
+      }} />}
+      {(connection === "direct" || !!form.account_id) && <>
+        <Toggle label={text("Utiliser ce compte dans Carrière", "Use this account in Career")} checked={form.enabled} onChange={(_, value) => set("enabled", !!value)} disabled={busy} />
+        <Toggle label={text("Suivre les réponses aux missions", "Track replies to missions")} checked={form.read_replies} onChange={(_, value) => set("read_replies", !!value)} disabled={busy} />
+        <TextField label={text("Relève toutes les (minutes)", "Sync every (minutes)")} type="number" min={1} max={60} value={String(form.poll_interval_minutes)} onChange={(_, value) => set("poll_interval_minutes", Number(value || 5))} disabled={busy} />
+        {!profile.company_prospecting && <>
+          <Toggle label={text("Envoyer automatiquement mes candidatures", "Automatically send my applications")} checked={form.auto_send} onChange={(_, value) => set("auto_send", !!value)} disabled={busy} data-testid="career-mail-auto-send" />
+          <TextField label={text("Score minimum sur 100", "Minimum score out of 100")} type="number" min={0} max={100} value={String(form.min_match_score)} onChange={(_, value) => set("min_match_score", Number(value || 0))} disabled={busy} />
+          <TextField label={text("Candidatures maximum par jour", "Maximum applications per day")} type="number" min={1} max={25} value={String(form.max_per_day)} onChange={(_, value) => set("max_per_day", Number(value || 3))} disabled={busy} />
+          <TextField label={text("Domaines destinataires autorisés, facultatif", "Allowed recipient domains, optional")} description={text("Séparés par des virgules. Vide : toute adresse publiée dans une offre éligible.", "Comma-separated. Leave empty to allow published addresses on eligible offers.")} value={form.allowed_recipient_domains.join(", ")} onChange={(_, value) => set("allowed_recipient_domains", (value || "").split(",").map(item => item.trim()))} disabled={busy} />
+        </>}
+        {connection === "oauth" && <p className="text-xs text-muted-foreground">{text("L'envoi autonome exige aussi la permission d'envoi sur le compte connecté.", "Autonomous sending also requires the connected account's send permission.")}</p>}
+        {profile.company_prospecting && <p className="text-xs text-muted-foreground">{text("Les règles d'envoi automatique pour la prospection se configurent dans Société.", "Automatic sending rules for prospecting are configured in Company.")}</p>}
+        {form.auto_send && !loopEnabled && <DefaultButton text={text("Configurer les horaires", "Configure schedule")} styles={BUTTON} disabled={busy} onClick={async () => { if (await save()) onSchedule(); }} />}
         <div className="flex flex-wrap gap-2">
           <PrimaryButton styles={BUTTON} text={text("Enregistrer", "Save")} onClick={() => void save()} disabled={busy} data-testid="career-mail-save" />
-          <DefaultButton styles={BUTTON} text={text("Enregistrer et tester la connexion", "Save and test connection")} onClick={() => void test()} disabled={busy} data-testid="career-mail-test" />
+          <DefaultButton styles={BUTTON} text={text("Enregistrer et vérifier la connexion", "Save and check connection")} onClick={async () => { if (await save()) await run("mail_test"); }} disabled={busy} data-testid="career-mail-test" />
         </div>
-      </div>
-    </Panel>
-  );
+      </>}
+      {busy && <ProgressIndicator />}
+      {error && <MessageBar messageBarType={MessageBarType.error}>{careerMailError(error, french)}</MessageBar>}
+      {saved && !error && <MessageBar messageBarType={MessageBarType.success}>{text("Compte enregistré.", "Account saved.")}</MessageBar>}
+      {!dirty && Object.entries(status?.checks || {}).map(([protocol, check]) => check ? <MessageBar key={protocol} messageBarType={check.status === "connected" ? MessageBarType.success : MessageBarType.error}>{protocol.toUpperCase()}: {check.status === "connected" ? text("authentification vérifiée", "authentication verified") : careerMailError(check.error || "mail_transport_failed", french)}</MessageBar> : null)}
+    </div>
+  </Panel>;
 }
 
 export function CareerMailCompose({ open, draft, receipt, french, busy, error, accountEnabled, onDismiss, onSettings, onRefresh, onSend, onDownload }: {
@@ -202,7 +223,7 @@ export function CareerMailCompose({ open, draft, receipt, french, busy, error, a
   const fresh = Boolean(draft && recipient.trim() && recipient.trim() === draft.recipient);
   const text = (fr: string, en: string) => french ? fr : en;
   return (
-    <Panel isOpen={open} onDismiss={onDismiss} isLightDismiss={!busy} type={PanelType.medium} headerText={text("Candidature par email", "Application by email")} closeButtonAriaLabel={text("Fermer", "Close")}>
+    <Panel styles={DESK_PANEL_STYLES} isOpen={open} onDismiss={onDismiss} isLightDismiss={!busy} type={PanelType.medium} headerText={text("Candidature par email", "Application by email")} closeButtonAriaLabel={text("Fermer", "Close")}>
       <div className="grid gap-5 pb-8" data-testid="career-mail-compose">
         {busy ? <ProgressIndicator label={text("Opération en cours...", "Working...")} /> : null}
         {error ? <MessageBar messageBarType={MessageBarType.error}>{careerMailError(error, french)}</MessageBar> : null}

@@ -35,8 +35,26 @@ def _store() -> CareerStore:
 
 
 def handle_career_action(action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    body = body if isinstance(body, dict) else {}
+    from filelock import FileLock, Timeout
+
+    from navin.accounts.store import AccountError
+
     store = _store()
+    # Stop writes an intent understood by the active loop. It must remain usable
+    # while a long API search owns the lifecycle lock.
+    if str(action or "").strip().lower() == "stop":
+        return _handle_career_action(store, action, body)
+    try:
+        with FileLock(str(store.root / "lifecycle.lock"), timeout=0):
+            return _handle_career_action(store, action, body)
+    except Timeout:
+        raise CareerError("A Career operation is in progress. Try again after it finishes.", status=409) from None
+    except AccountError as exc:
+        raise CareerError(exc.message, status=exc.status) from None
+
+
+def _handle_career_action(store: CareerStore, action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = body if isinstance(body, dict) else {}
     act = (action or "snapshot").strip().lower()
     from navin.agent.tools.context import is_heartbeat_turn
 
@@ -47,6 +65,51 @@ def handle_career_action(action: str, body: dict[str, Any] | None = None) -> dic
             "Collect, search and apply stay on the desk or a user chat."
         )
     if act in {"snapshot", "status"}:
+        return snapshot(store)
+    if act == "archive_reset":
+        from navin.desk_archive import archive_reset
+
+        receipt = archive_reset(store, module="career", confirmed=body.get("confirmed") is True)
+        return {**snapshot(store), "archive_receipt": receipt}
+    if act == "candidates":
+        from navin.career.prospecting import prospecting_snapshot
+
+        candidates = prospecting_snapshot(store)["candidates"]
+        query = str(body.get("query") or "").casefold()
+        rows = [row for row in candidates if query in " ".join(str(row.get(k) or "") for k in ("name", "headline", "snippet", "skills", "source")).casefold()]
+        return {"candidates": rows, "total": len(rows), "search_performed": False,
+                "next_action": {"action": "search_candidates", "id": str(body.get("id") or ""), "query": str(body.get("query") or "")},
+                "note": "This is the saved pool only. Use search_candidates to search configured platforms, including when this pool is empty."}
+    if act == "search_candidates":
+        from navin.career.prospecting import handle_prospecting
+
+        handle_prospecting(store, "prospecting_search", {**body, "mode": "profiles"})
+        return snapshot(store)
+    if act == "candidate_cv":
+        from navin.career.prospecting import prospecting_snapshot
+        from navin.career.sourcing_mail import read_candidate_cv
+
+        candidate = next((c for c in prospecting_snapshot(store)["candidates"] if c["id"] == body.get("id")), None)
+        if not candidate:
+            raise CareerError("Profil introuvable.", status=404)
+        return {**snapshot(store), "candidate_file": read_candidate_cv(store, candidate, str(body.get("document") or "cv"))}
+    if act == "archive_download":
+        from navin.desk_archive import download_archive
+
+        try:
+            file = download_archive(store.root, str(body.get("id") or ""))
+        except ValueError as exc:
+            raise CareerError(str(exc), status=400) from None
+        return {**snapshot(store), "archive_file": file}
+    if act == "empty_archive":
+        from navin.career.prospecting import handle_prospecting
+
+        handle_prospecting(store, "prospecting_empty_archive", body)
+        return snapshot(store)
+    if act.startswith("prospecting_"):
+        from navin.career.prospecting import handle_prospecting
+
+        handle_prospecting(store, act, body)
         return snapshot(store)
     if act in {"mail_config", "mail_test", "mail_draft", "send_email", "sync_mail"}:
         from navin.career.mail import configure_mailbox, mail_draft, send_application, test_mailbox

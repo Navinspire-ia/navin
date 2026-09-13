@@ -321,6 +321,10 @@ def _run_hunt(
     state["hunt_started_at"] = time.time()
     desk.save_loop(state)
     mark_loop_hunting(desk, True)
+    if profile.get("company_prospecting"):
+        from navin.career.prospecting import run_company_hunt
+
+        collect_fn = run_company_hunt
     try:
         try:
             hunt = call_with_deadline(
@@ -360,7 +364,15 @@ def _run_hunt(
         remaining = max(8.0, MAX_HUNT_S - max(0.0, time.time() - as_float(state.get("hunt_started_at"))))
         mail_result: dict[str, Any] = {"sent": 0}
         mail_config = desk.load_profile().get("mailbox") or {}
-        if mail_config.get("enabled") and mail_config.get("auto_send") and was_enabled and remaining > 15:
+        if profile.get("company_prospecting") and was_enabled and remaining > 15:
+            from navin.career.sourcing_mail import run_sourcing_cycle
+
+            try:
+                mail_result = run_sourcing_cycle(desk, deadline=time.monotonic() + min(90, remaining - 8), automatic=True)
+            except Exception:
+                logger.exception("Career company mail cycle failed")
+                mail_result = {"sent": 0, "error": "company_mail_failed"}
+        elif mail_config.get("enabled") and mail_config.get("auto_send") and was_enabled and remaining > 15:
             from navin.career.mail import run_mail_cycle
 
             mail_budget = min(120.0, remaining - 8)
