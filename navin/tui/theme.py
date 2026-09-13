@@ -5,7 +5,7 @@
 
 Brand chrome uses a sky blue that stays readable on charcoal without the
 neon punch of ``#0369FF``. Teal ``#54D4CD`` stays for accents. File paths
-use sage green; inline code that is not a path stays with the body text.
+use sage green; commands use muted amber and other inline code stays neutral.
 Built-in Textual themes stay selectable from the theme picker.
 
 ``navin`` (Navin Night) is the default; ``navin-light`` (Navin Day) is the
@@ -28,7 +28,7 @@ NAVIN_DARK = Theme(
     warning="#E6B84C",
     error="#E85D4C",
     success="#54D4CD",
-    foreground="#F2F2F2",
+    foreground="#E6E6E6",
     background="#181A1D",
     surface="#2A2D32",
     panel="#22252A",
