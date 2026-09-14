@@ -1225,8 +1225,26 @@ class GrepTool(_SearchTool):
     ) -> str:
         try:
             target = await self._bound_path(path or ".", write=False)
+            missing_path = None
+            recovery_note = ""
             if not target.exists():
-                return self._missing_path_msg("Path", path or ".", target)
+                missing_path = self._missing_path_msg("Path", path or ".", target)
+                workspace = self._display_workspace()
+                # An invented filename should not start a chain of guesses.
+                # Search its existing project directory for the same symbols,
+                # and state the wider scope explicitly when matches are found.
+                if (
+                    not target.suffix
+                    or workspace is None
+                    or not target.is_relative_to(workspace)
+                    or not target.parent.is_dir()
+                ):
+                    return missing_path
+                target = target.parent
+                recovery_note = (
+                    f"[Note: {path} does not exist. Searched {self._display(target)} "
+                    "for the same pattern instead.]\n\n"
+                )
             if not (target.is_dir() or target.is_file()):
                 return ToolResult.error(f"Error: Unsupported path: {path}")
             if sort not in {"relevance", "path", "modified"}:
@@ -1269,6 +1287,8 @@ class GrepTool(_SearchTool):
                 multiline=multiline,
             )
             hits = _sort_hits(hits, sort)
+            if missing_path is not None and not hits:
+                return missing_path
             total_matches = sum(len(hit.matches) for hit in hits)
 
             blocks: list[str] = []
@@ -1350,7 +1370,7 @@ class GrepTool(_SearchTool):
                 )
             if notes:
                 result += "\n\n" + "\n".join(notes)
-            return result
+            return recovery_note + result
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:

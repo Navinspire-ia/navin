@@ -194,6 +194,11 @@ class ApprovalBroker:
         """Hot-apply a new approvals posture from Settings > Security."""
         self._config = config
 
+    def enable_channel(self, channel: str) -> None:
+        """Register a UI owned by this runtime that can answer approval cards."""
+        if channel:
+            self._answering_channels = self._answering_channels | {channel}
+
     def _timeout_s(self) -> float:
         """How long to wait. Overridable so tests do not sleep for minutes."""
         return float(self._config.timeout_s)

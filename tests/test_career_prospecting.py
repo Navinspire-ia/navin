@@ -633,3 +633,19 @@ def test_stop_remains_available_during_api_search(store):
     with patch("navin.webui.career_api._store", return_value=store), FileLock(str(store.root / "lifecycle.lock")):
         result = handle_career_action("stop", {})
     assert not result["loop"]["enabled"]
+
+
+def test_search_revives_archived_offers_the_user_cleared(store):
+    store.upsert_opportunities([offer()])
+    from navin.career.retention import set_archived
+
+    set_archived(store, "job-one", archived=True)
+    assert all(row.get("archived") for row in store.load_opportunities())
+    # The next user search re-finds the same offer: default upsert keeps it
+    # archived (user tracking), the search path revives it.
+    store.upsert_opportunities([offer()])
+    assert all(row.get("archived") for row in store.load_opportunities())
+    store.upsert_opportunities([offer()], revive_archived=True)
+    rows = {row["id"]: row for row in store.load_opportunities()}
+    assert not rows["job-one"]["archived"] and rows["job-one"]["archived_at"] is None
+    assert rows["job-one"]["application_email"] == "client@example.com"

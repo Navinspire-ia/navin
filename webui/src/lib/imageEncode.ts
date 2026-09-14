@@ -15,6 +15,7 @@ import {
 } from "@/workers/imageEncode.worker";
 
 export type { EncodeResponse, EncodeSuccess, EncodeFailure } from "@/workers/imageEncode.worker";
+export { TARGET_MAX_BYTES } from "@/workers/imageEncode.worker";
 
 type Pending = {
   resolve: (r: EncodeResponse) => void;

@@ -553,7 +553,7 @@ class ReadFileTool(_FsTool):
             if self._block_device_reads and _is_blocked_device(fp):
                 return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output). Set tools.file.blockDeviceReads=false to allow it.")
             if not fp.exists():
-                recovered = self._closest_readable_match(fp)
+                recovered = await asyncio.to_thread(self._closest_readable_match, fp)
                 if recovered is not None:
                     note = (
                         f"[Note: {path} not found; reading closest match "
@@ -572,11 +572,11 @@ class ReadFileTool(_FsTool):
 
             # PDF support
             if fp.suffix.lower() == ".pdf":
-                return self._read_pdf(fp, pages)
+                return await asyncio.to_thread(self._read_pdf, fp, pages)
 
             # Office document support
             if fp.suffix.lower() in {".docx", ".xlsx", ".pptx"}:
-                return self._read_office_doc(fp)
+                return await asyncio.to_thread(self._read_office_doc, fp)
 
             from navin.utils.video_frames import is_video_path
 
@@ -584,7 +584,7 @@ class ReadFileTool(_FsTool):
                 return await asyncio.to_thread(self._read_video, fp)
 
             read_mtime = fp.stat().st_mtime
-            raw = fp.read_bytes()
+            raw = await asyncio.to_thread(fp.read_bytes)
             if not raw:
                 self._file_states.record_read(fp, offset=offset, limit=limit, content=raw, mtime=read_mtime)
                 return f"(Empty file: {path})" + scoped_project_instructions(self._display_workspace(), fp)
@@ -613,7 +613,7 @@ class ReadFileTool(_FsTool):
             # with autocrlf, editors saving CRLF) but is normalized on all
             # platforms so downstream StrReplace/Grep behavior is consistent
             # regardless of where the file was written.
-            decoded = text_decode.decode(raw)
+            decoded = await asyncio.to_thread(text_decode.decode, raw)
             if decoded is None:
                 # Binary file - return error message
                 mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]

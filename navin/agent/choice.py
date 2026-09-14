@@ -151,6 +151,11 @@ class ChoiceBroker:
     def _timeout(self) -> float:
         return float(self._timeout_s)
 
+    def enable_channel(self, channel: str) -> None:
+        """Register a UI owned by this runtime that can answer choice cards."""
+        if channel:
+            self._answering_channels = self._answering_channels | {channel}
+
     async def ask(self, request: ChoiceRequest) -> ChoiceAnswer:
         ctx = current_request_context()
         session_key = getattr(ctx, "session_key", "") or ""

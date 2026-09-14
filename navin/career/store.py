@@ -475,7 +475,7 @@ class CareerStore:
     def save_opportunities(self, rows: list[dict[str, Any]]) -> None:
         _atomic_write(self.jobs_path, rows)
 
-    def upsert_opportunities(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def upsert_opportunities(self, incoming: list[dict[str, Any]], *, revive_archived: bool = False) -> list[dict[str, Any]]:
         from navin.career.duplicates import same_mission, source_links
 
         existing = self.load_opportunities()
@@ -511,6 +511,12 @@ class CareerStore:
                 for field in ("url", "source", "application_email", "contact", "favorite", "archived", "archived_at"):
                     if field in prev:
                         merged[field] = prev[field]
+                # A fresh user-initiated search that re-finds a hidden offer
+                # means the user asked to see it again: bring it back instead of
+                # leaving it archived behind the current filters.
+                if revive_archived and prev.get("archived"):
+                    merged["archived"] = False
+                    merged["archived_at"] = None
             if prev.get("stage") in {"applied", "replied", "interview", "offer", "won", "rejected"}:
                 merged["stage"] = prev["stage"]
             merged["favorite"] = bool(merged.get("favorite"))

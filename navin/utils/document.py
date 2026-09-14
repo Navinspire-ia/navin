@@ -11,6 +11,7 @@ from zipfile import BadZipFile, ZipFile
 from loguru import logger
 
 from navin.utils.helpers import detect_image_mime
+from navin.utils.upload_limits import MAX_UPLOAD_FILE_BYTES
 
 # Supported file extensions for text extraction
 SUPPORTED_EXTENSIONS: set[str] = {
@@ -42,7 +43,7 @@ SUPPORTED_EXTENSIONS: set[str] = {
 }
 
 _MAX_TEXT_LENGTH = 200_000
-_MAX_EXTRACT_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_MAX_EXTRACT_FILE_SIZE = MAX_UPLOAD_FILE_BYTES
 _MAX_OFFICE_ARCHIVE_MEMBERS = 10_000
 _MAX_OFFICE_UNCOMPRESSED_SIZE = 256 * 1024 * 1024  # 256 MB
 _MAX_OFFICE_MEMBER_SIZE = 128 * 1024 * 1024  # 128 MB

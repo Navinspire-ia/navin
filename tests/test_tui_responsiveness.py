@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from textual.app import App, ComposeResult
-from textual.widgets import Markdown, Static
+from textual.widgets import Markdown, OptionList, Static
 
 from navin.bus.queue import MessageBus
 from navin.tui.app import NavinApp
@@ -120,6 +121,140 @@ class InterruptTests(unittest.IsolatedAsyncioTestCase):
                 for _ in range(20):
                     app._tick_spinner()
                 self.assertEqual(resolve.call_count, 1)
+
+    async def test_typing_continues_while_file_read_waits_for_disk(self):
+        from navin.agent.tools.filesystem import ReadFileTool
+
+        app = self.app
+        path = app.config.workspace_path / "slow.txt"
+        path.write_text("file content\n")
+        started, release = threading.Event(), threading.Event()
+        original_read = Path.read_bytes
+
+        def read_bytes(candidate):
+            if candidate == path:
+                started.set()
+                release.wait(3)
+            return original_read(candidate)
+
+        tool = ReadFileTool(workspace=app.config.workspace_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            with patch.object(Path, "read_bytes", read_bytes):
+                reading = asyncio.create_task(tool.execute(path=str(path)))
+                try:
+                    self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                    await pilot.press(*"fluide")
+                    self.assertEqual(app.composer.text, "fluide")
+                    self.assertFalse(reading.done(), "disk I/O blocked input until the read finished")
+                finally:
+                    release.set()
+                    result = await reading
+            self.assertIn("file content", result)
+
+    async def test_large_picker_batches_layout_and_keeps_selection_correct(self):
+        app = self.app
+        async with app.run_test(size=(100, 32)) as pilot:
+            picker = PickerScreen("Sessions", [
+                PickItem(str(i), f"Session {i}", group="Chats") for i in range(500)
+            ], current="123")
+            await app.push_screen(picker)
+            options = picker.query_one(OptionList)
+            self.assertEqual(picker._highlighted_item().id, "123")
+            with patch.object(options, "_update_lines", wraps=options._update_lines) as layout:
+                picker._apply_filter("Session 12")
+                self.assertLessEqual(layout.call_count, 6)
+            self.assertEqual(picker._highlighted_item().id, "123")
+            await pilot.press("enter")
+            self.assertEqual(len(app.screen_stack), 1)
+
+    async def test_terminal_approval_card_resumes_or_refuses_the_file_read(self):
+        from navin.agent.approval import (
+            ApprovalBroker,
+            ApprovalConfig,
+            bind_approval_gate,
+            handle_approval_decision,
+            reset_approval_gate,
+        )
+        from navin.agent.tools.context import RequestContext, request_context
+        from navin.agent.tools.filesystem import ReadFileTool
+        from navin.tui.runtime import UiApprovalRequested
+
+        app = self.app
+        requested = asyncio.Event()
+
+        async def publish(request_id, request, route):
+            await app._on_runtime_event(UiApprovalRequested(
+                **request.payload(request_id), remember_offered=True,
+            ))
+            requested.set()
+
+        broker = ApprovalBroker(publish=publish, config=ApprovalConfig(enabled=True))
+        app.runtime.agent_loop = SimpleNamespace(approvals=broker)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.runtime.switch_session("cli:direct")
+            with tempfile.TemporaryDirectory() as outside:
+                path = Path(outside) / "note.txt"
+                path.write_text("approved content\n")
+                tool = ReadFileTool(workspace=app.config.workspace_path, allowed_dir=app.config.workspace_path)
+                for allowed, key in ((False, "n"), (True, "y")):
+                    with self.subTest(allowed=allowed), request_context(RequestContext(
+                        channel="cli", chat_id="direct", session_key="cli:direct",
+                    )):
+                        requested.clear()
+                        token = bind_approval_gate(broker)
+                        reading = asyncio.create_task(tool.execute(path=str(path)))
+                        reset_approval_gate(token)
+                        try:
+                            await asyncio.wait_for(requested.wait(), 2)
+                            self.assertFalse(reading.done())
+                            await pilot.press(key)
+                            answer = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+                            self.assertTrue(await handle_approval_decision(app.runtime.agent_loop, answer, None))
+                            result = await asyncio.wait_for(reading, 2)
+                            if allowed:
+                                self.assertIn("approved content", result)
+                            else:
+                                self.assertTrue(result.is_error)
+                        finally:
+                            if not reading.done():
+                                reading.cancel()
+                                await asyncio.gather(reading, return_exceptions=True)
+
+    async def test_terminal_choice_card_delivers_the_selected_option(self):
+        from navin.agent.choice import (
+            ChoiceBroker,
+            ChoiceOption,
+            ChoiceRequest,
+            handle_choice_answer,
+        )
+        from navin.agent.tools.context import RequestContext, request_context
+        from navin.tui.runtime import UiChoiceRequested
+
+        app = self.app
+        requested = asyncio.Event()
+
+        async def publish(request_id, request, route):
+            await app._on_runtime_event(UiChoiceRequested(**request.payload(request_id)))
+            requested.set()
+
+        broker = ChoiceBroker(publish=publish)
+        app.runtime.agent_loop = SimpleNamespace(choices=broker)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.runtime.switch_session("cli:restored")
+            with request_context(RequestContext(channel="cli", chat_id="restored", session_key="cli:restored")):
+                asking = asyncio.create_task(broker.ask(ChoiceRequest("Choose a scope", (
+                    ChoiceOption("file", "File"), ChoiceOption("project", "Project"),
+                ))))
+                try:
+                    await asyncio.wait_for(requested.wait(), 2)
+                    await pilot.press("2")
+                    answer = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+                    self.assertTrue(await handle_choice_answer(app.runtime.agent_loop, answer, None))
+                    self.assertEqual((await asyncio.wait_for(asking, 2)).option_id, "project")
+                finally:
+                    if not asking.done():
+                        asking.cancel()
+                        await asyncio.gather(asking, return_exceptions=True)
 
 
 class StreamHost(App):
@@ -269,10 +404,10 @@ class SessionSwitchDuringLoadTests(unittest.IsolatedAsyncioTestCase):
 
         def fake_history():
             if app.runtime.session_key == "cli:other":
-                return other, 0
-            return heavy, 0
+                return other
+            return heavy
 
-        app.runtime.history = fake_history
+        app.runtime.history_snapshot = fake_history
         original_finish = AssistantMessage.finish
 
         async def slow_finish(self, *args, **kwargs):

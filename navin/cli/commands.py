@@ -3913,7 +3913,8 @@ def cache_command(
 def python_command(ctx: typer.Context):
     """Run a Python script, module or snippet with navin's own libraries.
 
-    ``navin python report.py``, ``navin python -m pytest``, ``navin python -c code``.
+    ``navin python report.py``, ``navin python -m pytest``, ``navin python -c code``,
+    or ``navin python -`` to read a script from standard input.
     A packaged build has no separate interpreter on disk, so this is how skills,
     the document converters and the agent's own scripts reach python-docx,
     openpyxl, pandas and everything else navin ships with. From source it is the
@@ -3923,7 +3924,7 @@ def python_command(ctx: typer.Context):
 
     args = list(ctx.args)
     if not args:
-        console.print("Usage: navin python [-m module | -c code | script.py] [args...]")
+        console.print("Usage: navin python [-m module | -c code | - | script.py] [args...]")
         raise typer.Exit(2)
 
     # sys.argv has to look like a normal interpreter's to the code being run:
@@ -3931,7 +3932,17 @@ def python_command(ctx: typer.Context):
     original_argv = sys.argv[:]
     original_path = sys.path[:]
     try:
-        if args[0] == "-c":
+        if args[0] == "-":
+            sys.argv = ["-", *args[1:]]
+            sys.path.insert(0, "")
+            # Compile bytes when available so Python encoding cookies work
+            # exactly as they do for a script passed to the interpreter.
+            source = getattr(sys.stdin, "buffer", sys.stdin).read()
+            exec(compile(source, "<stdin>", "exec"), {
+                "__name__": "__main__", "__file__": "<stdin>",
+                "__package__": None, "__spec__": None,
+            })  # noqa: S102
+        elif args[0] == "-c":
             if len(args) < 2:
                 console.print("navin python -c needs the code to run")
                 raise typer.Exit(2)

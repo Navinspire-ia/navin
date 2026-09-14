@@ -79,7 +79,7 @@ export interface ProspectingState {
   keys: Record<string, boolean>;
   checks: Record<string, { ok: boolean; message: string }>;
   platform_catalog: { id: string; name: string; url: string; markets: string; access: string; indexed_profiles: boolean; profile_mode?: string; priority?: number }[];
-  last_run: { at?: number; status?: string; offers?: number; profiles?: number; deferred?: number;
+  last_run: { at?: number; status?: string; offers?: number; revived_offers?: number; profiles?: number; deferred?: number;
     offer_id?: string;
     sources?: { source: string; role?: string; platform?: string; status: string; error_code?: string; count: number; rejected?: Record<string, number>; message?: string; retry_at?: number }[] };
 }

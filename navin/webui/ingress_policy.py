@@ -14,6 +14,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal
 
+from navin.utils.upload_limits import MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES
+
 MessageRejection = Literal["text_too_large"]
 
 
@@ -25,8 +27,8 @@ class MessageIngressLimits:
 @dataclass(frozen=True)
 class AttachmentIngressLimits:
     max_count: int = 20
-    max_file_bytes: int = 6 * 1024 * 1024
-    max_total_bytes: int = 24 * 1024 * 1024
+    max_file_bytes: int = MAX_UPLOAD_FILE_BYTES
+    max_total_bytes: int = MAX_UPLOAD_TOTAL_BYTES
 
 
 @dataclass(frozen=True)

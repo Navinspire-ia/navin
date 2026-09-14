@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -16,6 +17,7 @@ from rich.markup import escape
 from textual import events, on, work
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult, SystemCommand
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
@@ -202,7 +204,7 @@ class NavinActions(Provider):
         assert isinstance(app, NavinApp)
         items = [
             ("New chat", "Reset the conversation (/new)", "new_chat"),
-            ("Stop turn", "Cancel the running turn (esc)", "stop_turn"),
+            ("Stop turn", "Cancel the running turn", "request_stop"),
             ("Background terminals", "List live exec sessions (/ps)", "list_processes"),
             ("Provider", "Open provider settings (ctrl+i)", "open_settings('providers')"),
             ("Model", "Pick the model for the next turns (ctrl+o)", "pick_model"),
@@ -389,7 +391,7 @@ class NavinApp(App[None]):
         Binding("f4", "open_agi", "AGI"),
         Binding("f1", "show_help", "Help"),
         Binding("escape", "stop_turn", "Stop", show=True),
-        Binding("ctrl+c", "interrupt_or_clear", "Copy / stop", show=False, priority=True),
+        Binding("ctrl+c", "interrupt_or_clear", "Copy / clear", show=False, priority=True),
         Binding("super+c", "copy_selection", "Copy", show=False, priority=True),
         Binding("ctrl+insert", "copy_selection", "Copy", show=False),
         Binding("ctrl+shift+c", "copy_reply", "Copy reply", show=False),
@@ -426,6 +428,8 @@ class NavinApp(App[None]):
         self._last_speaker: str | None = None
         self._render_token = 0
         self._history_lock = asyncio.Lock()
+        self._history_snapshot: list[Any] = []
+        self._history_cursor: int | None = None
         self._pending_approvals: dict[str, ApprovalCard] = {}
         self._pending_choices: dict[str, ChoiceCard] = {}
         self._activity: list[str] = []
@@ -435,6 +439,8 @@ class NavinApp(App[None]):
         self._update_info: dict[str, Any] = {}
         self._engine_error: str | None = None
         self._spin = 0
+        self._navigation_closed_at = 0.0
+        self._stop_pending = False
         self._queued_prompts: dict[str, list[QueuedPrompt]] = {}
         self._queue_paused: set[str] = set()
         self._queue_serial = 0
@@ -453,6 +459,11 @@ class NavinApp(App[None]):
 
     def get_default_screen(self) -> Screen:
         return NavinScreen(id="_default")
+
+    def pop_screen(self) -> AwaitComplete:
+        popped = super().pop_screen()
+        self._navigation_closed_at = time.monotonic()
+        return popped
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -543,6 +554,26 @@ class NavinApp(App[None]):
         key = self.runtime.session_key
         self._queued_prompts[key] = [item for item in self._queued_prompts.get(key, []) if item.id != event.prompt_id]
         await self._refresh_queue()
+
+    @on(QueuedPromptRow.Sent)
+    async def _send_queued_prompt_now(self, event: QueuedPromptRow.Sent) -> None:
+        key = self.runtime.session_key
+        item = next((row for row in self._queued_prompts.get(key, []) if row.id == event.prompt_id), None)
+        if item is None or self._queue_sending or not self._engine_ready:
+            return
+        active = self.runtime.turn_active
+        if not active and not self._queue_ready():
+            self.notify("Finishing the current reply. Your message is still queued.")
+            return
+        self._queue_sending = True
+        try:
+            inbound = display_user_text(item.inbound) if active else item.inbound
+            if await self._send_prompt(item.text, inbound, followup=active, restore_input=False):
+                self._queued_prompts[key] = [row for row in self._queued_prompts.get(key, []) if row.id != item.id]
+        finally:
+            self._queue_sending = False
+            await self._refresh_queue()
+            self.composer.focus()
 
     @on(PromptQueue.Resumed)
     async def _resume_queued_prompts(self) -> None:
@@ -846,6 +877,12 @@ class NavinApp(App[None]):
     def _invalidate_history(self) -> int:
         """Stop any in-flight history paint (session switch, clear, reload)."""
         self._render_token += 1
+        self._history_cursor = None
+        self._history_snapshot = []
+        for transcript in self.query(Transcript):
+            transcript.has_older = False
+            transcript.loading_history = False
+            transcript.history_generation = self._render_token
         return self._render_token
 
     async def _render_history(self) -> None:
@@ -856,19 +893,81 @@ class NavinApp(App[None]):
             await self._paint_history(token)
 
     async def _paint_history(self, token: int) -> None:
+        from navin.tui.history import visible_chat_page
+
+        source = await asyncio.to_thread(self.runtime.history_snapshot)
+        rows, cursor = await asyncio.to_thread(visible_chat_page, source)
+        if token != self._render_token:
+            return
+        self._history_snapshot, self._history_cursor = source, cursor
+        transcript = self.transcript
+        transcript.has_older = cursor is not None
+        transcript.loading_history = True
+        transcript.auto_follow = False
+        try:
+            # Keep intermediate mounts off-screen. There is one jump to the
+            # newest reply after layout, never a replay through every message.
+            with self.batch_update():
+                await self._paint_history_rows(token, rows)
+                if token == self._render_token:
+                    # Resolve the new heights while repaints are suspended,
+                    # so the first visible frame is already at the bottom.
+                    transcript.screen._refresh_layout()
+                    transcript.scroll_end(animate=False, immediate=True)
+                    transcript.screen.refresh(layout=True)
+        finally:
+            if token == self._render_token:
+                transcript.loading_history = False
+                transcript.auto_follow = True
+
+    @on(Transcript.OlderRequested)
+    def _history_older_requested(self, event: Transcript.OlderRequested) -> None:
+        if event.generation == self._render_token:
+            self.run_worker(self._load_older_history(), group="older-history", exclusive=True)
+
+    async def _load_older_history(self) -> None:
+        from navin.tui.history import visible_chat_page
+
+        token = self._render_token
+        async with self._history_lock:
+            if token != self._render_token:
+                return
+            if self._history_cursor is None:
+                self.transcript.loading_history = False
+                return
+            transcript = self.transcript
+            anchor = next(iter(transcript.children), None)
+            old_y = anchor.virtual_region.y if anchor is not None else 0
+            try:
+                rows, cursor = await asyncio.to_thread(
+                    visible_chat_page, self._history_snapshot, before=self._history_cursor,
+                )
+                if token != self._render_token:
+                    return
+                with self.batch_update():
+                    await self._paint_history_rows(token, rows, before=anchor, final_rule=False)
+                    if token != self._render_token:
+                        return
+                    self._history_cursor = cursor
+                    transcript.has_older = cursor is not None
+                    scroll_y = transcript.scroll_y
+                    transcript.screen._refresh_layout()
+                    if anchor is not None and anchor.is_attached:
+                        transcript.scroll_to(y=scroll_y + anchor.virtual_region.y - old_y, animate=False, immediate=True)
+                    transcript.auto_follow = False
+                    transcript.screen.refresh(layout=True)
+            finally:
+                if token == self._render_token:
+                    transcript.loading_history = False
+
+    async def _paint_history_rows(
+        self, token: int, rows: list[dict[str, Any]], *, before: Any = None, final_rule: bool = True,
+    ) -> None:
         def stale() -> bool:
             return token != self._render_token
 
-        rows, older = self.runtime.history()
         if stale():
             return
-        if older:
-            await self._note(
-                f"{older} older messages not shown. PageUp / Ctrl+Up scrolls this chat.",
-                "quiet",
-            )
-            if stale():
-                return
         if not rows:
             return
         show_tools = self.prefs.show_tools
@@ -881,8 +980,8 @@ class NavinApp(App[None]):
             if stale():
                 return
             if row["role"] == "user":
-                await self.transcript.add(
-                    UserMessage(row["content"], show_head=prev_role != "user")
+                await self.transcript.mount(
+                    UserMessage(row["content"], show_head=prev_role != "user"), before=before,
                 )
                 if stale():
                     return
@@ -894,7 +993,7 @@ class NavinApp(App[None]):
                 show_head=prev_role != "assistant",
             )
             prev_role = "assistant"
-            await self.transcript.add(block)
+            await self.transcript.mount(block, before=before)
             if stale() or not block.is_attached:
                 return
             await block.set_text(row.get("content") or "")
@@ -939,11 +1038,10 @@ class NavinApp(App[None]):
                 latency_ms=meta.get("latency_ms"),
                 model=meta.get("model"),
                 preset=meta.get("model_preset"),
-                rule=row_index == last_assistant,
+                rule=final_rule and row_index == last_assistant,
             )
         if stale():
             return
-        self.transcript.scroll_end(animate=False)
 
     # -- composer ---------------------------------------------------------
 
@@ -971,9 +1069,9 @@ class NavinApp(App[None]):
         text = event.text.strip()
         if not text:
             return
-        await self.submit_text(text)
+        await self.submit_text(text, send_now=event.send_now)
 
-    async def submit_text(self, text: str) -> None:
+    async def submit_text(self, text: str, *, send_now: bool = False) -> None:
         if not self._engine_ready:
             await self._note("[$warning]engine is still starting…[/]", "warning")
             return
@@ -996,7 +1094,8 @@ class NavinApp(App[None]):
             return
         key = self.runtime.session_key
         ordinary_prompt = not text.startswith("/") or text.split(None, 1)[0].lower() in ROUTING_COMMANDS
-        if ordinary_prompt and (not self._queue_ready() or self._queued_prompts.get(key)):
+        send_to_active = send_now and self.runtime.turn_active
+        if ordinary_prompt and not send_to_active and (not self._queue_ready() or self._queued_prompts.get(key)):
             self._queue_serial += 1
             inbound, _ = inbound_for_submit(self.prefs.mode, text, turn_active=False)
             self._queued_prompts.setdefault(key, []).append(QueuedPrompt(self._queue_serial, text, inbound))
@@ -1018,8 +1117,8 @@ class NavinApp(App[None]):
         try:
             await self.runtime.send(inbound, followup=followup)
         except Exception as exc:  # noqa: BLE001 - retain the prompt and keep the chat open
-            self._awaiting_reply = False
             if not followup:
+                self._awaiting_reply = False
                 self.runtime._finish_turn({})
             await user.remove()
             if restore_input:
@@ -1176,6 +1275,7 @@ class NavinApp(App[None]):
 
     async def _on_runtime_event(self, event: UiEvent) -> None:
         if isinstance(event, UiTurnStarted):
+            self._stop_pending = False
             self._awaiting_reply = True
             self._set_status()
             self._refresh_working_line()
@@ -1284,6 +1384,7 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiTurnEnd):
+            self._stop_pending = False
             self._refresh_working_line()
             if self._current is not None and not self._current.finished:
                 st = self.runtime.status
@@ -1434,31 +1535,45 @@ class NavinApp(App[None]):
         if menu.visible_menu:
             menu.hide()
             self.composer.menu_open = False
+            self._navigation_closed_at = time.monotonic()
             return
         bar = self.query_one(FindBar)
         if bar.display:
             bar.hide()
             self.composer.focus()
+            self._navigation_closed_at = time.monotonic()
             return
         if self._pending_choices:
             card = next(iter(self._pending_choices.values()))
             if card.allow_skip:
                 card.answer(skipped=True)
                 return
+        if time.monotonic() - self._navigation_closed_at < 0.5:
+            return
         await self._request_stop("Esc")
+
+    async def action_request_stop(self) -> None:
+        await self._request_stop("Stop turn")
 
     async def _request_stop(self, source: str) -> None:
         if self.runtime.turn_active:
+            if self._stop_pending:
+                return
+            self._stop_pending = True
             self._queue_paused.add(self.runtime.session_key)
             await self._refresh_queue()
-            await self.runtime.stop_turn()
+            try:
+                await self.runtime.stop_turn()
+            except Exception:
+                self._stop_pending = False
+                raise
             self._refresh_working_line()
             await self._note(f"[$warning]Stop requested ({escape(source)})[/]", "warning")
             return
         self.composer.focus()
 
     async def action_interrupt_or_clear(self) -> None:
-        """Copy or clear the focused input before considering a task interrupt."""
+        """Copy or clear input. Escape and /stop explicitly interrupt the agent."""
         selected = self._selected_text()
         if selected:
             self.copy_to_clipboard(selected)
@@ -1467,14 +1582,9 @@ class NavinApp(App[None]):
             raise SkipAction()
         if isinstance(self.focused, TextArea) and not isinstance(self.focused, Composer):
             raise SkipAction()
-        active = self.runtime.turn_active
-        had_input = bool(self.composer.text)
-        had_menu = self.query_one(SlashMenu).visible_menu
         self.composer.clear_text()
         self.query_one(SlashMenu).hide()
         self.composer.menu_open = False
-        if active and not had_input and not had_menu:
-            await self._request_stop("Ctrl+C")
         self._refresh_working_line()
         self.composer.focus()
 
@@ -1992,10 +2102,11 @@ class NavinApp(App[None]):
         if not self._engine_ready:
             return
         while True:
+            items = await asyncio.to_thread(self._session_pick_items)
             chosen = await self.push_screen_wait(
                 PickerScreen(
                     "Sessions",
-                    self._session_pick_items(),
+                    items,
                     hint="Type to search. F2 renames. Enter opens.",
                     current=self.runtime.session_key,
                     renamable=True,

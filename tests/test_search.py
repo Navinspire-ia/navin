@@ -276,6 +276,35 @@ class GrepRankingTest(_GrepFixture):
 
 
 class GrepBehaviourTest(_GrepFixture):
+    def test_missing_filename_finds_symbols_in_its_project_directory(self):
+        _write(self.root, "navin/config/paths.py", "def get_runtime_subdir(name): pass\n")
+        tool = GrepTool(workspace=self.root, allowed_dir=self.root)
+        result = _run(tool.execute(path="navin/runtime_paths.py", pattern="def get_runtime_subdir"))
+        self.assertFalse(getattr(result, "is_error", False), result)
+        self.assertIn("navin/runtime_paths.py does not exist", result)
+        self.assertIn("Searched navin", result)
+        self.assertIn("navin/config/paths.py", result)
+
+    def test_missing_filename_without_matches_remains_an_error(self):
+        tool = GrepTool(workspace=self.root, allowed_dir=self.root)
+        result = _run(tool.execute(path="unknown.py", pattern="no_such_symbol"))
+        self.assertTrue(result.is_error)
+        self.assertIn("not found: unknown.py", result)
+
+    def test_missing_directory_does_not_widen_search(self):
+        _write(self.root, "present.py", "wanted_symbol\n")
+        tool = GrepTool(workspace=self.root, allowed_dir=self.root)
+        result = _run(tool.execute(path="absent", pattern="wanted_symbol"))
+        self.assertTrue(result.is_error)
+
+    def test_missing_file_fallback_respects_glob_and_workspace(self):
+        _write(self.root, "present.txt", "wanted_symbol\n")
+        tool = GrepTool(workspace=self.root, allowed_dir=self.root)
+        result = _run(tool.execute(path="unknown.py", pattern="wanted_symbol", glob="*.py"))
+        self.assertTrue(result.is_error)
+        result = _run(tool.execute(path="../unknown.py", pattern="wanted_symbol"))
+        self.assertTrue(result.is_error)
+
     def test_dependency_directories_are_skipped(self) -> None:
         self.assertNotIn("node_modules", self._grep())
 

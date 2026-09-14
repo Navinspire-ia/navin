@@ -607,8 +607,10 @@ class ToolCall(Vertical, can_focus=True):
         self.phase = "start"
         self.result: Any = None
         self.error: str | None = None
-        self.output_lines: list[str] = []
+        self._output_lines: list[str] = []
         self._output_buffer = ""
+        self._pending_output: list[str] = []
+        self._pending_output_chars = 0
         self.percent: float | None = None
         self.added = 0
         self.removed = 0
@@ -727,17 +729,18 @@ class ToolCall(Vertical, can_focus=True):
 
         if percent is None and output:
             percent = parse_progress_from_output(output).get("percent")
+        progress_changed = percent is not None and percent != self.percent
         if percent is not None:
             self.percent = percent
         if output:
             if output_mode == "snapshot":
-                self._output_buffer = output
-            else:
-                self._output_buffer += output
-            lines = self._output_buffer.splitlines()
-            self.output_lines = lines[-MAX_TRANSCRIPT_LINES:]
-            if len(lines) > MAX_TRANSCRIPT_LINES:
-                self._output_buffer = "\n".join(self.output_lines) + ("\n" if output.endswith("\n") else "")
+                self._output_buffer = ""
+                self._pending_output.clear()
+                self._pending_output_chars = 0
+            self._pending_output.append(output)
+            self._pending_output_chars += len(output)
+            if self._pending_output_chars >= 64_000:
+                self._flush_output_buffer()
         if phase == "output":
             self.phase = "output"
         elif phase in {"end", "error", "cancelled"}:
@@ -751,6 +754,8 @@ class ToolCall(Vertical, can_focus=True):
             self.add_class("-ok" if phase == "end" else f"-{phase}")
             self._reveal_if_preview()
         if phase == "output":
+            if progress_changed:
+                self._refresh_head()
             if self._output_timer is None:
                 self._output_timer = self.set_timer(STREAM_FRAME_SECONDS, self._paint_output)
             return
@@ -758,8 +763,26 @@ class ToolCall(Vertical, can_focus=True):
             self._output_timer.stop()
         self._paint_output()
 
+    @property
+    def output_lines(self) -> list[str]:
+        self._flush_output_buffer()
+        return self._output_lines
+
+    def _flush_output_buffer(self) -> None:
+        if not self._pending_output:
+            return
+        self._output_buffer += "".join(self._pending_output)
+        self._pending_output.clear()
+        self._pending_output_chars = 0
+        lines = self._output_buffer.splitlines()
+        self._output_lines = lines[-MAX_TRANSCRIPT_LINES:]
+        if len(lines) > MAX_TRANSCRIPT_LINES:
+            trailing = "\n" if self._output_buffer.endswith("\n") else ""
+            self._output_buffer = "\n".join(self._output_lines) + trailing
+
     def _paint_output(self) -> None:
         self._output_timer = None
+        self._flush_output_buffer()
         if not self.is_attached:
             return
         self._refresh_head()
@@ -1170,23 +1193,20 @@ class WorkingLine(Static):
         min-height: 1;
         margin: 0;
     }
-    WorkingLine:hover { color: $foreground; }
     """
 
     def set_line(self, text: str) -> None:
+        content = f"◦ {escape(text)}" if text else ""
+        if self.content == content and self.display == bool(text):
+            return
         if text:
-            self.update(f"◦ {escape(text)}")
+            self.update(content)
             self.display = True
             self.add_class("-visible")
             return
         self.update("")
         self.display = False
         self.remove_class("-visible")
-
-    def on_click(self) -> None:
-        if self.has_class("-visible"):
-            self.app.call_later(self.app.run_action, "stop_turn")
-
 
 class UpdateOffer(Static):
     """Persistent Codex-style line: a newer navin exists, /update installs it."""
@@ -2073,6 +2093,12 @@ class ChoiceCard(Vertical):
             opt = self.options[index]
             self.answer(option_id=str(opt.get("id") or opt.get("value") or index + 1))
 
+    def on_key(self, event: events.Key) -> None:
+        if not self.closed and event.key in "123456789" and self.query_one(OptionList).has_focus:
+            event.prevent_default()
+            event.stop()
+            self.pick_index(int(event.key) - 1)
+
     def answer(self, *, option_id: str = "", skipped: bool = False, custom_text: str = "") -> None:
         if self.closed:
             return
@@ -2117,10 +2143,16 @@ class QueuedPromptRow(Horizontal):
         width: auto; min-width: 0; height: 1; min-height: 1;
         border: none; padding: 0 1; background: $background; color: $text-muted; text-style: none;
     }
-    QueuedPromptRow Button:hover { color: $error; }
+    QueuedPromptRow .queue-remove:hover { color: $error; }
+    QueuedPromptRow Button.queue-send { color: $primary; }
     """
 
     class Removed(Message):
+        def __init__(self, prompt_id: int) -> None:
+            super().__init__()
+            self.prompt_id = prompt_id
+
+    class Sent(Message):
         def __init__(self, prompt_id: int) -> None:
             super().__init__()
             self.prompt_id = prompt_id
@@ -2134,12 +2166,23 @@ class QueuedPromptRow(Horizontal):
     def compose(self) -> ComposeResult:
         preview = " ".join(display_user_text(self.text).split())
         yield Static(f"{self.position}. {preview}", markup=False)
-        yield Button("Remove", compact=True)
+        yield Button("Send now", classes="queue-send", compact=True,
+                     tooltip="Send this message now. During a reply, add it to the current task.")
+        yield Button("Remove", classes="queue-remove", compact=True)
+
+    def set_position(self, position: int) -> None:
+        if position != self.position:
+            self.position = position
+            preview = " ".join(display_user_text(self.text).split())
+            self.query_one(Static).update(f"{position}. {preview}")
 
     @on(Button.Pressed)
     def remove_prompt(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(self.Removed(self.prompt_id))
+        if event.button.has_class("queue-send"):
+            self.post_message(self.Sent(self.prompt_id))
+        else:
+            self.post_message(self.Removed(self.prompt_id))
 
 
 class PromptQueue(Vertical):
@@ -2147,7 +2190,7 @@ class PromptQueue(Vertical):
 
     DEFAULT_CSS = """
     PromptQueue { height: auto; display: none; margin: 0 2; padding: 0 2; background: $background; }
-    PromptQueue > Horizontal { height: 1; }
+    PromptQueue > Horizontal { height: auto; min-height: 1; }
     PromptQueue #queue-title { width: 1fr; color: $primary; }
     PromptQueue #queue-items { height: auto; max-height: 5; background: $background; }
     PromptQueue Button.-style-default {
@@ -2174,9 +2217,19 @@ class PromptQueue(Vertical):
         )
         self.query_one("#queue-resume", Button).display = paused
         body = self.query_one("#queue-items", VerticalScroll)
-        await body.remove_children()
-        if items:
-            await body.mount(*(QueuedPromptRow(key, text, i + 1) for i, (key, text) in enumerate(items)))
+        existing = {row.prompt_id: row for row in body.query(QueuedPromptRow)}
+        wanted = {key for key, _ in items}
+        for key, row in existing.items():
+            if key not in wanted:
+                await row.remove()
+        new_rows = []
+        for position, (key, text) in enumerate(items, 1):
+            if key in existing:
+                existing[key].set_position(position)
+            else:
+                new_rows.append(QueuedPromptRow(key, text, position))
+        if new_rows:
+            await body.mount(*new_rows)
 
     @on(Button.Pressed, "#queue-resume")
     def resume_queue(self, event: Button.Pressed) -> None:
@@ -2333,6 +2386,7 @@ class Composer(TextArea):
     """
 
     BINDINGS = [
+        Binding("ctrl+enter", "send_now", "Send now", show=False),
         Binding("ctrl+j", "newline", "Newline", show=False),
         Binding("shift+enter", "newline", "Newline", show=False),
         Binding("alt+enter", "newline", "Newline", show=False),
@@ -2371,9 +2425,10 @@ class Composer(TextArea):
             self.delta = delta
 
     class Submitted(Message):
-        def __init__(self, text: str) -> None:
+        def __init__(self, text: str, *, send_now: bool = False) -> None:
             super().__init__()
             self.text = text
+            self.send_now = send_now
 
     class HistoryRequested(Message):
         def __init__(self, direction: int) -> None:
@@ -2503,6 +2558,9 @@ class Composer(TextArea):
     def action_newline(self) -> None:
         self.insert("\n")
 
+    def action_send_now(self) -> None:
+        self.post_message(self.Submitted(self.expand_for_submit(), send_now=True))
+
     def action_copy_any(self) -> None:
         """Prefer transcript selection; otherwise copy the prompt selection."""
         from textual.actions import SkipAction
@@ -2615,6 +2673,7 @@ class SlashMenu(OptionList):
         if not matches:
             self.remove_class("-visible")
             return
+        options: list[Option] = []
         for row in matches[:40]:
             cmd = str(row["command"])
             hint = (
@@ -2623,7 +2682,8 @@ class SlashMenu(OptionList):
                 else ""
             )
             title = escape(str(row.get("title") or ""))
-            self.add_option(Option(f"[b]{cmd}[/b]{hint}  {title}", id=cmd))
+            options.append(Option(f"[b]{cmd}[/b]{hint}  {title}", id=cmd))
+        self.add_options(options)
         self.highlighted = 0
         self.add_class("-visible")
 
@@ -2722,6 +2782,11 @@ class FindBar(Horizontal):
 class Transcript(VerticalScroll):
     can_focus = True
 
+    class OlderRequested(Message):
+        def __init__(self, generation: int) -> None:
+            super().__init__()
+            self.generation = generation
+
     DEFAULT_CSS = """
     Transcript {
         height: 1fr;
@@ -2734,14 +2799,34 @@ class Transcript(VerticalScroll):
 
     auto_follow = reactive(True)
     _follow_pending = False
+    has_older = False
+    loading_history = False
+    history_generation = 0
+
+    def request_older(self) -> None:
+        if self.has_older and not self.loading_history:
+            self.loading_history = True
+            self.auto_follow = False
+            self.post_message(self.OlderRequested(self.history_generation))
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if self.scroll_y <= 3:
+            self.request_older()
+
+    def on_resize(self) -> None:
+        self.follow()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
         self.auto_follow = self.is_vertical_scroll_end
+        if new_value < old_value and new_value <= 3:
+            self.request_older()
 
     def nudge(self, delta: int) -> None:
         if not delta:
             return
+        if delta < 0 and self.scroll_y + delta <= 3:
+            self.request_older()
         self.scroll_relative(y=delta, animate=False)
         self.auto_follow = self.is_vertical_scroll_end
 
