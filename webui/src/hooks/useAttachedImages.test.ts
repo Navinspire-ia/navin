@@ -70,7 +70,7 @@ describe("isAudioAttachment", () => {
   });
 
   it("shares the video ceiling, matching the gateway", () => {
-    expect(MAX_AUDIO_BYTES).toBe(100 * 1024 * 1024);
+    expect(MAX_AUDIO_BYTES).toBe(200 * 1024 * 1024);
     expect(MAX_AUDIO_BYTES).toBe(MAX_ATTACHMENT_BYTES);
   });
 });
@@ -84,7 +84,7 @@ describe("isVideoAttachment", () => {
   });
 
   it("accepts videos up to the same ceiling as documents, matching the gateway", () => {
-    expect(MAX_VIDEO_BYTES).toBe(100 * 1024 * 1024);
+    expect(MAX_VIDEO_BYTES).toBe(200 * 1024 * 1024);
     expect(MAX_VIDEO_BYTES).toBe(MAX_ATTACHMENT_BYTES);
   });
 });

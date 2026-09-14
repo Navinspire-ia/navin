@@ -91,7 +91,8 @@ def save_base64_data_url(
 
     Returns the absolute path on success, ``None`` when the URL shape or the
     base64 payload itself is malformed. Raises :class:`FileSizeExceeded`
-    when the decoded payload is larger than ``max_bytes`` (default 100 MB).
+    when the decoded payload is larger than ``max_bytes`` (the shared upload
+    limit).
     """
     m = _DATA_URL_RE.match(data_url)
     if not m:
