@@ -2098,10 +2098,8 @@ function ThreadComposerImpl({
       setInlineError(textTooLargeMessage());
       return;
     }
-    // Share the same ``data:`` URL with both the wire payload and the
-    // optimistic bubble preview: data URLs are self-contained (no blob
-    // lifetime, safe under React StrictMode double-mount) and keep the bubble
-    // in sync with whatever the backend actually sees.
+    // File previews retain the original File so the bubble can own a short
+    // blob URL. Putting a 100 MB data URL into the DOM stalls rendering.
     const payload: SendAttachment[] | undefined =
       readyImages.length > 0
         ? readyImages.map((img) => ({
@@ -2109,7 +2107,11 @@ function ThreadComposerImpl({
               data_url: img.dataUrl,
               name: img.file.name,
             },
-            preview: { kind: img.kind, url: img.dataUrl, name: img.file.name },
+            preview: {
+              kind: img.kind,
+              name: img.file.name,
+              ...(img.kind === "file" ? { file: img.file } : { url: img.dataUrl }),
+            },
           }))
         : undefined;
     const collected = collectTurnOptions();

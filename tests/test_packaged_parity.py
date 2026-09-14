@@ -106,6 +106,19 @@ class BundledExtrasTest(unittest.TestCase):
             text = (root / relative).read_text(encoding="utf-8")
             self.assertIn("bundled_extras.txt", text, relative)
 
+    def test_macos_build_makes_the_browser_extension_zips(self):
+        # The extension zips are gitignored and navin-onefile.spec raises
+        # "Build the browser extensions first" without them: the macOS build
+        # must produce them itself, before it reaches PyInstaller.
+        script = Path(__file__).resolve().parents[1] / "packaging" / "macos" / "build-offline.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("browser-extension/build.mjs", text)
+        self.assertLess(
+            text.index("browser-extension/build.mjs"),
+            text.index("packaging/pyinstaller"),
+            "the extension build must run before PyInstaller",
+        )
+
 
 class PackagedInstallTest(unittest.TestCase):
     """A packaged build must not pretend it can install Python packages."""
@@ -571,7 +584,8 @@ class MacUpdateTest(unittest.TestCase):
             self.assertIn('kill -0 "$1"', command[2])
             self.assertIn("ditto", command[2])
             self.assertIn("-mountpoint", command[2])
-            self.assertIn('find "$mnt"', command[2])
+            # The helper locates the .app on the mounted dmg itself.
+            self.assertIn('for app in "$mnt"/*.app', command[2])
 
 
 class WindowsUpdaterHelperTest(unittest.TestCase):
