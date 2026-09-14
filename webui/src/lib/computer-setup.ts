@@ -1,16 +1,16 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { DirectionalHint, type ICalloutProps } from "@fluentui/react";
+
 import type { ComputerDiagnostics, SettingsPayload } from "./types";
 
 // Settings lives in overflow-y-auto. Fluent lists dismiss on the first
 // scroll/resize unless these locks stay on (same as Career/Tenders).
-export const COMPUTER_MODEL_CALLOUT = {
+// directionalHintFixed keeps the list below the field so it does not bounce.
+export const COMPUTER_MODEL_CALLOUT: ICalloutProps = {
   calloutMaxHeight: 280,
-  // 5 = Fluent DirectionalHint.bottomLeftEdge. Keep the number here so this
-  // file stays free of @fluentui/react. Fixed hint stops the list bouncing
-  // between above and below the field in the scrolling settings panel.
-  directionalHint: 5,
+  directionalHint: DirectionalHint.bottomLeftEdge,
   directionalHintFixed: true,
   preventDismissOnScroll: true,
   preventDismissOnResize: true,
