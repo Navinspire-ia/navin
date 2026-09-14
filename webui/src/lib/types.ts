@@ -33,6 +33,8 @@ export interface UIMediaAttachment {
   kind: UIMediaKind;
   url?: string;
   name?: string;
+  /** Original local file for an optimistic preview, never part of the wire payload. */
+  file?: File;
 }
 
 export interface UIMessageSource { kind: "cron" | "local_trigger" | "trigger" | string; label?: string; }

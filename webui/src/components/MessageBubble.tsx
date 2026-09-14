@@ -712,7 +712,7 @@ function MessageMedia({
         <UserImages images={images} align={align} size={align === "left" ? "large" : "compact"} />
       ) : null}
       {nonImages.map((item, i) => (
-        <AttachmentTile key={`${item.url ?? item.name ?? item.kind}-${i}`} attachment={item} />
+        <AttachmentTile key={`${item.name ?? item.kind}-${i}`} attachment={item} />
       ))}
     </div>
   );
