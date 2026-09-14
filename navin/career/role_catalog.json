@@ -1,0 +1,2947 @@
+[
+  {
+    "label": [
+      "Développeur full stack",
+      "Full stack developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "JavaScript",
+        "JavaScript"
+      ],
+      [
+        "TypeScript",
+        "TypeScript"
+      ],
+      [
+        "React",
+        "React"
+      ],
+      [
+        "Node.js",
+        "Node.js"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Git",
+        "Git"
+      ],
+      [
+        "REST API",
+        "REST API"
+      ]
+    ],
+    "aliases": [
+      "Fullstack",
+      "Full-stack developer"
+    ]
+  },
+  {
+    "label": [
+      "Développeur frontend",
+      "Frontend developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "HTML",
+        "HTML"
+      ],
+      [
+        "CSS",
+        "CSS"
+      ],
+      [
+        "JavaScript",
+        "JavaScript"
+      ],
+      [
+        "TypeScript",
+        "TypeScript"
+      ],
+      [
+        "React",
+        "React"
+      ],
+      [
+        "Accessibilité web",
+        "Web accessibility"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": [
+      "Front-end developer"
+    ]
+  },
+  {
+    "label": [
+      "Développeur backend",
+      "Backend developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "REST API",
+        "REST API"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Git",
+        "Git"
+      ],
+      [
+        "Tests unitaires",
+        "Unit testing"
+      ],
+      [
+        "Conception d'API",
+        "API design"
+      ]
+    ],
+    "aliases": [
+      "Back-end developer"
+    ]
+  },
+  {
+    "label": [
+      "Développeur Java",
+      "Java developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Java",
+        "Java"
+      ],
+      [
+        "Spring Boot",
+        "Spring Boot"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "JUnit",
+        "JUnit"
+      ],
+      [
+        "Maven",
+        "Maven"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Développeur Python",
+      "Python developer"
+    ],
+    "domains": [
+      "IT",
+      "Data"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "FastAPI",
+        "FastAPI"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Pytest",
+        "Pytest"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Développeur .NET",
+      ".NET developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "C#",
+        "C#"
+      ],
+      [
+        ".NET",
+        ".NET"
+      ],
+      [
+        "ASP.NET Core",
+        "ASP.NET Core"
+      ],
+      [
+        "SQL Server",
+        "SQL Server"
+      ],
+      [
+        "Entity Framework",
+        "Entity Framework"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Développeur mobile",
+      "Mobile developer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Développement mobile",
+        "Mobile development"
+      ],
+      [
+        "REST API",
+        "REST API"
+      ],
+      [
+        "Tests mobiles",
+        "Mobile testing"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur DevOps",
+      "DevOps engineer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Linux",
+        "Linux"
+      ],
+      [
+        "Docker",
+        "Docker"
+      ],
+      [
+        "Kubernetes",
+        "Kubernetes"
+      ],
+      [
+        "Terraform",
+        "Terraform"
+      ],
+      [
+        "CI/CD",
+        "CI/CD"
+      ],
+      [
+        "Git",
+        "Git"
+      ]
+    ],
+    "aliases": [
+      "DevOps"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur SRE",
+      "Site reliability engineer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Linux",
+        "Linux"
+      ],
+      [
+        "Kubernetes",
+        "Kubernetes"
+      ],
+      [
+        "Observability",
+        "Observability"
+      ],
+      [
+        "Gestion des incidents",
+        "Incident management"
+      ],
+      [
+        "SLO / SLI",
+        "SLO / SLI"
+      ],
+      [
+        "Python",
+        "Python"
+      ]
+    ],
+    "aliases": [
+      "SRE"
+    ]
+  },
+  {
+    "label": [
+      "Architecte cloud",
+      "Cloud architect"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Architecture cloud",
+        "Cloud architecture"
+      ],
+      [
+        "Terraform",
+        "Terraform"
+      ],
+      [
+        "IAM",
+        "IAM"
+      ],
+      [
+        "Sécurité cloud",
+        "Cloud security"
+      ],
+      [
+        "FinOps",
+        "FinOps"
+      ]
+    ],
+    "aliases": [
+      "Cloud architecte"
+    ]
+  },
+  {
+    "label": [
+      "Architecte solutions",
+      "Solutions architect"
+    ],
+    "domains": [
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Architecture logicielle",
+        "Software architecture"
+      ],
+      [
+        "Intégration de systèmes",
+        "Systems integration"
+      ],
+      [
+        "REST API",
+        "REST API"
+      ],
+      [
+        "Modélisation",
+        "Modelling"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Administrateur systèmes",
+      "Systems administrator"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Linux",
+        "Linux"
+      ],
+      [
+        "Windows Server",
+        "Windows Server"
+      ],
+      [
+        "Active Directory",
+        "Active Directory"
+      ],
+      [
+        "Sauvegarde",
+        "Backup"
+      ],
+      [
+        "PowerShell",
+        "PowerShell"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur réseaux",
+      "Network engineer"
+    ],
+    "domains": [
+      "IT",
+      "Télécommunications"
+    ],
+    "skills": [
+      [
+        "TCP/IP",
+        "TCP/IP"
+      ],
+      [
+        "LAN / WAN",
+        "LAN / WAN"
+      ],
+      [
+        "VPN",
+        "VPN"
+      ],
+      [
+        "Pare-feu",
+        "Firewalls"
+      ],
+      [
+        "Supervision réseau",
+        "Network monitoring"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Administrateur bases de données",
+      "Database administrator"
+    ],
+    "domains": [
+      "IT",
+      "Data"
+    ],
+    "skills": [
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Optimisation SQL",
+        "SQL optimisation"
+      ],
+      [
+        "Sauvegarde",
+        "Backup"
+      ],
+      [
+        "Réplication",
+        "Replication"
+      ],
+      [
+        "Sécurité des données",
+        "Data security"
+      ]
+    ],
+    "aliases": [
+      "DBA"
+    ]
+  },
+  {
+    "label": [
+      "Data engineer",
+      "Data engineer"
+    ],
+    "domains": [
+      "Data",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "ETL / ELT",
+        "ETL / ELT"
+      ],
+      [
+        "Apache Spark",
+        "Apache Spark"
+      ],
+      [
+        "Airflow",
+        "Airflow"
+      ],
+      [
+        "Qualité des données",
+        "Data quality"
+      ]
+    ],
+    "aliases": [
+      "Data engineering",
+      "Dataeng",
+      "Ingénieur données"
+    ]
+  },
+  {
+    "label": [
+      "Data analyst",
+      "Data analyst"
+    ],
+    "domains": [
+      "Data"
+    ],
+    "skills": [
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ],
+      [
+        "Power BI",
+        "Power BI"
+      ],
+      [
+        "Analyse de données",
+        "Data analysis"
+      ],
+      [
+        "Statistiques",
+        "Statistics"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Data scientist",
+      "Data scientist"
+    ],
+    "domains": [
+      "Data"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Machine learning",
+        "Machine learning"
+      ],
+      [
+        "Statistiques",
+        "Statistics"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur machine learning",
+      "Machine learning engineer"
+    ],
+    "domains": [
+      "Data",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "PyTorch",
+        "PyTorch"
+      ],
+      [
+        "MLOps",
+        "MLOps"
+      ],
+      [
+        "Docker",
+        "Docker"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ]
+    ],
+    "aliases": [
+      "ML engineer"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur IA générative",
+      "Generative AI engineer"
+    ],
+    "domains": [
+      "IA générative",
+      "Data",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "LLM",
+        "LLM"
+      ],
+      [
+        "RAG",
+        "RAG"
+      ],
+      [
+        "Prompt engineering",
+        "Prompt engineering"
+      ],
+      [
+        "Embeddings",
+        "Embeddings"
+      ],
+      [
+        "Recherche vectorielle",
+        "Vector search"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ],
+      [
+        "LLMOps",
+        "LLMOps"
+      ]
+    ],
+    "aliases": [
+      "AI engineer",
+      "Ingénieur IA",
+      "Intelligence générative",
+      "Intelligence artificielle générative",
+      "IA gen",
+      "IA générative",
+      "GenAI",
+      "Generative AI",
+      "GenAI engineer",
+      "LLM engineer"
+    ]
+  },
+  {
+    "label": [
+      "Architecte IA générative",
+      "Generative AI architect"
+    ],
+    "domains": [
+      "IA générative",
+      "Data",
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "LLM",
+        "LLM"
+      ],
+      [
+        "RAG",
+        "RAG"
+      ],
+      [
+        "Architecture cloud",
+        "Cloud architecture"
+      ],
+      [
+        "Agents IA",
+        "AI agents"
+      ],
+      [
+        "Sécurité des modèles",
+        "Model security"
+      ],
+      [
+        "Optimisation des coûts",
+        "Cost optimisation"
+      ]
+    ],
+    "aliases": [
+      "GenAI architect",
+      "Architecte GenAI"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur agents IA",
+      "AI agent engineer"
+    ],
+    "domains": [
+      "IA générative",
+      "IT",
+      "Data"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "LLM",
+        "LLM"
+      ],
+      [
+        "Agents IA",
+        "AI agents"
+      ],
+      [
+        "LangGraph",
+        "LangGraph"
+      ],
+      [
+        "MCP",
+        "MCP"
+      ],
+      [
+        "Appels d'outils",
+        "Tool calling"
+      ],
+      [
+        "Évaluation d'agents",
+        "Agent evaluation"
+      ]
+    ],
+    "aliases": [
+      "Agentic AI engineer",
+      "Ingénieur IA agentique"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur RAG",
+      "RAG engineer"
+    ],
+    "domains": [
+      "IA générative",
+      "Data",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "RAG",
+        "RAG"
+      ],
+      [
+        "Embeddings",
+        "Embeddings"
+      ],
+      [
+        "Recherche vectorielle",
+        "Vector search"
+      ],
+      [
+        "Recherche hybride",
+        "Hybrid search"
+      ],
+      [
+        "Reranking",
+        "Reranking"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur LLMOps",
+      "LLMOps engineer"
+    ],
+    "domains": [
+      "IA générative",
+      "Data",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "LLMOps",
+        "LLMOps"
+      ],
+      [
+        "Docker",
+        "Docker"
+      ],
+      [
+        "Kubernetes",
+        "Kubernetes"
+      ],
+      [
+        "Inférence de modèles",
+        "Model inference"
+      ],
+      [
+        "Observabilité LLM",
+        "LLM observability"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Spécialiste fine-tuning LLM",
+      "LLM fine-tuning specialist"
+    ],
+    "domains": [
+      "IA générative",
+      "Data"
+    ],
+    "skills": [
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "PyTorch",
+        "PyTorch"
+      ],
+      [
+        "Transformers",
+        "Transformers"
+      ],
+      [
+        "Fine-tuning",
+        "Fine-tuning"
+      ],
+      [
+        "LoRA / QLoRA",
+        "LoRA / QLoRA"
+      ],
+      [
+        "Préparation de données",
+        "Data preparation"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant IA générative",
+      "Generative AI consultant"
+    ],
+    "domains": [
+      "IA générative",
+      "Conseil",
+      "Data"
+    ],
+    "skills": [
+      [
+        "Analyse des cas d'usage",
+        "Use case analysis"
+      ],
+      [
+        "LLM",
+        "LLM"
+      ],
+      [
+        "Prompt engineering",
+        "Prompt engineering"
+      ],
+      [
+        "Prototypage",
+        "Prototyping"
+      ],
+      [
+        "Gouvernance IA",
+        "AI governance"
+      ],
+      [
+        "Conduite du changement",
+        "Change management"
+      ]
+    ],
+    "aliases": [
+      "Consultant GenAI"
+    ]
+  },
+  {
+    "label": [
+      "Product owner IA générative",
+      "Generative AI product owner"
+    ],
+    "domains": [
+      "IA générative",
+      "Conseil",
+      "IT"
+    ],
+    "skills": [
+      [
+        "LLM",
+        "LLM"
+      ],
+      [
+        "Analyse des cas d'usage",
+        "Use case analysis"
+      ],
+      [
+        "Gestion du backlog",
+        "Backlog management"
+      ],
+      [
+        "Évaluation de modèles",
+        "Model evaluation"
+      ],
+      [
+        "Gouvernance IA",
+        "AI governance"
+      ],
+      [
+        "Agile / Scrum",
+        "Agile / Scrum"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant BI",
+      "BI consultant"
+    ],
+    "domains": [
+      "Data",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Power BI",
+        "Power BI"
+      ],
+      [
+        "DAX",
+        "DAX"
+      ],
+      [
+        "Modélisation de données",
+        "Data modelling"
+      ],
+      [
+        "ETL / ELT",
+        "ETL / ELT"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant cybersécurité",
+      "Cybersecurity consultant"
+    ],
+    "domains": [
+      "Cybersécurité",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Analyse des risques",
+        "Risk assessment"
+      ],
+      [
+        "IAM",
+        "IAM"
+      ],
+      [
+        "SIEM",
+        "SIEM"
+      ],
+      [
+        "Audit de sécurité",
+        "Security auditing"
+      ],
+      [
+        "ISO 27001",
+        "ISO 27001"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Analyste SOC",
+      "SOC analyst"
+    ],
+    "domains": [
+      "Cybersécurité"
+    ],
+    "skills": [
+      [
+        "SIEM",
+        "SIEM"
+      ],
+      [
+        "EDR",
+        "EDR"
+      ],
+      [
+        "Analyse de journaux",
+        "Log analysis"
+      ],
+      [
+        "Réponse aux incidents",
+        "Incident response"
+      ],
+      [
+        "MITRE ATT&CK",
+        "MITRE ATT&CK"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Pentester",
+      "Penetration tester"
+    ],
+    "domains": [
+      "Cybersécurité"
+    ],
+    "skills": [
+      [
+        "Tests d'intrusion",
+        "Penetration testing"
+      ],
+      [
+        "OWASP",
+        "OWASP"
+      ],
+      [
+        "Burp Suite",
+        "Burp Suite"
+      ],
+      [
+        "Linux",
+        "Linux"
+      ],
+      [
+        "Rapports de sécurité",
+        "Security reporting"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant GRC",
+      "GRC consultant"
+    ],
+    "domains": [
+      "Cybersécurité",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Gouvernance",
+        "Governance"
+      ],
+      [
+        "Analyse des risques",
+        "Risk assessment"
+      ],
+      [
+        "Conformité",
+        "Compliance"
+      ],
+      [
+        "ISO 27001",
+        "ISO 27001"
+      ],
+      [
+        "Audit",
+        "Audit"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Chef de projet",
+      "Project manager"
+    ],
+    "domains": [
+      "Conseil",
+      "IT"
+    ],
+    "skills": [
+      [
+        "Gestion de projet",
+        "Project management"
+      ],
+      [
+        "Planification",
+        "Planning"
+      ],
+      [
+        "Gestion budgétaire",
+        "Budget management"
+      ],
+      [
+        "Gestion des risques",
+        "Risk management"
+      ],
+      [
+        "Coordination",
+        "Coordination"
+      ]
+    ],
+    "aliases": [
+      "Project lead"
+    ]
+  },
+  {
+    "label": [
+      "Product owner",
+      "Product owner"
+    ],
+    "domains": [
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Agile / Scrum",
+        "Agile / Scrum"
+      ],
+      [
+        "Gestion du backlog",
+        "Backlog management"
+      ],
+      [
+        "User stories",
+        "User stories"
+      ],
+      [
+        "Priorisation",
+        "Prioritisation"
+      ],
+      [
+        "Recette fonctionnelle",
+        "User acceptance testing"
+      ]
+    ],
+    "aliases": [
+      "PO"
+    ]
+  },
+  {
+    "label": [
+      "Scrum master",
+      "Scrum master"
+    ],
+    "domains": [
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Agile / Scrum",
+        "Agile / Scrum"
+      ],
+      [
+        "Facilitation",
+        "Facilitation"
+      ],
+      [
+        "Amélioration continue",
+        "Continuous improvement"
+      ],
+      [
+        "Coaching d'équipe",
+        "Team coaching"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Business analyst",
+      "Business analyst"
+    ],
+    "domains": [
+      "Conseil",
+      "IT",
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Analyse métier",
+        "Business analysis"
+      ],
+      [
+        "Recueil des besoins",
+        "Requirements gathering"
+      ],
+      [
+        "BPMN",
+        "BPMN"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Recette fonctionnelle",
+        "User acceptance testing"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant SAP",
+      "SAP consultant"
+    ],
+    "domains": [
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "SAP",
+        "SAP"
+      ],
+      [
+        "Analyse métier",
+        "Business analysis"
+      ],
+      [
+        "Paramétrage ERP",
+        "ERP configuration"
+      ],
+      [
+        "Migration de données",
+        "Data migration"
+      ],
+      [
+        "Recette fonctionnelle",
+        "User acceptance testing"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant Salesforce",
+      "Salesforce consultant"
+    ],
+    "domains": [
+      "IT",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Salesforce",
+        "Salesforce"
+      ],
+      [
+        "CRM",
+        "CRM"
+      ],
+      [
+        "Automatisation des processus",
+        "Process automation"
+      ],
+      [
+        "Analyse métier",
+        "Business analysis"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Testeur QA",
+      "QA tester"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Tests fonctionnels",
+        "Functional testing"
+      ],
+      [
+        "Plans de test",
+        "Test plans"
+      ],
+      [
+        "Gestion des anomalies",
+        "Defect management"
+      ],
+      [
+        "SQL",
+        "SQL"
+      ],
+      [
+        "Postman",
+        "Postman"
+      ]
+    ],
+    "aliases": [
+      "QA analyst"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur QA automatisation",
+      "QA automation engineer"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Playwright",
+        "Playwright"
+      ],
+      [
+        "Selenium",
+        "Selenium"
+      ],
+      [
+        "CI/CD",
+        "CI/CD"
+      ],
+      [
+        "Tests d'API",
+        "API testing"
+      ],
+      [
+        "Tests de régression",
+        "Regression testing"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Designer UX/UI",
+      "UX/UI designer"
+    ],
+    "domains": [
+      "IT",
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "Figma",
+        "Figma"
+      ],
+      [
+        "Recherche utilisateur",
+        "User research"
+      ],
+      [
+        "Prototypage",
+        "Prototyping"
+      ],
+      [
+        "Design systems",
+        "Design systems"
+      ],
+      [
+        "Accessibilité web",
+        "Web accessibility"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Technicien support",
+      "Support technician"
+    ],
+    "domains": [
+      "IT"
+    ],
+    "skills": [
+      [
+        "Support utilisateurs",
+        "User support"
+      ],
+      [
+        "Diagnostic technique",
+        "Technical troubleshooting"
+      ],
+      [
+        "ITIL",
+        "ITIL"
+      ],
+      [
+        "Microsoft 365",
+        "Microsoft 365"
+      ],
+      [
+        "Gestion des tickets",
+        "Ticket management"
+      ]
+    ],
+    "aliases": [
+      "Helpdesk"
+    ]
+  },
+  {
+    "label": [
+      "Infirmier",
+      "Nurse"
+    ],
+    "domains": [
+      "Santé"
+    ],
+    "skills": [
+      [
+        "Soins",
+        "Nursing care"
+      ],
+      [
+        "Surveillance clinique",
+        "Clinical monitoring"
+      ],
+      [
+        "Hygiène hospitalière",
+        "Hospital hygiene"
+      ],
+      [
+        "Dossier patient",
+        "Patient records"
+      ],
+      [
+        "Éducation du patient",
+        "Patient education"
+      ]
+    ],
+    "aliases": [
+      "Infirmière",
+      "IDE",
+      "Registered nurse"
+    ]
+  },
+  {
+    "label": [
+      "Médecin",
+      "Doctor"
+    ],
+    "domains": [
+      "Santé"
+    ],
+    "skills": [
+      [
+        "Diagnostic clinique",
+        "Clinical diagnosis"
+      ],
+      [
+        "Prise en charge médicale",
+        "Medical care"
+      ],
+      [
+        "Dossier patient",
+        "Patient records"
+      ],
+      [
+        "Coordination des soins",
+        "Care coordination"
+      ]
+    ],
+    "aliases": [
+      "Physician"
+    ]
+  },
+  {
+    "label": [
+      "Coordinateur de soins",
+      "Care coordinator"
+    ],
+    "domains": [
+      "Santé"
+    ],
+    "skills": [
+      [
+        "Coordination",
+        "Coordination"
+      ],
+      [
+        "Parcours de soins",
+        "Care pathways"
+      ],
+      [
+        "Planification",
+        "Planning"
+      ],
+      [
+        "Dossier patient",
+        "Patient records"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Pharmacien",
+      "Pharmacist"
+    ],
+    "domains": [
+      "Santé"
+    ],
+    "skills": [
+      [
+        "Dispensation",
+        "Dispensing"
+      ],
+      [
+        "Pharmacovigilance",
+        "Pharmacovigilance"
+      ],
+      [
+        "Gestion des stocks",
+        "Inventory management"
+      ],
+      [
+        "Conseil au patient",
+        "Patient counselling"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Comptable",
+      "Accountant"
+    ],
+    "domains": [
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Comptabilité",
+        "Accounting"
+      ],
+      [
+        "Clôture comptable",
+        "Financial closing"
+      ],
+      [
+        "Rapprochement bancaire",
+        "Bank reconciliation"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ],
+      [
+        "Fiscalité",
+        "Taxation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Contrôleur de gestion",
+      "Financial controller"
+    ],
+    "domains": [
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Contrôle de gestion",
+        "Management accounting"
+      ],
+      [
+        "Budget et prévisions",
+        "Budgeting and forecasting"
+      ],
+      [
+        "Analyse des écarts",
+        "Variance analysis"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ],
+      [
+        "Power BI",
+        "Power BI"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Analyste financier",
+      "Financial analyst"
+    ],
+    "domains": [
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Analyse financière",
+        "Financial analysis"
+      ],
+      [
+        "Modélisation financière",
+        "Financial modelling"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ],
+      [
+        "Évaluation d'entreprise",
+        "Business valuation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Auditeur financier",
+      "Financial auditor"
+    ],
+    "domains": [
+      "Finance",
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Audit",
+        "Audit"
+      ],
+      [
+        "Contrôle interne",
+        "Internal controls"
+      ],
+      [
+        "Comptabilité",
+        "Accounting"
+      ],
+      [
+        "Analyse des risques",
+        "Risk assessment"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Gestionnaire assurance",
+      "Insurance administrator"
+    ],
+    "domains": [
+      "Assurance"
+    ],
+    "skills": [
+      [
+        "Gestion des contrats",
+        "Contract administration"
+      ],
+      [
+        "Gestion des sinistres",
+        "Claims handling"
+      ],
+      [
+        "Relation client",
+        "Customer relations"
+      ],
+      [
+        "Analyse des risques",
+        "Risk assessment"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Actuaire",
+      "Actuary"
+    ],
+    "domains": [
+      "Assurance",
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Statistiques",
+        "Statistics"
+      ],
+      [
+        "Modélisation des risques",
+        "Risk modelling"
+      ],
+      [
+        "Tarification",
+        "Pricing"
+      ],
+      [
+        "Python",
+        "Python"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur civil",
+      "Civil engineer"
+    ],
+    "domains": [
+      "BTP"
+    ],
+    "skills": [
+      [
+        "Génie civil",
+        "Civil engineering"
+      ],
+      [
+        "AutoCAD",
+        "AutoCAD"
+      ],
+      [
+        "Calcul de structures",
+        "Structural analysis"
+      ],
+      [
+        "Suivi de chantier",
+        "Site supervision"
+      ],
+      [
+        "BIM",
+        "BIM"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Conducteur de travaux",
+      "Construction manager"
+    ],
+    "domains": [
+      "BTP"
+    ],
+    "skills": [
+      [
+        "Suivi de chantier",
+        "Site supervision"
+      ],
+      [
+        "Planification",
+        "Planning"
+      ],
+      [
+        "Gestion budgétaire",
+        "Budget management"
+      ],
+      [
+        "Coordination des sous-traitants",
+        "Subcontractor coordination"
+      ],
+      [
+        "Sécurité de chantier",
+        "Site safety"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Architecte bâtiment",
+      "Building architect"
+    ],
+    "domains": [
+      "BTP"
+    ],
+    "skills": [
+      [
+        "Conception architecturale",
+        "Architectural design"
+      ],
+      [
+        "AutoCAD",
+        "AutoCAD"
+      ],
+      [
+        "Revit",
+        "Revit"
+      ],
+      [
+        "BIM",
+        "BIM"
+      ],
+      [
+        "Coordination technique",
+        "Technical coordination"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "BIM coordinateur",
+      "BIM coordinator"
+    ],
+    "domains": [
+      "BTP"
+    ],
+    "skills": [
+      [
+        "BIM",
+        "BIM"
+      ],
+      [
+        "Revit",
+        "Revit"
+      ],
+      [
+        "Navisworks",
+        "Navisworks"
+      ],
+      [
+        "Détection de conflits",
+        "Clash detection"
+      ],
+      [
+        "Coordination technique",
+        "Technical coordination"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Économiste de la construction",
+      "Quantity surveyor"
+    ],
+    "domains": [
+      "BTP"
+    ],
+    "skills": [
+      [
+        "Métrés",
+        "Quantity takeoff"
+      ],
+      [
+        "Estimation des coûts",
+        "Cost estimating"
+      ],
+      [
+        "Appels d'offres",
+        "Tendering"
+      ],
+      [
+        "Suivi budgétaire",
+        "Cost control"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Technicien de maintenance",
+      "Maintenance technician"
+    ],
+    "domains": [
+      "Industrie"
+    ],
+    "skills": [
+      [
+        "Maintenance industrielle",
+        "Industrial maintenance"
+      ],
+      [
+        "Maintenance préventive",
+        "Preventive maintenance"
+      ],
+      [
+        "Diagnostic de pannes",
+        "Fault diagnosis"
+      ],
+      [
+        "GMAO / CMMS",
+        "GMAO / CMMS"
+      ],
+      [
+        "Lecture de plans",
+        "Technical drawing interpretation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur mécanique",
+      "Mechanical engineer"
+    ],
+    "domains": [
+      "Industrie"
+    ],
+    "skills": [
+      [
+        "Conception mécanique",
+        "Mechanical design"
+      ],
+      [
+        "CAO / CAD",
+        "CAO / CAD"
+      ],
+      [
+        "Dimensionnement",
+        "Engineering calculations"
+      ],
+      [
+        "Simulation",
+        "Simulation"
+      ],
+      [
+        "Industrialisation",
+        "Industrialisation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur électrique",
+      "Electrical engineer"
+    ],
+    "domains": [
+      "Industrie",
+      "Énergie"
+    ],
+    "skills": [
+      [
+        "Électrotechnique",
+        "Electrical engineering"
+      ],
+      [
+        "Schémas électriques",
+        "Electrical schematics"
+      ],
+      [
+        "Dimensionnement",
+        "Engineering calculations"
+      ],
+      [
+        "Mise en service",
+        "Commissioning"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Automaticien",
+      "Automation engineer"
+    ],
+    "domains": [
+      "Industrie"
+    ],
+    "skills": [
+      [
+        "PLC / API",
+        "PLC / API"
+      ],
+      [
+        "SCADA",
+        "SCADA"
+      ],
+      [
+        "Automatisme industriel",
+        "Industrial automation"
+      ],
+      [
+        "Mise en service",
+        "Commissioning"
+      ],
+      [
+        "Diagnostic de pannes",
+        "Fault diagnosis"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Responsable qualité HSE",
+      "Quality and HSE manager"
+    ],
+    "domains": [
+      "Industrie",
+      "BTP",
+      "Énergie"
+    ],
+    "skills": [
+      [
+        "Qualité / HSE",
+        "Quality / HSE"
+      ],
+      [
+        "Analyse des risques",
+        "Risk assessment"
+      ],
+      [
+        "Audit",
+        "Audit"
+      ],
+      [
+        "Amélioration continue",
+        "Continuous improvement"
+      ],
+      [
+        "ISO 9001",
+        "ISO 9001"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur énergies renouvelables",
+      "Renewable energy engineer"
+    ],
+    "domains": [
+      "Énergie"
+    ],
+    "skills": [
+      [
+        "Énergies renouvelables",
+        "Renewable energy"
+      ],
+      [
+        "Études de faisabilité",
+        "Feasibility studies"
+      ],
+      [
+        "Dimensionnement",
+        "Engineering calculations"
+      ],
+      [
+        "Efficacité énergétique",
+        "Energy efficiency"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur procédés",
+      "Process engineer"
+    ],
+    "domains": [
+      "Énergie",
+      "Industrie"
+    ],
+    "skills": [
+      [
+        "Génie des procédés",
+        "Process engineering"
+      ],
+      [
+        "P&ID",
+        "P&ID"
+      ],
+      [
+        "Simulation de procédés",
+        "Process simulation"
+      ],
+      [
+        "Sécurité des procédés",
+        "Process safety"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Technicien télécoms",
+      "Telecommunications technician"
+    ],
+    "domains": [
+      "Télécommunications"
+    ],
+    "skills": [
+      [
+        "Fibre optique",
+        "Fibre optics"
+      ],
+      [
+        "Réseaux télécoms",
+        "Telecommunications networks"
+      ],
+      [
+        "Installation et maintenance",
+        "Installation and maintenance"
+      ],
+      [
+        "Mesures et diagnostic",
+        "Testing and troubleshooting"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Ingénieur radio",
+      "Radio network engineer"
+    ],
+    "domains": [
+      "Télécommunications"
+    ],
+    "skills": [
+      [
+        "4G / 5G",
+        "4G / 5G"
+      ],
+      [
+        "Planification radio",
+        "Radio planning"
+      ],
+      [
+        "Optimisation réseau",
+        "Network optimisation"
+      ],
+      [
+        "Mesures radio",
+        "Radio measurements"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Responsable logistique",
+      "Logistics manager"
+    ],
+    "domains": [
+      "Transport"
+    ],
+    "skills": [
+      [
+        "Supply chain",
+        "Supply chain"
+      ],
+      [
+        "Gestion des stocks",
+        "Inventory management"
+      ],
+      [
+        "Planification transport",
+        "Transport planning"
+      ],
+      [
+        "WMS / TMS",
+        "WMS / TMS"
+      ],
+      [
+        "Gestion des fournisseurs",
+        "Supplier management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Acheteur",
+      "Buyer"
+    ],
+    "domains": [
+      "Transport",
+      "Commerce",
+      "Industrie"
+    ],
+    "skills": [
+      [
+        "Achats",
+        "Procurement"
+      ],
+      [
+        "Négociation",
+        "Negotiation"
+      ],
+      [
+        "Sourcing fournisseurs",
+        "Supplier sourcing"
+      ],
+      [
+        "Gestion des contrats",
+        "Contract administration"
+      ],
+      [
+        "Analyse des coûts",
+        "Cost analysis"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Gestionnaire supply chain",
+      "Supply chain planner"
+    ],
+    "domains": [
+      "Transport"
+    ],
+    "skills": [
+      [
+        "Supply chain",
+        "Supply chain"
+      ],
+      [
+        "Prévision de la demande",
+        "Demand forecasting"
+      ],
+      [
+        "Approvisionnement",
+        "Replenishment"
+      ],
+      [
+        "ERP",
+        "ERP"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Commercial",
+      "Sales representative"
+    ],
+    "domains": [
+      "Commerce"
+    ],
+    "skills": [
+      [
+        "Prospection",
+        "Prospecting"
+      ],
+      [
+        "Négociation",
+        "Negotiation"
+      ],
+      [
+        "CRM",
+        "CRM"
+      ],
+      [
+        "Relation client",
+        "Customer relations"
+      ],
+      [
+        "Proposition commerciale",
+        "Sales proposals"
+      ]
+    ],
+    "aliases": [
+      "Sales",
+      "Business developer"
+    ]
+  },
+  {
+    "label": [
+      "Responsable grands comptes",
+      "Key account manager"
+    ],
+    "domains": [
+      "Commerce"
+    ],
+    "skills": [
+      [
+        "Gestion de comptes",
+        "Account management"
+      ],
+      [
+        "Négociation",
+        "Negotiation"
+      ],
+      [
+        "CRM",
+        "CRM"
+      ],
+      [
+        "Stratégie commerciale",
+        "Sales strategy"
+      ]
+    ],
+    "aliases": [
+      "Account manager",
+      "KAM"
+    ]
+  },
+  {
+    "label": [
+      "Responsable e-commerce",
+      "E-commerce manager"
+    ],
+    "domains": [
+      "Commerce",
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "E-commerce",
+        "E-commerce"
+      ],
+      [
+        "Gestion de catalogue",
+        "Catalogue management"
+      ],
+      [
+        "Conversion",
+        "Conversion optimisation"
+      ],
+      [
+        "Web analytics",
+        "Web analytics"
+      ],
+      [
+        "CRM",
+        "CRM"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Responsable marketing",
+      "Marketing manager"
+    ],
+    "domains": [
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "Stratégie marketing",
+        "Marketing strategy"
+      ],
+      [
+        "Gestion de campagnes",
+        "Campaign management"
+      ],
+      [
+        "Web analytics",
+        "Web analytics"
+      ],
+      [
+        "Gestion budgétaire",
+        "Budget management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant SEO",
+      "SEO consultant"
+    ],
+    "domains": [
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "SEO",
+        "SEO"
+      ],
+      [
+        "Audit technique",
+        "Technical auditing"
+      ],
+      [
+        "Recherche de mots-clés",
+        "Keyword research"
+      ],
+      [
+        "Google Search Console",
+        "Google Search Console"
+      ],
+      [
+        "Stratégie de contenu",
+        "Content strategy"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Community manager",
+      "Community manager"
+    ],
+    "domains": [
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "Réseaux sociaux",
+        "Social media"
+      ],
+      [
+        "Création de contenu",
+        "Content creation"
+      ],
+      [
+        "Modération",
+        "Moderation"
+      ],
+      [
+        "Calendrier éditorial",
+        "Editorial planning"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Graphiste",
+      "Graphic designer"
+    ],
+    "domains": [
+      "Marketing"
+    ],
+    "skills": [
+      [
+        "Adobe Illustrator",
+        "Adobe Illustrator"
+      ],
+      [
+        "Adobe Photoshop",
+        "Adobe Photoshop"
+      ],
+      [
+        "Identité visuelle",
+        "Visual identity"
+      ],
+      [
+        "Mise en page",
+        "Layout design"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Recruteur",
+      "Recruiter"
+    ],
+    "domains": [
+      "RH"
+    ],
+    "skills": [
+      [
+        "Recrutement",
+        "Recruitment"
+      ],
+      [
+        "Sourcing candidats",
+        "Candidate sourcing"
+      ],
+      [
+        "Entretiens",
+        "Interviewing"
+      ],
+      [
+        "ATS",
+        "ATS"
+      ],
+      [
+        "Évaluation des compétences",
+        "Skills assessment"
+      ]
+    ],
+    "aliases": [
+      "Talent acquisition"
+    ]
+  },
+  {
+    "label": [
+      "Gestionnaire de paie",
+      "Payroll specialist"
+    ],
+    "domains": [
+      "RH",
+      "Finance"
+    ],
+    "skills": [
+      [
+        "Gestion de paie",
+        "Payroll"
+      ],
+      [
+        "Administration du personnel",
+        "Personnel administration"
+      ],
+      [
+        "Droit du travail",
+        "Employment law"
+      ],
+      [
+        "Excel",
+        "Excel"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Responsable RH",
+      "HR manager"
+    ],
+    "domains": [
+      "RH"
+    ],
+    "skills": [
+      [
+        "Gestion RH",
+        "HR management"
+      ],
+      [
+        "Recrutement",
+        "Recruitment"
+      ],
+      [
+        "Relations sociales",
+        "Employee relations"
+      ],
+      [
+        "Développement des compétences",
+        "Learning and development"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Consultant en organisation",
+      "Organisation consultant"
+    ],
+    "domains": [
+      "Conseil"
+    ],
+    "skills": [
+      [
+        "Analyse des processus",
+        "Process analysis"
+      ],
+      [
+        "Conduite du changement",
+        "Change management"
+      ],
+      [
+        "Gestion de projet",
+        "Project management"
+      ],
+      [
+        "Facilitation",
+        "Facilitation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Directeur d'hôtel",
+      "Hotel manager"
+    ],
+    "domains": [
+      "Hôtellerie"
+    ],
+    "skills": [
+      [
+        "Gestion hôtelière",
+        "Hotel management"
+      ],
+      [
+        "Relation client",
+        "Customer relations"
+      ],
+      [
+        "Gestion d'équipe",
+        "Team management"
+      ],
+      [
+        "Gestion budgétaire",
+        "Budget management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Réceptionniste",
+      "Receptionist"
+    ],
+    "domains": [
+      "Hôtellerie"
+    ],
+    "skills": [
+      [
+        "Accueil",
+        "Guest reception"
+      ],
+      [
+        "Gestion des réservations",
+        "Reservation management"
+      ],
+      [
+        "PMS",
+        "PMS"
+      ],
+      [
+        "Relation client",
+        "Customer relations"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Chef de cuisine",
+      "Head chef"
+    ],
+    "domains": [
+      "Hôtellerie"
+    ],
+    "skills": [
+      [
+        "Production culinaire",
+        "Culinary production"
+      ],
+      [
+        "HACCP",
+        "HACCP"
+      ],
+      [
+        "Gestion des stocks",
+        "Inventory management"
+      ],
+      [
+        "Gestion d'équipe",
+        "Team management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Formateur",
+      "Trainer"
+    ],
+    "domains": [
+      "Éducation"
+    ],
+    "skills": [
+      [
+        "Ingénierie pédagogique",
+        "Instructional design"
+      ],
+      [
+        "Animation de formation",
+        "Training delivery"
+      ],
+      [
+        "Évaluation des acquis",
+        "Learning assessment"
+      ],
+      [
+        "LMS",
+        "LMS"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Enseignant",
+      "Teacher"
+    ],
+    "domains": [
+      "Éducation"
+    ],
+    "skills": [
+      [
+        "Pédagogie",
+        "Teaching methods"
+      ],
+      [
+        "Préparation de cours",
+        "Lesson planning"
+      ],
+      [
+        "Évaluation des acquis",
+        "Learning assessment"
+      ],
+      [
+        "Gestion de classe",
+        "Classroom management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Juriste",
+      "Legal counsel"
+    ],
+    "domains": [
+      "Juridique"
+    ],
+    "skills": [
+      [
+        "Analyse juridique",
+        "Legal analysis"
+      ],
+      [
+        "Rédaction de contrats",
+        "Contract drafting"
+      ],
+      [
+        "Veille juridique",
+        "Legal research"
+      ],
+      [
+        "Conformité",
+        "Compliance"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Délégué à la protection des données",
+      "Data protection officer"
+    ],
+    "domains": [
+      "Juridique",
+      "Cybersécurité"
+    ],
+    "skills": [
+      [
+        "Protection des données",
+        "Data protection"
+      ],
+      [
+        "RGPD / GDPR",
+        "RGPD / GDPR"
+      ],
+      [
+        "Analyse d'impact",
+        "Impact assessments"
+      ],
+      [
+        "Audit",
+        "Audit"
+      ]
+    ],
+    "aliases": [
+      "DPO"
+    ]
+  },
+  {
+    "label": [
+      "Ingénieur agronome",
+      "Agronomist"
+    ],
+    "domains": [
+      "Agriculture"
+    ],
+    "skills": [
+      [
+        "Agronomie",
+        "Agronomy"
+      ],
+      [
+        "Gestion des cultures",
+        "Crop management"
+      ],
+      [
+        "Analyse des sols",
+        "Soil analysis"
+      ],
+      [
+        "Irrigation",
+        "Irrigation"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Responsable exploitation agricole",
+      "Farm manager"
+    ],
+    "domains": [
+      "Agriculture"
+    ],
+    "skills": [
+      [
+        "Gestion d'exploitation",
+        "Farm management"
+      ],
+      [
+        "Planification agricole",
+        "Agricultural planning"
+      ],
+      [
+        "Gestion d'équipe",
+        "Team management"
+      ],
+      [
+        "Gestion budgétaire",
+        "Budget management"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Gestionnaire marchés publics",
+      "Public procurement specialist"
+    ],
+    "domains": [
+      "Public",
+      "Juridique"
+    ],
+    "skills": [
+      [
+        "Marchés publics",
+        "Public procurement"
+      ],
+      [
+        "Appels d'offres",
+        "Tendering"
+      ],
+      [
+        "Analyse des offres",
+        "Bid evaluation"
+      ],
+      [
+        "Suivi des contrats",
+        "Contract monitoring"
+      ]
+    ],
+    "aliases": []
+  },
+  {
+    "label": [
+      "Chargé de développement territorial",
+      "Regional development officer"
+    ],
+    "domains": [
+      "Public"
+    ],
+    "skills": [
+      [
+        "Développement territorial",
+        "Regional development"
+      ],
+      [
+        "Gestion de projet",
+        "Project management"
+      ],
+      [
+        "Concertation",
+        "Stakeholder consultation"
+      ],
+      [
+        "Recherche de financements",
+        "Funding applications"
+      ]
+    ],
+    "aliases": []
+  }
+]

@@ -135,8 +135,8 @@ _PERIOD_RE = re.compile(
     re.I,
 )
 _YEARS_RE = re.compile(r"(\d{1,2})\s*(?:\+|-|à|a|to|/)?\s*(\d{1,2})?\s*\+?\s*(?:ans?|years?|yrs?)\b", re.I)
-_REMOTE_RE = re.compile(r"\b(full[ -]?remote|100\s*%\s*(?:remote|t[ée]l[ée]travail)|remote|t[ée]l[ée]travail (?:total|complet)|work from home|wfh|anywhere)\b", re.I)
-_HYBRID_RE = re.compile(r"\b(hybrid|hybride|partial|partiel|t[ée]l[ée]travail partiel|\d\s*(?:j|jours|days?)\s*(?:de\s*)?(?:t[ée]l[ée]travail|remote|sur site|on[ -]?site))\b", re.I)
+_REMOTE_RE = re.compile(r"\b(full[ -]?remote|100\s*%\s*(?:remote|t[ée]l[ée]travail)|remote(?!\s+(?:access|desktop|sensing|support|team|teams|server|control|device|monitoring|troubleshooting)\b)|t[ée]l[ée]travail (?:total|complet)|work from home|wfh|anywhere)\b", re.I)
+_HYBRID_RE = re.compile(r"\b(hybrid[e]?(?!\s+(?:search|cloud|architecture|model|retrieval|recherche)\b)|t[ée]l[ée]travail partiel|partial remote|[1-4]\s*(?:j|jours?|days?)\s*(?:de\s*)?(?:t[ée]l[ée]travail|remote|sur site|on[ -]?site))\b", re.I)
 _ONSITE_RE = re.compile(r"\b(on[ -]?site|onsite|pr[ée]sentiel|sur site|in[ -]office|no remote)\b", re.I)
 
 _CONTRACT_TOKENS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -413,10 +413,22 @@ def contracts_track(contracts: list[str], wanted: str = "") -> str:
 def normalize_remote(*values: Any) -> str:
     """remote | hybrid | onsite | "" out of flags, labels and free text."""
     evidence = " ".join(_clean(value) for value in values if value is not None and not isinstance(value, bool))
-    if re.search(r"\b(no remote|not remote|remote (?:is )?not (?:allowed|available)|sans t[ée]l[ée]travail|t[ée]l[ée]travail (?:interdit|non autoris[ée]))\b", evidence, re.I):
+    if re.search(r"\b(no remote|not remote|remote (?:is )?not (?:allowed|available|possible)|(?:sans|pas de) t[ée]l[ée]travail|t[ée]l[ée]travail (?:interdit|non autoris[ée]))\b", evidence, re.I):
+        return "onsite"
+    if values and str(values[0]).lower() in {"onsite", "on-site", "on_site", "presentiel", "présentiel"}:
         return "onsite"
     if _HYBRID_RE.search(evidence):
         return "hybrid"
+    if re.search(r"\b(?:remote|t[ée]l[ée]travail)\s*:?\s*[1-4]\s*(?:(?:[àa-]|to)\s*[1-4]\s*)?(?:j|jours?|days?)\b|\b[1-9]\d?\s*%\s*(?:remote|t[ée]l[ée]travail)\b", evidence, re.I):
+        return "hybrid"
+    if re.search(r"\b(?:remote|t[ée]l[ée]travail)\s*(?::\s*)?(?:possible|n[ée]gociable|negotiable|am[ée]nageable|[àa] (?:discuter|confirmer)|to be (?:discussed|confirmed))\b|\b(?:up to|jusqu'[àa])\s*100\s*%", evidence, re.I):
+        return ""
+    if re.search(r"\b(?:occasional|occasionnel|partiel)\s*(?:remote|t[ée]l[ée]travail)|\b(?:remote|t[ée]l[ée]travail)\s*(?:occasionnel|partiel)", evidence, re.I):
+        return "hybrid"
+    if re.search(r"\b(?:sur site|on[ -]?site|office)\s+(?:requis|required|obligatoire)|\b(?:mandatory|regular|weekly|monthly)\s+(?:on[ -]?site|office)", evidence, re.I):
+        return "hybrid" if _REMOTE_RE.search(evidence) else "onsite"
+    if re.search(r"\b5\s*(?:j|jours?|days?)\s*(?:de\s*)?(?:t[ée]l[ée]travail|remote)\b", evidence, re.I):
+        return "remote"
     for value in values:
         if value is True:
             return "remote"
@@ -608,6 +620,9 @@ def enrich_facts(row: dict[str, Any], *, track: str = "") -> dict[str, Any]:
     Structured values already on the row win; only empty fields are read out of
     the title and description. The row is updated in place and returned.
     """
+    from navin.career.needs import enrich_need, is_project_need
+
+    enrich_need(row)
     title = _clean(row.get("title"))
     description = _clean(row.get("description"))
     hay = f"{title}\n{description[:1500]}"
@@ -635,7 +650,10 @@ def enrich_facts(row: dict[str, Any], *, track: str = "") -> dict[str, Any]:
             if not _clean(row.get("duration")):
                 row["duration"] = label
     has_pay = any(row.get(key) is not None for key in ("daily_rate_min", "daily_rate_max", "salary_min", "salary_max"))
-    if not has_pay:
+    if row.get("price_model") == "fixed":
+        # A project budget has no daily/annual equivalent without a workload.
+        row.update(pay_fields(currency=_clean(row.get("currency"))))
+    elif not has_pay:
         wanted = track or _clean(row.get("track"))
         country = _clean(row.get("country"))
         if row.get("compensation") is not None:
@@ -649,7 +667,7 @@ def enrich_facts(row: dict[str, Any], *, track: str = "") -> dict[str, Any]:
             # Always write the pay keys: a re-collect must clear a stale figure on the stored row.
             found = pay_from_description(description, country=country, track=wanted)
             row.update(found or pay_fields(currency=_clean(row.get("currency")), country=country, track=wanted))
-    if not _clean(row.get("currency")):
+    if not _clean(row.get("currency")) and not is_project_need(row):
         row["currency"] = market_currency(_clean(row.get("country")))
     return row
 

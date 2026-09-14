@@ -46,6 +46,18 @@ def test_bundled_source_catalog_matches_gateway():
     assert catalog == {"missions": mission_catalog(), "platforms": platform_catalog()}
 
 
+def test_profile_navigation_restores_www_without_changing_saved_identity(tmp_path):
+    store = CareerStore(tmp_path / "career")
+    candidate = {"id": "existing-id", "url": "https://lesbonsfreelances.com/freelance/example?x=1"}
+    _save(store, {"candidates": [candidate], "matches": {"offer": {"results": [{"candidate": candidate}]}}})
+    snapshot = prospecting_snapshot(store)
+    expected = "https://www.lesbonsfreelances.com/freelance/example?x=1"
+    assert snapshot["candidates"][0]["url"] == expected
+    assert snapshot["matches"]["offer"]["results"][0]["candidate"]["url"] == expected
+    assert snapshot["candidates"][0]["id"] == "existing-id"
+    assert _state(store)["candidates"][0]["url"] == candidate["url"]
+
+
 def test_company_multiple_choices_survive_reload(tmp_path):
     store = CareerStore(tmp_path / "career")
     criteria = {
@@ -67,12 +79,12 @@ def test_company_multiple_choices_survive_reload(tmp_path):
 
 
 def test_company_no_key_defaults_and_manual_removals_survive_reload(tmp_path):
-    from navin.career.prospecting_catalog import mission_catalog
+    from navin.career.prospecting_catalog import default_mission_sources
 
     store = CareerStore(tmp_path / "career")
     sources = prospecting_snapshot(store)["criteria"]["sources"]
-    assert sources == [source["id"] for source in mission_catalog() if not source["provider"]]
-    assert "jobicy" in sources and "google_jobs" not in sources and "brave_jobs" not in sources
+    assert sources == default_mission_sources("freelance")
+    assert "mon-consultant-independant" in sources and "jobicy" not in sources and "google_jobs" not in sources
     defaults = {"version": 1, "generated": {"skills": ["Soins"]}, "dismissed": {"profile_skills": ["Soins"], "sources": sources}}
     handle_prospecting(store, "prospecting_config", {"criteria": {"sources": [], "profile_roles": [], "autofill": defaults,
         "skills": [f"Skill {index}" for index in range(80)]}})
@@ -179,7 +191,7 @@ def test_company_without_cv_and_all_requested_markets(store):
     codes = ["SA", "OM", "AE", "BH", "QA", "KW", "MA"]
     handle_prospecting(store, "prospecting_config", {"criteria": {"countries": codes, "city": "Dubai"}})
     assert _state(store)["criteria"]["countries"] == codes
-    assert len(prospecting_snapshot(store)["platform_catalog"]) == 26
+    assert len(prospecting_snapshot(store)["platform_catalog"]) == 33
 
 
 def test_partial_failures_dont_lose_results_and_cooldown_is_used(store):
@@ -369,8 +381,11 @@ def candidate_pdf():
     return output.getvalue()
 
 
-def test_candidate_consent_and_genuine_cv_enable_automatic_client_email(store):
+@pytest.mark.parametrize("fixed_project", [False, True])
+def test_candidate_consent_and_genuine_cv_enable_automatic_client_email(store, fixed_project):
     state, match = mail_setup(store)
+    if fixed_project:
+        store.upsert_opportunities([{**offer(), "price_model": "fixed", "budget": 20000, "currency": "EUR", "need_type": "rfp"}])
     receipt = _send(store, state, match, offer(), "candidate", smtp_factory=lambda _: SMTP())
     _save(store, state)
     text = f"ACCORD {_ref('job-one', 'person-1')}\nTJM: 400 EUR / jour\nDisponible le mois prochain."
@@ -382,6 +397,9 @@ def test_candidate_consent_and_genuine_cv_enable_automatic_client_email(store):
     assert saved["stage"] == "submitted"
     assert saved["purchase_rate"] == 400
     assert saved["client_mail"]["recipient"] == "client@example.com"
+    if fixed_project:
+        assert "chiffrage du projet reste à établir" in saved["client_mail"]["body"]
+        assert "TJM proposé" not in saved["client_mail"]["body"]
     assert len(SMTP.messages) == 2
     assert b"application/pdf" in SMTP.messages[-1]
     assert read_candidate_cv(store, saved["candidate"])["name"] == "cv.pdf"
@@ -600,7 +618,7 @@ def test_priority_sources_cover_all_countries_before_extra_boards(store):
 
     store.save_secret("CAREER_SERPAPI_KEY", "test-search-key")
     countries = ["SA", "OM", "AE", "BH", "QA", "KW", "MA"]
-    handle_prospecting(store, "prospecting_config", {"criteria": {"countries": countries, "sources": [s["id"] for s in mission_catalog()]}})
+    handle_prospecting(store, "prospecting_config", {"criteria": {"track": "jobs", "countries": countries, "sources": [s["id"] for s in mission_catalog()]}})
     with patch("navin.career.prospecting._mission_source", return_value=[]) as missions, patch("navin.career.prospecting._candidates", return_value=[]) as profiles:
         handle_prospecting(store, "prospecting_search", {})
     assert {call.args[2]["countries"][0] for call in missions.call_args_list if call.args[1] == "linkedin"} == set(countries)

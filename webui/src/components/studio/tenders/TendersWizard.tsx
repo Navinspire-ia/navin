@@ -876,6 +876,16 @@ export function TendersWizard({
                 <p className="text-[13px] text-muted-foreground">
                   {tx("sourcesPicked", "{{count}} sources selected", { count: sourceIds.length })}
                 </p>
+                <DefaultButton
+                  text={tx("consultingSources", "Use Gulf, Morocco and international consulting sources")}
+                  disabled={!zones.some(group => group.sources.some(source => source.recommended_for_consulting))}
+                  onClick={() => setSourceIds([...new Set(zones.flatMap(group => group.sources)
+                    .filter(source => source.recommended_for_consulting).map(source => source.id))])}
+                  styles={BUTTON_STYLES}
+                />
+                <p className="text-[13px] text-muted-foreground">
+                  {tx("consultingSourcesHint", "RFPs use project budgets and submission deadlines. Your freelance day-rate thresholds remain in the Career workspace.")}
+                </p>
                 {enabledHosts.length ? (
                   <Block
                     title={tx("keptHosts", "Hosts you kept")}

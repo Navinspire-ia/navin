@@ -152,9 +152,12 @@ def normalize_tender(raw: dict[str, Any], *, source_id: str) -> dict[str, Any]:
     ref = _clean(raw.get("reference") or raw.get("id") or raw.get("notice_id"), limit=80)
     tid = tender_id(source_id, ref or url or title)
     now = time.time()
+    notice_type = re.search(r"\b(RFP|RFQ|RFI|EOI)\b", title, re.I)
     return {
         "id": tid,
         "source_id": source_id,
+        "opportunity_kind": "rfp",
+        "need_type": _clean(raw.get("need_type") or raw.get("notice_type") or (notice_type[1].upper() if notice_type else ""), limit=80),
         "country": _clean(raw.get("country"), limit=16).upper() or "INTL",
         "buyer": _clean(raw.get("buyer") or raw.get("organization"), limit=200),
         "title": title or "Untitled notice",
@@ -162,7 +165,7 @@ def normalize_tender(raw: dict[str, Any], *, source_id: str) -> dict[str, Any]:
         "sector": _clean(raw.get("sector"), limit=80),
         "cpv": _clean(raw.get("cpv") or raw.get("unspsc"), limit=80),
         "budget": float(raw["budget"]) if isinstance(raw.get("budget"), (int, float)) else None,
-        "currency": _clean(raw.get("currency") or "EUR", limit=8).upper() or "EUR",
+        "currency": _clean(raw.get("currency"), limit=8).upper(),
         "publication_date": iso_date(raw.get("publication_date") or raw.get("published")),
         "deadline": iso_date(raw.get("deadline") or raw.get("deadline_date")),
         "documents": list(raw.get("documents") or [])[:20],

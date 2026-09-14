@@ -103,13 +103,28 @@ SOURCES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "uae-procurement",
-        "name": "UAE Government Procurement",
+        "name": "UAE Digital Procurement Platform",
         "country": "AE",
         "zone": "gcc",
         "priority": "P1",
         "ingest": "html",
-        "url": "https://www.mof.gov.ae/",
-        "notes": "UAE federal procurement entry point.",
+        "url": "https://mof.gov.ae/en/public-finance/government-procurement/current-business-opportunities/",
+        "notes": "UAE federal business opportunities. Supplier registration is required to submit a bid.",
+    },
+    {
+        "id": "dubai-esupply", "name": "Dubai eSupply", "country": "AE", "zone": "gcc",
+        "priority": "P1", "ingest": "search", "url": "https://esupply.dubai.gov.ae/",
+        "notes": "Dubai government RFX and tenders. Public notice discovery; supplier account required for participation.",
+    },
+    {
+        "id": "dubai-isupplier", "name": "Dubai iSupplier", "country": "AE", "zone": "gcc",
+        "priority": "P1", "ingest": "search", "url": "https://isupplier.dubai.gov.ae/",
+        "notes": "Dubai supplier portal. Account access may be required; no private tender collection is claimed.",
+    },
+    {
+        "id": "abu-dhabi-adgpg", "name": "Abu Dhabi Government Procurement Gate", "country": "AE", "zone": "gcc",
+        "priority": "P1", "ingest": "search", "url": "https://www.adgpg.gov.ae/en",
+        "notes": "Abu Dhabi government procurement; the supplier journey is at supplier.adgpg.gov.ae. Public notices only.",
     },
     {
         "id": "monaqasat",
@@ -133,10 +148,10 @@ SOURCES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "oman-tender-board",
-        "name": "Oman Tender Board",
+        "name": "Oman ESNAD / Tender Board",
         "country": "OM",
         "zone": "gcc",
-        "priority": "P2",
+        "priority": "P1",
         "ingest": "html",
         "url": "https://etendering.tenderboard.gov.om/",
         "notes": "Sultanate of Oman e-tendering.",
@@ -180,6 +195,11 @@ SOURCES: tuple[dict[str, Any], ...] = (
         "ingest": "html",
         "url": "https://www.ungm.org/Public/Notice",
         "notes": "UN agencies and many international organisations. Free public search. Cloudflare may challenge bots.",
+    },
+    {
+        "id": "sap-discovery", "name": "SAP Business Network Discovery", "country": "INTL", "zone": "international",
+        "priority": "P1", "ingest": "search", "url": "https://service.ariba.com/Discovery.aw",
+        "notes": "Buyer-published B2B service needs, RFI, RFQ and RFP. Public discovery only; account required for restricted postings and responses.",
     },
     {
         "id": "world-bank",
@@ -1119,6 +1139,10 @@ API_SOURCE_IDS = frozenset(
     }
 )
 _FETCH_IDS = API_SOURCE_IDS
+PRIORITY_MISSION_RFP_SOURCES = frozenset({
+    "etimad", "dubai-esupply", "dubai-isupplier", "abu-dhabi-adgpg", "uae-procurement",
+    "oman-tender-board", "monaqasat", "maroc-marches", "ungm", "world-bank", "sap-discovery",
+})
 _TED_COUNTRIES = frozenset(
     {
         "EU",
@@ -1201,6 +1225,7 @@ def enrich_source(row: dict[str, Any]) -> dict[str, Any]:
     else:
         out["coverage"] = "search"
     out["access"] = _access_of(str(out.get("coverage") or ""))
+    out["recommended_for_consulting"] = sid in PRIORITY_MISSION_RFP_SOURCES
     return out
 
 
@@ -1274,6 +1299,7 @@ def web_search_queries(
     crafts: list[str],
     tender_types: list[str] | None = None,
     project_types: list[str] | None = None,
+    source_ids: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Safety-net queries (P4). Collect runs them through web_search + scrape."""
     from navin.tenders.needs import query_need_terms
@@ -1289,6 +1315,21 @@ def web_search_queries(
     codes = [iso.strip().upper() for iso in (countries or list(_COUNTRY_QUERY)) if str(iso).strip()]
     if "INTL" not in codes:
         codes.append("INTL")
+    from navin.tenders.normalize import host_of
+
+    selected = set(source_ids or [])
+    for source in sources_for_countries(countries):
+        sid = source["id"]
+        if source["coverage"] != "search" or (selected and sid not in selected):
+            continue
+        if not selected and sid not in PRIORITY_MISSION_RFP_SOURCES:
+            continue
+        host = host_of(source["url"])
+        query = f'site:{host} (RFP OR RFQ OR tender OR consultation OR "appel d\'offres") ({craft_clause})'
+        queries.append({"country": source["country"], "lang": "en", "source_id": sid, "query": query})
+        seen.add(query)
+    if selected:
+        return queries
     for code in codes:
         pair = _COUNTRY_QUERY.get(code)
         if pair is None:

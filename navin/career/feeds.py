@@ -644,7 +644,7 @@ def parse_arbeitnow(body: str, *, titles: list[str], track: str = "") -> list[di
         if titles and not title_matches(f"{title} {' '.join(tags)}", titles):
             continue
         location = _text(item.get("location"))
-        country = infer_country_iso("", location) or "DE"
+        country = infer_country_iso("", location)
         remote_flag = item.get("remote")
         row = feed_row(
             "arbeitnow",

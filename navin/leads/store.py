@@ -185,6 +185,8 @@ def lead_key(row: dict[str, Any]) -> str:
     person = str(row.get("person") or "").strip().casefold()
     if domain and person:
         return f"p:{domain}:{person}"
+    if person and row.get("ingest") == "browser_extension_reviewed" and row.get("source_url"):
+        return "u:" + str(row["source_url"]).strip()
     company = str(row.get("company") or "").strip().casefold()
     return f"c:{company}:{domain}"
 

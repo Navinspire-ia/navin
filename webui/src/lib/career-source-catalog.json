@@ -65,6 +65,234 @@
       "mode": "feed"
     },
     {
+      "id": "mon-consultant-independant",
+      "name": "Mon Consultant Indépendant",
+      "markets": "FR BE CH LU",
+      "mode": "public_listing",
+      "provider": "",
+      "url": "https://www.mon-consultant-independant.com/missions-consultants-freelance",
+      "domain": "mon-consultant-independant.com",
+      "detail_pattern": "/detail-annonce-deconnecte-consultant-freelance",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "lehibou",
+      "name": "LeHibou",
+      "markets": "FR",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.lehibou.com/freelance/",
+      "domain": "lehibou.com",
+      "detail_pattern": "/(?:annonce|mission)s?/[^/]+",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelanceinformatique",
+      "name": "Freelance Informatique",
+      "markets": "FR",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.freelance-informatique.fr/mission-freelance",
+      "domain": "freelance-informatique.fr",
+      "detail_pattern": "/mission(?:-freelance)?(?:/|-)[^/]*\\d[A-Za-z0-9]*",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelancermap_jobs",
+      "name": "freelancermap",
+      "markets": "International",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.freelancermap.com/",
+      "domain": "freelancermap.com",
+      "detail_pattern": "/(?:project|projekt)/[^/]+",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "connecting_expertise",
+      "name": "Connecting-Expertise",
+      "markets": "Europe BE",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.connecting-expertise.com/freelancers",
+      "domain": "connecting-expertise.com",
+      "detail_pattern": "",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "prounity",
+      "name": "ProUnity",
+      "markets": "BE NL LU",
+      "mode": "public_listing",
+      "provider": "",
+      "url": "https://www.pro-unity.com/freelance-missions/",
+      "domain": "pro-unity.com",
+      "detail_pattern": "/job/[a-f0-9-]{36}/?",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelancers_lu",
+      "name": "Freelancers.lu",
+      "markets": "LU",
+      "mode": "public_listing",
+      "provider": "",
+      "url": "https://freelancers.lu/fr/missions",
+      "domain": "freelancers.lu",
+      "detail_pattern": "/(?:fr|en|de|lb)/missions/[a-f0-9-]{36}",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "peopleperhour_jobs",
+      "name": "PeoplePerHour",
+      "markets": "International",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.peopleperhour.com/freelance-jobs",
+      "domain": "peopleperhour.com",
+      "detail_pattern": "/freelance-jobs/(?:[^/]+/){2}[^/]+-\\d+",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "upwork_jobs",
+      "name": "Upwork",
+      "markets": "International",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.upwork.com/nx/search/jobs/",
+      "domain": "upwork.com",
+      "detail_pattern": "/(?:jobs/[^/]*~[a-zA-Z0-9]+|freelance-jobs/apply/[^/]+)",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelancer_jobs",
+      "name": "Freelancer.com",
+      "markets": "International",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.freelancer.com/jobs/",
+      "domain": "freelancer.com",
+      "detail_pattern": "/projects/[^/]+/[^/]+",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelancer_au",
+      "name": "Freelancer Australia",
+      "markets": "AU",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.freelancer.com.au/jobs/",
+      "domain": "freelancer.com.au",
+      "detail_pattern": "/projects/[^/]+/[^/]+",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "expert360",
+      "name": "Expert360",
+      "markets": "AU NZ",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://expert360.com/",
+      "domain": "expert360.com",
+      "detail_pattern": "",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "malt_missions",
+      "name": "Malt",
+      "markets": "Europe",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.malt.fr/",
+      "domain": "malt.fr",
+      "detail_pattern": "",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "comet",
+      "name": "Comet",
+      "markets": "FR",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.comet.co/",
+      "domain": "comet.co",
+      "detail_pattern": "",
+      "priority": 2,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "freelance_com",
+      "name": "Freelance.com",
+      "markets": "International",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.freelance.com/",
+      "domain": "freelance.com",
+      "detail_pattern": "",
+      "priority": 2,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "gulp",
+      "name": "GULP",
+      "markets": "DE CH AT",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.gulp.de/",
+      "domain": "gulp.de",
+      "detail_pattern": "/projekt/[^/]+",
+      "priority": 2,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "yunojuno",
+      "name": "YunoJuno",
+      "markets": "GB",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.yunojuno.com/",
+      "domain": "yunojuno.com",
+      "detail_pattern": "",
+      "priority": 1,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "toptal",
+      "name": "Toptal",
+      "markets": "International",
+      "mode": "account",
+      "provider": "account",
+      "url": "https://www.toptal.com/",
+      "domain": "toptal.com",
+      "detail_pattern": "",
+      "priority": 2,
+      "opportunity_kind": "freelance"
+    },
+    {
+      "id": "workhoppers_jobs",
+      "name": "Workhoppers",
+      "markets": "CA",
+      "mode": "public_search",
+      "provider": "",
+      "url": "https://www.workhoppers.com/",
+      "domain": "workhoppers.com",
+      "detail_pattern": "/(?:en|fr)/job/\\d+",
+      "priority": 2,
+      "opportunity_kind": "freelance"
+    },
+    {
       "id": "jobicy",
       "name": "Jobicy",
       "markets": "International",
@@ -193,14 +421,6 @@
       "mode": "indexed"
     },
     {
-      "id": "freelancermap_jobs",
-      "name": "freelancermap",
-      "markets": "International",
-      "provider": "serpapi",
-      "url": "https://freelancermap.com",
-      "mode": "indexed"
-    },
-    {
       "id": "freelancede_jobs",
       "name": "freelance.de",
       "markets": "DE CH AT",
@@ -255,14 +475,6 @@
       "provider": "serpapi",
       "url": "https://wellfound.com",
       "mode": "indexed"
-    },
-    {
-      "id": "freelancer_jobs",
-      "name": "Freelancer.com",
-      "markets": "International",
-      "provider": "serpapi",
-      "url": "https://freelancer.com",
-      "mode": "indexed"
     }
   ],
   "platforms": [
@@ -274,7 +486,12 @@
       "access": "partner",
       "indexed_profiles": true,
       "profile_path": "/in/",
-      "domain": "linkedin.com"
+      "domain": "linkedin.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "linkedin.com"
+      ],
+      "priority": 2
     },
     {
       "id": "freework",
@@ -284,7 +501,12 @@
       "access": "partner",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "free-work.com"
+      "domain": "free-work.com",
+      "profile_mode": "account",
+      "domains": [
+        "free-work.com"
+      ],
+      "priority": 2
     },
     {
       "id": "cvlibrary",
@@ -294,7 +516,12 @@
       "access": "partner",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "cv-library.co.uk"
+      "domain": "cv-library.co.uk",
+      "profile_mode": "account",
+      "domains": [
+        "cv-library.co.uk"
+      ],
+      "priority": 2
     },
     {
       "id": "resumelibrary",
@@ -304,7 +531,12 @@
       "access": "partner",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "resume-library.com"
+      "domain": "resume-library.com",
+      "profile_mode": "account",
+      "domains": [
+        "resume-library.com"
+      ],
+      "priority": 2
     },
     {
       "id": "dice",
@@ -314,7 +546,12 @@
       "access": "partner",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "dice.com"
+      "domain": "dice.com",
+      "profile_mode": "account",
+      "domains": [
+        "dice.com"
+      ],
+      "priority": 2
     },
     {
       "id": "seek",
@@ -324,7 +561,12 @@
       "access": "restricted",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "seek.com.au"
+      "domain": "seek.com.au",
+      "profile_mode": "account",
+      "domains": [
+        "seek.com.au"
+      ],
+      "priority": 2
     },
     {
       "id": "malt",
@@ -334,7 +576,13 @@
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/profile/",
-      "domain": "malt.fr"
+      "domain": "malt.fr",
+      "profile_mode": "public_search",
+      "domains": [
+        "malt.fr",
+        "malt.com"
+      ],
+      "priority": 1
     },
     {
       "id": "freelancermap",
@@ -344,7 +592,12 @@
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/profile/",
-      "domain": "freelancermap.com"
+      "domain": "freelancermap.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "freelancermap.com"
+      ],
+      "priority": 1
     },
     {
       "id": "freelancede",
@@ -354,7 +607,12 @@
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/Freelancer/",
-      "domain": "freelance.de"
+      "domain": "freelance.de",
+      "profile_mode": "public_search",
+      "domains": [
+        "freelance.de"
+      ],
+      "priority": 2
     },
     {
       "id": "jellow",
@@ -364,17 +622,27 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "jellow.nl"
+      "domain": "jellow.nl",
+      "profile_mode": "account",
+      "domains": [
+        "jellow.nl"
+      ],
+      "priority": 2
     },
     {
       "id": "lesbonsfreelances",
       "name": "LesBonsFreelances",
-      "url": "https://lesbonsfreelances.com",
+      "url": "https://www.lesbonsfreelances.com",
       "markets": "FR",
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/freelance/",
-      "domain": "lesbonsfreelances.com"
+      "domain": "lesbonsfreelances.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "lesbonsfreelances.com"
+      ],
+      "priority": 2
     },
     {
       "id": "freelanceinformatique",
@@ -384,7 +652,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "freelance-informatique.fr"
+      "domain": "freelance-informatique.fr",
+      "profile_mode": "account",
+      "domains": [
+        "freelance-informatique.fr"
+      ],
+      "priority": 2
     },
     {
       "id": "peopleperhour",
@@ -394,7 +667,12 @@
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/freelancer/",
-      "domain": "peopleperhour.com"
+      "domain": "peopleperhour.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "peopleperhour.com"
+      ],
+      "priority": 2
     },
     {
       "id": "workhoppers",
@@ -404,7 +682,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "workhoppers.com"
+      "domain": "workhoppers.com",
+      "profile_mode": "account",
+      "domains": [
+        "workhoppers.com"
+      ],
+      "priority": 2
     },
     {
       "id": "contra",
@@ -414,7 +697,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "contra.com"
+      "domain": "contra.com",
+      "profile_mode": "account",
+      "domains": [
+        "contra.com"
+      ],
+      "priority": 2
     },
     {
       "id": "freelancer",
@@ -424,17 +712,133 @@
       "access": "web",
       "indexed_profiles": true,
       "profile_path": "/u/",
-      "domain": "freelancer.com"
+      "domain": "freelancer.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "freelancer.com",
+        "freelancer.com.au"
+      ],
+      "priority": 1
     },
     {
       "id": "upwork",
       "name": "Upwork",
       "url": "https://upwork.com",
       "markets": "International",
+      "access": "web",
+      "indexed_profiles": true,
+      "profile_path": "/freelancers/",
+      "domain": "upwork.com",
+      "profile_mode": "public_search",
+      "domains": [
+        "upwork.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "prounity",
+      "name": "ProUnity",
+      "url": "https://pro-unity.com",
+      "markets": "Europe",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "pro-unity.com",
+      "profile_mode": "account",
+      "domains": [
+        "pro-unity.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "connecting_expertise",
+      "name": "Connecting-Expertise",
+      "url": "https://connecting-expertise.com",
+      "markets": "Europe",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "connecting-expertise.com",
+      "profile_mode": "account",
+      "domains": [
+        "connecting-expertise.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "freelancers_lu",
+      "name": "Freelancers.lu",
+      "url": "https://freelancers.lu",
+      "markets": "LU FR BE DE",
+      "access": "public_listing",
+      "indexed_profiles": true,
+      "profile_path": "/fr/freelancers/",
+      "domain": "freelancers.lu",
+      "profile_mode": "public_listing",
+      "domains": [
+        "freelancers.lu"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "expert360",
+      "name": "Expert360",
+      "url": "https://expert360.com",
+      "markets": "AU NZ",
       "access": "restricted",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "upwork.com"
+      "domain": "expert360.com",
+      "profile_mode": "account",
+      "domains": [
+        "expert360.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "yunojuno",
+      "name": "YunoJuno",
+      "url": "https://yunojuno.com",
+      "markets": "GB",
+      "access": "restricted",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "yunojuno.com",
+      "profile_mode": "account",
+      "domains": [
+        "yunojuno.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "lehibou",
+      "name": "LeHibou",
+      "url": "https://lehibou.com",
+      "markets": "FR",
+      "access": "partner",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "lehibou.com",
+      "profile_mode": "account",
+      "domains": [
+        "lehibou.com"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "comet",
+      "name": "Comet",
+      "url": "https://comet.co",
+      "markets": "FR",
+      "access": "manual",
+      "indexed_profiles": false,
+      "profile_path": "",
+      "domain": "comet.co",
+      "profile_mode": "account",
+      "domains": [
+        "comet.co"
+      ],
+      "priority": 2
     },
     {
       "id": "apec",
@@ -444,7 +848,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "apec.fr"
+      "domain": "apec.fr",
+      "profile_mode": "account",
+      "domains": [
+        "apec.fr"
+      ],
+      "priority": 2
     },
     {
       "id": "hellowork",
@@ -454,7 +863,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "hellowork.com"
+      "domain": "hellowork.com",
+      "profile_mode": "account",
+      "domains": [
+        "hellowork.com"
+      ],
+      "priority": 2
     },
     {
       "id": "francetravail",
@@ -464,7 +878,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "francetravail.fr"
+      "domain": "francetravail.fr",
+      "profile_mode": "account",
+      "domains": [
+        "francetravail.fr"
+      ],
+      "priority": 2
     },
     {
       "id": "ictjob",
@@ -474,7 +893,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "ictjob.be"
+      "domain": "ictjob.be",
+      "profile_mode": "account",
+      "domains": [
+        "ictjob.be"
+      ],
+      "priority": 2
     },
     {
       "id": "jobroom",
@@ -484,7 +908,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "job-room.ch"
+      "domain": "job-room.ch",
+      "profile_mode": "account",
+      "domains": [
+        "job-room.ch"
+      ],
+      "priority": 2
     },
     {
       "id": "adem",
@@ -494,7 +923,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "adem.public.lu"
+      "domain": "adem.public.lu",
+      "profile_mode": "account",
+      "domains": [
+        "adem.public.lu"
+      ],
+      "priority": 2
     },
     {
       "id": "reed",
@@ -504,7 +938,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "reed.co.uk"
+      "domain": "reed.co.uk",
+      "profile_mode": "account",
+      "domains": [
+        "reed.co.uk"
+      ],
+      "priority": 2
     },
     {
       "id": "wellfound",
@@ -514,7 +953,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "wellfound.com"
+      "domain": "wellfound.com",
+      "profile_mode": "account",
+      "domains": [
+        "wellfound.com"
+      ],
+      "priority": 2
     },
     {
       "id": "jobbank",
@@ -524,7 +968,12 @@
       "access": "manual",
       "indexed_profiles": false,
       "profile_path": "",
-      "domain": "jobbank.gc.ca"
+      "domain": "jobbank.gc.ca",
+      "profile_mode": "account",
+      "domains": [
+        "jobbank.gc.ca"
+      ],
+      "priority": 2
     }
   ]
 }

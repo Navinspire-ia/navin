@@ -24,7 +24,12 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from navin.career.errors import CareerError
-from navin.career.prospecting_catalog import INDEXED_MISSIONS, mission_catalog, platform_catalog
+from navin.career.prospecting_catalog import (
+    INDEXED_MISSIONS,
+    default_mission_sources,
+    mission_catalog,
+    platform_catalog,
+)
 from navin.career.scope import (
     candidate_countries,
     country_in_scope,
@@ -78,10 +83,10 @@ def _state(store: CareerStore) -> dict[str, Any]:
         "skills": profile.get("stack", []), "countries": profile.get("countries_primary", []),
         "city": "", "track": profile.get("track", "both"), "internal_talents": True,
         "work_mode": profile.get("work_mode", "any"), "max_age_days": 30,
-        "sources": [source["id"] for source in mission_catalog() if not source["provider"]],
+        "sources": default_mission_sources(profile.get("track", "both"), profile.get("countries_primary", [])),
         "platforms": [source["id"] for source in platform_catalog() if source["indexed_profiles"]], "signal_only": True,
         "company": profile.get("company", {}), "sale_rate": 0, "min_rate": profile.get("min_rate", 0), "margin_percent": 0,
-        "buy_rate_max": 0, "salary_max": 0, "currency": "EUR", "profile_domain": "",
+        "buy_rate_max": 0, "salary_max": 0, "min_project_budget": 0, "currency": "EUR", "profile_domain": "",
         "profile_roles": raw.get("criteria", {}).get("roles", profile.get("titles", [])),
         "profile_skills": [], "profile_countries": [], "profile_city": "", "signature": "",
         "auto_contact": False, "auto_present": False, "min_score": 70, "max_per_day": 5,
@@ -96,7 +101,15 @@ def _state(store: CareerStore) -> dict[str, Any]:
 
 
 def prospecting_snapshot(store: CareerStore) -> dict[str, Any]:
+    from navin.career.prospecting_catalog import profile_navigation_url
+
     state = _state(store)
+    # Search deduplication removes www; navigation needs the actual public host.
+    candidates = state["candidates"] + [row["candidate"] for group in state["matches"].values()
+                                        for row in group.get("results", [])]
+    for candidate in candidates:
+        if candidate.get("url"):
+            candidate["url"] = profile_navigation_url(candidate["url"])
     return {**state, "platform_catalog": platform_catalog(), "mission_catalog": mission_catalog(),
             "keys": {key: store.has_secret(name) for key, name in KEYS.items()}}
 
@@ -191,6 +204,30 @@ def _query(criteria: dict[str, Any]) -> str:
 def _mission_source(store: CareerStore, source: str, criteria: dict[str, Any]) -> list[dict[str, Any]]:
     query = _query(criteria)
     track = criteria["track"]
+    from navin.career.mission_platforms import indexed_missions, platform_by_id
+
+    platform = platform_by_id(source)
+    if platform:
+        if track == "jobs":
+            return []
+        if source == "mon-consultant-independant":
+            from navin.career.mci import search_missions
+
+            return search_missions(titles=criteria["roles"], countries=criteria["countries"], track=track)
+        if platform["mode"] == "public_listing":
+            from navin.career.public_missions import search_missions
+
+            return search_missions(platform, titles=criteria["roles"], countries=criteria["countries"])
+        if platform["mode"] == "account":
+            raise CareerError("This marketplace requires account access; automatic collection is not connected.")
+        providers = [key for key in KEYS if store.has_secret(KEYS[key])] + ["public_web"]
+        for provider in providers:
+            try:
+                hits = _web(store, provider, f'site:{platform["domain"]} {query} (freelance OR contractor OR project OR mission) -CDI -internship')
+                return indexed_missions(platform, hits)
+            except CareerError:
+                if provider == providers[-1]:
+                    raise
     if source == "freelancescope":
         from navin.career.freelancescope import search_missions
 
@@ -276,10 +313,13 @@ def _mission_source(store: CareerStore, source: str, criteria: dict[str, Any]) -
 
 
 def _candidates(store: CareerStore, provider: str, criteria: dict[str, Any]) -> list[dict[str, Any]]:
+    from navin.career.prospecting_catalog import is_profile_url
+    from navin.career.vocabulary import skill_present
+
     platforms = [p for p in platform_catalog() if p["id"] in criteria["platforms"] and p["indexed_profiles"]]
     if not platforms:
         return []
-    sites = " OR ".join("site:" + p["domain"] + p["profile_path"] for p in platforms)
+    sites = " OR ".join("site:" + domain + p["profile_path"] for p in platforms for domain in p.get("domains", [p["domain"]]))
     signals = ("disponible" if set(criteria["countries"]) & {"FR", "BE", "CH", "LU", "MA", "TN"} else "available") if criteria["signal_only"] else ""
     # A profile rarely repeats the vacancy title's gender suffix, all its
     # skills or its work-mode wording. Apply business constraints to evidence.
@@ -290,15 +330,17 @@ def _candidates(store: CareerStore, provider: str, criteria: dict[str, Any]) -> 
              for role in roles]
     query = _query({**criteria, "roles": roles, "skills": [] if roles else criteria["skills"][:3],
                     "domain": "" if roles else criteria["domain"], "work_mode": "any"})
-    site_query = f"({sites})" if len(platforms) > 1 else sites
-    hits = _web(store, provider, f"{site_query} {query} {signals}")
+    site_query = f"({sites})" if " OR " in sites else sites
+    if provider == "public_profiles":
+        from navin.career.public_profiles import search_lu_profiles
+
+        hits = search_lu_profiles(criteria) if any(p["id"] == "freelancers_lu" for p in platforms) else []
+    else:
+        hits = _web(store, provider, f"{site_query} {query} {signals}")
     rows = SourcingRows()
     for hit in hits:
         url = _url(hit.get("url"))
-        parsed = urllib.parse.urlsplit(url)
-        platform = next((p for p in platforms if (parsed.hostname == p["domain"] or
-                        (parsed.hostname or "").endswith("." + p["domain"])) and
-                        p["profile_path"].lower() in parsed.path.lower()), None)
+        platform = next((p for p in platforms if is_profile_url(url, p)), None)
         if not platform:
             rows.reject("platform")
             continue
@@ -307,7 +349,7 @@ def _candidates(store: CareerStore, provider: str, criteria: dict[str, Any]) -> 
             # Their combined geography/availability is not one person's data.
             rows.reject("evidence")
             continue
-        title, snippet = _clean(hit.get("title"), 180), _clean(hit.get("snippet"), 1500)
+        title, snippet = _clean(hit.get("title"), 180), _clean(hit.get("snippet"), 5500 if provider == "public_profiles" else 1500)
         evidence = f"{title} {snippet}"
         signal = any(_has(evidence, term) for term in ("open to work", "opentowork", "disponible", "available", "recherche emploi", "recherche un emploi"))
         if any(_has(evidence, term) for term in ("not available", "not open to work", "indisponible", "pas disponible", "non disponible")):
@@ -329,6 +371,8 @@ def _candidates(store: CareerStore, provider: str, criteria: dict[str, Any]) -> 
 
         facts = enrich_facts({"title": title, "description": snippet, "track": criteria["track"]})
         geography = {"headline": title, "snippet": snippet}
+        if provider == "public_profiles":
+            geography.update(country=hit.get("country", ""), location=hit.get("location", ""))
         if not country_in_scope(geography, criteria["countries"]):
             rows.reject("country")
             continue
@@ -336,14 +380,15 @@ def _candidates(store: CareerStore, provider: str, criteria: dict[str, Any]) -> 
         country = next(iter(observed_countries)) if len(observed_countries) == 1 else ""
         phones = re.findall(r"(?<!\w)\+[1-9][\d .()-]{7,20}\d", evidence)
         phone = re.sub(r"[^+\d]", "", phones[0]) if len(phones) == 1 else ""
-        rows.append({"id": hashlib.sha256(url.encode()).hexdigest()[:20], "name": title, "headline": title,
+        rows.append({"id": hashlib.sha256(url.encode()).hexdigest()[:20], "name": _clean(hit.get("name")) or title, "headline": _clean(hit.get("headline")) or title,
                      "daily_rate": facts.get("daily_rate_min"), "salary": facts.get("salary_min"), "currency": facts.get("currency", ""),
                      "email": contact, "email_source": url if contact else "", "phone": phone,
                      "url": url, "source": platform["name"], "snippet": snippet,
                      "signal": "declared" if signal else "unknown", "observed_at": time.time(),
                      "country": country,
                      "city": criteria["city"] if criteria["city"] and _has(evidence, criteria["city"]) else "",
-                     "skills": [skill for skill in criteria["skills"] if _has(evidence, skill)], "provider": provider})
+                     "skills": list(dict.fromkeys([*(hit.get("skills", []) if provider == "public_profiles" else []),
+                                                    *[skill for skill in criteria["skills"] if skill_present(evidence, skill)]])), "provider": provider})
     return rows
 
 
@@ -449,7 +494,17 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
     if not offer and criteria["mode"] in {"both", "missions"}:
         unavailable = set()
         for source in mission_catalog():
-            if source["id"] not in criteria["sources"] or not source["provider"]:
+            if source["id"] not in criteria["sources"]:
+                continue
+            if criteria["track"] == "jobs" and source.get("opportunity_kind") == "freelance":
+                unavailable.add(source["id"])
+                continue
+            if source["mode"] == "account":
+                unavailable.add(source["id"])
+                statuses.append({"source": "missions:" + source["id"], "status": "access_required", "count": 0,
+                                 "message": "Marketplace account required; automatic collection is not connected."})
+                continue
+            if not source["provider"]:
                 continue
             configured = any(store.has_secret(key) for key in KEYS.values()) if source["mode"] == "indexed" else store.has_secret(KEYS[source["provider"]])
             if not configured:
@@ -490,7 +545,7 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
                 for platform in platform_catalog():
                     if not platform["indexed_profiles"] or platform["id"] not in criteria["platforms"]:
                         continue
-                    for provider in providers:
+                    for provider in (["public_profiles"] if platform.get("profile_mode") == "public_listing" else providers):
                         add_task("profiles", provider, country, {**scoped, "platforms": [platform["id"]]}, role, weight, platform["id"])
     if not tasks and criteria["roles"] and priorities and not any(role_shares(criteria["roles"], priorities).values()):
         raise CareerError("All selected roles are paused. Set a positive search priority for at least one role.", status=400)
@@ -499,8 +554,17 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
     if criteria["track"] != "jobs":
         # Public freelance boards expose rates, dates and work modes in their
         # listings. Search those before snippets that cannot verify the floor.
-        priority.update({"freework": -3, "collective": -2, "freelancescope": -1})
+        from navin.career.mission_platforms import mission_platform_catalog
+
+        priority.update({row["id"]: -1 if row["priority"] == 1 else 5 for row in mission_platform_catalog()})
+        priority.update({"freework": -4, "mon-consultant-independant": -3,
+                         "prounity": -2, "freelancers_lu": -2, "collective": -2, "freelancescope": -1})
     platform_order = {p["id"]: index for index, p in enumerate(platform_catalog())}
+    if criteria["track"] != "jobs":
+        from navin.career.prospecting_catalog import B2B_PROFILE_PRIORITY
+
+        platform_order.update({key: index - len(B2B_PROFILE_PRIORITY) for index, key in enumerate(B2B_PROFILE_PRIORITY)})
+        priority["public_profiles"] = 3
     all_tasks = sorted(tasks, key=lambda task: (
         priority.get(task["id"].split(":")[1], 5), platform_order.get(task["platform"], 0),
         task_countries.index(task["id"].split(":")[2])))
@@ -601,7 +665,7 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
     state["last_run"] = {"at": time.time(), "offer_id": offer_id, "sources": statuses,
                          "offers": len({r["id"] for r in store.load_opportunities()} - before),
                          "observed_offers": len(found_offers), "profiles": len(candidates), "deferred": deferred,
-                         "criteria": {k: criteria.get(k) for k in ("mode", "roles", "countries", "sources", "platforms", "min_rate", "sale_rate", "currency", "work_mode", "max_age_days")},
+                         "criteria": {k: criteria.get(k) for k in ("mode", "roles", "skills", "countries", "sources", "platforms", "min_rate", "sale_rate", "sale_rate_remote", "sale_rate_onsite", "min_project_budget", "currency", "work_mode", "max_age_days")},
                          "status": "complete" if not deferred and statuses and all(s["status"] == "ok" for s in statuses) else "partial"}
     summary = {k: state["last_run"][k] for k in ("at", "offers", "status", "deferred")}
     summary.update({"new_profiles": len(set(candidates) - previous_candidates),
@@ -720,10 +784,12 @@ def handle_prospecting(store: CareerStore, action: str, body: dict[str, Any]) ->
                         from navin.career.mail_settings import email_address
 
                         criteria[key] = list(dict.fromkeys(email_address(a) for a in _split(raw[key])))[:10]
-                for key, cap in (("sale_rate", 100000), ("min_rate", 100000), ("buy_rate_max", 100000), ("salary_max", 10000000),
-                                 ("margin_percent", 95), ("min_score", 100), ("max_per_day", 25)):
+                for key, cap in (("sale_rate", 100000), ("min_rate", 100000), ("sale_rate_remote", 100000), ("sale_rate_onsite", 100000), ("buy_rate_max", 100000), ("salary_max", 10000000),
+                                 ("min_project_budget", 1000000000), ("margin_percent", 95), ("min_score", 100), ("max_per_day", 25)):
                     if key in raw:
                         try:
+                            if isinstance(raw[key], bool):
+                                raise ValueError
                             value = float(raw[key])
                             if not 0 <= value <= cap:
                                 raise ValueError

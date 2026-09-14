@@ -145,6 +145,8 @@ def requires_restricted_eligibility(row: dict[str, Any], profile: dict[str, Any]
 
 
 def job_is_relevant(row: dict[str, Any], profile: dict[str, Any]) -> bool:
+    from navin.career.vocabulary import role_present
+
     title = str(row.get("title") or "")
     if is_listing_hit(title, str(row.get("url") or "")):
         return False
@@ -152,7 +154,7 @@ def job_is_relevant(row: dict[str, Any], profile: dict[str, Any]) -> bool:
         return False
     if requires_restricted_eligibility(row, profile):
         return False
-    return title_match_pct(title, profile) >= 50
+    return any(role_present(title, role) for role in _list(profile.get("titles"))) or title_match_pct(title, profile) >= 50
 
 
 def score_opportunity(row: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:

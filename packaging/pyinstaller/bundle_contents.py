@@ -6,9 +6,8 @@ build shipped playwright's driver and the installed one did not, which meant the
 browser tool could fetch a Chromium in one build and not in the other. The two
 specs now read this module, so a capability is added once.
 
-Every helper degrades to an empty list when the package is absent from the build
-environment: an extra that was not installed is a build without that feature, not
-a build that fails.
+Optional dependency helpers return an empty list when a package is absent.
+Browser extension packages are required so desktop downloads remain available.
 """
 
 from __future__ import annotations
@@ -178,6 +177,23 @@ def template_data() -> list[tuple[str, str]]:
         if source.is_dir():
             found.append((str(source), f"templates/{category}"))
     return found
+
+
+def browser_extension_data() -> list[tuple[str, str]]:
+    """Require all installable browser packages in every desktop sidecar."""
+    from zipfile import ZipFile
+
+    packages = []
+    for browser in ("chrome", "edge", "firefox"):
+        package = REPO_ROOT / "navin" / "browser_extension" / f"{browser}.zip"
+        if not package.is_file():
+            raise RuntimeError("Build the browser extensions first: node browser-extension/build.mjs")
+        with ZipFile(package) as archive:
+            required = {"manifest.json", "app.js", "background.js", "capture.js", "overlay.js", "index.html"}
+            if not required.issubset(archive.namelist()):
+                raise RuntimeError(f"Incomplete browser extension package: {package}")
+        packages.append((str(package), "navin/browser_extension"))
+    return packages
 
 
 def extra_data() -> list[tuple[str, str]]:

@@ -158,6 +158,12 @@ export interface CareerOpportunity {
   valid_through?: string;
   daily_rate_min?: number | null;
   daily_rate_max?: number | null;
+  need_type?: string;
+  price_model?: string;
+  budget?: number | null;
+  budget_min?: number | null;
+  budget_max?: number | null;
+  deadline?: string;
   salary_min?: number | null;
   salary_max?: number | null;
 }

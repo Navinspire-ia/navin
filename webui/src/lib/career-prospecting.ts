@@ -33,6 +33,7 @@ export interface ProspectCriteria {
   daily_search: boolean;
   company: { name: string; email: string; phone: string; address: string };
   sale_rate: number; margin_percent: number; buy_rate_max: number; salary_max: number; currency: string;
+  min_rate?: number; sale_rate_remote?: number; sale_rate_onsite?: number; min_project_budget?: number;
   profile_domain: string; profile_roles: string[]; profile_skills: string[]; profile_countries: string[]; profile_city: string;
   autofill?: CompanyAutofill;
   signature: string; auto_contact: boolean; auto_present: boolean; min_score: number; max_per_day: number;
@@ -77,7 +78,7 @@ export interface ProspectingState {
   matches: Record<string, { searched_at: number; results: CandidateMatch[] }>;
   keys: Record<string, boolean>;
   checks: Record<string, { ok: boolean; message: string }>;
-  platform_catalog: { id: string; name: string; url: string; markets: string; access: string; indexed_profiles: boolean }[];
+  platform_catalog: { id: string; name: string; url: string; markets: string; access: string; indexed_profiles: boolean; profile_mode?: string; priority?: number }[];
   last_run: { at?: number; status?: string; offers?: number; profiles?: number; deferred?: number;
     offer_id?: string;
     sources?: { source: string; role?: string; platform?: string; status: string; error_code?: string; count: number; rejected?: Record<string, number>; message?: string; retry_at?: number }[] };
@@ -90,8 +91,8 @@ export function sourcingStatusText(source: NonNullable<ProspectingState["last_ru
     ? "Source non configurée : clé API manquante. Les recherches disponibles continuent."
     : "Source not configured: missing API key. Available searches continue.";
   if (source.status === "access_required") return fr
-    ? "Accès à la base de candidats requis. La recherche publique de profils est indisponible."
-    : "Candidate database access required. Public profile search is unavailable.";
+    ? (source.source.startsWith("missions:") ? "Compte plateforme requis. La collecte automatique n'est pas connectée." : "Accès à la base de candidats requis. La recherche publique de profils est indisponible.")
+    : (source.source.startsWith("missions:") ? "Marketplace account required. Automatic collection is not connected." : "Candidate database access required. Public profile search is unavailable.");
   if (source.error_code === "rate_limited" || source.message?.includes("limited by the provider")) return fr
     ? "Le moteur de recherche a temporairement bloqué cette requête. Cela ne signifie pas qu'aucun profil n'existe."
     : "The search engine temporarily blocked this query. This does not mean there are no candidates.";
@@ -120,9 +121,15 @@ export function platformRelevant(markets: string, countries: string[]): boolean 
   return countries.some(country => markets.split(/[, ]+/).includes(country) || (markets.includes("Europe") && EUROPE.has(country)));
 }
 
-export interface MissionSource { id: string; name: string; markets: string; provider: string; url?: string; mode?: string }
+export interface MissionSource { id: string; name: string; markets: string; provider: string; url?: string; mode?: string; priority?: number; opportunity_kind?: string }
 export function missionSourcesForCountries(countries: string[], catalog?: MissionSource[]) {
   return (catalog?.length ? catalog : DEFAULT_MISSION_CATALOG).filter(source => platformRelevant(source.markets, countries));
+}
+
+export function suggestedMissionSources(countries: string[], track: string, catalog?: MissionSource[]): string[] {
+  return missionSourcesForCountries(countries, catalog).filter(source => !source.provider
+    && (track === "freelance" ? source.priority === 1 || ["freework", "collective", "freelancescope"].includes(source.id)
+      : track === "jobs" ? source.opportunity_kind !== "freelance" : true)).map(source => source.id);
 }
 
 export function candidateSheet(candidate: SourcedCandidate): string {

@@ -7,7 +7,7 @@ import { Checkbox, DefaultButton, Dropdown, Label, Link, MessageBar, MessageBarT
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import type { CareerDesk } from "@/lib/career-api";
-import { DEFAULT_PLATFORM_CATALOG, emptyProspecting, missionSourcesForCountries, platformRelevant, type ProspectCriteria } from "@/lib/career-prospecting";
+import { DEFAULT_PLATFORM_CATALOG, emptyProspecting, missionSourcesForCountries, platformRelevant, suggestedMissionSources, type ProspectCriteria } from "@/lib/career-prospecting";
 import { CareerCountryMultiSelect } from "./CareerCountrySelect";
 import { CareerMultiSelect } from "./CareerMultiSelect";
 import { careerSuggestions } from "@/lib/career-suggestions";
@@ -17,10 +17,11 @@ import { browserTimeZone } from "@/lib/trading-loop-schedule";
 import { BUTTON_STYLES, openOfficialCareerUrl, openToolsHash } from "./career-ui";
 
 const split = (s: string) => s.split(",").map(v => v.trim()).filter(Boolean);
-export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, onFinish, onMail, onSchedule }: {
+export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, onFinish, onMail, onSchedule, onAccounts }: {
   desk: CareerDesk; initialStep?: number; busy: boolean; token: string;
   run: (action: string, body?: Record<string, unknown>) => Promise<CareerDesk | null>;
   onFinish: () => void; onMail: () => void; onSchedule: () => void;
+  onAccounts?: (platform?: string) => void;
 }) {
   const { i18n } = useTranslation();
   const c = (fr: string, en: string) => i18n.language.startsWith("fr") ? fr : en;
@@ -70,7 +71,7 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
   const candidateSources = (state.platform_catalog?.length ? state.platform_catalog : DEFAULT_PLATFORM_CATALOG)
     .filter(source => platformRelevant(source.markets, criteria.profile_countries.length ? criteria.profile_countries : criteria.countries))
     .filter(source => source.name.toLocaleLowerCase().includes(platformSearch.toLocaleLowerCase()));
-  const money = (key: "sale_rate" | "margin_percent" | "buy_rate_max" | "salary_max", label: string) => <TextField label={label} type="number" min={0} max={key === "margin_percent" ? 95 : undefined}
+  const money = (key: "sale_rate_remote" | "sale_rate_onsite" | "min_project_budget" | "margin_percent" | "buy_rate_max" | "salary_max", label: string) => <TextField label={label} type="number" min={0} max={key === "margin_percent" ? 95 : undefined}
     value={criteria[key] ? String(criteria[key]) : ""} onChange={(_, v) => set(key, Number(v || 0))} />;
   const shares = careerRoleShares(criteria.roles, criteria.role_priorities);
   const shareLabel = (role: string) => shares[role].toLocaleString(i18n.language, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -102,7 +103,14 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
             label={[c("Nom de la société", "Company name"), "Email", c("Téléphone", "Phone"), c("Adresse", "Address")][i]}
             required={key === "name"} type={key === "email" ? "email" : key === "phone" ? "tel" : "text"}
             value={criteria.company[key] || ""} onChange={(_, v) => set("company", { ...criteria.company, [key]: v || "" })} />)}
-          <div className="grid gap-4 sm:grid-cols-2">{money("sale_rate", c("TJM de vente minimum", "Minimum daily selling rate"))}{money("margin_percent", c("Marge cible (%)", "Target margin (%)"))}</div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {money("sale_rate_remote", c("TJM minimum full remote", "Minimum full remote day rate"))}
+            {money("sale_rate_onsite", c("TJM minimum hybride / présentiel", "Minimum hybrid / on-site day rate"))}
+          </div>
+          <p className="text-xs text-muted-foreground">{c("Ces minimums de vente filtrent les tarifs journaliers et s'appliquent aux propositions clients en régie. 0 désactive le seuil concerné. Si les seuils diffèrent, un mode de travail inconnu écarte la mission en régie.", "These minimum selling rates filter day rates and apply to time-based client proposals. 0 disables that floor. If the floors differ, time-based missions with an unknown work mode are excluded.")}</p>
+          {money("min_project_budget", c("Budget minimum des projets au forfait / RFP", "Minimum fixed-project / RFP budget"))}
+          <p className="text-xs text-muted-foreground">{c("Les projets au forfait et consultations sans TJM publié restent dans Carrière. Leur budget total utilise ce seuil distinct, dans la devise choisie. 0 accepte aussi les budgets non publiés ; un seuil positif exige un budget vérifié. Le chiffrage de la proposition reste à établir selon les livrables.", "Fixed-price projects and consultations without a published day rate stay in Career. Their total budget uses this separate floor in the selected currency. 0 also accepts undisclosed budgets; a positive floor requires a verified budget. Proposal pricing still depends on the deliverables.")}</p>
+          {money("margin_percent", c("Marge cible (%)", "Target margin (%)"))}
           <Dropdown label={c("Devise", "Currency")} selectedKey={criteria.currency} options={["EUR", "USD", "GBP", "CHF", "CAD", "AUD", "SAR", "OMR", "AED", "BHD", "QAR", "KWD", "MAD"].map(key => ({ key, text: key }))} onChange={(_, o) => set("currency", String(o?.key))} />
           <p className="text-xs text-muted-foreground">{c("Marge sur le prix de vente. Exemple : achat 400, marge 20 %, vente minimale 500. Les propositions utiliseront vos conditions.", "Margin on selling price. Example: cost 400, margin 20%, minimum sale 500. Proposals use your terms.")}</p>
         </>}
@@ -128,7 +136,7 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
             </Stack>
           </details>}
           {choices("skills", c("Compétences recherchées", "Required skills"), "skills")}
-          <p className="text-xs text-muted-foreground">{c("Les métiers préremplissent les compétences et les profils recherchés. Ajoutez ou retirez librement des éléments.", "Roles prefill skills and candidate requirements. You can freely add or remove any item.")}</p>
+          <p className="text-xs text-muted-foreground">{c("Toutes les compétences sélectionnées pour le métier correspondant doivent figurer dans l'annonce. Les équivalents français et anglais sont reconnus. Retirez les suggestions qui ne sont pas obligatoires.", "Every selected skill for the matching role must appear in the listing. French and English equivalents are recognized. Remove suggestions that are not mandatory.")}</p>
           <Dropdown label={c("Besoins", "Engagement")} selectedKey={criteria.track} onChange={(_, o) => set("track", o?.key as ProspectCriteria["track"])} options={[
             { key: "both", text: c("Missions et emplois", "Missions and jobs") }, { key: "freelance", text: "Freelance" }, { key: "jobs", text: c("Salariés", "Employees") }]} />
           <Dropdown label={c("Mode de travail", "Work mode")} selectedKey={criteria.work_mode} disabled={busy}
@@ -137,7 +145,8 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
               { key: "hybrid", text: c("Hybride", "Hybrid") }, { key: "onsite", text: c("Sur site", "On site") }]} />
           <TextField label={c("Ancienneté maximale des demandes (jours)", "Maximum posting age (days)")} type="number" min={1} max={30} disabled={busy}
             value={String(criteria.max_age_days)} onChange={(_, value) => { const days = Number(value); if (Number.isInteger(days) && days >= 1 && days <= 30) set("max_age_days", days); }} />
-          <p className="text-xs text-muted-foreground">{c("Les résultats doivent respecter les pays, le TJM minimum, le mode de travail et la date de publication. Les informations manquantes ne valident pas un critère.", "Results must meet the countries, minimum day rate, work mode and publication date. Missing information does not satisfy a criterion.")}</p>
+          <p className="text-xs text-muted-foreground">{c("Les résultats doivent respecter les pays, les métiers, les compétences, le TJM du mode de travail et la date de publication. Les informations manquantes ne valident pas un critère. Les conversions de devises sont indicatives.", "Results must meet the countries, roles, skills, day rate for the work mode and publication date. Missing information does not satisfy a criterion. Currency conversions are indicative.")}</p>
+          <p className="text-xs text-muted-foreground">{c("Full remote ne signifie pas nécessairement ouvert à l'offshore : vérifiez les pays de résidence autorisés par le client. Les pays des consultants se règlent dans Profils et sources.", "Full remote does not necessarily allow offshore work: check the client's permitted countries of residence. Set consultant countries in Candidates and sources.")}</p>
         </>}
         {step === 2 && <>
           {countries("countries")}
@@ -145,14 +154,26 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
           {criteria.countries.includes("AE") && <Stack horizontal tokens={{ childrenGap: 8 }}>{["Dubai", "Abu Dhabi"].map(city => <DefaultButton key={city} text={city} onClick={() => set("city", city)} styles={BUTTON_STYLES} />)}</Stack>}
         </>}
         {step === 3 && <>
-          <p>{c("Les sources sans clé API sont sélectionnées par défaut selon vos pays cibles. Vous pouvez les décocher.", "Sources without API keys are selected by default for your target countries. You can deselect them.")}</p>
+          <p>{criteria.track === "freelance" ? c("Choisissez les sources publiques à collecter. L'extension navigateur permet d'importer les fiches que vous consultez avec vos comptes, après vérification.", "Choose public sources to collect. The browser extension imports records you view with your accounts, after review.") : c("Les sources sans clé API sont proposées selon vos pays cibles. Vous pouvez les cocher ou les décocher.", "Sources without API keys are suggested for your target countries. You can select or deselect them.")}</p>
+          <p className="text-xs text-muted-foreground">{c("Les missions, consultations RFP et projets SoW récupérés dans ces marketplaces vont dans Carrière pour le matching de profils. Seules les sources publiques connectées participent à la collecte automatique. Tender couvre aussi les portails de marchés publics et les appels d'offres structurés.", "Missions, RFPs and SoW projects obtained from these marketplaces go into Career for profile matching. Only connected public sources participate in automatic collection. Tender also covers procurement portals and formal tenders.")}</p>
+          {onAccounts && <DefaultButton text={c("Connecter l'extension navigateur", "Connect browser extension")} styles={BUTTON_STYLES} onClick={() => onAccounts()} />}
+          <DefaultButton text={c("Ouvrir les appels d'offres / RFP", "Open tenders / RFPs")} styles={BUTTON_STYLES}
+            onClick={() => { window.location.hash = "/tenders"; }} />
           <TextField label={c("Rechercher une plateforme de missions", "Search mission platforms")} value={sourceSearch} onChange={(_, value) => setSourceSearch(value || "")} />
+          <DefaultButton text={c("Appliquer le lot prioritaire", "Apply priority sources")} disabled={busy}
+            onClick={() => set("sources", suggestedMissionSources(criteria.countries, criteria.track, state.mission_catalog))} styles={BUTTON_STYLES} />
           <p className="text-xs text-muted-foreground">{missionSources.length} {c("plateformes. Cochez celles à utiliser.", "platforms. Select the ones to use.")}</p>
           {missionSources.map(source => <div key={source.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-4">
-            <div><Checkbox label={source.name} checked={criteria.sources.includes(source.id)} onChange={(_, v) => toggle("sources", source.id, v)} />
+            <div>{source.mode === "account" ? <strong>{source.name}</strong> : <Checkbox label={source.name} checked={criteria.sources.includes(source.id)} onChange={(_, v) => toggle("sources", source.id, v)} />}
+              {source.priority === 1 && <span className="text-xs text-muted-foreground">{c("Prioritaire", "Priority")}</span>}
+              {source.id === "malt_missions" && <p className="text-xs text-muted-foreground">{c("Profils publics dans Profils et sources. Missions proposées en privé aux freelances sélectionnés, sans catalogue public de besoins.", "Public profiles are in Candidates and sources. Missions are offered privately to selected freelancers, with no public brief catalog.")}</p>}
+              {["prounity", "connecting_expertise"].includes(source.id) && <p className="text-xs text-muted-foreground">{c("Les fournisseurs peuvent proposer leurs consultants dans l'espace privé de la plateforme. Les propositions automatiques sur cette plateforme ne sont pas connectées.", "Suppliers can propose their consultants in the platform's private workspace. Automatic proposals on this platform are not connected.")}</p>}
               {source.url && <Link onClick={() => openOfficialCareerUrl(token, source.url!)}>{c("Ouvrir la plateforme", "Open platform")}</Link>}
               {source.mode === "indexed" && <p className="text-xs text-muted-foreground">{c("Offres publiques via SerpApi ou Brave", "Public offers via SerpApi or Brave")}</p>}</div>
-            {source.provider ? <DefaultButton text={state.keys[source.provider] ? c("Accès enregistré", "Access saved") : c("Configurer", "Configure")} onClick={() => openProvider(source.provider)} styles={BUTTON_STYLES} /> : <span className="text-xs text-muted-foreground">{c("Sans clé API", "No API key")}</span>}
+            {source.mode === "account" ? <Stack tokens={{ childrenGap: 8 }}><span className="text-xs text-muted-foreground">{c("Collecte automatique privée non connectée", "Private automatic collection not connected")}</span>
+              {onAccounts && <DefaultButton text={c("Importer avec l'extension", "Import with extension")} styles={BUTTON_STYLES} onClick={() => onAccounts(source.id)} />}</Stack>
+              : source.provider ? <DefaultButton text={state.keys[source.provider] ? c("Accès enregistré", "Access saved") : c("Configurer", "Configure")} onClick={() => openProvider(source.provider)} styles={BUTTON_STYLES} />
+                : <span className="text-xs text-muted-foreground">{source.mode === "public_search" ? c("Recherche web publique", "Public web discovery") : source.mode === "public_listing" ? c("Collecte des annonces publiques", "Public listing collection") : c("Sans clé API", "No API key")}</span>}
           </div>)}
           {apiEditor}
         </>}
@@ -171,9 +192,11 @@ export function CareerCompanySetup({ desk, initialStep = 0, busy, token, run, on
           <p className="text-xs text-muted-foreground">{candidateSources.length} {c("plateformes dans vos pays cibles", "platforms in your target countries")}</p>
           {candidateSources.map(p => <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-4">
             <div>{p.indexed_profiles ? <Checkbox label={p.name} checked={criteria.platforms.includes(p.id)} onChange={(_, v) => toggle("platforms", p.id, v)} /> : <strong>{p.name}</strong>}
-              <p className="mt-1 text-xs text-muted-foreground">{p.indexed_profiles ? c("Recherche publique sans clé API. API en option.", "Public search without an API key. API optional.") : c("Accès partenaire ou plateforme, API non connectée", "Partner or platform access, API not connected")}</p></div>
-            <DefaultButton text={p.indexed_profiles ? c("API facultative", "Optional API") : c("Gérer mon accès", "Manage access")} styles={BUTTON_STYLES}
-              onClick={() => p.indexed_profiles ? openProvider("serpapi") : openOfficialCareerUrl(token, p.url)} />
+              {p.priority === 1 && <span className="text-xs text-muted-foreground">{c("Prioritaire", "Priority")}</span>}
+              <p className="mt-1 text-xs text-muted-foreground">{p.profile_mode === "public_listing" ? c("Lecture des profils publics, des compétences et des TJM affichés. Disponibilité à confirmer.", "Reads public profiles, skills and displayed day rates. Availability requires confirmation.") : p.indexed_profiles ? c("Profils publics indexés via la recherche web. Couverture partielle, disponibilité à confirmer. Clé API facultative.", "Public profiles indexed by web search. Partial coverage; availability requires confirmation. API key optional.") : c("Accès partenaire ou plateforme, collecte des profils non connectée", "Partner or platform access, profile collection not connected")}</p></div>
+            <DefaultButton text={p.profile_mode === "public_listing" ? c("Ouvrir l'annuaire", "Open directory") : p.indexed_profiles ? c("Configurer la recherche web", "Configure web search") : c("Ouvrir la plateforme", "Open platform")} styles={BUTTON_STYLES}
+              onClick={() => p.indexed_profiles && p.profile_mode !== "public_listing" ? openProvider("serpapi") : openOfficialCareerUrl(token, p.url)} />
+            {onAccounts && <DefaultButton text={c("Importer avec l'extension", "Import with extension")} styles={BUTTON_STYLES} onClick={() => onAccounts(p.id)} />}
           </div>)}
           <DefaultButton text={c("Configurer Brave en complément", "Configure Brave as an additional source")} onClick={() => openProvider("brave")} styles={BUTTON_STYLES} />
           {apiEditor}

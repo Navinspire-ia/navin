@@ -750,12 +750,6 @@ class TuiRuntime:
             else:
                 st.context_used = 0
                 st.billed_tokens_session = 0
-        # Mid-turn, the runner publishes each request's usage on the loop
-        # before the turn-end persist; prefer it so the meter moves live.
-        with contextlib.suppress(Exception):
-            live_usage = getattr(loop, "_last_usage", None)
-            if isinstance(live_usage, dict) and live_usage.get("prompt_tokens"):
-                st.context_used = int(live_usage["prompt_tokens"])
         # The registry is not what the model pays for: desks and on-demand
         # tools are withheld until a turn names them. Show the real count from
         # the last turn, else what a plain turn would send right now.

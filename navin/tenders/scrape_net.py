@@ -304,18 +304,24 @@ def scrape_official_net(
     fetch_fn: FetchFn | None = None,
     max_queries: int = MAX_QUERIES,
     max_fetches: int = MAX_FETCHES,
+    source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run web_search then scrape on official public hosts. Never invent a notice."""
     search = search_fn or default_web_search
     fetch = fetch_fn or default_scrape_fetch
-    query_rows = queries or web_search_queries(
+    query_rows = queries if queries is not None else web_search_queries(
         countries=list(countries or []),
         crafts=list(crafts or []),
         tender_types=list(tender_types or []),
         project_types=list(project_types or []),
+        source_ids=source_ids,
     )
     search_sources = _search_sources(list(countries or []))
+    if source_ids:
+        search_sources = [row for row in search_sources if row["id"] in source_ids]
     allow = official_hosts()
+    if source_ids:
+        allow = {host_of(row["url"]).removeprefix("www.") for row in search_sources}
     skip_hosts = _api_hosts()
     by_source: dict[str, dict[str, Any]] = {
         row["id"]: {"count": 0, "detail": "", "walls": []} for row in search_sources
@@ -408,9 +414,9 @@ def scrape_official_net(
             {
                 "title": title,
                 "source_url": url,
-                "description": text[:400],
+                "description": text[:4000],
                 "country": (source or {}).get("country") or cand.get("country") or "INTL",
-                "buyer": (source or {}).get("name") or "",
+                "buyer": page.get("buyer") or "",
                 "reference": url,
             },
             source_id=sid,

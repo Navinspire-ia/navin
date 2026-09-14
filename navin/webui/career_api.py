@@ -42,7 +42,8 @@ def handle_career_action(action: str, body: dict[str, Any] | None = None) -> dic
     store = _store()
     # Stop writes an intent understood by the active loop. It must remain usable
     # while a long API search owns the lifecycle lock.
-    if str(action or "").strip().lower() == "stop":
+    normalized = str(action or "").strip().lower()
+    if normalized == "stop" or normalized.startswith("extension_"):
         return _handle_career_action(store, action, body)
     try:
         with FileLock(str(store.root / "lifecycle.lock"), timeout=0):
@@ -66,6 +67,10 @@ def _handle_career_action(store: CareerStore, action: str, body: dict[str, Any] 
         )
     if act in {"snapshot", "status"}:
         return snapshot(store)
+    if act.startswith("extension_"):
+        from navin.webui.browser_bridge import BrowserBridge
+
+        return BrowserBridge().handle(act.removeprefix("extension_"), body, admin=True)
     if act == "archive_reset":
         from navin.desk_archive import archive_reset
 

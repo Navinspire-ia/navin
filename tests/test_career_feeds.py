@@ -329,7 +329,8 @@ class FeedParsersTest(unittest.TestCase):
         self.assertEqual(row["experience_level"], "senior")
         self.assertEqual(row["attribution"], "Arbeitnow")
         self.assertEqual(row["posted_at"], "2026-09-10")
-        self.assertEqual(parse_arbeitnow(json.dumps(ARBEITNOW), titles=[], track="jobs")[1]["country"], "DE")
+        # An empty location on a German board does not establish Germany.
+        self.assertEqual(parse_arbeitnow(json.dumps(ARBEITNOW), titles=[], track="jobs")[1]["country"], "REMOTE")
 
     def test_hn_hiring_reads_the_header_line_and_skips_replies(self) -> None:
         self.assertEqual(hn_story_id(json.dumps(HN_STORY)), "49522897")
