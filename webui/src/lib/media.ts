@@ -134,11 +134,13 @@ export function toMediaAttachment(media: {
   url?: string;
   name?: string;
   kind?: UIMediaKind;
+  file?: File;
 }): UIMediaAttachment {
   return {
     kind: explicitMediaKind(media) ?? media.kind ?? "file",
     url: media.url,
     name: media.name,
+    ...(media.file ? { file: media.file } : {}),
   };
 }
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Download, Eye, FileIcon, ImageIcon, ImagePlus, Loader2, Music2, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -20,7 +20,37 @@ interface AttachmentTileProps {
   variant?: "default" | "compact";
 }
 
-export function AttachmentTile({ attachment, className, inline = false, variant = "default" }: AttachmentTileProps) {
+export function AttachmentTile({ attachment, ...props }: AttachmentTileProps) {
+  const [localPreview, setLocalPreview] = useState<{ source: File | string; url: string } | null>(null);
+  // Queued drafts can still contain data URLs. Keep those out of the DOM too.
+  const source = attachment.file ?? (attachment.url?.startsWith("data:") ? attachment.url : null);
+  useEffect(() => {
+    if (!source) return;
+    let cancelled = false;
+    let objectUrl: string | undefined;
+    const controller = new AbortController();
+    const resolve = async () => {
+      const blob = typeof source === "string"
+        ? await (await fetch(source, { signal: controller.signal })).blob()
+        : source;
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setLocalPreview({ source, url: objectUrl });
+    };
+    void resolve().catch(() => { /* The attachment label stays visible if reading fails. */ });
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [source]);
+  const resolved = source
+    ? { ...attachment, url: localPreview?.source === source ? localPreview.url : undefined }
+    : attachment;
+  return <ResolvedAttachmentTile attachment={resolved} {...props} />;
+}
+
+function ResolvedAttachmentTile({ attachment, className, inline = false, variant = "default" }: AttachmentTileProps) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
