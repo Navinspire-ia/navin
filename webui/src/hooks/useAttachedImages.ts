@@ -89,6 +89,10 @@ const DOCUMENT_MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
   [".toml", "application/toml"],
   [".ini", "text/plain"],
   [".cfg", "text/plain"],
+  // Chat attachment archives: the backend extracts text from members.
+  [".zip", "application/zip"],
+  [".rar", "application/vnd.rar"],
+  [".7z", "application/x-7z-compressed"],
 ]);
 
 const ACCEPTED_DOCUMENT_MIMES: ReadonlySet<string> = new Set(DOCUMENT_MIME_BY_EXTENSION.values());

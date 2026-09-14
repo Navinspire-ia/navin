@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from rich.console import Console
-from typer.testing import CliRunner
+pytest.importorskip("typer.testing")
+from typer.testing import CliRunner  # noqa: E402
 
 from navin.agent.tools.computer import refresh_computer_registration
 from navin.agent.tools.registry import ToolRegistry

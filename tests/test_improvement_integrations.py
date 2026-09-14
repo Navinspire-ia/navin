@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console
-from typer.testing import CliRunner
+pytest.importorskip("typer.testing")
+from typer.testing import CliRunner  # noqa: E402
 
 from navin.agent.code_validation import CodeValidationState
 from navin.agent.runner import AgentRunner

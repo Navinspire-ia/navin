@@ -12,7 +12,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from typer.testing import CliRunner
+import pytest
+
+pytest.importorskip("typer.testing")
+from typer.testing import CliRunner  # noqa: E402
 
 from navin.cli.commands import app
 from navin.python_runtime import _shim_body
