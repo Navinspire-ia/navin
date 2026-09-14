@@ -585,6 +585,7 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
     candidates = {c["id"]: c for c in state["candidates"]}
     previous_candidates = set(candidates)
     found_offers = []
+    revived_offers: list[str] = []
     before = {r["id"] for r in store.load_opportunities()}
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
@@ -627,7 +628,14 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
                             row["country"] = next(iter(observed_countries))
                         accepted.append(row)
                     rows = accepted
-                    store.upsert_opportunities(rows)
+                    # A search the user launched after emptying the list must
+                    # bring hidden offers back instead of silently keeping them
+                    # archived behind the filters.
+                    archived_before = {row["id"] for row in store.load_opportunities() if row.get("archived")}
+                    store.upsert_opportunities(rows, revive_archived=True)
+                    revived_now = {row["id"] for row in store.load_opportunities()
+                                   if row["id"] in archived_before and not row.get("archived")}
+                    revived_offers.extend(revived_now)
                     found_offers.extend(rows)
                 else:
                     accepted = [row for row in rows if country_in_scope(row, task["criteria"]["countries"])]
@@ -664,6 +672,7 @@ def _search(store: CareerStore, state: dict[str, Any], offer_id: str = "", *, re
                 _match(store, state, row)
     state["last_run"] = {"at": time.time(), "offer_id": offer_id, "sources": statuses,
                          "offers": len({r["id"] for r in store.load_opportunities()} - before),
+                         "revived_offers": len(set(revived_offers)),
                          "observed_offers": len(found_offers), "profiles": len(candidates), "deferred": deferred,
                          "criteria": {k: criteria.get(k) for k in ("mode", "roles", "skills", "countries", "sources", "platforms", "min_rate", "sale_rate", "sale_rate_remote", "sale_rate_onsite", "min_project_budget", "currency", "work_mode", "max_age_days")},
                          "status": "complete" if not deferred and statuses and all(s["status"] == "ok" for s in statuses) else "partial"}

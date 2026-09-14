@@ -122,7 +122,7 @@ help:
 	@echo "  Git (Forgejo privé / GitHub public):"
 	@echo "    publish-forgejo     Pousser la branche prod vers Forgejo (arbre complet)"
 	@echo "    publish-github-dry  Aperçu de l'arbre public CLI (sans site / desktop / AWS / navin.live)"
-	@echo "    publish-github      Pousser cet arbre filtré vers GitHub main (Navinspire-ia/navin)"
+	@echo "    publish-github      Pousser l'arbre filtré vers GitHub main (demande le nom du commit)"
 	@echo "    publish-remotes     Afficher / créer les remotes origin + github"
 	@echo ""
 	@echo "  Nettoyage:"
@@ -226,7 +226,7 @@ desktop-dmg: macos
 macos: set-version
 	@sh packaging/macos/build-offline.sh
 
-# Deux remotes : Forgejo (prod, arbre complet) et GitHub (main, sans site/abo/AWS).
+# Forgejo (prod, arbre complet) et GitHub public (main filtré). origin n'est pas écrasé.
 publish-remotes:
 	@bash scripts/publish-git.sh remotes
 

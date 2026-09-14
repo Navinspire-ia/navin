@@ -187,13 +187,15 @@ class ChatInteractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIs(app.transcript.children[-1], block)
             app.prefs.mode = "chat"
             await pilot.press("ctrl+c")
+            self.assertEqual(app.runtime.bus.inbound_size, 0)
+            await pilot.press("escape")
             stop = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 1)
             self.assertEqual(stop.content, "/stop")
             await app.runtime._dispatch(OutboundMessage("cli", "direct", "Stopped."))
             await pilot.pause()
             self.assertFalse(app.query_one(WorkingLine).display)
             self.assertIn(app.runtime.session_key, app._queue_paused)
-            await pilot.click(app.query_one(QueuedPromptRow).query_one("Button"))
+            await pilot.click(app.query_one(QueuedPromptRow).query_one(".queue-remove"))
             self.assertFalse(app.query_one(PromptQueue).display)
             # Terminal-managed Ctrl+V sends Paste, not a key. Its payload wins
             # over the old in-app clipboard and does not consume the next Enter.

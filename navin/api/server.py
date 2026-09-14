@@ -32,6 +32,7 @@ from navin.utils.media_decode import (
     save_base64_data_url as _save_base64_data_url,
 )
 from navin.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from navin.utils.upload_limits import MAX_UPLOAD_REQUEST_BYTES
 
 __all__ = (
     "MAX_FILE_SIZE",
@@ -438,7 +439,7 @@ def create_app(
         request_timeout: Per-request timeout in seconds.
         api_key: Optional API key for Bearer-token authentication on API routes.
     """
-    app = web.Application(client_max_size=20 * 1024 * 1024)  # 20MB for base64 images
+    app = web.Application(client_max_size=MAX_UPLOAD_REQUEST_BYTES)
     app[_AGENT_LOOP_KEY] = agent_loop
     app[_MODEL_NAME_KEY] = model_name
     app[_REQUEST_TIMEOUT_KEY] = request_timeout

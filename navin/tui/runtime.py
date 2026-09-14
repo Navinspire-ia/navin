@@ -407,6 +407,7 @@ class TuiRuntime:
             provider=snapshot.provider,
             provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
         )
+        self._enable_interaction()
         self._refresh_status()
         self._subscribe_runtime_events()
         from navin.optional_live import live_modules_available
@@ -420,6 +421,13 @@ class TuiRuntime:
         except ImportError:
             self._license_sync = None
         self._ensure_tasks()
+
+    def _enable_interaction(self) -> None:
+        """This runtime has a card renderer, including for restored CLI chats."""
+        for name in ("approvals", "choices"):
+            broker = getattr(self.agent_loop, name, None)
+            if broker is not None:
+                broker.enable_channel(self.channel)
 
     def _ensure_tasks(self) -> None:
         """Keep the chat usable after a consumer exits; never silently drop input."""
@@ -912,6 +920,15 @@ class TuiRuntime:
 
         return visible_chat_rows(session.messages, limit=limit)
 
+    def history_snapshot(self) -> list[Any]:
+        """Stable source for paging, without eagerly formatting old turns."""
+        if self.agent_loop is None:
+            return []
+        try:
+            return list(self.agent_loop.sessions.get_or_create(self.session_key).messages)
+        except Exception:  # noqa: BLE001 - match history() for unavailable sessions
+            return []
+
     def slash_commands(self) -> list[dict[str, Any]]:
         from navin.command.builtin import BUILTIN_COMMAND_SPECS
 
@@ -934,9 +951,10 @@ class TuiRuntime:
     async def switch_session(self, session_id: str) -> None:
         """Point the UI at another session key (no engine restart needed)."""
         self.channel, self.chat_id = split_session_id(session_id)
+        self._enable_interaction()
         self.status.turn_active = False
         self._turn_started_at = None
-        self._refresh_status()
+        await asyncio.to_thread(self._refresh_status)
 
     async def send(self, text: str, *, model_preset: str | None = None, followup: bool = False) -> None:
         if self.bus is None:
