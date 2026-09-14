@@ -1286,7 +1286,8 @@ class NavinApp(App[None]):
             return
         if isinstance(event, UiStreamEnd):
             if self._current is not None:
-                await self._current.stream_end()
+                await self._current.stream_end(resuming=event.resuming)
+                self.transcript.follow()
             return
         if isinstance(event, UiReasoning):
             if not self.prefs.show_reasoning:
@@ -1371,7 +1372,7 @@ class NavinApp(App[None]):
             elif block.finished:
                 block.hide_finish()
                 block.finished = False
-            if not (event.streamed and block.streamed) and block.text.strip() != event.text.strip():
+            if block.text.strip() != event.text.strip():
                 await block.set_text(event.text, render_as=event.render_as)
             else:
                 await block.stream_end()
@@ -1451,6 +1452,7 @@ class NavinApp(App[None]):
             self._sync_shortcuts()
             if card is not None:
                 card.close(event.allowed, event.reason)
+                await self._remove_prompt(card)
             self._set_status()
             return
         if isinstance(event, UiChoiceRequested):
@@ -1473,7 +1475,7 @@ class NavinApp(App[None]):
             self._sync_shortcuts()
             if card is not None:
                 card.close(event.option_id, event.skipped)
-            self.composer.focus()
+                await self._remove_prompt(card)
             return
         if isinstance(event, UiEngineError):
             self._awaiting_reply = False
@@ -1482,29 +1484,43 @@ class NavinApp(App[None]):
             await self._note(f"[$error]{escape(event.text)}[/]", "error")
             return
 
+    async def _remove_prompt(
+        self, card: ApprovalCard | ChoiceCard, *, resume_follow: bool = False
+    ) -> None:
+        # A resolved card below the active assistant hides its continuing output.
+        await card.remove()
+        self.composer.focus()
+        if resume_follow:
+            self.transcript.auto_follow = True
+            self.transcript.scroll_end(animate=False)
+        else:
+            self.transcript.follow()
+
     @on(ApprovalCard.Decided)
     async def _approval_decided(self, event: ApprovalCard.Decided) -> None:
         card = self._pending_approvals.pop(event.request_id, None)
+        if card is None:
+            return
         self._sync_shortcuts()
-        if card is not None:
-            card.close(event.allowed, "remembered" if event.remember else "")
+        card.close(event.allowed, "remembered" if event.remember else "")
+        await self._remove_prompt(card, resume_follow=True)
         await self.runtime.approve(event.request_id, allowed=event.allowed, remember=event.remember)
         self._set_status()
-        self.composer.focus()
 
     @on(ChoiceCard.Answered)
     async def _choice_answered(self, event: ChoiceCard.Answered) -> None:
         card = self._pending_choices.pop(event.request_id, None)
+        if card is None:
+            return
         self._sync_shortcuts()
-        if card is not None:
-            card.close(event.option_id, event.skipped, event.custom_text)
+        card.close(event.option_id, event.skipped, event.custom_text)
+        await self._remove_prompt(card, resume_follow=True)
         await self.runtime.answer_choice(
             event.request_id,
             option_id=event.option_id,
             skipped=event.skipped,
             custom_text=event.custom_text,
         )
-        self.composer.focus()
 
     # -- actions ----------------------------------------------------------
 

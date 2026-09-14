@@ -28,8 +28,8 @@ def test_new_and_saved_defaults_transport_a_100_mb_file(config):
     channel = WebSocketConfig(**config)
     policy = DEFAULT_WEBUI_INGRESS_POLICY
     advertised = policy.bootstrap_limits(max_frame_bytes=channel.max_message_bytes)
-    assert advertised["attachments"]["max_file_bytes"] == 100 * MIB
-    assert advertised["attachments"]["max_total_bytes"] == 100 * MIB
+    assert advertised["attachments"]["max_file_bytes"] == 200 * MIB
+    assert advertised["attachments"]["max_total_bytes"] == 200 * MIB
     assert channel.max_message_bytes >= policy.minimum_full_policy_frame_bytes()
     assert create_app(Mock())._client_max_size >= policy.minimum_full_policy_frame_bytes()
 
@@ -64,9 +64,9 @@ def test_large_document_is_stored_readable_and_downloadable(tmp_path: Path, size
     assert filename.endswith("_large-report.txt")
 
 
-def test_one_byte_above_100_mb_is_rejected_without_writing(tmp_path: Path):
+def test_one_byte_above_the_upload_limit_is_rejected_without_writing(tmp_path: Path):
     # These lengths share a base64 block, so the decoded-byte guard is needed.
-    data_url = "data:text/plain;base64," + base64.b64encode(b" " * (100 * MIB + 1)).decode()
+    data_url = "data:text/plain;base64," + base64.b64encode(b" " * (200 * MIB + 1)).decode()
     paths, reason = store_inbound_attachments(
         [{"name": "oversized.txt", "data_url": data_url}], media_dir=tmp_path, logger=Mock(),
     )

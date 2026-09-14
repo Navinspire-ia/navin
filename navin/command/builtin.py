@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import re
 import subprocess
@@ -14,7 +15,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
 from loguru import logger
 
@@ -659,6 +660,23 @@ def _stop_board_workspace(ctx: CommandContext) -> Path | None:
     return getattr(loop, "workspace", None)
 
 
+def _is_internal_pending(item: Any) -> bool:
+    """True when a queued mid-turn message is engine-internal traffic.
+
+    Goal and board continuations, injected exec/subagent events and subagent
+    results belong to the turn the user just stopped. A plain user message is
+    deliberate input and must survive the stop.
+    """
+    from navin.session.turn_continuation import internal_continuation_inbound
+
+    metadata = item.metadata if isinstance(item.metadata, dict) else {}
+    if internal_continuation_inbound(metadata):
+        return True
+    if metadata.get("injected_event"):
+        return True
+    return getattr(item, "sender_id", "") == "subagent"
+
+
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
@@ -669,15 +687,26 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     if callable(marker):
         marker(ctx.key)
     total = await loop._cancel_active_tasks(ctx.key)
-    # Also drain pending queue to prevent mid-turn injection deadlock
+    # Drain the pending mid-turn injection queue. Internal traffic (goal /
+    # board continuations, injected exec and subagent events) dies with the
+    # stopped turn, but genuine user messages were sent on purpose: they are
+    # re-published to the bus so they start a fresh turn instead of
+    # silently disappearing.
     pending = loop._pending_queues.pop(ctx.key, None)
+    republished = 0
     if pending is not None:
         while not pending.empty():
             try:
-                pending.get_nowait()
-                total += 1
+                item = pending.get_nowait()
             except Exception:
                 break
+            if _is_internal_pending(item):
+                continue
+            metadata = item.metadata if isinstance(item.metadata, dict) else {}
+            await loop.bus.publish_inbound(
+                dataclasses.replace(item, metadata={**metadata, "queued_behind_stop": True})
+            )
+            republished += 1
     # Deactivate any active sustained goal, otherwise the next turn
     # (heartbeat, automation, user message) silently resumes the work.
     goal_cancelled = await loop._cancel_sustained_goal(ctx.key, msg)
@@ -707,6 +736,8 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
         content += " The active goal was cancelled as well."
     if plan_cancelled:
         content += f" Marked {plan_cancelled} plan step(s) cancelled."
+    if republished:
+        content += f" {republished} queued message(s) will run now."
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
         metadata=dict(msg.metadata or {})

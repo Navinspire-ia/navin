@@ -1605,11 +1605,14 @@ class AssistantMessage(Vertical):
         # Interim narration replaces the previous line instead of stacking:
         # each tool batch would otherwise leave its sentence on screen forever.
         if self._progress_line is not None and self._progress_line.is_attached:
-            self._progress_line.update(text)
+            self._progress_line.update(f"· {escape(text)}")
+            self.move_child(self._progress_line, before=preview)
+            self._refresh_preview()
             return
         line = ProgressLine(text)
         self._progress_line = line
         await self.mount(line, before=preview)
+        self._refresh_preview()
 
     def _drop_progress_line(self) -> None:
         line = self._progress_line
@@ -1691,7 +1694,7 @@ class AssistantMessage(Vertical):
             preview = self.query_one(".assistant-preview", Static)
         except Exception:  # noqa: BLE001
             return
-        if self._open:
+        if self._open or (self._progress_line is not None and not self.text.strip()):
             preview.update("")
             preview.display = False
             return
@@ -1764,6 +1767,7 @@ class AssistantMessage(Vertical):
         if self.finished:
             self.finished = False
             self.hide_finish()
+        self._drop_progress_line()
         self.streamed = True
         self._buffer.append(text)
         if len(self._buffer) == 1 and not self._open:
@@ -1771,10 +1775,28 @@ class AssistantMessage(Vertical):
         if self._paint_timer is None:
             self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
 
-    async def stream_end(self) -> None:
+    async def stream_end(self, *, resuming: bool = False) -> None:
         if self._paint_timer is not None:
             self._paint_timer.stop()
             self._paint_timer = None
+        if resuming:
+            body = await self._ready_body()
+            if body is None:
+                return
+            # The next iteration is a fresh stream, with one status while tools run.
+            async with self._paint_lock:
+                narration = self.text.strip()
+                self._buffer.clear()
+                self._painted_markdown = ""
+                self._open = False
+                self.remove_class("-open")
+                self._sync_layers()
+                await body.update("")
+            if narration:
+                await self.progress(assistant_preview(narration))
+            else:
+                self._refresh_preview()
+            return
         if looks_like_client_prompt(self.text):
             await self.reveal()
             return

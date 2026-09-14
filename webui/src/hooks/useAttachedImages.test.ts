@@ -41,6 +41,12 @@ describe("acceptedAttachmentKind", () => {
     expect(acceptedAttachmentKind(fileOf("a.md", "text/markdown"))).toBe("file");
   });
 
+  it("accepts chat archives as raw files", () => {
+    expect(acceptedAttachmentKind(fileOf("bundle.zip", "application/zip"))).toBe("file");
+    expect(acceptedAttachmentKind(fileOf("bundle.rar", ""))).toBe("file");
+    expect(acceptedAttachmentKind(fileOf("bundle.7z", "application/x-7z-compressed"))).toBe("file");
+  });
+
   it("accepts the gateway audio whitelist as raw files", () => {
     expect(acceptedAttachmentKind(fileOf("memo.mp3", "audio/mpeg"))).toBe("file");
     expect(acceptedAttachmentKind(fileOf("memo.wav", "audio/wav"))).toBe("file");
@@ -98,5 +104,8 @@ describe("ACCEPT_ATTR", () => {
     expect(ACCEPT_ATTR).toContain("application/pdf");
     expect(ACCEPT_ATTR).toContain(".mov");
     expect(ACCEPT_ATTR).toContain(".mp3");
+    expect(ACCEPT_ATTR).toContain(".zip");
+    expect(ACCEPT_ATTR).toContain(".rar");
+    expect(ACCEPT_ATTR).toContain(".7z");
   });
 });

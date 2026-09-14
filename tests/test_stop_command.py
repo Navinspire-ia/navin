@@ -36,9 +36,15 @@ class _FakeSessions:
         self.saved += 1
 
 
-def _msg(content: str = "/stop") -> InboundMessage:
+def _msg(
+    content: str = "/stop",
+    *,
+    sender_id: str = "user",
+    metadata: dict | None = None,
+) -> InboundMessage:
     return InboundMessage(
-        channel="websocket", sender_id="user", chat_id="chat-1", content=content,
+        channel="websocket", sender_id=sender_id, chat_id="chat-1",
+        content=content, metadata=metadata or {},
     )
 
 
@@ -110,6 +116,16 @@ class _FakeStopLoop:
         self._goal_cancelled = goal_cancelled
         self._pending_queues: dict[str, asyncio.Queue] = {}
         self.goal_cancel_calls: list[str] = []
+        self.published: list[InboundMessage] = []
+
+        class _Bus:
+            def __init__(self, loop: _FakeStopLoop) -> None:
+                self._loop = loop
+
+            async def publish_inbound(self, item: InboundMessage) -> None:
+                self._loop.published.append(item)
+
+        self.bus = _Bus(self)
 
     async def _cancel_active_tasks(self, key: str) -> int:
         return self._cancelled_tasks
@@ -147,15 +163,40 @@ class CmdStopTest(unittest.IsolatedAsyncioTestCase):
             out.content, "Nothing is running - everything is already stopped.",
         )
 
-    async def test_stop_drains_pending_queue(self) -> None:
+    async def test_stop_republishes_queued_user_messages(self) -> None:
+        # A "Send now" prompt sitting in the mid-turn injection queue is
+        # deliberate user input: /stop must hand it back to the bus as a
+        # fresh turn, not destroy it.
         loop = _FakeStopLoop(cancelled_tasks=0, goal_cancelled=False)
         queue: asyncio.Queue = asyncio.Queue()
         queue.put_nowait(_msg("queued follow-up"))
         loop._pending_queues["websocket:chat-1"] = queue
         out = await cmd_stop(_stop_ctx(loop))
-        self.assertIn("Stopped 1 task(s)", out.content)
         self.assertTrue(queue.empty())
         self.assertNotIn("websocket:chat-1", loop._pending_queues)
+        self.assertEqual(len(loop.published), 1)
+        self.assertEqual(loop.published[0].content, "queued follow-up")
+        self.assertNotIn("Stopped", out.content)
+        self.assertIn("1 queued message(s) will run now", out.content)
+
+    async def test_stop_drops_internal_pending_traffic(self) -> None:
+        from navin.session import turn_continuation as tc
+
+        loop = _FakeStopLoop(cancelled_tasks=0, goal_cancelled=False)
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait(_msg("continue the build", sender_id="system:continuation", metadata={
+            tc.INTERNAL_CONTINUATION_META: True,
+        }))
+        queue.put_nowait(_msg("exec finished", sender_id="user", metadata={
+            "injected_event": "exec_finished",
+        }))
+        queue.put_nowait(_msg("subagent result", sender_id="subagent"))
+        loop._pending_queues["websocket:chat-1"] = queue
+        out = await cmd_stop(_stop_ctx(loop))
+        self.assertEqual(loop.published, [])
+        self.assertEqual(
+            out.content, "Nothing is running - everything is already stopped.",
+        )
 
 
 class StaleContinuationAfterStopTest(unittest.IsolatedAsyncioTestCase):
