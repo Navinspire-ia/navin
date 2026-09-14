@@ -114,10 +114,12 @@ def computer_models_payload(query: dict[str, list[str]]) -> dict[str, Any]:
         models = _navin_selection(models)
     def priority(row: dict[str, Any]) -> tuple[int, str]:
         model = row["id"].lower()
-        if provider == "navin" and "qwen3.8-max" in model:
+        if provider == "navin" and "gpt-6-astra" in model:
             rank = 0
+        elif provider == "navin" and "qwen3.8-max" in model:
+            rank = 1
         else:
-            rank = 1 if row["grounding"] else 2
+            rank = 2 if row["grounding"] else 3
         return rank, str(row["label"]).lower()
 
     models.sort(key=priority)

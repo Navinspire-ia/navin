@@ -54,6 +54,7 @@ class ListenerInfo:
     pid: int | None
     cmdline: str | None
     source: str
+    cwd: str | None = None
 
 
 @dataclass(frozen=True)
@@ -361,7 +362,12 @@ def _who_via_ss(port: int) -> ListenerInfo | None:
         users = ""
         if "users:(" in line:
             users = line.split("users:(", 1)[1].rstrip()
-        return ListenerInfo(pid=pid, cmdline=cmdline or users or None, source="ss")
+        return ListenerInfo(
+            pid=pid,
+            cmdline=cmdline or users or None,
+            source="ss",
+            cwd=_cwd_for_pid(pid),
+        )
     return None
 
 
@@ -390,7 +396,17 @@ def _who_via_lsof(port: int) -> ListenerInfo | None:
     except ValueError:
         return None
     cmdline = _cmdline_for_pid(pid)
-    return ListenerInfo(pid=pid, cmdline=cmdline or parts[0], source="lsof")
+    return ListenerInfo(pid=pid, cmdline=cmdline or parts[0], source="lsof", cwd=_cwd_for_pid(pid))
+
+
+def _cwd_for_pid(pid: int | None) -> str | None:
+    """Best-effort working directory of a process (Linux /proc, else None)."""
+    if pid is None or pid <= 0:
+        return None
+    try:
+        return str(Path(f"/proc/{pid}/cwd").resolve())
+    except OSError:
+        return None
 
 
 def _cmdline_for_pid(pid: int | None) -> str | None:

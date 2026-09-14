@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { computerChatUrl, computerPermissionGranted, computerSettingsUrl, computerSetupIssue, computerSetupStep } from "./computer-setup";
+import { COMPUTER_MODEL_CALLOUT, computerChatUrl, computerPermissionGranted, computerSettingsUrl, computerSetupIssue, computerSetupStep } from "./computer-setup";
 import type { ComputerDiagnostics, SettingsPayload } from "./types";
 
 const config: NonNullable<SettingsPayload["computer"]> = {
@@ -48,6 +48,12 @@ describe("Computer setup", () => {
     expect(computerSetupIssue("computer", "Computer needs a vision model")).toBe("vision");
     expect(computerSetupIssue("exec", "permission denied")).toBeNull();
     expect(computerSetupIssue("computer", "invalid click coordinates")).toBeNull();
+  });
+
+  it("keeps the vision model list open inside the scrolling settings panel", () => {
+    expect(COMPUTER_MODEL_CALLOUT.preventDismissOnScroll).toBe(true);
+    expect(COMPUTER_MODEL_CALLOUT.preventDismissOnResize).toBe(true);
+    expect(COMPUTER_MODEL_CALLOUT.directionalHintFixed).toBe(true);
   });
 
   it("returns to the same chat after setup", () => {

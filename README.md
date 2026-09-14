@@ -110,6 +110,26 @@ Navin does not have to start from zero every session.
   <img src="./assets/memory-graph.gif" alt="Memories flow into Project Brain then Agent Loop" width="900">
 </p>
 
+## Project Graph + Code Index
+
+Navin maps every codebase it works on. Two layers, one interactive graph:
+
+- **Project Graph** (metagraph): every file becomes a node colored by role (frontend, backend, config, test, docs), with import edges and one-sentence roles. Ask "where is X handled?" and the agent answers with the exact file list and dependency chain instead of grepping the whole tree. Rendered live in the Dev workbench Graph tab from `.navin/metadata/`.
+- **Code Index**: type-aware navigation on top of the map - definitions, references, callers and callees, plus impact analysis that lists every transitive caller and the tests at risk before you change a shared signature.
+
+The result: the agent navigates like someone who knows the codebase, not like someone reading it for the first time.
+
+## Same model, a fraction of the tokens
+
+A raw coding agent pays the model tax on every turn: it re-reads files, re-discovers structure and re-prints diffs, turn after turn. Navin moves that work to your machine:
+
+- **Local Project Graph + Code Index** answer "where is this handled?" without ever putting the tree into the prompt - the model receives the exact slice, not the repo.
+- **Durable project memory** (Project Brain) carries decisions, conventions and facts across sessions, so the agent does not re-learn your codebase in the context window.
+- **Structured tool results** (diffs, compact graph strips, quiet run journals) keep every step readable while keeping the billed surface tiny.
+- **Cached-token aware routing** - long agentic turns reuse cached context instead of rebilling it.
+
+On real usage, that compounds: the same GPT-6 work that burns ~$100 of context on a raw agent lands around ~$10 on Navin. Same model, same quality, roughly 10x fewer billed tokens - because the expensive part (understanding your code) happens locally, once.
+
 ## One AI workspace
 
 Navin connects many workflows to the same agent, memory and project context.

@@ -69,8 +69,9 @@ def test_byok_catalog_uses_only_selected_provider_and_declared_vision(config):
 def test_navin_curates_flagships_across_families_without_leaking_other_plans(config):
     ids = ["qwen/qwen3.8-max", "qwen/qwen3.7-plus", "anthropic/claude-opus-5",
            "anthropic/claude-opus-4.8", "anthropic/claude-sonnet-5", "openai/gpt-5.6-sol",
-           "openai/gpt-5-mini", "google/gemini-3.7-flash", "google/gemini-3-flash-preview",
-           "x-ai/grok-4.6", "x-ai/grok-4.5", "deepseek/deepseek-chat"]
+           "openai/gpt-6-astra", "openai/gpt-5-mini", "google/gemini-3.7-flash",
+           "google/gemini-3-flash-preview", "x-ai/grok-4.6", "x-ai/grok-4.5",
+           "deepseek/deepseek-chat"]
     for index, model in enumerate(ids):
         config.model_presets[f"navin-{index}"] = ModelPresetConfig(provider="navin", model=model)
     save_config(config)
@@ -79,9 +80,11 @@ def test_navin_curates_flagships_across_families_without_leaking_other_plans(con
     with patch("navin.webui.computer_models.provider_models_payload", return_value=catalog(rows)):
         result = computer_models_payload({"provider": ["navin"]})
     assert {row["id"] for row in result["models"]} == {
-        "qwen/qwen3.8-max", "anthropic/claude-opus-5", "anthropic/claude-sonnet-5",
-        "openai/gpt-5.6-sol", "google/gemini-3.7-flash", "x-ai/grok-4.6",
+        "openai/gpt-6-astra", "qwen/qwen3.8-max", "anthropic/claude-opus-5",
+        "anthropic/claude-sonnet-5", "google/gemini-3.7-flash", "x-ai/grok-4.6",
     }
+    assert result["recommended"] == "openai/gpt-6-astra"
+    assert result["models"][0]["id"] == "openai/gpt-6-astra"
 
 
 def test_navin_trusts_a_text_only_declaration_and_keeps_limited_plan_vision(config):

@@ -12,7 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { Search } from "lucide-react";
+import { Search, Waypoints } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
@@ -20,6 +20,7 @@ import { FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { FileWorkspaceActionsProvider } from "@/components/FileWorkspaceActionsContext";
 import { PendingReviewPanel } from "@/components/review/PendingReviewPanel";
 import { ArtifactCanvas } from "@/components/thread/ArtifactCanvas";
+import { MetagraphSidePanel } from "@/components/thread/MetagraphSidePanel";
 import { resolveArtifactPlacement } from "@/lib/artifact-placement";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import {
@@ -214,6 +215,7 @@ const FILE_PREVIEW_MIN_WIDTH = 360;
 const FILE_PREVIEW_MAX_WIDTH = 860;
 const FILE_PREVIEW_MIN_MAIN_WIDTH = 420;
 const FILE_PREVIEW_CLOSE_ANIMATION_MS = 320;
+const METAGRAPH_PANEL_CLOSE_ANIMATION_MS = 320;
 
 const ARTIFACT_CANVAS_DEFAULT_WIDTH = 520;
 const ARTIFACT_CANVAS_MIN_WIDTH = 320;
@@ -735,6 +737,9 @@ export function ThreadShell({
   const [scrollToBottomSignal, setScrollToBottomSignal] = useState(0);
   const [scrollToLatestUserPromptSignal, setScrollToLatestUserPromptSignal] = useState(0);
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
+  const [metagraphPanelOpen, setMetagraphPanelOpen] = useState(false);
+  const [metagraphPanelClosing, setMetagraphPanelClosing] = useState(false);
+  const metagraphPanelCloseTimerRef = useRef<number | null>(null);
   const [filePreviewClosing, setFilePreviewClosing] = useState(false);
   const [filePreviewWidth, setFilePreviewWidth] = useState(FILE_PREVIEW_DEFAULT_WIDTH);
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
@@ -2116,6 +2121,35 @@ export function ThreadShell({
     }, FILE_PREVIEW_CLOSE_ANIMATION_MS);
   }, [filePreviewClosing, filePreviewPath]);
 
+  const handleCloseMetagraphPanel = useCallback(() => {
+    if (!metagraphPanelOpen || metagraphPanelClosing) return;
+    setMetagraphPanelClosing(true);
+    metagraphPanelCloseTimerRef.current = window.setTimeout(() => {
+      metagraphPanelCloseTimerRef.current = null;
+      setMetagraphPanelOpen(false);
+      setMetagraphPanelClosing(false);
+    }, METAGRAPH_PANEL_CLOSE_ANIMATION_MS);
+  }, [metagraphPanelClosing, metagraphPanelOpen]);
+
+  const handleToggleMetagraphPanel = useCallback(() => {
+    if (metagraphPanelOpen && !metagraphPanelClosing) {
+      handleCloseMetagraphPanel();
+      return;
+    }
+    if (metagraphPanelCloseTimerRef.current !== null) {
+      window.clearTimeout(metagraphPanelCloseTimerRef.current);
+      metagraphPanelCloseTimerRef.current = null;
+    }
+    setMetagraphPanelClosing(false);
+    setMetagraphPanelOpen(true);
+  }, [handleCloseMetagraphPanel, metagraphPanelClosing, metagraphPanelOpen]);
+
+  useEffect(() => () => {
+    if (metagraphPanelCloseTimerRef.current !== null) {
+      window.clearTimeout(metagraphPanelCloseTimerRef.current);
+    }
+  }, []);
+
   const handleFilePreviewResizeStart = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -2543,6 +2577,20 @@ export function ThreadShell({
             minimal={!session && !loading}
             promptNavigatorAction={promptNavigatorAction}
             sessionInfoAction={sessionInfoAction}
+            graphAction={
+              session ? (
+                <button
+                  type="button"
+                  onClick={handleToggleMetagraphPanel}
+                  aria-pressed={metagraphPanelOpen && !metagraphPanelClosing}
+                  className="host-no-drag inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[12px] text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground"
+                  aria-label={t("dev.graphTab", { defaultValue: "Graph" })}
+                >
+                  <Waypoints className="h-4 w-4" aria-hidden />
+                  <span className="hidden sm:inline">{t("dev.graphTab", { defaultValue: "Graph" })}</span>
+                </button>
+              ) : undefined
+            }
             findAction={
               session ? (
                 conversationFind.open ? (
@@ -2617,6 +2665,13 @@ export function ThreadShell({
           </FilePreviewAvailabilityProvider>
         </FileWorkspaceActionsProvider>
       </div>
+      {metagraphPanelOpen ? (
+        <MetagraphSidePanel
+          sessionKey={historyKey}
+          isClosing={metagraphPanelClosing}
+          onClose={handleCloseMetagraphPanel}
+        />
+      ) : null}
       {filePreviewPath && historyKey ? (
         <FilePreviewPanel
           sessionKey={historyKey}

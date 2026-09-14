@@ -67,6 +67,65 @@ def test_queue_waits_for_final_reply_and_sends_fifo_without_touching_draft(tmp_p
     asyncio.run(run())
 
 
+def test_send_now_during_active_turn_publishes_and_keeps_message(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("first")
+            await app.runtime.bus.consume_inbound()
+            # A prompt queued while the first turn is still running.
+            app.prefs.mode = "agent"
+            await app.submit_text("urgent follow-up")
+            app.prefs.mode = "chat"
+            await pilot.pause()
+            assert len(app.query(QueuedPromptRow)) == 1
+            row = app.query(QueuedPromptRow).first()
+            await pilot.click(row.query_one(".queue-send"))
+            await pilot.pause()
+            # The agent must receive the prompt as a follow-up of the running turn.
+            sent = await asyncio.wait_for(app.runtime.bus.consume_inbound(), 2)
+            assert sent.content == "urgent follow-up"
+            # And the message must stay visible in the transcript.
+            await pilot.pause()
+            texts = [r.raw_text for r in app.query(UserMessage)]
+            assert "urgent follow-up" in texts, texts
+            # The turn ends and the reply arrives: the follow-up must still be
+            # visible (it must not be swallowed by the turn-end repaint).
+            app.runtime._finish_turn({})
+            await app.runtime._dispatch(OutboundMessage("cli", "direct", "Done, follow-up handled."))
+            await pilot.pause()
+            texts = [r.raw_text for r in app.query(UserMessage)]
+            assert texts == ["first", "urgent follow-up"], texts
+            assert [r.text for r in app.query(AssistantMessage)] == ["Done, follow-up handled."]
+    asyncio.run(run())
+
+
+def test_edit_loads_queued_message_into_composer_and_keeps_draft(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("first")
+            await app.runtime.bus.consume_inbound()
+            await app.submit_text("queued one")
+            await app.submit_text("queued two")
+            await pilot.pause()
+            app.composer.set_text("current draft")
+            row = next(
+                r for r in app.query(QueuedPromptRow) if "queued one" in str(r.query_one(Static).render())
+            )
+            await pilot.click(row.query_one(".queue-edit"))
+            await pilot.pause()
+            # The queued text is now in the composer, the previous draft went
+            # back to the queue, and the edited row is gone.
+            assert app.composer.text == "queued one"
+            rows = app.query(QueuedPromptRow)
+            texts = [str(r.query_one(Static).render()) for r in rows]
+            assert len(texts) == 2
+            assert any("current draft" in t for t in texts)
+            assert not any("queued one" in t for t in texts)
+    asyncio.run(run())
+
+
 def test_stop_pauses_queue_and_remove_resume_controls_work(tmp_path):
     async def run():
         app = make_app(tmp_path)

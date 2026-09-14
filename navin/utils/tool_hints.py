@@ -45,6 +45,8 @@ _TOOL_VERBS: dict[str, str] = {
     "glob": "find",
     "find_files": "find",
     "list_dir": "list",
+    "metagraph": "graph",
+    "code_index": "index",
     "exec": "run",
     "shell": "run",
     "exec_command": "run",
@@ -287,7 +289,9 @@ def exec_flags(arguments: dict) -> str:
 
 
 # Consecutive reads/searches fold under one TUI header, like Cursor's Explored.
-_EXPLORE_VERBS = frozenset({"read", "list", "grep", "find", "search"})
+# metagraph and code_index are primary exploration tools: they read the
+# project index, so they belong in the Explored cluster, not as standalone rows.
+_EXPLORE_VERBS = frozenset({"read", "list", "grep", "find", "search", "graph", "index"})
 _EDIT_VERBS = frozenset({"edit", "create"})
 _EXPLORE_OP = {
     "read": "Read",
@@ -295,6 +299,8 @@ _EXPLORE_OP = {
     "grep": "Search",
     "find": "Search",
     "search": "Search",
+    "graph": "Graph",
+    "index": "Index",
 }
 
 
@@ -321,12 +327,12 @@ def describe_explore_step(
     path = _first_path(args)
     file_name = _path_name(path) if path else ""
     query = ""
-    for key in ("pattern", "query", "glob"):
+    for key in ("pattern", "query", "glob", "name"):
         val = args.get(key)
         if isinstance(val, str) and val.strip():
             query = " ".join(val.split())
             break
-    if verb in {"grep", "find", "search"}:
+    if verb in {"grep", "find", "search", "graph", "index"}:
         if query and file_name:
             text = f"{label} {query} in {file_name}"
         elif query:
@@ -848,6 +854,7 @@ def preview_rows(
             if line.strip():
                 rows.append((None, "error", line.rstrip()))
     command = _command_from_args(args)
+    run_is_git = command.strip().startswith("git")
     text = _result_text(result, output_lines)
     if error:
         # A failure may also contain useful stdout. Remove only a duplicate
@@ -858,6 +865,14 @@ def preview_rows(
         text = extra
     if text and _looks_like_unified_diff(text):
         rows.extend(_rows_from_unified_diff(text))
+    elif verb in {"graph", "index"} and text:
+        # metagraph / code_index results read like a graph answer: render a
+        # compact strip (chain joined by arrows, hubs/deps as short rows)
+        # instead of numbered transcript lines.
+        rows.extend(_graph_compact_rows(text))
+    elif verb == "run" and not run_is_git:
+        # Journal off for command runs: only git commands print their output.
+        pass
     elif text:
         for index, line in enumerate(text.splitlines(), start=1):
             rows.append((index, "ctx", line))
@@ -869,6 +884,19 @@ def preview_rows(
         if isinstance(question, str) and question.strip():
             rows.append((None, "ctx", " ".join(question.split())))
     return rows[: max(1, int(limit))]
+
+
+def _graph_compact_rows(text: str, max_rows: int = 8) -> list[tuple[int | None, str, str]]:
+    """Compact preview rows for metagraph / code_index answers."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    rows: list[tuple[int | None, str, str]] = []
+    if lines and lines[0].startswith("Path ("):
+        steps = [line for line in lines[1:] if line]
+        rows.append((None, "ctx", " → ".join(steps) if steps else lines[0]))
+        return rows[:max_rows]
+    for line in lines[:max_rows]:
+        rows.append((None, "ctx", line))
+    return rows
 
 
 def display_tool_error(error: str) -> str:

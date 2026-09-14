@@ -3,6 +3,19 @@
 
 import type { ComputerDiagnostics, SettingsPayload } from "./types";
 
+// Settings lives in overflow-y-auto. Fluent lists dismiss on the first
+// scroll/resize unless these locks stay on (same as Career/Tenders).
+export const COMPUTER_MODEL_CALLOUT = {
+  calloutMaxHeight: 280,
+  // 5 = Fluent DirectionalHint.bottomLeftEdge. Keep the number here so this
+  // file stays free of @fluentui/react. Fixed hint stops the list bouncing
+  // between above and below the field in the scrolling settings panel.
+  directionalHint: 5,
+  directionalHintFixed: true,
+  preventDismissOnScroll: true,
+  preventDismissOnResize: true,
+};
+
 export const COMPUTER_PERMISSIONS = ["screen_recording", "accessibility", "automation"] as const;
 export type ComputerPermission = typeof COMPUTER_PERMISSIONS[number];
 export type ComputerSetupIssue = "vision" | "permissions" | "desktop" | "disabled" | "stopped";

@@ -533,6 +533,10 @@ class SyncTest(unittest.TestCase):
             config.model_routes["vision"],
             managed_catalog.slug_preset_key(managed_catalog.DEFAULT_VISION_MODEL),
         )
+        self.assertEqual(
+            config.model_routes["computer"],
+            managed_catalog.slug_preset_key(managed_catalog.ASTRA_MODEL),
+        )
 
     def test_the_url_can_be_overridden(self):
         config = Config.model_validate(

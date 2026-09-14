@@ -24,6 +24,7 @@ from navin.utils.tool_hints import (
     format_tool_preview_markup,
     format_turn_summary,
     humanize_shell_command,
+    preview_rows,
     tool_cluster_kind,
     tool_verb,
 )
@@ -106,8 +107,80 @@ class ExploreClusterTests(unittest.TestCase):
         self.assertEqual(tool_cluster_kind("read_file"), "explore")
         self.assertEqual(tool_cluster_kind("grep"), "explore")
         self.assertEqual(tool_cluster_kind("list_dir"), "explore")
+        self.assertEqual(tool_cluster_kind("metagraph"), "explore")
+        self.assertEqual(tool_cluster_kind("code_index"), "explore")
         self.assertEqual(tool_cluster_kind("edit_file"), "edit")
         self.assertEqual(tool_cluster_kind("exec"), "")
+
+    def test_index_tools_show_as_explored_steps(self) -> None:
+        self.assertEqual(tool_verb("metagraph"), "graph")
+        self.assertEqual(tool_verb("code_index"), "index")
+        self.assertEqual(
+            describe_explore_step(
+                "metagraph", {"action": "find", "query": "checkpoint", "kind": "back"},
+            ),
+            "Graph checkpoint",
+        )
+        self.assertEqual(
+            describe_explore_step(
+                "code_index", {"action": "references", "name": "AgentLoop"},
+            ),
+            "Index AgentLoop",
+        )
+
+    def test_run_journal_hidden_except_git(self) -> None:
+        # Non-git command runs show the head only, no output journal.
+        rows = preview_rows(
+            "exec", {"command": "pytest tests/test_tool_hints.py"},
+            result="5 passed in 1.2s",
+        )
+        self.assertEqual(rows, [])
+        # Git commands keep their output journal.
+        rows = preview_rows(
+            "exec", {"command": "git status"},
+            result="On branch prod-v2\nnothing to commit",
+        )
+        self.assertEqual(
+            [row[2] for row in rows],
+            ["On branch prod-v2", "nothing to commit"],
+        )
+        # Failures stay visible whatever the command.
+        rows = preview_rows(
+            "exec", {"command": "pytest -q"}, error="boom: 1 failed",
+        )
+        self.assertEqual([row[1] for row in rows], ["error"])
+
+    def test_metagraph_result_previews_as_compact_graph(self) -> None:
+        rows = preview_rows(
+            "metagraph",
+            {"action": "path", "from": "a.py", "to": "c.py"},
+            result=(
+                "Path (2 hop(s)):\n"
+                "  a.py\n"
+                "  b.py\n"
+                "  c.py"
+            ),
+        )
+        self.assertEqual(rows, [(None, "ctx", "a.py → b.py → c.py")])
+
+    def test_metagraph_hubs_preview_stays_compact(self) -> None:
+        rows = preview_rows(
+            "metagraph",
+            {"action": "hubs"},
+            result=(
+                "Main hubs (most connected):\n"
+                "  navin/tui/app.py [back] (in=40, out=12)\n"
+                "  navin/agent/loop.py [back] (in=33, out=9)"
+            ),
+        )
+        self.assertEqual(
+            [row[2] for row in rows],
+            [
+                "Main hubs (most connected):",
+                "navin/tui/app.py [back] (in=40, out=12)",
+                "navin/agent/loop.py [back] (in=33, out=9)",
+            ],
+        )
 
     def test_steps_look_like_cursor(self) -> None:
         self.assertEqual(
@@ -189,24 +262,24 @@ class QuietToolLineTests(unittest.TestCase):
         self.assertIn("run", quoted)
         self.assertGreater(len(quoted), 4)
 
+        # Non-git runs hide the output journal; git runs keep it.
         detail = format_tool_detail(
             "exec",
             {"command": "pytest -q"},
             result="PASS - no lint errors, tests green\n2 passed",
         )
-        self.assertIn("PASS", detail)
-        self.assertIn("2 passed", detail)
-        self.assertNotIn("(no output)", detail)
-
+        self.assertEqual(detail, "")
         long_out = "\n".join(f"line {i} ALTER TABLE users" for i in range(40))
         full = format_tool_detail(
             "exec",
             {"command": "psql -f migrate.sql"},
             result=long_out,
         )
-        self.assertIn("line 0 ALTER TABLE users", full)
-        self.assertIn("line 39 ALTER TABLE users", full)
-        self.assertIn("   1 ", full)
+        self.assertEqual(full, "")
+        git_log = format_tool_detail(
+            "exec", {"command": "git log --oneline -2"}, result="abc123 fix\ndef456 feat",
+        )
+        self.assertIn("abc123 fix", git_log)
 
     def test_edit_line_shows_plus_and_minus(self) -> None:
         line = describe_tool_line(
@@ -259,9 +332,8 @@ class QuietToolLineTests(unittest.TestCase):
         empty = format_tool_detail("exec", {"command": "true"}, result="(no output)")
         self.assertEqual(empty, "")
         script = format_tool_detail("exec", {"command": heredoc}, result="(no output)")
-        self.assertIn("   1  import json", script)
-        self.assertNotIn("+import json", script, "Executed script text is not a file addition")
-        self.assertNotIn("(no output)", script)
+        self.assertEqual(script, "")
+        self.assertNotIn("(no output)", format_tool_detail("exec", {"command": "git status"}, result="(no output)"))
         diff = format_tool_detail(
             "exec",
             {"command": "git diff"},
