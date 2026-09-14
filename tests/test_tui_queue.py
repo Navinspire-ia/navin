@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 from navin.bus.events import OutboundMessage
 from navin.tui.prefs import TuiPrefs
@@ -76,7 +76,7 @@ def test_stop_pauses_queue_and_remove_resume_controls_work(tmp_path):
             await app.submit_text("remove this")
             await app.submit_text("keep this")
             await pilot.pause()
-            await pilot.click(app.query(QueuedPromptRow).first().query_one(Button))
+            await pilot.click(app.query(QueuedPromptRow).first().query_one(".queue-remove"))
             assert len(app.query(QueuedPromptRow)) == 1
             await pilot.press("escape")
             assert (await app.runtime.bus.consume_inbound()).content == "/stop"

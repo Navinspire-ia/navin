@@ -28,10 +28,6 @@ AttachmentRejection = Literal[
 AttachmentIngressResult = tuple[list[str], AttachmentRejection | None]
 
 _MAX_VIDEOS_PER_MESSAGE = 1
-_MAX_VIDEO_BYTES = 20 * 1024 * 1024
-# Audio is transcribed server-side, never sent to the chat model as bytes, so
-# it shares the video ceiling rather than the 6 MB image/document budget.
-_MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 _IMAGE_MIME_ALLOWED: frozenset[str] = frozenset({
     "image/png",
@@ -133,6 +129,8 @@ def store_inbound_attachments(
         return [], "too_many_videos"
     if image_count + document_count > limits.max_count:
         return [], "too_many_attachments"
+    if len(media) > limits.max_count:
+        return [], "too_many_attachments"
 
     paths: list[str] = []
     total_attachment_bytes = 0
@@ -156,15 +154,10 @@ def store_inbound_attachments(
             return abort("decode")
         if mime not in _UPLOAD_MIME_ALLOWED:
             return abort("mime")
-        is_video = mime in _VIDEO_MIME_ALLOWED
         is_audio = mime in _AUDIO_MIME_ALLOWED
         is_document = mime in _DOCUMENT_MIME_ALLOWED
-        if is_video:
-            max_bytes = _MAX_VIDEO_BYTES
-        elif is_audio:
-            max_bytes = _MAX_AUDIO_BYTES
-        else:
-            max_bytes = limits.max_file_bytes
+        remaining_bytes = limits.max_total_bytes - total_attachment_bytes
+        max_bytes = min(limits.max_file_bytes, remaining_bytes)
         name = (
             item.get("name")
             if (is_document or is_audio) and isinstance(item.get("name"), str)
@@ -178,21 +171,16 @@ def store_inbound_attachments(
                 filename=name,
             )
         except FileSizeExceeded:
-            return abort("size")
+            return abort("size" if limits.max_file_bytes <= remaining_bytes else "total_size")
         except Exception as exc:
             logger.warning("media decode failed: {}", exc)
             return abort("decode")
         if saved is None:
             return abort("decode")
         paths.append(saved)
-        # Video and audio never reach the model as bytes, so they stay out of
-        # the shared image/document total, exactly as the WebUI projects it.
-        if not is_video and not is_audio:
-            try:
-                total_attachment_bytes += Path(saved).stat().st_size
-            except OSError as exc:
-                logger.warning("failed to stat inbound attachment {}: {}", saved, exc)
-                return abort("decode")
-            if total_attachment_bytes > limits.max_total_bytes:
-                return abort("total_size")
+        try:
+            total_attachment_bytes += Path(saved).stat().st_size
+        except OSError as exc:
+            logger.warning("failed to stat inbound attachment {}: {}", saved, exc)
+            return abort("decode")
     return paths, None

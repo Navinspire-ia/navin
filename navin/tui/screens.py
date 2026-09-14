@@ -161,14 +161,18 @@ class PickerScreen(ModalScreen[str | None]):
         options.clear_options()
         highlight = None
         group = ""
+        rows: list[Option] = []
         for idx, item in enumerate(items):
             if item.group and item.group != group:
                 group = item.group
-                options.add_option(Option(Text(group, style="#87AFD7"), disabled=True))
+                rows.append(Option(Text(group, style="#87AFD7"), disabled=True))
             mark = ">" if item.id == self._current else "-"
             if highlight is None or item.id == self._current:
-                highlight = options.option_count
-            options.add_option(Option(self._option_line(item, mark), id=f"{idx}"))
+                highlight = len(rows)
+            rows.append(Option(self._option_line(item, mark), id=f"{idx}"))
+        # Adding one row at a time recalculates wrapping, scrolling and layout
+        # for every option on every search keystroke.
+        options.add_options(rows)
         if items:
             options.highlighted = highlight
 
@@ -815,8 +819,11 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+L` | Clear the screen (again to reload this chat) |
 | `Up` / `Down` | Prompt history (when the composer is empty) |
 | `F1` | This help |
-| `Ctrl+C` | Copy selected text; otherwise stop active work or clear the prompt. Keep the chat visible |
-| Send while working | Queue the message for the next turn. Remove a queued message or resume the queue after stopping |
+| `Ctrl+C` | Copy selected text or clear the prompt. Active work continues |
+| `Enter` while working | Queue the message for after the current reply |
+| `Ctrl+Enter` / queued **Send now** | Add the message to the current task immediately |
+| Queued **Remove** / **Resume queue** | Remove a waiting message or resume the queue after stopping |
+| Scroll up in a restored chat | Load earlier messages in pages while keeping your reading position |
 | `Cmd+C` / `Ctrl+Insert` | Copy the selection |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the last message (up to 5000 lines, including tool output) |
 | `Ctrl+V` / `Cmd+V` | Paste |

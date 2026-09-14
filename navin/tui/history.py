@@ -14,6 +14,32 @@ from navin.session.history_visibility import is_hidden_history_message
 
 # Safety cap when the caller asks for "everything". A huge render freezes WT.
 DEFAULT_VISIBLE_CAP = 2000
+HISTORY_PAGE_SIZE = 12
+
+
+def visible_chat_page(
+    messages: list[Any], *, before: int | None = None, limit: int = HISTORY_PAGE_SIZE,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Read one page backwards without formatting the rest of the session.
+
+    The cursor is an offset in a stable raw-message snapshot. Tool results
+    stay with their assistant message even when they span a page boundary.
+    """
+    end = len(messages) if before is None else max(0, min(before, len(messages)))
+    start = end
+    visible = 0
+    for index in range(end - 1, -1, -1):
+        start = index
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+            continue
+        rows, _ = visible_chat_rows([message], limit=1)
+        if rows:
+            visible += 1
+            if visible >= max(1, limit):
+                break
+    rows, _ = visible_chat_rows(messages[start:end], limit=max(1, limit))
+    return rows, start if start > 0 else None
 
 
 def _message_text(content: Any) -> str:

@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from navin.tui.history import visible_chat_rows
+from navin.tui.history import visible_chat_page, visible_chat_rows
 
 HIDDEN_HISTORY_META = "_hidden_history"
 
@@ -23,6 +24,39 @@ def _assistant(text: str, **extra: object) -> dict:
 
 
 class VisibleChatRowsTest(unittest.TestCase):
+    def test_pages_preserve_every_turn_and_tool_result(self) -> None:
+        messages = [{"role": "system", "content": "hidden prefix"}]
+        for i in range(17):
+            messages.extend([
+                _user(f"u{i}"),
+                _assistant("", tool_calls=[{"id": f"t{i}", "function": {"name": "exec"}}]),
+                {"role": "tool", "tool_call_id": f"t{i}", "content": f"result {i}"},
+                _assistant(f"a{i}"),
+                {"role": "user", "content": "hidden", HIDDEN_HISTORY_META: True},
+            ])
+        expected, _ = visible_chat_rows(messages)
+        cursor = None
+        recovered = []
+        for _ in range(len(messages)):
+            page, cursor = visible_chat_page(messages, before=cursor, limit=5)
+            self.assertLessEqual(len(page), 5)
+            recovered = page + recovered
+            if cursor is None:
+                break
+        self.assertEqual(recovered, expected)
+
+    def test_opening_only_formats_the_tail_of_a_large_session(self) -> None:
+        from navin.tui.history import public_history_message
+
+        messages = [_user(f"message {i}") for i in range(10_000)]
+        with patch("navin.tui.history.public_history_message", wraps=public_history_message) as format_message:
+            page, cursor = visible_chat_page(messages)
+        self.assertEqual(len(page), 12)
+        self.assertEqual(page[-1]["content"], "message 9999")
+        self.assertEqual(cursor, 9988)
+        self.assertLessEqual(format_message.call_count, 24)
+        self.assertEqual(visible_chat_page(messages, before=0), ([], None))
+
     def test_keeps_early_turns_when_the_tail_is_tools(self) -> None:
         messages: list[dict] = [_user("first question"), _assistant("first answer")]
         messages.append(

@@ -749,9 +749,13 @@ export function CareerWorkspace({
       const result = await run("search", { query: text.trim(), track });
       if (result) {
         const last = result.prospecting?.last_run;
-        setSearchNote(last?.status === "complete"
+        const revived = Number(last?.revived_offers || 0);
+        const revivedNote = revived
+          ? " " + tx("companyOfferRevived", "{{count}} offer(s) you had cleared were found again and put back in the list.", { count: revived })
+          : "";
+        setSearchNote((last?.status === "complete"
           ? tx("companyOfferSearchDone", "Offer search complete: {{count}} new offers. Source details are available in Tracking.", { count: last?.offers || 0 })
-          : tx("companyOfferSearchPartial", "Offer search partial: {{count}} new offers. Check source status in Tracking.", { count: last?.offers || 0 }));
+          : tx("companyOfferSearchPartial", "Offer search partial: {{count}} new offers. Check source status in Tracking.", { count: last?.offers || 0 })) + revivedNote);
       }
       return;
     }

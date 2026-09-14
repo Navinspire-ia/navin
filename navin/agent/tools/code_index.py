@@ -315,20 +315,47 @@ class CodeIndexTool(_FsTool):
         depth: int | None = None,
         **kwargs: Any,
     ) -> str:
-        from navin.index import get_index
-
         try:
             root = self._project_root()
             if not root.is_dir():
                 return ToolResult.error(f"Error: project root not found: {root}")
-            index = get_index(root)
-            if action == "refresh":
-                stats = index.refresh(force=True)
-                return f"Index rebuilt: {stats.summary()}"
-            index.ensure()
+            index = await asyncio.to_thread(self._prepare_index, root, action == "refresh")
         except Exception as exc:
             return ToolResult.error(f"Error building code index: {exc}")
 
+        if action == "refresh":
+            return f"Index rebuilt: {index.stats.summary()}"
+        if action == "semantic":
+            result = await self._semantic(index, query, limit)
+        else:
+            result = await asyncio.to_thread(
+                self._query_index, index, action, name, query, path, kind,
+                exported_only, limit, calls_only, depth,
+            )
+        return self._with_coverage_note(index, result)
+
+    @staticmethod
+    def _prepare_index(root: Path, refresh: bool) -> Any:
+        from navin.index import get_index
+
+        index = get_index(root)
+        if refresh:
+            index.refresh(force=True)
+        else:
+            index.ensure()
+        return index
+
+    def _query_index(self, index: Any, *args: Any) -> str:
+        # Queries can populate reference caches. Serialize them with the
+        # background warmer, entirely outside the input event loop.
+        with index._lifecycle_lock:
+            return self._query_index_locked(index, *args)
+
+    def _query_index_locked(
+        self, index: Any, action: str, name: str | None, query: str | None,
+        path: str | None, kind: str | None, exported_only: bool,
+        limit: int | None, calls_only: bool, depth: int | None,
+    ) -> str:
         if action == "overview":
             result = self._overview(index)
         elif action == "definition":
@@ -349,15 +376,13 @@ class CodeIndexTool(_FsTool):
             result = self._search(index, query, kind, exported_only, limit)
         elif action == "text":
             result = self._text_search(index, query, limit)
-        elif action == "semantic":
-            result = await self._semantic(index, query, limit)
         elif action == "outline":
             result = self._outline(index, path, limit)
         elif action == "file":
             result = self._file(index, path)
         else:
             return self.unknown_action(action)
-        return self._with_coverage_note(index, result)
+        return result
 
     @staticmethod
     def _with_coverage_note(index: Any, result: Any) -> Any:

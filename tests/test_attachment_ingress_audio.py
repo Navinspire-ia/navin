@@ -74,7 +74,7 @@ class TestStoreInboundAttachments:
         assert rejection == "too_many_attachments"
         assert paths == []
 
-    def test_audio_has_its_own_size_ceiling(self, tmp_path: Path):
+    def test_audio_uses_the_configured_file_ceiling(self, tmp_path: Path):
         limits = AttachmentIngressLimits(max_file_bytes=16)
         paths, rejection = store_inbound_attachments(
             [{"data_url": _data_url("audio/mpeg", b"ID3" + b"\x00" * 64)}],
@@ -82,10 +82,10 @@ class TestStoreInboundAttachments:
             logger=_Logger(),
             limits=limits,
         )
-        assert rejection is None
-        assert len(paths) == 1
+        assert rejection == "size"
+        assert paths == []
 
-    def test_audio_stays_out_of_the_shared_total(self, tmp_path: Path):
+    def test_audio_counts_toward_the_shared_total(self, tmp_path: Path):
         limits = AttachmentIngressLimits(max_total_bytes=32)
         paths, rejection = store_inbound_attachments(
             [
@@ -96,15 +96,16 @@ class TestStoreInboundAttachments:
             logger=_Logger(),
             limits=limits,
         )
-        assert rejection is None
-        assert len(paths) == 2
+        assert rejection == "total_size"
+        assert paths == []
+        assert list(tmp_path.iterdir()) == []
 
-    def test_oversized_audio_is_rejected(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(attachment_ingress, "_MAX_AUDIO_BYTES", 8)
+    def test_oversized_audio_is_rejected(self, tmp_path: Path):
         paths, rejection = store_inbound_attachments(
             [{"data_url": _data_url("audio/mpeg", b"ID3" + b"\x00" * 64)}],
             media_dir=tmp_path,
             logger=_Logger(),
+            limits=AttachmentIngressLimits(max_file_bytes=8),
         )
         assert rejection == "size"
         assert paths == []

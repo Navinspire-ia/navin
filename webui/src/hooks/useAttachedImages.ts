@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { encodeImage, type EncodeFailure } from "@/lib/imageEncode";
+import { encodeImage, TARGET_MAX_BYTES, type EncodeFailure } from "@/lib/imageEncode";
 import {
   ACCEPTED_AUDIO_MIMES,
   ACCEPTED_IMAGE_MIMES,
@@ -66,15 +66,10 @@ export type AttachmentError =
 
 export const MAX_ATTACHMENTS_PER_MESSAGE = 20;
 export const MAX_IMAGES_PER_MESSAGE = MAX_ATTACHMENTS_PER_MESSAGE;
-export const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
-export const MAX_TOTAL_ATTACHMENT_BYTES = 24 * 1024 * 1024;
-/** Videos get their own ceiling, mirroring the gateway: a clip worth analyzing
- * is almost always past the 6 MB document budget. The transport frame check
- * below stays the real hard limit. */
-export const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
-/** Audio is transcribed by the gateway, never sent to the model as bytes, so
- * it shares the video ceiling rather than the document budget. */
-export const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_TOTAL_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = MAX_ATTACHMENT_BYTES;
+export const MAX_AUDIO_BYTES = MAX_ATTACHMENT_BYTES;
 
 const DOCUMENT_MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
   [".pdf", "application/pdf"],
@@ -136,11 +131,8 @@ export function isAudioAttachment(file: File): boolean {
   return ACCEPTED_AUDIO_MIMES.has(mimeForFile(file));
 }
 
-/** Per-file ceiling: video and audio have their own, everything else shares one. */
-function fileSizeLimit(file: File, maxFileBytes: number): number {
-  if (isVideoAttachment(file)) return MAX_VIDEO_BYTES;
-  if (isAudioAttachment(file)) return MAX_AUDIO_BYTES;
-  return maxFileBytes;
+function projectedDecodedBytes(file: File, kind: AttachmentKind, maxFileBytes: number): number {
+  return kind === "image" ? Math.min(file.size, maxFileBytes, TARGET_MAX_BYTES) : file.size;
 }
 
 function projectedDataUrlBytes(
@@ -149,7 +141,7 @@ function projectedDataUrlBytes(
   maxFileBytes: number,
 ): number {
   const prefixBytes = `data:${mimeForFile(file)};base64,`.length;
-  const decodedBytes = kind === "image" ? Math.min(file.size, maxFileBytes) : file.size;
+  const decodedBytes = projectedDecodedBytes(file, kind, maxFileBytes);
   return prefixBytes + 4 * Math.ceil(decodedBytes / 3);
 }
 
@@ -218,19 +210,6 @@ function uuid(): string {
   return `img-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function bufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(
-      null,
-      bytes.subarray(i, i + chunk) as unknown as number[],
-    );
-  }
-  return btoa(binary);
-}
-
 async function encodeFile(file: File, maxFileBytes: number): Promise<{
   ok: true;
   dataUrl: string;
@@ -241,10 +220,20 @@ async function encodeFile(file: File, maxFileBytes: number): Promise<{
 }> {
   if (file.size > maxFileBytes) return { ok: false, reason: "too_large" };
   try {
-    const buffer = await file.arrayBuffer();
+    // Native asynchronous encoding avoids building a 100 MB binary string
+    // in JavaScript on the UI thread. Preserve the extension-resolved MIME.
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === "string"
+        ? resolve(reader.result)
+        : reject(new Error("File read failed"));
+      reader.onerror = () => reject(reader.error);
+      reader.onabort = () => reject(new Error("File read aborted"));
+      reader.readAsDataURL(file.slice(0, file.size, mimeForFile(file)));
+    });
     return {
       ok: true,
-      dataUrl: `data:${mimeForFile(file)};base64,${bufferToBase64(buffer)}`,
+      dataUrl,
       bytes: file.size,
     };
   } catch {
@@ -346,10 +335,10 @@ export function useAttachedImages({
         ),
         0,
       );
-      let projectedDecodedBytes = imagesRef.current.reduce(
+      let totalDecodedBytes = imagesRef.current.reduce(
         (total, image) => total + (
           image.encodedBytes
-          ?? (image.kind === "image" ? Math.min(image.file.size, maxFileBytes) : image.file.size)
+          ?? projectedDecodedBytes(image.file, image.kind, maxFileBytes)
         ),
         0,
       );
@@ -364,7 +353,7 @@ export function useAttachedImages({
           rejected.push({ file, reason: "empty_file" });
           continue;
         }
-        if (kind === "file" && file.size > fileSizeLimit(file, maxFileBytes)) {
+        if (file.size > maxFileBytes) {
           rejected.push({ file, reason: "too_large" });
           continue;
         }
@@ -372,11 +361,8 @@ export function useAttachedImages({
           rejected.push({ file, reason: "too_many_attachments" });
           continue;
         }
-        const nextDecodedBytes = kind === "image" ? Math.min(file.size, maxFileBytes) : file.size;
-        // The gateway keeps video and audio out of the shared attachment total
-        // too, so a clip must not evict the documents sent alongside it.
-        const countsTowardTotal = !isVideoAttachment(file) && !isAudioAttachment(file);
-        if (countsTowardTotal && projectedDecodedBytes + nextDecodedBytes > maxTotalBytes) {
+        const nextDecodedBytes = projectedDecodedBytes(file, kind, maxFileBytes);
+        if (totalDecodedBytes + nextDecodedBytes > maxTotalBytes) {
           rejected.push({ file, reason: "total_too_large" });
           continue;
         }
@@ -386,7 +372,7 @@ export function useAttachedImages({
           continue;
         }
         slot -= 1;
-        if (countsTowardTotal) projectedDecodedBytes += nextDecodedBytes;
+        totalDecodedBytes += nextDecodedBytes;
         projectedWireBytes += nextWireBytes;
         toAdd.push({
           id: uuid(),
@@ -406,7 +392,7 @@ export function useAttachedImages({
           queueMicrotask(() => {
             const work = entry.kind === "image"
               ? encodeImage(entry.file)
-              : encodeFile(entry.file, fileSizeLimit(entry.file, maxFileBytes));
+              : encodeFile(entry.file, maxFileBytes);
             work.then(
               (result) => {
                 if (result.ok) {

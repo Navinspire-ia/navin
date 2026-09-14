@@ -89,6 +89,7 @@ from navin.utils.media_templates import (
     MEDIA_TEMPLATES_METADATA_KEY,
     normalize_media_template_mentions,
 )
+from navin.utils.upload_limits import MAX_UPLOAD_REQUEST_BYTES
 from navin.webui.blocking_pool import blocking_pool_size, watch_pool_latency
 from navin.webui.cli_apps_api import normalize_cli_app_mentions
 from navin.webui.collab_tokens import (
@@ -173,11 +174,8 @@ class WebSocketConfig(Base):
     websocket_requires_token: bool = True
     allow_from: list[str] = Field(default_factory=lambda: ["*"])
     streaming: bool = True
-    # Default 36 MB, upper 40 MB: supports up to 4 images at ~6 MB each after
-    # client-side Worker normalization (see webui Composer). 4 × 6 MB × 1.37
-    # (base64 overhead) + envelope framing stays under 36 MB; the 40 MB ceiling
-    # leaves a small margin for sender slop without opening a DoS avenue.
-    max_message_bytes: int = Field(default=37_748_736, ge=1024, le=41_943_040)
+    # A 100 MB attachment needs about 134 MB once encoded as base64.
+    max_message_bytes: int = Field(default=MAX_UPLOAD_REQUEST_BYTES, ge=1024, le=160 * 1024 * 1024)
     ping_interval_s: float = Field(default=30.0, ge=5.0, le=300.0)
     # 20s was the websockets library default. The desktop WebView (Tauri /
     # WebView2 / WebKitGTK) often misses a pong while the UI thread paints
@@ -187,6 +185,12 @@ class WebSocketConfig(Base):
     ping_timeout_s: float = Field(default=120.0, ge=5.0, le=300.0)
     ssl_certfile: str = ""
     ssl_keyfile: str = ""
+
+    @field_validator("max_message_bytes")
+    @classmethod
+    def upgrade_legacy_frame_default(cls, value: int) -> int:
+        # Config saves persisted the former default even when never customized.
+        return MAX_UPLOAD_REQUEST_BYTES if value == 37_748_736 else value
 
     @field_validator("unix_socket_path")
     @classmethod
@@ -1291,7 +1295,9 @@ class WebSocketChannel(BaseChannel):
                         reason="malformed",
                     )
                     return
-                media_paths, reason = self._media.store_inbound_attachments(raw_media)
+                media_paths, reason = await asyncio.to_thread(
+                    self._media.store_inbound_attachments, raw_media,
+                )
                 if reason is not None:
                     await self._send_event(
                         connection,

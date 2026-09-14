@@ -22,10 +22,11 @@ from navin.config.secrets import RUNTIME_CONFIG_DENIED, is_runtime_secret_path
 from navin.security.workspace_access import WorkspaceScope
 from navin.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 from navin.utils import wsl
+from navin.utils.upload_limits import MAX_UPLOAD_FILE_BYTES
 
 MAX_FILE_PREVIEW_BYTES = 384 * 1024
 MAX_IMAGE_PREVIEW_BYTES = 8 * 1024 * 1024
-MAX_FILE_DOWNLOAD_BYTES = 64 * 1024 * 1024
+MAX_FILE_DOWNLOAD_BYTES = MAX_UPLOAD_FILE_BYTES
 # Saves travel as chunked base64 request headers (the gateway's HTTP layer has
 # no request bodies), so the cap must stay under the header-count limit raised
 # in navin.channels.websocket (640 headers) and under the Vite dev proxy's

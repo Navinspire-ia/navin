@@ -121,6 +121,8 @@ import {
 import {
   ACCEPT_ATTR,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_ATTACHMENT_BYTES,
+  MAX_TOTAL_ATTACHMENT_BYTES,
   isAudioAttachment,
   isVideoAttachment,
   useAttachedImages,
@@ -1025,6 +1027,8 @@ function ThreadComposerImpl({
 
   const maxAttachments = ingressLimits?.attachments.max_count
     ?? MAX_ATTACHMENTS_PER_MESSAGE;
+  const maxFileMb = (ingressLimits?.attachments.max_file_bytes ?? MAX_ATTACHMENT_BYTES) / (1024 * 1024);
+  const maxTotalMb = (ingressLimits?.attachments.max_total_bytes ?? MAX_TOTAL_ATTACHMENT_BYTES) / (1024 * 1024);
   const maxTextBytes = ingressLimits?.message.max_text_bytes ?? 64 * 1024;
   const { images, enqueue, remove, clear, restoreReadyImages, encoding, full } =
     useAttachedImages({ ingressLimits });
@@ -1037,15 +1041,19 @@ function ThreadComposerImpl({
         : reason === "empty_file"
           ? "Empty files cannot be attached"
           : reason === "total_too_large"
-            ? "Attachments are too large together - remove some or use smaller files"
+            ? `Attachments exceed ${maxTotalMb} MB per message`
             : reason === "transport_too_large"
               ? "This attachment would exceed the gateway transport limit"
               : reason === "too_large"
-                ? "File is too large"
+                ? `File exceeds ${maxFileMb} MB`
                 : "Unsupported file type";
-      return t(key, { max: maxAttachments, defaultValue: fallback });
+      return t(key, {
+        max: maxAttachments,
+        maxSize: reason === "total_too_large" ? maxTotalMb : maxFileMb,
+        defaultValue: fallback,
+      });
     },
-    [maxAttachments, t],
+    [maxAttachments, maxFileMb, maxTotalMb, t],
   );
 
   const textTooLargeMessage = useCallback(

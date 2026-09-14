@@ -17,8 +17,9 @@ import uuid
 from pathlib import Path
 
 from navin.utils.helpers import safe_filename
+from navin.utils.upload_limits import MAX_UPLOAD_FILE_BYTES
 
-DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_MAX_BYTES = MAX_UPLOAD_FILE_BYTES
 MAX_FILE_SIZE = DEFAULT_MAX_BYTES
 
 _DATA_URL_RE = re.compile(r"^data:([^;,]+)(?:;[^,]*)*;base64,(.+)$", re.DOTALL)
@@ -90,11 +91,15 @@ def save_base64_data_url(
 
     Returns the absolute path on success, ``None`` when the URL shape or the
     base64 payload itself is malformed. Raises :class:`FileSizeExceeded`
-    when the decoded payload is larger than ``max_bytes`` (default 10 MB).
+    when the decoded payload is larger than ``max_bytes`` (default 100 MB).
     """
     m = _DATA_URL_RE.match(data_url)
     if not m:
         return None
+    limit = DEFAULT_MAX_BYTES if max_bytes is None else max_bytes
+    # Reject oversized input before copying or decoding a potentially huge payload.
+    if m.end(2) - m.start(2) > 4 * ((limit + 2) // 3):
+        raise FileSizeExceeded(f"File exceeds {limit // (1024 * 1024)}MB limit")
     mime_type, b64_payload = m.group(1).strip().lower(), m.group(2)
     try:
         raw = base64.b64decode(b64_payload, validate=True)
@@ -102,7 +107,6 @@ def save_base64_data_url(
         return None
     if not raw:
         return None
-    limit = DEFAULT_MAX_BYTES if max_bytes is None else max_bytes
     if len(raw) > limit:
         raise FileSizeExceeded(f"File exceeds {limit // (1024 * 1024)}MB limit")
     ext = _MIME_EXTENSION_OVERRIDES.get(mime_type) or mimetypes.guess_extension(mime_type) or ".bin"
