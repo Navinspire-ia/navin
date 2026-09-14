@@ -1,0 +1,33 @@
+name: Publish npm launcher
+
+# Run this after the release workflow has attached the binaries for the tag:
+# the launcher downloads them on first use, so publishing earlier would ship
+# a package that cannot find its own binary.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Check the launcher version matches the crate
+        run: |
+          crate=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          launcher=$(node -p "require('./npm/package.json').version")
+          test "$crate" = "$launcher" || {
+            echo "Cargo.toml is $crate but npm/package.json is $launcher"
+            exit 1
+          }
+      - run: npm publish --provenance --access public
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

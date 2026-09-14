@@ -949,6 +949,11 @@ class AgentRunner:
                 context.model = spec.runtime.model
                 context.usage["model"] = spec.runtime.model
             self._accumulate_usage(usage, raw_usage)
+            # Live context meter: expose the latest request usage on the loop
+            # so the TUI can refresh the percentage mid-turn, not only at the
+            # end when session metadata is persisted.
+            with suppress(Exception):
+                setattr(spec.runtime, "_last_usage", dict(raw_usage))
             prompt_n = int(raw_usage.get("prompt_tokens") or 0)
             if prompt_n > peak_prompt_tokens:
                 peak_prompt_tokens = prompt_n

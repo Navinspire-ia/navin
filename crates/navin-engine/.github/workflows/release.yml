@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # The npm launcher verifies a binary before running it, so every asset
+      # ships with its checksum next to it.
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          archive="navin-engine-${{ matrix.target }}.tar.gz"
+          tar -czf "$archive" -C target/${{ matrix.target }}/release navin-engine
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        run: |
+          $archive = "navin-engine-${{ matrix.target }}.zip"
+          Compress-Archive -Path target/${{ matrix.target }}/release/navin-engine.exe -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          Set-Content -Path "$archive.sha256" -Value "$hash  $archive"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            navin-engine-${{ matrix.target }}.tar.gz
+            navin-engine-${{ matrix.target }}.tar.gz.sha256
+            navin-engine-${{ matrix.target }}.zip
+            navin-engine-${{ matrix.target }}.zip.sha256
+          fail_on_unmatched_files: false
+          generate_release_notes: true

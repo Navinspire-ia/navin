@@ -1,0 +1,33 @@
+{
+  "name": "navin-engine",
+  "version": "0.1.0",
+  "description": "Proves and measures code changes: fault-injection proofs for HTTP services and port-less workers, benchmarked variants, signed promotions, and an MCP server for AI coding agents",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "testing",
+    "benchmark",
+    "reliability",
+    "chaos-engineering",
+    "fault-injection",
+    "performance",
+    "ai-agents",
+    "ci"
+  ],
+  "homepage": "https://github.com/navinspire-ai/navin-engine",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navinspire-ai/navin-engine.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "navin-engine": "bin/navin-engine.js"
+  },
+  "files": [
+    "bin/navin-engine.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

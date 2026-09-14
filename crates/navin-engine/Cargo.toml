@@ -1,0 +1,46 @@
+[package]
+name = "navin-engine"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+description = "Proves and measures code changes: shadow isolation, fault-injection proofs, benchmarked variants, and an MCP server for AI coding agents"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/navinspire-ai/navin-engine"
+keywords = ["mcp", "testing", "benchmark", "reliability", "agent"]
+categories = ["development-tools::testing", "command-line-utilities"]
+
+[[bin]]
+name = "navin-engine"
+path = "src/main.rs"
+
+[lib]
+name = "navin_engine"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ed25519-dalek = "2"
+getrandom = "0.2"
+sysinfo = "0.33"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "signal", "sync", "time", "process", "fs"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
