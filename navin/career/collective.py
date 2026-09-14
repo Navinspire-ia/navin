@@ -208,14 +208,15 @@ def to_job(record: dict[str, Any], *, locale: str, track: str) -> dict[str, Any]
         return None
     company = record.get("company") if isinstance(record.get("company"), dict) else {}
     place = _location_label(record)
-    iso = infer_country_iso("", place) or ("FR" if locale == "fr" else "")
+    iso = infer_country_iso("", place)
     permanent = bool(record.get("isPermanentContract"))
     row_track = "jobs" if permanent else "freelance"
     if track in {"freelance", "jobs"} and row_track != track:
         return None
     kinds = normalize_contracts(["permanent"] if permanent else ["contractor"])
     prefs = [str(item).strip().upper() for item in (record.get("workPreferences") or []) if str(item).strip()]
-    remote = next((_REMOTE[item] for item in prefs if item in _REMOTE), "")
+    modes = {_REMOTE[item] for item in prefs if item in _REMOTE}
+    remote = "hybrid" if "hybrid" in modes or len(modes) > 1 else next(iter(modes), "")
     skills: list[str] = []
     for item in record.get("projectTypes") or []:
         name = skill_label(str(item))

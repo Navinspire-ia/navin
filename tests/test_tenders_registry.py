@@ -141,7 +141,7 @@ class TendersRegistryContractTest(unittest.TestCase):
         fixture = json.loads((ROOT / "webui/src/lib/tender-catalog-urls.json").read_text(encoding="utf-8"))
         live = [{"id": row["id"], "url": row["url"]} for row in catalog()]
         self.assertEqual(fixture, live)
-        self.assertEqual(len(live), 76)
+        self.assertEqual(len(live), 80)
         for row in live:
             self.assertTrue(str(row["url"]).startswith("https://"), row["id"])
 

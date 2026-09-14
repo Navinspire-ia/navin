@@ -152,6 +152,7 @@ export const MARKET_PRESETS = [
   "IE",
   "SE",
   "PL",
+  "AU",
 ] as const;
 
 /** Search starts here when the profile is empty or too narrow. */

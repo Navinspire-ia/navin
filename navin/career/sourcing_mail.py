@@ -64,8 +64,10 @@ def _advance(match: dict[str, Any], kind: str) -> None:
             match["interview"]["status"], match["next_action"] = after, action
 
 
-def proposal_rate(criteria: dict[str, Any], match: dict[str, Any]) -> float:
-    sale = float(criteria.get("sale_rate") or 0)
+def proposal_rate(criteria: dict[str, Any], match: dict[str, Any], offer: dict[str, Any] | None = None) -> float:
+    from navin.career.scope import offer_work_mode, selling_floor
+
+    sale = selling_floor(criteria, offer_work_mode(offer or {}))
     buy = float(match.get("purchase_rate") or 0)
     margin = float(criteria.get("margin_percent") or 0)
     return round(max(sale, buy / (1 - margin / 100) if buy else 0), 2)
@@ -303,6 +305,8 @@ def _send(store: CareerStore, state: dict[str, Any], match: dict[str, Any], offe
         body = ("Bonjour,\n\nMerci pour votre retour. Pour compléter votre candidature, il nous manque :\n" +
                 "\n".join("- " + item for item in missing) + "\n\nMerci de répondre à ce message.\n\n" + signature)
     elif kind == "client":
+        from navin.career.needs import is_project_need
+
         if match.get("interest") != "confirmed" or match.get("availability") != "confirmed" or not match.get("sharing_consent"):
             raise CareerError("Candidate consent is required before sending the profile to the client.")
         if not match.get("availability_detail"):
@@ -318,7 +322,7 @@ def _send(store: CareerStore, state: dict[str, Any], match: dict[str, Any], offe
             attachments.append(read_candidate_cv(store, candidate, "dossier"))
         elif criteria["require_dossier"]:
             raise CareerError("A skills dossier is required before client presentation.")
-        rate = proposal_rate(criteria, match)
+        rate = proposal_rate(criteria, match, offer)
         if match["score"] < criteria["min_score"]:
             raise CareerError("Candidate match is below the configured minimum score.")
         if offer.get("track") != "jobs" and (not rate or not match.get("purchase_rate")):
@@ -331,6 +335,8 @@ def _send(store: CareerStore, state: dict[str, Any], match: dict[str, Any], offe
             raise CareerError("Selling day rate exceeds the published client budget.")
         subject = f"[{ref}] Profil proposé : {offer['title']}"
         commercial = f"TJM proposé : {rate:.2f} {criteria['currency']} / jour.\n" if rate and offer.get("track") != "jobs" else ""
+        if is_project_need(offer):
+            commercial = "Le chiffrage du projet reste à établir selon le périmètre et les livrables.\n"
         if offer.get("track") == "jobs":
             salary = float(match.get("expected_salary") or 0)
             caps = [float(v) for v in (criteria["salary_max"], offer.get("salary_max")) if v]

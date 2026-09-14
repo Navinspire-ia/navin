@@ -17,7 +17,7 @@ from navin.career.errors import CareerError
 from navin.career.export import attach_exports
 from navin.career.jsonld import extract_jobpostings, jobposting_facts
 from navin.career.matching import score_opportunity
-from navin.career.normalize import enrich_facts
+from navin.career.normalize import enrich_facts, normalize_remote
 from navin.career.sources import (
     INBOX_CLASSES,
     STAGES,
@@ -252,13 +252,7 @@ def _normalize_ingest_row(row: dict[str, Any], body: dict[str, Any], profile: di
         ingest = "linkedin_mcp" if from_mcp or is_linkedin_url(url) else "ui_search"
     location = _first_text(row, "location", "location_name", "formattedLocation")
     description = html_to_text(_first_text(row, "description", "details", "snippet", "text"))[:4000]
-    remote = str(row.get("remote") or "").strip().lower()
-    if not remote:
-        hay = f"{title} {location} {description}".lower()
-        if "hybrid" in hay:
-            remote = "hybrid"
-        elif re.search(r"remote|teletravail|t[eé]l[eé]travail|work from home", hay):
-            remote = "remote"
+    remote = normalize_remote(row.get("remote"), title, location, description)
     return {
         "id": str(row.get("id") or stable_job_id(source, url or title, title or "Offer")),
         "source": source,
@@ -297,7 +291,8 @@ def ingest_hits(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
         job = _normalize_ingest_row(row, body, profile)
         if not job:
             continue
-        for key in ("daily_rate_min", "daily_rate_max", "salary_min", "salary_max", "posted_at", "published_at"):
+        for key in ("daily_rate_min", "daily_rate_max", "salary_min", "salary_max", "posted_at", "published_at",
+                    "need_type", "price_model", "budget", "budget_min", "budget_max", "deadline"):
             if key in row:
                 job[key] = row[key]
         enrich_facts(job)
@@ -358,7 +353,7 @@ def import_offer(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
         "url": url,
         "track": str(body.get("track") or profile.get("track") or "freelance"),
         "stage": "discovered",
-        "remote": "remote" if "remote" in f"{title} {description}".lower() else "",
+        "remote": normalize_remote(title, description),
         "ingest": "open_manual" if is_closed_job_url(url) else "paste",
         "application_email": str(body.get("application_email") or "").strip(),
         "application_email_source": "provided" if body.get("application_email") else "",
@@ -386,6 +381,10 @@ def import_offer(store: CareerStore, body: dict[str, Any]) -> dict[str, Any]:
             value = facts.get(key)
             if value not in (None, "", []):
                 row[key] = value
+    for key in ("need_type", "price_model", "budget", "budget_min", "budget_max", "deadline", "posted_at", "currency",
+                "daily_rate_min", "daily_rate_max", "remote"):
+        if key in body:
+            row[key] = body[key]
     enrich_facts(row, track=row["track"])
     scored = score_opportunity(row, profile)
     store.upsert_opportunities([scored])

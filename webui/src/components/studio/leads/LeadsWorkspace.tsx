@@ -14,6 +14,8 @@ import {
   MessageBar,
   MessageBarType,
   PrimaryButton,
+  Panel,
+  PanelType,
   ProgressIndicator,
   TextField,
   Toggle,
@@ -24,6 +26,7 @@ import "@/lib/fluent-icons";
 import { useTranslation } from "react-i18next";
 
 import { LeadFilters } from "@/components/studio/leads/LeadFilters";
+import { BrowserExtensionPanel } from "@/components/studio/career/BrowserExtensionPanel";
 import { LeadsActivity } from "@/components/studio/leads/LeadsActivity";
 import { LeadsStart } from "@/components/studio/leads/LeadsStart";
 import { sectorLabel } from "@/components/studio/leads/sector-label";
@@ -201,6 +204,7 @@ export function LeadsWorkspace({
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
   const [channelDraft, setChannelDraft] = useState<LeadsChannels>({});
   const [providersOpen, setProvidersOpen] = useState(false);
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
   const shellRef = useRef<HTMLDivElement>(null);
@@ -229,6 +233,13 @@ export function LeadsWorkspace({
 
   useEffect(() => {
     void load();
+    const refreshOnReturn = () => { if (document.visibilityState === "visible") void load(); };
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -511,6 +522,8 @@ export function LeadsWorkspace({
             ) : null}
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
+            <DefaultButton text="Extensions" iconProps={{ iconName: "PlugConnected" }}
+              styles={HEADER_BUTTON_STYLES} onClick={() => setExtensionsOpen(true)} data-testid="leads-extensions" />
             {onToggleChat ? (
               <IconButton
                 iconProps={{ iconName: chatOpen ? "ChatSolid" : "Chat" }}
@@ -736,6 +749,14 @@ export function LeadsWorkspace({
             ) : null}
           </AnimatePresence>
         </div>
+        {extensionsOpen && <Panel isOpen type={PanelType.large}
+          headerText="Leads · Extensions" closeButtonAriaLabel={i18n.language.startsWith("fr") ? "Fermer" : "Close"}
+          onDismiss={() => { setExtensionsOpen(false); void load(); }}>
+          <MessageBar>{i18n.language.startsWith("fr")
+            ? "Dans l'extension, choisissez Prospection commerciale pour enregistrer les contacts dans Leads. Vérifiez les fiches avant l'envoi."
+            : "In the extension, choose Commercial prospecting to save contacts in Leads. Review records before sending."}</MessageBar>
+          <BrowserExtensionPanel token={token || ""} />
+        </Panel>}
         <TradingLoopSchedulePanel
           key={`${scheduleMode}-${scheduleOpen ? "open" : "shut"}`}
           open={scheduleOpen}

@@ -33,7 +33,19 @@
   },
   {
     "id": "uae-procurement",
-    "url": "https://www.mof.gov.ae/"
+    "url": "https://mof.gov.ae/en/public-finance/government-procurement/current-business-opportunities/"
+  },
+  {
+    "id": "dubai-esupply",
+    "url": "https://esupply.dubai.gov.ae/"
+  },
+  {
+    "id": "dubai-isupplier",
+    "url": "https://isupplier.dubai.gov.ae/"
+  },
+  {
+    "id": "abu-dhabi-adgpg",
+    "url": "https://www.adgpg.gov.ae/en"
   },
   {
     "id": "monaqasat",
@@ -62,6 +74,10 @@
   {
     "id": "ungm",
     "url": "https://www.ungm.org/Public/Notice"
+  },
+  {
+    "id": "sap-discovery",
+    "url": "https://service.ariba.com/Discovery.aw"
   },
   {
     "id": "world-bank",

@@ -14,7 +14,7 @@ describe("company sourcing markets", () => {
   it("keeps the complete directory available before the gateway sends its catalogs", () => {
     const missions = missionSourcesForCountries(["AE", "MA"], []);
     expect(missions.map(source => source.id)).toEqual(expect.arrayContaining(["bayt", "gulftalent", "naukrigulf", "rekrute"]));
-    expect(DEFAULT_PLATFORM_CATALOG).toHaveLength(26);
+    expect(DEFAULT_PLATFORM_CATALOG).toHaveLength(33);
     expect(DEFAULT_PLATFORM_CATALOG.filter(source => platformRelevant(source.markets, ["AE", "MA"])).map(source => source.id))
       .toEqual(expect.arrayContaining(["linkedin", "freelancermap", "peopleperhour", "freelancer", "upwork"]));
   });

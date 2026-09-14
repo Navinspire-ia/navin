@@ -73,7 +73,7 @@ def test_a_failed_platform_keeps_other_platform_results_and_reports_rejections(s
     store.upsert_opportunities([offer()])
     def web(_, provider, query):
         assert provider == "public_web"
-        assert query.count("site:") == 1 and "F/H" not in query
+        assert query.count("site:") == (1 if "site:linkedin" in query else 2) and "F/H" not in query
         assert "France" in query and "intelligence artificielle" in query
         if "site:linkedin" in query:
             raise CareerError("Web search was limited by the provider.")

@@ -56,6 +56,7 @@ export interface TenderSource {
   url: string;
   api?: string;
   notes?: string;
+  recommended_for_consulting?: boolean;
 }
 
 export interface TenderNotice {

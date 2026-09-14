@@ -212,6 +212,12 @@ MARKETS: dict[str, dict[str, Any]] = {
         "aliases": ("freelance", "kontrakt"),
         "domains": ("pracuj.pl",),
     },
+    "AU": {
+        "label": "Australia", "langs": ("en",),
+        "cities": ("Sydney", "Melbourne", "Brisbane", "Perth"),
+        "aliases": ("freelance", "contractor", "contract"),
+        "domains": ("freelancer.com.au",),
+    },
 }
 
 # Search starts on Gulf + Maghreb + core Europe, not France alone.
@@ -1038,6 +1044,7 @@ def is_open_scrape_url(url: str) -> bool:
 
 
 CLOSED_FETCH_HOSTS = (
+    "freelancer.com.au",
     "adem.public.lu",
     "linkedin.com",
     "lnkd.in",
@@ -1420,6 +1427,9 @@ def _country_boards(country: str, q: str) -> list[dict[str, str]]:
     iso = (country or "").upper()
     enc = quote_plus(q)
     boards: dict[str, list[dict[str, str]]] = {
+        "AU": [
+            {"id": "au-freelancer", "label": "Freelancer Australia", "url": f"https://www.freelancer.com.au/jobs/?keyword={enc}", "country": "AU", "kind": "board"},
+        ],
         "FR": [
             {"id": "fr-freework", "label": "Free-Work", "url": f"https://www.free-work.com/fr/tech-it/jobs?query={enc}", "country": "FR", "kind": "board"},
             {"id": "fr-collective", "label": "Collective.work", "url": f"https://www.collective.work/jobs/fr?search={enc}", "country": "FR", "kind": "board"},

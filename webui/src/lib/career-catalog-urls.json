@@ -558,5 +558,13 @@
   {
     "id": "lu-adem",
     "url": "https://adem.public.lu/"
+  },
+  {
+    "id": "li-AU",
+    "url": "https://www.linkedin.com/jobs/search/?keywords=Data+Engineer&location=Australia&f_JT=C&f_WT=2"
+  },
+  {
+    "id": "au-freelancer",
+    "url": "https://www.freelancer.com.au/jobs/?keyword=Data+Engineer"
   }
 ]
