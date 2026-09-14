@@ -223,7 +223,30 @@ def _looks_like_navin_port(port: int) -> bool:
     return bool(html and html_looks_like_navin(html))
 
 
-def discover_running_project_url(*, preferred_port: int | None = None) -> str | None:
+def _listener_belongs_to_workspace(port: int, workspace: Path | None) -> bool:
+    """True when the process holding ``port`` runs inside the workspace.
+
+    Foreign dev servers (another project on the same machine, e.g. a Lynara
+    app on port 3000) must never be adopted as the workspace app: the agent
+    would preview the wrong app and the real one would never start. When we
+    cannot prove the listener belongs to the workspace, treat it as foreign.
+    """
+    if workspace is None:
+        return True
+    listener = who_listens(port)
+    if listener is None or not listener.cwd:
+        return False
+    try:
+        return Path(listener.cwd).resolve() == Path(workspace).resolve() or (
+            Path(workspace).resolve() in Path(listener.cwd).resolve().parents
+        )
+    except OSError:
+        return False
+
+
+def discover_running_project_url(
+    *, preferred_port: int | None = None, workspace: Path | None = None
+) -> str | None:
     """Return a loopback URL that is already serving a non-Navin project."""
     ports: list[int] = []
     if preferred_port and preferred_port not in _PROBE_PORTS:
@@ -237,6 +260,8 @@ def discover_running_project_url(*, preferred_port: int | None = None) -> str | 
         if not port_in_use("127.0.0.1", port):
             continue
         if _looks_like_navin_port(port):
+            continue
+        if not _listener_belongs_to_workspace(port, workspace):
             continue
         url = f"http://127.0.0.1:{port}"
         if http_reachable(url):
@@ -601,7 +626,11 @@ async def start_project_dev_server(
         if not _looks_like_navin_port(server.port) and http_reachable(
             f"http://127.0.0.1:{server.port}"
         ):
-            return None, None  # already up
+            # "Already up" is only true when the listener is actually this
+            # project (same cwd). A foreign app on the same port must not
+            # be adopted: fall through and start on the next free port.
+            if _listener_belongs_to_workspace(server.port, server.cwd):
+                return None, None  # already up
         if _looks_like_navin_port(server.port):
             return None, (
                 f"port {server.port} is Navin's editor, not the project. "
@@ -675,11 +704,20 @@ async def ensure_project_preview_url(
                 return None, (
                     f"{preferred_url} is the Navin editor, not the project app."
                 )
-            return preferred_url, None
+            if await asyncio.to_thread(
+                _listener_belongs_to_workspace, preferred_port, workspace
+            ):
+                return preferred_url, None
+            if not start_if_needed:
+                return preferred_url, None
+            # The preferred port is held by another app (not this workspace):
+            # fall through and start the workspace app on a free port instead
+            # of previewing the wrong project.
 
     running = await asyncio.to_thread(
         discover_running_project_url,
         preferred_port=preferred_port,
+        workspace=workspace,
     )
     if running:
         return running, None
@@ -709,7 +747,9 @@ async def ensure_project_preview_url(
     if not url:
         # Started but unknown port - scan again after a short boot window.
         await asyncio.sleep(2.0)
-        running = await asyncio.to_thread(discover_running_project_url)
+        running = await asyncio.to_thread(
+            discover_running_project_url, workspace=workspace
+        )
         if running:
             return running, None
         return None, (
@@ -721,7 +761,9 @@ async def ensure_project_preview_url(
         return url, None
 
     # Port might have shifted (e.g. Vite fell back).
-    running = await asyncio.to_thread(discover_running_project_url)
+    running = await asyncio.to_thread(
+        discover_running_project_url, workspace=workspace
+    )
     if running:
         return running, None
 

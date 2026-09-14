@@ -1086,7 +1086,7 @@ def apply_catalog(
         from navin.providers.model_capabilities import supports_vision
 
         computer_slug = next((slug for slug in (
-            "qwen/qwen3.8-max", "qwen/qwen3.8-flash", DEFAULT_VISION_MODEL,
+            ASTRA_MODEL, "qwen/qwen3.8-max", "qwen/qwen3.8-flash", DEFAULT_VISION_MODEL,
             ECONOMY_VISION_MODEL, FREE_VISION_MODEL,
         ) if slug in catalog_slugs and supports_vision(slug)), "")
         if computer_slug:

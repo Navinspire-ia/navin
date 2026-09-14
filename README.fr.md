@@ -110,6 +110,26 @@ Navin n'a pas à repartir de zéro à chaque session.
   <img src="./assets/memory-graph.gif" alt="Mémoires vers Project Brain puis Agent Loop" width="900">
 </p>
 
+## Project Graph + Code Index
+
+Navin cartographie chaque base de code sur laquelle il travaille. Deux couches, un même graphe interactif :
+
+- **Project Graph** (metagraph) : chaque fichier devient un nœud coloré par rôle (frontend, backend, config, test, docs), relié par ses imports et décrit en une phrase. À la question "où est géré X ?", l'agent répond avec la liste exacte de fichiers et la chaîne de dépendances, sans parcourir tout l'arbre. Le graphe s'affiche en direct dans l'onglet Graph du workbench Dev, depuis `.navin/metadata/`.
+- **Code Index** : navigation type-aware par-dessus la carte - définitions, références, appelants et appelés, plus l'analyse d'impact qui liste tous les appelants transitifs et les tests à risque avant de modifier une signature partagée.
+
+Résultat : l'agent navigue comme quelqu'un qui connaît le code, pas comme quelqu'un qui le lit pour la première fois.
+
+## Même modèle, une fraction des tokens
+
+Un agent de code brut paie l'impôt modèle à chaque tour : il relit les fichiers, redécouvre la structure et réimprime les diffs, tour après tour. Navin déplace ce travail sur votre machine :
+
+- **Project Graph + Code Index locaux** répondent à "où est géré ceci ?" sans jamais mettre l'arborescence dans le prompt - le modèle reçoit l'extrait exact, pas le dépôt.
+- **La mémoire projet durable** (Project Brain) porte les décisions, conventions et faits entre les sessions, donc l'agent ne réapprend pas votre code dans la fenêtre de contexte.
+- **Des résultats d'outils structurés** (diffs, bandes de graphe compactes, journaux d'exécution silencieux) gardent chaque étape lisible avec une surface facturée minuscule.
+- **Le routage tient compte des tokens en cache** - les longs tours agentifs réutilisent le contexte au lieu de le refacturer.
+
+Sur l'usage réel, ça se cumule : le même travail GPT-6 qui brûle ~100 $ de contexte chez un agent brut revient à ~10 $ sur Navin. Même modèle, même qualité, environ 10x moins de tokens facturés - parce que la partie coûteuse (comprendre votre code) se fait localement, une seule fois.
+
 ## Un seul workspace IA
 
 Navin relie beaucoup de workflows au même agent, à la même mémoire et au même contexte projet.

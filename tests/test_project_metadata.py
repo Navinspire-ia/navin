@@ -361,6 +361,20 @@ class RepoMapContextTest(_Tree):
         self.assertTrue(any(line.startswith("Project map") for line in lines))
         self.assertTrue(any(".navin/metadata map upkeep" in line for line in lines))
 
+    def test_map_tells_the_model_to_navigate_from_the_index(self) -> None:
+        """The standing hint must push graph/index-first navigation, not tours."""
+        from navin.agent.tools.metagraph import _MAP_MIN_FILES
+
+        self.write("core.py")
+        for i in range(_MAP_MIN_FILES + 5):
+            self.write(f"mod_{i}.py", "import core\n")
+        lines = self._lines()
+        guidance = " ".join(lines)
+        self.assertIn("metagraph", guidance)
+        self.assertIn("code_index", guidance)
+        self.assertIn("grep", guidance)
+        self.assertIn("scoped", guidance)
+
 
 class CursorRenameTest(unittest.TestCase):
     """``memory/.cursor`` read as Cursor IDE config to everyone who saw it."""

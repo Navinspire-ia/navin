@@ -52,7 +52,11 @@ class SkillCatalogTool(Tool):
             "lists skill names; use action=find with a few keywords to get "
             "descriptions and availability, then action=read name=<skill> to "
             "load the full SKILL.md before following it. action=list shows "
-            "every name."
+            "every name. action=graph walks the skill relation graph: give a "
+            "task description (query=) or a skill name (name=) and it returns "
+            "the best skills plus the related ones, so you can pick the "
+            "right playbook even when its description never mentions your "
+            "keywords."
         )
 
     @property
@@ -62,16 +66,26 @@ class SkillCatalogTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["find", "read", "list"],
-                    "description": "find (keyword search), read (full SKILL.md), list (all names)",
+                    "enum": ["find", "read", "list", "graph"],
+                    "description": (
+                        "find (keyword search), read (full SKILL.md), "
+                        "list (all names), graph (best skills for a task "
+                        "with the relations that link them)"
+                    ),
                 },
                 "query": {
                     "type": "string",
-                    "description": "Keywords for action=find, e.g. 'pdf report' or 'deploy docker'",
+                    "description": (
+                        "Keywords for action=find, e.g. 'pdf report' or "
+                        "'deploy docker'; task description for action=graph"
+                    ),
                 },
                 "name": {
                     "type": "string",
-                    "description": "Exact skill name for action=read",
+                    "description": (
+                        "Exact skill name for action=read; with action=graph, "
+                        "show the skills related to this one"
+                    ),
                 },
             },
             "required": ["action"],
@@ -101,6 +115,48 @@ class SkillCatalogTool(Tool):
     def _execute(self, action: str, query: str, name: str) -> Any:
         loader = self._loader()
         action = (action or "find").strip().lower()
+        if action == "graph":
+            from navin.agent.skills_graph import build_skills_graph
+
+            graph = build_skills_graph(loader)
+            if (name or "").strip():
+                key = name.strip()
+                if key not in graph.nodes:
+                    return self.error(f"skill not found: {key}. Use action=list to see names.")
+                edges = graph.related(key, limit=6)
+                if not edges:
+                    return f"No related skill for '{key}'."
+                lines = [f"Skills related to **{key}**:"]
+                for edge in edges:
+                    node = graph.nodes.get(edge.dst)
+                    status = "" if (node and node.available) else " (unavailable)"
+                    lines.append(
+                        f"- **{edge.dst}**{status} - {edge.kind} relation "
+                        f"(weight {edge.weight}) - {node.description if node else ''}"
+                    )
+                lines.append(
+                    "\nLoad one with `skill action=read name=<name>` before applying it."
+                )
+                return "\n".join(lines)
+            if not (query or "").strip():
+                return self.error("action=graph requires query=<task description> or name=<skill>")
+            rows = graph.suggest(query, limit=6)
+            if not rows:
+                return (
+                    f"No skill matches '{query}'. Use action=list to see every "
+                    "name, or proceed without a skill."
+                )
+            lines = ["Best skills for this task (graph-ranked):"]
+            for row in rows:
+                status = ""
+                if not row["available"]:
+                    status = f" (unavailable: {row.get('missing') or 'missing dependencies'})"
+                via = f" - related to {row['via']}" if row.get("via") else ""
+                lines.append(f"- **{row['name']}**{status}{via} - {row['description']}")
+            lines.append(
+                "\nLoad one with `skill action=read name=<name>` before applying it."
+            )
+            return "\n".join(lines)
         if action == "find":
             if not (query or "").strip():
                 return self.error("action=find requires query=<keywords>")

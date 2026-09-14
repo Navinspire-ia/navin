@@ -79,6 +79,12 @@ const TOOL_ACTIVITY_LABELS: Record<string, ActivityLabel> = {
 };
 
 const TOOL_ACTION_LABELS: Record<string, Record<string, ActivityLabel>> = {
+  skill: {
+    graph: label("skillGraph", "Ranked skills for the task"),
+    find: label("skillFind", "Searched the skill catalog"),
+    read: label("skillRead", "Loaded a skill"),
+    list: label("skillList", "Listed skills"),
+  },
   git: {
     status: label("gitStatus", "Checked git status"),
     diff: label("gitDiff", "Reviewed git diff"),
