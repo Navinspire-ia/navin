@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { DEFAULT_PLATFORM_CATALOG, missionSourcesForCountries, platformRelevant, type CompanyAutofillField, type MissionSource, type ProspectCriteria } from "./career-prospecting";
+import { DEFAULT_PLATFORM_CATALOG, missionSourcesForCountries, platformRelevant, suggestedMissionSources, type CompanyAutofillField, type MissionSource, type ProspectCriteria } from "./career-prospecting";
 import { careerValueKey, skillsForCareerRoles, uniqueCareerValues } from "./career-role-matrix";
 
 const split = (value: string) => value.split(",").map(part => part.trim()).filter(Boolean);
@@ -55,6 +55,8 @@ function profileSkills(criteria: ProspectCriteria, language: string): string[] {
 }
 
 export function initializeCompanyCriteria(criteria: ProspectCriteria, language: string, catalog?: MissionSource[]): ProspectCriteria {
+  const legacyFloor = Math.max(criteria.sale_rate || 0, criteria.min_rate || 0);
+  criteria = { ...criteria, sale_rate_remote: criteria.sale_rate_remote ?? legacyFloor, sale_rate_onsite: criteria.sale_rate_onsite ?? legacyFloor };
   if (criteria.autofill?.version === 1) return roleSettings(criteria, language);
   let next: ProspectCriteria = { ...criteria, autofill: { version: 1, generated: {}, dismissed: {} } };
   next.autofill!.generated.sources = criteria.sources.filter(id => missionSourcesForCountries([], catalog).some(source => source.id === id && !source.provider));
@@ -67,7 +69,7 @@ export function initializeCompanyCriteria(criteria: ProspectCriteria, language: 
   if (!next.profile_roles.length || next.autofill!.generated.profile_roles) next = sync(next, "profile_roles", next.roles);
   if (!next.profile_domain.trim() || next.autofill!.generated.profile_domain) next = sync(next, "profile_domain", split(next.domain));
   if (!next.profile_skills.length || next.autofill!.generated.profile_skills) next = sync(next, "profile_skills", profileSkills(next, language));
-  next = sync(next, "sources", missionSourcesForCountries(next.countries, catalog).filter(source => !source.provider).map(source => source.id));
+  next = sync(next, "sources", suggestedMissionSources(next.countries, next.track, catalog));
   return roleSettings(sync(next, "platforms", publicPlatforms(next)), language);
 }
 
@@ -92,7 +94,7 @@ export function updateCompanyCriteria<K extends keyof ProspectCriteria>(criteria
   }
   if (field === "roles" || field === "skills" || field === "profile_roles") next = sync(next, "profile_skills", profileSkills(next, language));
   if (field === "domain") next = sync(next, "profile_domain", split(next.domain));
-  if (field === "countries") next = sync(next, "sources", missionSourcesForCountries(next.countries, catalog).filter(source => !source.provider).map(source => source.id));
+  if (field === "countries" || field === "track") next = sync(next, "sources", suggestedMissionSources(next.countries, next.track, catalog));
   if (field === "countries" || field === "profile_countries") next = sync(next, "platforms", publicPlatforms(next));
   return roleSettings(next, language);
 }

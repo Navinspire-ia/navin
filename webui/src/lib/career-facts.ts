@@ -20,6 +20,9 @@ export type OfferFactCopy = {
   workHybrid: string;
   workOnsite: string;
   perDay: string;
+  needType?: string;
+  projectBudget?: string;
+  deadline?: string;
   /** Optional: the boards' card lines (Free-Work style). Missing copy hides the fact. */
   perYear?: string;
   dayRate?: string;
@@ -160,8 +163,8 @@ function parsedFacts(row: CareerOpportunity): {
   let remote = String(row.remote || "")
     .trim()
     .toLowerCase();
-  if (!remote && /\bhybrid\b/i.test(text)) remote = "hybrid";
-  else if (!remote && /\b(remote|teletravail|work from home)\b/i.test(text)) remote = "remote";
+  if (row.remote == null && /\bhybrid\b/i.test(text)) remote = "hybrid";
+  else if (row.remote == null && /\b(remote|teletravail|work from home)\b/i.test(text)) remote = "remote";
 
   const min = Number(row.hybrid_days_min);
   const max = Number(row.hybrid_days_max);
@@ -222,6 +225,11 @@ export function offerFacts(
   const rowTrack = String(row.track || track || "");
   const currency = String(row.currency || parsed.currency || "");
   const facts: OfferFact[] = [];
+  const consultation = ["rfp", "rfq", "rfi", "eoi", "sow"].includes(row.need_type || "");
+  const project = row.price_model === "fixed" || (consultation && !["daily", "hourly"].includes(row.price_model || "")
+    && row.daily_rate_min == null && row.daily_rate_max == null && row.compensation == null);
+  if (consultation && copy.needType) facts.push({ id: "need", label: copy.needType, value: row.need_type!.toUpperCase() });
+  if (row.deadline && copy.deadline) facts.push({ id: "deadline", label: copy.deadline, value: row.deadline.slice(0, 10) });
 
   const kinds = offerContracts(row);
   if (copy.contract) {
@@ -240,7 +248,10 @@ export function offerFacts(
   const dayText = formatPayRange(day.min, day.max, currency, "day", copy.perDay, locale);
   const yearText = formatPayRange(year.min, year.max, currency, "year", copy.perYear || "", locale);
   const hasRange = Boolean(dayText || yearText);
-  if (hasRange && copy.salary && copy.dayRate) {
+  if (project) {
+    const budget = currency ? formatPayRange(row.budget_min, row.budget_max ?? row.budget, currency, "day", "", locale) : "";
+    facts.push({ id: "budget", label: copy.projectBudget || copy.pay, value: budget || copy.unknown });
+  } else if (hasRange && copy.salary && copy.dayRate) {
     if (yearText || rowTrack === "jobs") facts.push({ id: "salary", label: copy.salary, value: yearText || copy.unknown });
     if (dayText || rowTrack === "freelance") facts.push({ id: "dayrate", label: copy.dayRate, value: dayText || copy.unknown });
   } else {

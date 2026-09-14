@@ -52,6 +52,22 @@ function job(partial: Partial<CareerOpportunity> & { id: string }): CareerOpport
 }
 
 describe("career offer facts", () => {
+  it("shows marketplace RFP budgets and deadlines without a daily suffix", () => {
+    const facts = offerFacts(job({ need_type: "rfp", price_model: "fixed", budget_min: 20000, budget_max: 25000,
+      daily_rate_max: 700, compensation: 700, currency: "EUR", track: "freelance", deadline: "2026-10-01" }),
+      { ...BOARD_COPY, projectBudget: "Budget projet", needType: "Type de besoin", deadline: "Date limite" });
+    expect(facts.find(f => f.id === "need")?.value).toBe("RFP");
+    expect(facts.find(f => f.id === "budget")?.value).toBe("20000-25000 €");
+    expect(facts.find(f => f.id === "deadline")?.value).toBe("2026-10-01");
+    expect(facts.some(f => ["dayrate", "salary", "pay"].includes(f.id))).toBe(false);
+  });
+
+  it("does not invent a currency or a day rate for an undisclosed RFP budget", () => {
+    const facts = offerFacts(job({ need_type: "sow", budget: 20000, track: "freelance" }), BOARD_COPY);
+    expect(facts.find(f => f.id === "budget")?.value).toBe(COPY.unknown);
+    expect(facts.some(f => f.id === "dayrate")).toBe(false);
+  });
+
   it("shows posted city, country, remote mode, pay and duration without guessing missing fields", () => {
     const facts = offerFacts(
       job({

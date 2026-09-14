@@ -1,0 +1,14 @@
+body { margin: 0; background: #f6f8fb; color: #15263c; font-family: "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+h1, h2 { text-wrap: balance; }
+p { line-height: 1.55; text-wrap: pretty; }
+button, input, select { min-height: 40px; }
+textarea { min-height: 150px; }
+button:focus-visible, a:focus-visible { outline: 2px solid #155bba; outline-offset: 3px; }
+@media (max-width: 700px) { main div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; } }
+@media (max-width: 500px) {
+  main { padding: 20px 16px 40px !important; }
+  h1 { font-size: 24px !important; }
+  .ms-Button { height: auto; min-height: 44px; padding-top: 8px; padding-bottom: 8px; }
+  .ms-Button-label { white-space: normal; line-height: 1.35; overflow-wrap: anywhere; }
+}

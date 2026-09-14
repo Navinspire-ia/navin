@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from loguru import logger
 
+from navin.career.normalize import normalize_remote
 from navin.career.sources import (
     MARKETS,
     clean_job_text,
@@ -69,7 +70,6 @@ _CRITERIA_RE = re.compile(
     r'<span[^>]*class="description__job-criteria-text[^"]*"[^>]*>\s*(.*?)\s*</span>',
     re.S,
 )
-_REMOTE_RE = re.compile(r"\b(remote|t[ée]l[ée]travail|hybrid|hybride|full remote)\b", re.I)
 
 
 class LinkedInWallError(RuntimeError):
@@ -174,7 +174,7 @@ def to_job(card: dict[str, Any], detail: dict[str, Any] | None, *, country: str,
     title = str(card.get("title") or "")
     url = str(card.get("url") or "")
     location = str(card.get("location") or "")
-    iso = infer_country_iso(country, location) or country
+    iso = infer_country_iso("", location)
     hay = f"{title} {location} {detail.get('description', '')[:400]}"
     return {
         "id": stable_job_id("linkedin", url, title),
@@ -187,7 +187,7 @@ def to_job(card: dict[str, Any], detail: dict[str, Any] | None, *, country: str,
         "currency": "",
         "stack": [],
         "seniority": str(detail.get("seniority") or ""),
-        "remote": "remote" if _REMOTE_RE.search(hay) else "",
+        "remote": normalize_remote(hay),
         "posted_at": str(card.get("posted_at") or ""),
         "contact": "",
         "description": str(detail.get("description") or ""),

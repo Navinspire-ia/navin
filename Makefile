@@ -349,9 +349,7 @@ native: _ensure_navin
 	@cp navin-sandbox/target/release/navin-sandbox navin/resources/bin/navin-sandbox
 	@chmod +x navin/resources/bin/navin-sandbox
 	@chmod +x navin/resources/bin/navin-sandbox
-	@# Le moteur vit dans son propre dépôt (submodule): un clone frais arrive
-	@# avec le répertoire vide.
-	@test -f crates/navin-engine/Cargo.toml || git submodule update --init crates/navin-engine
+	@test -f crates/navin-engine/Cargo.toml || { echo "$(RED)crates/navin-engine manquant$(NC)"; exit 1; }
 	@cd crates/navin-engine && cargo build --release
 	@cp crates/navin-engine/target/release/navin-engine navin/resources/bin/navin-engine
 	@echo "$(GREEN)✓ Extension native + binaires sandbox et moteur installés$(NC)"

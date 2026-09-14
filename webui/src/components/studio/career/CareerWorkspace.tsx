@@ -37,6 +37,7 @@ import { browserTimeZone } from "@/lib/trading-loop-schedule";
 import { CareerFilters } from "@/components/studio/career/CareerFilters";
 import { CareerWizard } from "@/components/studio/career/CareerWizard";
 import { CareerProspecting, type ProspectTab } from "./CareerProspecting";
+import { BrowserExtensionPanel } from "./BrowserExtensionPanel";
 import { prospectingError } from "@/lib/career-prospecting";
 import { DeskReset } from "../DeskReset";
 import {
@@ -298,6 +299,9 @@ function factsCopy(tx: Tx): OfferFactCopy {
     perDay: tx("factPerDay", "/day"),
     perYear: tx("factPerYear", "/yr"),
     dayRate: tx("factDayRate", "Day rate"),
+    needType: tx("factNeedType", "Need type"),
+    projectBudget: tx("factProjectBudget", "Project budget"),
+    deadline: tx("factDeadline", "Deadline"),
     salary: tx("factSalary", "Salary"),
     contract: tx("factContract", "Contract"),
     experience: tx("factExperience", "Experience"),
@@ -404,6 +408,7 @@ export function CareerWorkspace({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<"start" | "edit">("start");
   const [mailSettingsOpen, setMailSettingsOpen] = useState(false);
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
   const [prospectPanel, setProspectPanel] = useState<{ tab: ProspectTab; offer: string } | null>(null);
   const headerRef = useRef<HTMLElement>(null);
   const [headerWidth, setHeaderWidth] = useState(0);
@@ -1147,7 +1152,11 @@ export function CareerWorkspace({
               ] }} />
           </div>
         </header>
-
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 20px 8px", flexShrink: 0 }}>
+          <DefaultButton text="Extensions" iconProps={{ iconName: "Puzzle" }} styles={HEADER_BUTTON_STYLES}
+            title={lang === "fr" ? "Télécharger et installer pour Chrome, Edge ou Firefox" : "Download and install for Chrome, Edge or Firefox"}
+            onClick={() => setExtensionsOpen(true)} data-testid="career-extensions" />
+        </div>
 
         <div
           data-testid="career-scroll"
@@ -1365,6 +1374,11 @@ export function CareerWorkspace({
             </motion.div>
           </AnimatePresence>
         </div>
+        {extensionsOpen && <Panel isOpen type={PanelType.large} styles={DESK_PANEL_STYLES}
+          headerText={lang === "fr" ? "Carrière · Extensions" : "Career · Extensions"}
+          closeButtonAriaLabel={lang === "fr" ? "Fermer" : "Close"} onDismiss={() => setExtensionsOpen(false)}>
+          <BrowserExtensionPanel token={token || ""} />
+        </Panel>}
         <TradingLoopSchedulePanel
           key={`${scheduleMode}-${scheduleOpen ? "open" : "shut"}`}
           open={scheduleOpen}
@@ -1892,7 +1906,7 @@ function OfferCard({
     return fact && fact.value !== copy.unknown ? fact : null;
   };
   const side: { id: string; label: string; value: string }[] = [];
-  for (const id of ["start", "duration", "salary", "dayrate", "pay", "remote"]) {
+  for (const id of ["need", "budget", "deadline", "start", "duration", "salary", "dayrate", "pay", "remote"]) {
     const fact = known(id);
     if (fact) side.push(fact);
   }

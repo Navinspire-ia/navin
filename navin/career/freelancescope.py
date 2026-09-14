@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from navin.career.errors import CareerError
 from navin.career.jsonld import jobposting_rows
-from navin.career.sources import stable_job_id
+from navin.career.sources import infer_country_iso, stable_job_id
 
 BASE = "https://www.freelancescope.fr"
 
@@ -36,14 +36,15 @@ def parse_missions(body: str) -> list[dict[str, Any]]:
         company_line = anchor.parent.parent.find("p")
         company = company_line.get_text(" ", strip=True).split("·")[0].strip() if company_line else ""
         location = card.select_one("ul li")
+        place = location.get_text(" ", strip=True).split("·")[0].strip() if location else ""
         skills = [s.get_text(" ", strip=True) for s in card.select('[data-slot="badge"]')]
         published = card.find("time")
         url = BASE + path
         rows.append({"id": stable_job_id("freelancescope", url, title), "source": "freelancescope",
                      "title": title, "description": description, "company": company,
-                     "location": location.get_text(" ", strip=True).split("·")[0].strip() if location else "",
+                     "location": place,
                      "stack": skills, "published_at": published.get("datetime", "") if published else "",
-                     "url": url, "country": "FR", "track": "freelance", "stage": "discovered",
+                     "url": url, "country": infer_country_iso("", place), "track": "freelance", "stage": "discovered",
                      "attribution": "FreelanceScope - catalogue public", "ingest": "public_card"})
     return rows
 

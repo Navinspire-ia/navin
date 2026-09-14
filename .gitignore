@@ -180,6 +180,8 @@ temp/
 *.tmp
 exp/
 .playwright-mcp/
+/navin/browser_extension/
+/browser-extension/dist/
 bridge/node_modules/
 meetily/
 # Etat local de l'agent Navin (memoire/persona), jamais versionne.

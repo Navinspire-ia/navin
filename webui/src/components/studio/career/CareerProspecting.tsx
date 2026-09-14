@@ -11,11 +11,12 @@ import type { CareerDesk } from "@/lib/career-api";
 import { emptyProspecting, downloadCandidate, sourcingStatusText, type CandidateMatch } from "@/lib/career-prospecting";
 import { localizeCareerValue } from "@/lib/career-role-matrix";
 import { CareerCompanySetup } from "./CareerCompanySetup";
+import { BrowserExtensionPanel } from "./BrowserExtensionPanel";
 import { saveArchive } from "@/lib/desk-archive";
 import { CareerScene } from "./CareerScene";
 import { BUTTON_STYLES, openOfficialCareerUrl } from "./career-ui";
 
-export type ProspectTab = "dashboard" | "criteria" | "profiles" | "matches" | "platforms";
+export type ProspectTab = "dashboard" | "criteria" | "profiles" | "matches" | "platforms" | "accounts";
 type Run = (action: string, body?: Record<string, unknown>) => Promise<CareerDesk | null>;
 export function CareerProspecting({ desk, initialTab, offerId, busy, error, token, onMail, onSchedule, onRun, onDismiss }: {
   desk: CareerDesk; initialTab: ProspectTab; offerId: string; busy: boolean; error: string;
@@ -73,6 +74,7 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
         <PivotItem itemKey="profiles" headerText={c("Profils", "Profiles")} itemCount={state.candidates.length} />
         <PivotItem itemKey="matches" headerText={c("Matching et suivi", "Matches and tracking")} />
         <PivotItem itemKey="platforms" headerText={c("Plateformes et API", "Platforms and APIs")} />
+        <PivotItem itemKey="accounts" headerText={c("Extension navigateur", "Browser extension")} />
       </Pivot>
       <motion.div key={tab} initial={reduced ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
         {tab === "dashboard" && <Stack tokens={{ childrenGap: 18 }}>
@@ -107,7 +109,9 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
             </tr>)}</tbody></table></div>
         </Stack>}
         {(tab === "criteria" || tab === "platforms") && <CareerCompanySetup key={tab} desk={desk} initialStep={tab === "platforms" ? 3 : 0}
+          onAccounts={() => setTab("accounts")}
           busy={busy} token={token} run={onRun} onMail={onMail} onSchedule={onSchedule} onFinish={() => setTab("dashboard")} />}
+        {tab === "accounts" && <BrowserExtensionPanel token={token} />}
         {tab === "profiles" && <Stack tokens={{ childrenGap: 16 }}>
           <h3 className="text-lg font-semibold">{c("Vivier de candidats", "Candidate pool")} · {state.candidates.length}</h3>
           <p>{c("Profils sauvegardés et réutilisables. Les observations publiques ne constituent ni un CV complet ni une confirmation de disponibilité.", "Saved, reusable profiles. Public observations are neither a complete resume nor confirmed availability.")}</p>
@@ -205,6 +209,8 @@ export function CareerProspecting({ desk, initialTab, offerId, busy, error, toke
           {Object.entries(s.rejected || {}).filter(([, count]) => count > 0).map(([reason, count]) => <p key={reason}>
             {count} {c("écarté(s)", "excluded")} : {({ country: c("pays hors périmètre ou inconnu", "country outside scope or unknown"), role: c("métier différent", "different role"), track: c("type de contrat différent", "different engagement"),
               rate: c("TJM inférieur au minimum", "day rate below minimum"), rate_unknown: c("TJM non vérifié", "unverified day rate"), work_mode: c("mode de travail différent", "different work mode"),
+              budget: c("budget projet inférieur au minimum", "project budget below minimum"), budget_unknown: c("budget projet non vérifié", "unverified project budget"),
+              skills: c("compétences requises non vérifiées", "required skills not verified"), city: c("ville différente ou inconnue", "different or unknown city"), expired: c("date limite dépassée", "deadline passed"),
               work_mode_unknown: c("mode de travail non précisé", "unspecified work mode"), date: c("date hors de la période autorisée", "date outside allowed period"), date_unknown: c("date de publication inconnue", "unknown publication date"),
               platform: c("page hors des profils de la plateforme sélectionnée", "page outside the selected platform's profiles"),
               availability_unknown: c("aucun signal public de disponibilité", "no public availability signal"),

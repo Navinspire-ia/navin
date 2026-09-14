@@ -99,6 +99,7 @@ datas = (
     + bundle_contents.template_data()
     + bundle_contents.script_data()
     + bundle_contents.extra_data()
+    + bundle_contents.browser_extension_data()
     + bundle_contents.ffmpeg_data()
     + bundle_contents.typescript_data()
 )

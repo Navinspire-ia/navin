@@ -245,12 +245,14 @@ include = [
     "navin/skills/**/*.py",
     "navin/skills/**/*.csv",
     "navin/web/dist/**/*",
+    "navin/browser_extension/*.zip",
 ]
 # navin/web/dist/ is produced by `cd webui && bun run build` and is
 # git-ignored. List it as an artifact so hatch ships it in both wheel and
 # sdist even though VCS does not track it.
 artifacts = [
     "navin/web/dist/**/*",
+    "navin/browser_extension/*.zip",
 ]
 
 [tool.hatch.build.targets.wheel]

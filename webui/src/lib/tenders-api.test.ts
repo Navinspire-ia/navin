@@ -55,7 +55,7 @@ describe("tenders desk links", () => {
   });
 
   it("sends every catalog portal out of the IDE", () => {
-    expect(catalogUrls).toHaveLength(76);
+    expect(catalogUrls).toHaveLength(80);
     for (const row of catalogUrls) {
       const href = officialTenderHref(row.url);
       expect(href, row.id).toBeTruthy();

@@ -35,6 +35,7 @@ from navin.career.normalize import (
 from navin.career.sources import (
     clean_job_text,
     html_to_text,
+    infer_country_iso,
     is_listing_hit,
     stable_job_id,
 )
@@ -301,14 +302,14 @@ def to_job(record: dict[str, Any], *, country: str, track: str) -> dict[str, Any
     slug = str(record.get("slug") or "").strip()
     if not title or not slug:
         return None
-    iso = (country or "").strip().upper() if locale_for(country) else "FR"
-    locale = locale_for(iso)
+    locale = locale_for(country) or "fr"
     job = record.get("job") if isinstance(record.get("job"), dict) else {}
     url = job_url(locale, str(job.get("slug") or "").strip(), slug)
     if is_listing_hit(title, url):
         return None
     company = record.get("company") if isinstance(record.get("company"), dict) else {}
     location = record.get("location") if isinstance(record.get("location"), dict) else {}
+    iso = infer_country_iso("", str(location.get("label") or ""))
     contracts = [str(item).strip().lower() for item in (record.get("contracts") or []) if str(item).strip()]
     row_track = _track_for(contracts, (track or "").strip().lower())
     daily = clean_job_text(str(record.get("dailySalary") or "")).strip()

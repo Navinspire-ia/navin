@@ -149,6 +149,7 @@ def collect(
         crafts=list(crafts or []),
         tender_types=list(tender_types or []),
         project_types=list(project_types or []),
+        source_ids=list(selected),
     )
     wanted_countries = {str(row.get("country") or "").upper() for row in wanted}
     for row in catalog():
@@ -217,6 +218,7 @@ def collect(
             tender_types=list(tender_types or []),
             project_types=list(project_types or []),
             queries=queries,
+            source_ids=list(selected),
         )
         tenders.extend(net.get("tenders") or [])
         by_source = net.get("by_source") or {}

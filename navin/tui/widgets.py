@@ -1582,7 +1582,20 @@ class AssistantMessage(Vertical):
         preview = await self._ready_preview()
         if preview is None:
             return
-        await self.mount(ProgressLine(text), before=preview)
+        # Interim narration replaces the previous line instead of stacking:
+        # each tool batch would otherwise leave its sentence on screen forever.
+        if self._progress_line is not None and self._progress_line.is_attached:
+            self._progress_line.update(text)
+            return
+        line = ProgressLine(text)
+        self._progress_line = line
+        await self.mount(line, before=preview)
+
+    def _drop_progress_line(self) -> None:
+        line = self._progress_line
+        self._progress_line = None
+        if line is not None and line.is_attached:
+            line.remove()
 
     async def subagent(
         self,
@@ -1751,6 +1764,7 @@ class AssistantMessage(Vertical):
     async def set_text(self, text: str, *, render_as: str = "markdown") -> None:
         if not self.is_attached:
             return
+        self._drop_progress_line()
         await self.stream_end()
         self._buffer = [text]
         if self.finished or looks_like_client_prompt(text):
@@ -1798,6 +1812,7 @@ class AssistantMessage(Vertical):
         if not self.is_attached:
             return
         await self.stream_end()
+        self._drop_progress_line()
         if not self.is_attached:
             return
         self.finished = True

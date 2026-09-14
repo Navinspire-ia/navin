@@ -692,7 +692,7 @@ class GatewayHTTPHandler:
             return response
 
         # Session routes
-        response = await self._dispatch_session_routes(request, got)
+        response = await self._dispatch_session_routes(request, got, connection)
         if response is not None:
             return response
 
@@ -828,7 +828,7 @@ class GatewayHTTPHandler:
 
     # -- Session routes -----------------------------------------------------
 
-    async def _dispatch_session_routes(self, request: WsRequest, got: str) -> Response | None:
+    async def _dispatch_session_routes(self, request: WsRequest, got: str, connection: Any = None) -> Response | None:
         m = re.match(r"^/api/sessions/([^/]+)/messages$", got)
         if m:
             # JSONL parse + history scrub can be hundreds of ms on a long
@@ -1004,6 +1004,8 @@ class GatewayHTTPHandler:
             return await self._handle_tenders(request)
         if re.match(r"^/api/career$", got):
             return await self._handle_career(request)
+        if re.match(r"^/api/browser-bridge$", got):
+            return await self._handle_browser_bridge(request, connection)
         if re.match(r"^/api/accounts$", got):
             return await self._handle_accounts(request)
         if re.match(r"^/api/leads$", got):
@@ -2719,6 +2721,33 @@ class GatewayHTTPHandler:
         except (ValueError, WebUIFilePreviewError):
             return _http_error(400, "invalid account payload")
 
+    async def _handle_browser_bridge(self, request: WsRequest, connection: Any = None) -> Response:
+        from navin.career.errors import CareerError
+        from navin.webui.browser_bridge import BrowserBridge
+
+        action = (_query_first(_parse_query(request.path), "action") or "status").strip()
+        try:
+            raw = file_body_from_headers(request.headers) or "{}"
+            if len(raw) > 1100000:
+                raise CareerError("L'import dépasse la limite de 1 Mo.", status=413)
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                raise CareerError("Le contenu de l'import est invalide.")
+            token = request.headers.get("X-Navin-Browser-Token", "")
+            local = self._runtime_surface == "native" or _is_same_machine_client(connection)
+            payload = await asyncio.to_thread(BrowserBridge().handle, action, body, token=token, local=local)
+            response = _http_json_response(payload)
+        except (CareerError, WebUIFilePreviewError) as exc:
+            response = _http_error(exc.status, exc.message)
+        except ValueError:
+            response = _http_error(400, "Contenu d'import invalide.")
+        except Exception:
+            # Never log request headers, credentials or imported private content.
+            response = _http_error(500, "L'import a échoué. Réessayez depuis l'extension.")
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
     async def _handle_career(self, request: WsRequest) -> Response:
         """Navin Career desk (Freelance + Jobs). Same store as the `career` tool."""
         if not self.check_api_token(request):
@@ -2752,7 +2781,10 @@ class GatewayHTTPHandler:
         except Exception as exc:
             self._log.exception("career desk failed action={}", action)
             return _http_error(500, str(exc) or "career desk failed")
-        return _http_json_response(payload)
+        response = _http_json_response(payload)
+        if action.startswith("extension_"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     async def _handle_trading(self, request: WsRequest) -> Response:
         """Paper Trading Agent OS desk. Same store as the `trading` tool."""
