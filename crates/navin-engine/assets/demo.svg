@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="424"
+     viewBox="0 0 790 424" role="img"
+     aria-label="navin-engine measures three candidate patches, rejects the one that breaks a test, and proves the winner">
+  <style>
+    .ln {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      animation-duration: 15.0s;
+      animation-iteration-count: infinite;
+      animation-timing-function: ease;
+      animation-fill-mode: both;
+    }
+    .chrome {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      fill: #8b949e;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .ln { animation: none; opacity: 1; }
+    }
+    @keyframes r0{0%,1.3%{opacity:0}2.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r1{0%,7.3%{opacity:0}8.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r2{0%,12.0%{opacity:0}13.6%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r3{0%,17.3%{opacity:0}18.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r4{0%,24.0%{opacity:0}25.6%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r5{0%,29.3%{opacity:0}30.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r6{0%,37.3%{opacity:0}38.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r7{0%,45.3%{opacity:0}46.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r8{0%,54.7%{opacity:0}56.3%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r9{0%,61.3%{opacity:0}62.9%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r10{0%,66.7%{opacity:0}68.3%,92%{opacity:1}96%,100%{opacity:0}}@keyframes r11{0%,74.7%{opacity:0}76.3%,92%{opacity:1}96%,100%{opacity:0}}
+  </style>
+  <rect x="1" y="1" width="788" height="422" rx="12"
+        fill="#0d1117" stroke="#30363d"/>
+  <rect x="1" y="1" width="788" height="40" rx="12" fill="#161b22"/>
+  <rect x="1" y="29" width="788" height="12" fill="#161b22"/>
+  <line x1="1" y1="41" x2="789" y2="41" stroke="#30363d"/>
+  <circle cx="24" cy="21" r="5" fill="#f85149"/>
+  <circle cx="42" cy="21" r="5" fill="#d29922"/>
+  <circle cx="60" cy="21" r="5" fill="#3fb950"/>
+  <text class="chrome" x="82" y="25">navin-engine</text>
+  <text class="chrome" x="770" y="25" text-anchor="end">a real run, not a mockup</text>
+  <text class="ln" y="92" style="animation-name:r0"><tspan x="30" fill="#3fb950" font-weight="600">$</tspan><tspan x="48" fill="#e6edf3" font-weight="400">navin-engine optimize --objective p95</tspan></text>
+  <text class="ln" y="118" style="animation-name:r1"><tspan x="30" fill="#8b949e" font-weight="400">detected</tspan><tspan x="125" fill="#c9d1d9" font-weight="400">python  ·  python3 server.py  ·  pytest</tspan></text>
+  <text class="ln" y="144" style="animation-name:r2"><tspan x="30" fill="#8b949e" font-weight="400">probing</tspan><tspan x="125" fill="#c9d1d9" font-weight="400">http://127.0.0.1:8099</tspan><tspan x="315" fill="#8b949e" font-weight="400">port found by booting the app</tspan></text>
+  <text class="ln" y="170" style="animation-name:r3"><tspan x="30" fill="#8b949e" font-weight="400">baseline</tspan><tspan x="125" fill="#c9d1d9" font-weight="400">P95 55.8 ± 1.3 ms</tspan><tspan x="285" fill="#c9d1d9" font-weight="400">277 RPS</tspan><tspan x="385" fill="#8b949e" font-weight="400">robustness 100/100</tspan></text>
+  <text class="ln" y="196" style="animation-name:r4"><tspan x="30" fill="#8b949e" font-weight="400">3 candidates, each in its own throwaway git worktree</tspan></text>
+  <text class="ln" y="222" style="animation-name:r5"><tspan x="30" fill="#3fb950" font-weight="600">1</tspan><tspan x="48" fill="#e6edf3" font-weight="500">cache-the-payload</tspan><tspan x="245" fill="#3fb950" font-weight="600">P95 8.0 ms</tspan><tspan x="360" fill="#3fb950" font-weight="600">-85.7%</tspan><tspan x="445" fill="#8b949e" font-weight="400">tests pass  ·  same behaviour</tspan><tspan x="685" fill="#3fb950" font-weight="600">kept</tspan></text>
+  <text class="ln" y="248" style="animation-name:r6"><tspan x="30" fill="#f85149" font-weight="600">2</tspan><tspan x="48" fill="#e6edf3" font-weight="500">drop-half-the-catalogue</tspan><tspan x="245" fill="#8b949e" font-weight="400">P95 8.0 ms</tspan><tspan x="360" fill="#8b949e" font-weight="400">-85.7%</tspan><tspan x="445" fill="#f85149" font-weight="500">one passing test broke</tspan><tspan x="685" fill="#f85149" font-weight="600">rejected</tspan></text>
+  <text class="ln" y="274" style="animation-name:r7"><tspan x="30" fill="#d29922" font-weight="600">3</tspan><tspan x="48" fill="#e6edf3" font-weight="500">shorten-the-sleep</tspan><tspan x="245" fill="#c9d1d9" font-weight="400">P95 49.6 ms</tspan><tspan x="360" fill="#c9d1d9" font-weight="400">-10.9%</tspan><tspan x="445" fill="#8b949e" font-weight="400">real, but smaller</tspan><tspan x="685" fill="#d29922" font-weight="600">beaten</tspan></text>
+  <text class="ln" y="300" style="animation-name:r8"><tspan x="30" fill="#3fb950" font-weight="700">WINNER</tspan><tspan x="125" fill="#e6edf3" font-weight="600">cache-the-payload</tspan><tspan x="320" fill="#8b949e" font-weight="400">P95</tspan><tspan x="355" fill="#e6edf3" font-weight="600">55.8 → 8.0 ms</tspan><tspan x="500" fill="#8b949e" font-weight="400">RPS</tspan><tspan x="535" fill="#e6edf3" font-weight="600">277 → 1502</tspan></text>
+  <text class="ln" y="326" style="animation-name:r9"><tspan x="30" fill="#8b949e" font-weight="400">branch</tspan><tspan x="125" fill="#58a6ff" font-weight="400">navin/evolve/optimize-p95</tspan><tspan x="360" fill="#8b949e" font-weight="400">·  your working tree untouched</tspan></text>
+  <text class="ln" y="352" style="animation-name:r10"><tspan x="30" fill="#8b949e" font-weight="400">proof</tspan><tspan x="125" fill="#3fb950" font-weight="400">Ed25519 certificate signed and verified</tspan></text>
+  <text class="ln" y="378" style="animation-name:r11"><tspan x="30" fill="#e6edf3" font-weight="600">3 AI-written candidates measured. 1 rejected. 1 proven.</tspan></text>
+</svg>
