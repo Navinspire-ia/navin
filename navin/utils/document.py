@@ -34,6 +34,10 @@ SUPPORTED_EXTENSIONS: set[str] = {
     ".toml",
     ".ini",
     ".cfg",
+    # Chat attachment archives (text extracted from members)
+    ".zip",
+    ".7z",
+    ".rar",
     # Image formats (for future OCR support)
     ".png",
     ".jpg",
@@ -134,6 +138,8 @@ def extract_text(path: Path) -> str | None:
         return _extract_pptx(path)
     elif _is_text_extension(ext):
         return _extract_text_file(path)
+    elif ext in _ARCHIVE_EXTENSIONS:
+        return _extract_archive(path)
     elif ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
         # Image files - for future OCR support
         return f"[image: {path.name}]"
@@ -378,6 +384,181 @@ def _is_text_extension(ext: str) -> bool:
         ".ini",
         ".cfg",
     }
+
+
+# Chat attachment archives. .zip is stdlib; .7z and .rar go through their
+# dedicated readers (see _extract_archive).
+_ARCHIVE_EXTENSIONS = {".zip", ".7z", ".rar"}
+
+
+def _decode_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
+
+def _archive_member_text(name: str, data: bytes) -> str:
+    """Best-effort text from one archive member; non-text members are skipped."""
+    if Path(name).suffix.lower() not in _ARCHIVE_TEXT_EXTENSIONS:
+        return ""
+    return _decode_text(data)
+
+
+# Members worth surfacing: plain text formats readable without extra parsing.
+_ARCHIVE_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg",
+}
+
+
+def _render_archive_text(path: Path, entries: list[tuple[str, bytes]]) -> str:
+    """Render extracted member texts with the shared bounds and prefix."""
+    collector = _TextCollector(_MAX_TEXT_LENGTH)
+    if not entries:
+        return f"[archive: {path.name} (no readable text files inside)]"
+    for name, data in entries:
+        if not collector.add(f"\n===== {name} =====\n{_truncate(_decode_text(data), _MAX_ARCHIVE_MEMBER_TEXT)}", separator="\n"):
+            break
+    header = f"[archive: {path.name}, {len(entries)} text file(s)]"
+    return header + collector.render()
+
+
+_MAX_ARCHIVE_MEMBER_TEXT = 100_000
+
+
+def _zip_entries(path: Path) -> list[tuple[str, bytes]] | str:
+    try:
+        error = None
+        with ZipFile(path) as archive:
+            members = archive.infolist()
+            if len(members) > _MAX_OFFICE_ARCHIVE_MEMBERS:
+                error = f"[error: archive contains too many files ({len(members)})]"
+            else:
+                total_size = 0
+                for member in members:
+                    if member.flag_bits & 0x1:
+                        error = "[error: encrypted archives are not supported]"
+                        break
+                    if member.is_dir():
+                        continue
+                    if member.file_size > _MAX_OFFICE_MEMBER_SIZE:
+                        error = "[error: archive contains an oversized internal file]"
+                        break
+                    total_size += member.file_size
+                    if total_size > _MAX_OFFICE_UNCOMPRESSED_SIZE:
+                        limit_mb = _MAX_OFFICE_UNCOMPRESSED_SIZE / (1024 * 1024)
+                        error = f"[error: archive expands beyond the {limit_mb:g} MB safety limit]"
+                        break
+            if error:
+                return error
+            entries: list[tuple[str, bytes]] = []
+            for member in members:
+                if member.is_dir():
+                    continue
+                if Path(member.filename).suffix.lower() not in _ARCHIVE_TEXT_EXTENSIONS:
+                    continue
+                with archive.open(member) as handle:
+                    data = handle.read(_MAX_OFFICE_MEMBER_SIZE + 1)
+                if len(data) > _MAX_OFFICE_MEMBER_SIZE:
+                    return "[error: archive contains an oversized internal file]"
+                entries.append((member.filename, data))
+            return entries
+    except (BadZipFile, OSError, RuntimeError) as e:
+        logger.exception("Failed to read zip archive {}", path)
+        return f"[error: failed to read archive: {e!s}]"
+
+
+def _sevenzip_entries(path: Path) -> list[tuple[str, bytes]] | str:
+    try:
+        import py7zr
+    except ImportError:
+        return "[error: .7z support requires the py7zr package]"
+    try:
+        with py7zr.SevenZipFile(path) as archive:
+            if archive.needs_password():
+                return "[error: encrypted archives are not supported]"
+            infos = archive.list()
+            if len(infos) > _MAX_OFFICE_ARCHIVE_MEMBERS:
+                return f"[error: archive contains too many files ({len(infos)})]"
+            total_size = 0
+            for info in infos:
+                if info.is_directory:
+                    continue
+                if info.uncompressed > _MAX_OFFICE_MEMBER_SIZE:
+                    return "[error: archive contains an oversized internal file]"
+                total_size += info.uncompressed
+                if total_size > _MAX_OFFICE_UNCOMPRESSED_SIZE:
+                    limit_mb = _MAX_OFFICE_UNCOMPRESSED_SIZE / (1024 * 1024)
+                    return f"[error: archive expands beyond the {limit_mb:g} MB safety limit]"
+            wanted = {
+                info.filename
+                for info in infos
+                if not info.is_directory
+                and Path(info.filename).suffix.lower() in _ARCHIVE_TEXT_EXTENSIONS
+                and info.uncompressed <= _MAX_OFFICE_MEMBER_SIZE
+            }
+            if not wanted:
+                return []
+            extracted = archive.read(targets=set(wanted))
+            return [
+                (name, payload.read())
+                for name, payload in sorted(extracted.items())
+            ]
+    except Exception as e:
+        logger.exception("Failed to read 7z archive {}", path)
+        return f"[error: failed to read archive: {e!s}]"
+
+
+def _rar_entries(path: Path) -> list[tuple[str, bytes]] | str:
+    try:
+        import rarfile
+    except ImportError:
+        return "[error: .rar support requires the rarfile package]"
+    try:
+        with rarfile.RarFile(path) as archive:
+            if archive.needs_password():
+                return "[error: encrypted archives are not supported]"
+            infos = [i for i in archive.infolist() if not i.is_dir()]
+            if len(infos) > _MAX_OFFICE_ARCHIVE_MEMBERS:
+                return f"[error: archive contains too many files ({len(infos)})]"
+            total_size = 0
+            for info in infos:
+                if info.file_size > _MAX_OFFICE_MEMBER_SIZE:
+                    return "[error: archive contains an oversized internal file]"
+                total_size += info.file_size
+                if total_size > _MAX_OFFICE_UNCOMPRESSED_SIZE:
+                    limit_mb = _MAX_OFFICE_UNCOMPRESSED_SIZE / (1024 * 1024)
+                    return f"[error: archive expands beyond the {limit_mb:g} MB safety limit]"
+            entries: list[tuple[str, bytes]] = []
+            for info in infos:
+                if Path(info.filename).suffix.lower() not in _ARCHIVE_TEXT_EXTENSIONS:
+                    continue
+                entries.append((info.filename, archive.read(info)))
+            return entries
+    except rarfile.RarCannotExec:
+        return "[error: .rar extraction requires the unrar or unar tool on this machine]"
+    except Exception as e:
+        logger.exception("Failed to read rar archive {}", path)
+        return f"[error: failed to read archive: {e!s}]"
+
+
+def _extract_archive(path: Path) -> str:
+    """Extract bounded text from zip / 7z / rar chat attachments."""
+    ext = path.suffix.lower()
+    if ext == ".zip":
+        result = _zip_entries(path)
+    elif ext == ".7z":
+        result = _sevenzip_entries(path)
+    else:
+        result = _rar_entries(path)
+    if isinstance(result, str):
+        return result
+    try:
+        return _render_archive_text(path, result)
+    except Exception as e:
+        logger.exception("Failed to render archive text {}", path)
+        return f"[error: failed to read archive: {e!s}]"
 
 
 # ---------------------------------------------------------------------------

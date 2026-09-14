@@ -64,10 +64,20 @@ dependencies = [
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
+    # Archive text extraction for chat attachments (.7z / .rar; .zip is stdlib).
+    "py7zr>=1.0.0,<2.0.0",
+    "rarfile>=4.2,<5.0",
     # Computer is available in the standard CLI and desktop installation.
     "pillow>=10.0.0",
     "python-xlib>=0.33; sys_platform == 'linux'",
 ]
+
+[tool.pytest.ini_options]
+# The project suite lives in tests/ (CI runs `pytest tests/` too).
+# templates_apps/ holds vendored third-party templates with their own
+# dependency sets (fastapi, tap_tester, sqlalchemy, ...) that are not
+# installable in the project environment.
+testpaths = ["tests"]
 
 [project.optional-dependencies]
 api = [
