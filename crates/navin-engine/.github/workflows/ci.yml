@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      # Several tests boot a real server and watch which port it opens, so
+      # they need a few minutes and must not run in parallel with each other.
+      - run: cargo test --locked -- --test-threads=4
+        timeout-minutes: 20
+
+  launcher:
+    name: npm launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The launcher derives the release tag from its own version, so a drift
+      # against the crate would make `npx navin-engine` fetch a missing asset.
+      - name: Version matches the crate
+        run: |
+          crate=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          launcher=$(node -p "require('./npm/package.json').version")
+          test "$crate" = "$launcher" || {
+            echo "Cargo.toml is $crate but npm/package.json is $launcher"
+            exit 1
+          }
+      - run: node --check npm/bin/navin-engine.js
+
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Compilation only for now: the port-discovery tests are verified on
+      # Linux, and their behaviour on these platforms is not yet pinned down.
+      - run: cargo build --locked --release

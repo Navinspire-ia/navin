@@ -1395,6 +1395,7 @@ class AssistantMessage(Vertical):
         self._file_tools: dict[tuple[str, str], ToolCall] = {}
         self._cluster: ToolCluster | None = None
         self._subagents: dict[str, SubagentCard] = {}
+        self._progress_line: ProgressLine | None = None
         self._reasoning: ReasoningBlock | None = None
         self.streamed = False
         self.finished = False
