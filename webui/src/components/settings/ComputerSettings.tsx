@@ -15,16 +15,13 @@ import {
   updateComputerModel, updateSettings,
 } from "@/lib/api";
 import type { ComputerDiagnostics, ComputerModelsPayload, SettingsPayload, SettingsUpdate } from "@/lib/types";
-import { COMPUTER_PERMISSIONS, computerChatUrl, computerPermissionGranted, computerSetupStep, type ComputerPermission } from "@/lib/computer-setup";
+import { COMPUTER_MODEL_CALLOUT, COMPUTER_PERMISSIONS, computerChatUrl, computerPermissionGranted, computerSetupStep, type ComputerPermission } from "@/lib/computer-setup";
 import { useClient } from "@/providers/ClientProvider";
 import "@/lib/fluent-icons";
 import "./computer-settings.css";
 
 type ComputerConfig = NonNullable<SettingsPayload["computer"]>;
 type AppRule = "protected_apps" | "allowed_apps" | "blocked_apps" | "ask_apps";
-// Model catalogs run to dozens of rows: the list scrolls inside the callout
-// instead of running past the top or bottom of the window.
-const MODEL_LIST_CALLOUT = { calloutMaxHeight: 320 };
 const APP_RULES: AppRule[] = ["protected_apps", "allowed_apps", "blocked_apps", "ask_apps"];
 
 function ToggleRow({ title, description, checked, disabled, onChange }: {
@@ -111,6 +108,7 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
   const [awaitingPermissions, setAwaitingPermissions] = useState(false);
   const diagnosticsRequest = useRef(0);
   const setupRoot = useRef<HTMLElement>(null);
+  const autoAppliedDefault = useRef(false);
   const [display, setDisplay] = useState(cfg?.display ?? "");
   const [apps, setApps] = useState<Record<AppRule, string>>({
     protected_apps: "", allowed_apps: "", blocked_apps: "", ask_apps: "",
@@ -133,6 +131,21 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
     }).finally(() => { if (!cancelled) setModelsLoading(false); });
     return () => { cancelled = true; };
   }, [provider, token, modelsRefresh]);
+
+  useEffect(() => {
+    if (!cfg || !token || autoAppliedDefault.current) return;
+    if (provider !== "navin" || modelsLoading || !models?.recommended) return;
+    if (busy || stopping || isRestarting) return;
+    const current = (cfg.model || "").toLowerCase();
+    const previousDefault = current.includes("qwen3.8-max");
+    const ready = cfg.model_vision === true
+      && providerNames.split("|").includes(savedProvider)
+      && models.models.some((row) => row.id === cfg.model)
+      && !previousDefault;
+    if (ready) return;
+    autoAppliedDefault.current = true;
+    void selectModel(models.recommended);
+  }, [busy, cfg, isRestarting, models, modelsLoading, provider, providerNames, savedProvider, stopping, token]);
 
   useEffect(() => {
     const request = ++diagnosticsRequest.current;
@@ -172,7 +185,8 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
     if (!hasConfig) return;
     const step = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("step");
     if (step && ["model", "permissions", "check"].includes(step)) {
-      setupRoot.current?.querySelector<HTMLElement>(`[data-setup-step="${step}"]`)?.focus();
+      setupRoot.current?.querySelector<HTMLElement>(`[data-setup-step="${step}"]`)
+        ?.scrollIntoView({ block: "nearest" });
     }
   }, [hasConfig]);
 
@@ -236,6 +250,11 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
     });
   }
 
+  const modelOptions = useMemo(() => (models?.models ?? []).map((row) => ({
+    key: row.id,
+    text: row.label + (row.id === models?.recommended ? ` (${t("settings.computer.recommended")})` : ""),
+  })), [models, t]);
+
   if (!cfg) return <MessageBar>{tx("unavailable")}</MessageBar>;
 
   const disabled = !!busy || stopping || isRestarting || !token;
@@ -291,7 +310,8 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
               return <div role="listitem" key={step}>
                 <DefaultButton text={`${index + 1}. ${tx(`steps.${step}`)}`} checked={setupStep === step}
                   iconProps={{ iconName: complete ? "Completed" : "CircleRing" }}
-                  onClick={() => setupRoot.current?.querySelector<HTMLElement>(`[data-setup-step="${step}"]`)?.focus()} />
+                  onClick={() => setupRoot.current?.querySelector<HTMLElement>(`[data-setup-step="${step}"]`)
+                    ?.scrollIntoView({ block: "nearest" })} />
               </div>;
             })}
           </div>
@@ -316,16 +336,15 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
             </MessageBar>
             <div className="computer-settings-grid">
               <Dropdown label={tx("provider")} selectedKey={provider || null} disabled={disabled}
-                calloutProps={MODEL_LIST_CALLOUT}
+                calloutProps={COMPUTER_MODEL_CALLOUT}
                 placeholder={tx("chooseProvider")} options={configuredProviders.map((entry) => ({ key: entry.name, text: entry.label }))}
                 onChange={(_, option) => { if (option) setProvider(String(option.key)); }} />
               <Dropdown label={t("settings.rows.computerRoute")}
                 selectedKey={provider === savedProvider && models?.models.some((row) => row.id === cfg.model) ? cfg.model : null}
-                calloutProps={MODEL_LIST_CALLOUT}
+                calloutProps={COMPUTER_MODEL_CALLOUT}
                 disabled={disabled || modelsLoading || !models?.models.length}
                 placeholder={modelsLoading ? tx("loadingModels") : tx("chooseModel")}
-                options={(models?.models ?? []).map((row) => ({ key: row.id,
-                  text: row.label + (row.id === models?.recommended ? ` (${tx("recommended")})` : "") }))}
+                options={modelOptions}
                 onChange={(_, option) => { if (option) void selectModel(String(option.key)); }} />
             </div>
             <Text block variant="small" className="computer-settings-description">{provider === "navin" ? tx("navinModelHelp") : tx("byokModelHelp")}</Text>
@@ -417,12 +436,14 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
             <Text as="h3" variant="large" styles={{ root: { margin: 0, fontWeight: 600 } }}>{tx("controlPreferences")}</Text>
             <div className="computer-settings-grid">
               <Dropdown label={t("settings.rows.computerAsk")} selectedKey={cfg.ask}
+                calloutProps={COMPUTER_MODEL_CALLOUT}
                 disabled={optionDisabled} options={[
                   { key: "never", text: tx("autonomous") },
                   { key: "destructive", text: tx("askDestructive") },
                   { key: "always", text: tx("askAlways") },
                 ]} onChange={(_, option) => { if (option) void persist({ computerAsk: option.key as SettingsUpdate["computerAsk"] }); }} />
               <Dropdown label={t("settings.rows.computerSessionMode")} selectedKey={cfg.session_mode}
+                calloutProps={COMPUTER_MODEL_CALLOUT}
                 disabled={optionDisabled} options={[
                   { key: "shared", text: tx("sessionShared") }, { key: "dedicated", text: tx("sessionDedicated") },
                 ]} onChange={(_, option) => { if (option) void persist({ computerSessionMode: option.key as SettingsUpdate["computerSessionMode"] }); }} />
@@ -440,7 +461,8 @@ export function ComputerSettings({ settings, onUpdated, onRestart, isRestarting 
           {advanced ? <div className="computer-settings-card">
             <Text variant="large" styles={{ root: { fontWeight: 600 } }}>{tx("moreOptions")}</Text>
             <div className="computer-settings-grid">
-              <Dropdown label={tx("backend")} selectedKey={cfg.backend_preference ?? "auto"} disabled={optionDisabled}
+              <Dropdown label={tx("backend")} selectedKey={cfg.backend_preference ?? "auto"}
+                calloutProps={COMPUTER_MODEL_CALLOUT} disabled={optionDisabled}
                 options={[
                   { key: "auto", text: tx("automatic") }, { key: "windows", text: "Windows" },
                   { key: "macos", text: "macOS" }, { key: "x11", text: "Linux X11" },

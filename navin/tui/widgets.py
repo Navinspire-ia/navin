@@ -96,6 +96,7 @@ _TOOL_ICONS: dict[str, str] = {
     "todo": "☑",
     "board": "▣",
     "git": "⌥",
+    "skill": "✦",
 }
 
 
@@ -123,6 +124,7 @@ _TOOL_COLORS: dict[str, str] = {
     "cron": "#00B8FF",
     "ask_user": "#FF4081",
     "message": "#FF4081",
+    "skill": "#00E5A0",
 }
 
 
@@ -2179,6 +2181,11 @@ class QueuedPromptRow(Horizontal):
             super().__init__()
             self.prompt_id = prompt_id
 
+    class Edited(Message):
+        def __init__(self, prompt_id: int) -> None:
+            super().__init__()
+            self.prompt_id = prompt_id
+
     def __init__(self, prompt_id: int, text: str, position: int) -> None:
         super().__init__()
         self.prompt_id = prompt_id
@@ -2188,6 +2195,8 @@ class QueuedPromptRow(Horizontal):
     def compose(self) -> ComposeResult:
         preview = " ".join(display_user_text(self.text).split())
         yield Static(f"{self.position}. {preview}", markup=False)
+        yield Button("Edit", classes="queue-edit", compact=True,
+                     tooltip="Load this message in the composer to change it. Your current draft goes back to the queue.")
         yield Button("Send now", classes="queue-send", compact=True,
                      tooltip="Send this message now. During a reply, add it to the current task.")
         yield Button("Remove", classes="queue-remove", compact=True)
@@ -2203,6 +2212,8 @@ class QueuedPromptRow(Horizontal):
         event.stop()
         if event.button.has_class("queue-send"):
             self.post_message(self.Sent(self.prompt_id))
+        elif event.button.has_class("queue-edit"):
+            self.post_message(self.Edited(self.prompt_id))
         else:
             self.post_message(self.Removed(self.prompt_id))
 

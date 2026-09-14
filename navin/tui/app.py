@@ -555,6 +555,25 @@ class NavinApp(App[None]):
         self._queued_prompts[key] = [item for item in self._queued_prompts.get(key, []) if item.id != event.prompt_id]
         await self._refresh_queue()
 
+    @on(QueuedPromptRow.Edited)
+    async def _edit_queued_prompt(self, event: QueuedPromptRow.Edited) -> None:
+        if self._queue_sending:
+            return
+        key = self.runtime.session_key
+        item = next((row for row in self._queued_prompts.get(key, []) if row.id == event.prompt_id), None)
+        if item is None:
+            return
+        draft = self.composer.text.strip()
+        self._queued_prompts[key] = [row for row in self._queued_prompts.get(key, []) if row.id != event.prompt_id]
+        if draft:
+            self._queue_serial += 1
+            inbound, _ = inbound_for_submit(self.prefs.mode, draft, turn_active=False)
+            self._queued_prompts.setdefault(key, []).append(
+                QueuedPrompt(self._queue_serial, draft, inbound))
+        self.composer.set_text(item.text)
+        await self._refresh_queue()
+        self.composer.focus()
+
     @on(QueuedPromptRow.Sent)
     async def _send_queued_prompt_now(self, event: QueuedPromptRow.Sent) -> None:
         key = self.runtime.session_key

@@ -158,6 +158,44 @@ class SkillToolTest(unittest.TestCase):
             self.assertIn("alpha", result)
             self.assertIn("beta", result)
 
+    def test_graph_suggests_skills_and_names_the_relation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_skill(root, "pdf-report", "Build polished PDF reports with charts")
+            # invoice-reader never mentions pdf; it must surface through its
+            # explicit relation declared in frontmatter metadata.
+            skill_dir = root / "skills" / "invoice-reader"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\n"
+                "name: invoice-reader\n"
+                "description: Read invoices and receipts from files\n"
+                "metadata:\n"
+                "  navin:\n"
+                "    related:\n"
+                "      - pdf-report\n"
+                "---\n\nParse invoice fields.\n",
+                encoding="utf-8",
+            )
+            result = asyncio.run(self._tool(root).execute(action="graph", query="pdf report"))
+            self.assertIn("pdf-report", result)
+            self.assertIn("invoice-reader", result)
+            self.assertIn("related to pdf-report", result)
+
+    def test_graph_by_name_lists_related_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_skill(root, "pdf-report", "Build polished PDF reports with charts")
+            _write_skill(root, "pdf-ocr", "Extract text from scanned PDF documents")
+            result = asyncio.run(self._tool(root).execute(action="graph", name="pdf-report"))
+            self.assertIn("related to", result)
+            self.assertIn("pdf-ocr", result)
+
+    def test_graph_without_query_or_name_is_a_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = asyncio.run(self._tool(Path(tmp)).execute(action="graph"))
+            self.assertIn("query", str(result))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -108,8 +108,11 @@ def _repo_map_lines(graph: dict[str, Any]) -> list[str]:
             f"- {hub['id']} [{hub['kind']}]" + (f": {role}" if role else "")
         )
     lines.append(
-        "- Use metagraph (overview/find/impact) or code_index to navigate "
-        "instead of re-exploring the tree."
+        "- Navigate with metagraph (overview/find/impact) or code_index "
+        "(definition/references/semantic) FIRST; they read the existing "
+        "index and cost one cheap call. Fall back to grep with a scoped "
+        "path/glob only for string literals the index cannot answer, and "
+        "never re-list or re-read the tree to re-orient after compaction."
     )
     return lines
 

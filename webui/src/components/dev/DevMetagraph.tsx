@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, Search, Waypoints } from "lucide-react";
+import { Loader2, RefreshCw, Search, Waypoints, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { MetagraphCanvas } from "@/components/dev/MetagraphCanvas";
@@ -105,10 +105,13 @@ export function DevMetagraph({
   sessionKey,
   onOpenFile,
   onRunAction,
+  compact = false,
 }: {
   sessionKey: string | null;
   onOpenFile?: (absolutePath: string) => void;
-  onRunAction?: (text: string) => void;
+  onRunAction?: (command: string) => void;
+  /** Narrow layout for the chat side panel: fewer chrome bits, detail as overlay. */
+  compact?: boolean;
 }) {
   const { token, client } = useClient();
   const { t } = useTranslation();
@@ -371,7 +374,10 @@ export function DevMetagraph({
                 ? tx("dev.graph.searchPackages", "Filter packages…")
                 : tx("dev.graph.search", "Filter files…")
             }
-            className="h-7 w-44 rounded-md border border-border/60 bg-background pl-7 pr-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-foreground/50"
+            className={cn(
+              "h-7 rounded-md border border-border/60 bg-background pl-7 pr-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-foreground/50",
+              compact ? "w-32" : "w-44",
+            )}
           />
         </div>
 
@@ -408,8 +414,9 @@ export function DevMetagraph({
           </button>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-1">
-          {KIND_ORDER.filter((kind) => (payload.kinds[kind] ?? 0) > 0).map((kind) => {
+        {!compact ? (
+          <div className="flex flex-wrap items-center gap-1">
+            {KIND_ORDER.filter((kind) => (payload.kinds[kind] ?? 0) > 0).map((kind) => {
             const total = payload.kinds[kind] ?? 0;
             const shown = hidden.has(kind) ? 0 : (visibleKindCounts[kind] ?? 0);
             return (
@@ -446,7 +453,9 @@ export function DevMetagraph({
               </button>
             );
           })}
-        </div>
+          </div>
+        ) : null}
+        {!compact ? (
         <label className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
           <input
             type="checkbox"
@@ -456,13 +465,14 @@ export function DevMetagraph({
           />
           {tx("dev.graph.connectedOnly", "Connected only")}
         </label>
+        ) : null}
         <div className="ml-auto flex items-center gap-1.5">
-          {payload.has_metadata ? (
+          {!compact && payload.has_metadata ? (
             <span className="text-[11px] text-muted-foreground">
               {tx("dev.graph.annotated", "annotated")}: {payload.annotated}
             </span>
           ) : null}
-          {payload.annotated_stale ? (
+          {!compact && payload.annotated_stale ? (
             <span
               className="text-[11px] text-amber-500"
               title={tx(
@@ -508,7 +518,7 @@ export function DevMetagraph({
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
+      <div className={cn("relative flex min-h-0 flex-1", compact && "overflow-hidden")}>
         <MetagraphCanvas
           nodes={nodes}
           edges={edges}
@@ -527,6 +537,57 @@ export function DevMetagraph({
           onAspect={setAspect}
           highlight={highlight}
         />
+        {compact && detail ? (
+          <div className="absolute inset-x-2 bottom-2 z-10 max-h-[60%] overflow-y-auto rounded-lg border border-border/70 bg-background/95 p-2.5 shadow-lg backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-start gap-2">
+                <span
+                  className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: KIND_COLORS[detail.node.kind] ?? KIND_COLORS.other }}
+                  aria-hidden
+                />
+                <div className="min-w-0">
+                  <p className="break-all text-[12.5px] font-medium leading-snug text-foreground">
+                    {detail.node.id.split("/").pop()}
+                  </p>
+                  {detail.node.id.includes("/") ? (
+                    <p className="break-all text-[11px] leading-snug text-muted-foreground">
+                      {detail.node.id.slice(0, detail.node.id.lastIndexOf("/"))}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                aria-label={tx("dev.graph.closeDetail", "Close details")}
+                title={tx("dev.graph.closeDetail", "Close details")}
+                className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+            {detail.node.role ? (
+              <p className="mt-1.5 line-clamp-3 text-[11.5px] leading-snug text-foreground/90">
+                {detail.node.role}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] italic text-muted-foreground">
+                {tx("dev.graph.noRole", "No role recorded yet.")}
+              </p>
+            )}
+            <p className="mt-1.5 text-[10.5px] text-muted-foreground">
+              {detail.node.kind}
+              {" · "}
+              {tx("dev.graph.lines", "Lines")} {detail.node.size}
+              {detail.imports.length > 0 ? ` · ${tx("dev.graph.dependsOn", "Imports")} ${detail.imports.length}` : ""}
+              {detail.importedBy.length > 0
+                ? ` · ${tx("dev.graph.usedBy", "Imported by")} ${detail.importedBy.length}`
+                : ""}
+            </p>
+          </div>
+        ) : null}
+        {!compact ? (
         <aside className="flex w-64 shrink-0 flex-col gap-2.5 overflow-y-auto border-l border-border/50 bg-muted/10 px-3 py-2.5">
           {detail ? (
             <>
@@ -738,6 +799,7 @@ export function DevMetagraph({
             </p>
           )}
         </aside>
+        ) : null}
       </div>
 
       {payload.truncated ? (
