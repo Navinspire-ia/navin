@@ -175,6 +175,17 @@ export function dismissNotification(
   return list.filter((entry) => entry.id !== id);
 }
 
+/**
+ * Remove every entry carrying `key`: the backend reports the condition over
+ * (e.g. the interrupted turn resumed), so the stale warning must not stay.
+ */
+export function clearNotificationsByKey(
+  list: readonly NotificationEntry[],
+  key: string,
+): NotificationEntry[] {
+  return list.filter((entry) => entry.key !== key);
+}
+
 export function unreadCount(list: readonly NotificationEntry[]): number {
   return list.reduce((total, entry) => (entry.read ? total : total + 1), 0);
 }

@@ -147,4 +147,21 @@ def runtime_health_payload(*, workspace: str | None = None) -> dict[str, Any]:
             "path": workspace or str(Path.home()),
         },
         "pid": os.getpid(),
+        "engine": _engine_identity(),
+    }
+
+
+def _engine_identity() -> dict[str, str]:
+    """Which navin build is actually serving this endpoint.
+
+    Desktop shells attach to any already-listening gateway, so a stale CLI or
+    an orphaned older sidecar can serve a freshly installed app. Exposing the
+    version and the running binary makes that mismatch diagnosable from the
+    WebUI instead of looking like random chat/session bugs.
+    """
+    from navin import __version__ as navin_version
+
+    return {
+        "version": navin_version,
+        "executable": sys.executable,
     }

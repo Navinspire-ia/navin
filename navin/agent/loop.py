@@ -70,6 +70,7 @@ from navin.bus.outbound_events import (
     ApprovalRequestedEvent,
     ChoiceClosedEvent,
     ChoiceRequestedEvent,
+    NotificationEvent,
     RetryWaitEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
@@ -3293,6 +3294,23 @@ class AgentLoop:
             ctx.on_progress = await self._build_bus_progress_callback(ctx.msg)
         if ctx.on_retry_wait is None:
             ctx.on_retry_wait = await self._build_retry_wait_callback(ctx.msg)
+        if ctx.msg.metadata.get(RECOVERY_ID_META) is not None:
+            # A recovered turn is running again: retire the "retrying" warning
+            # the previous attempt left in the notification centre instead of
+            # letting it outlive the recovery.
+            await self.bus.publish_outbound(
+                outbound_message_for_event(
+                    channel=ctx.msg.channel,
+                    chat_id=ctx.msg.chat_id,
+                    event=NotificationEvent(
+                        title="Connection restored",
+                        level="success",
+                        key=f"retry:{ctx.msg.chat_id}",
+                        clear=True,
+                    ),
+                    metadata=ctx.msg.metadata,
+                )
+            )
 
         return "ok"
 
