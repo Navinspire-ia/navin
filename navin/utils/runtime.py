@@ -310,8 +310,33 @@ def repeated_readonly_tool_error(
         f"Error: this exact {tool_name} call already ran "
         f"{_MAX_IDENTICAL_READONLY_CALLS} times this turn with identical "
         "arguments. The result is already in the conversation (or was "
-        "cleared after you saw it). Do not repeat it. Change the path or "
-        "pattern, edit the file, or answer from what you already have."
+        "cleared after you saw it). Do not repeat it verbatim. "
+        + _readonly_spin_hint(tool_name, arguments)
+    )
+
+
+def _readonly_spin_hint(tool_name: str, arguments: Any) -> str:
+    """Escape hatch named in the blocked-read message.
+
+    ``read_file`` owns a ``force=true`` parameter built for exactly this case
+    (compaction cleared the earlier content), so the error must name it.
+    ``force=true`` calls carry their own budget; once that is spent too, the
+    honest advice is to narrow the read or move on.
+    """
+    if tool_name != "read_file":
+        return (
+            "Change the path or pattern, edit the file, or answer from what "
+            "you already have."
+        )
+    if isinstance(arguments, dict) and arguments.get("force"):
+        return (
+            "The force=true re-read budget is spent too: narrow the read with "
+            "offset/limit, edit the file, or answer from what you already have."
+        )
+    return (
+        "If compaction cleared the earlier content, pass force=true once to "
+        "re-read the file with a fresh budget; otherwise change the arguments, "
+        "edit the file, or answer from what you already have."
     )
 
 
