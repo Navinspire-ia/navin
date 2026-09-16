@@ -80,13 +80,107 @@ def test_claude_code_parser(tmp_path: Path) -> None:
     sessions = import_sessions._parse_claude_code(tmp_path)
     assert len(sessions) == 1
     session = sessions[0]
-    assert session.session_id == "aaa-1"
+    assert session.session_id == "aaa"
     assert session.title == "Fix the flaky queue test"
     assert [m["role"] for m in session.messages] == ["user", "assistant"]
     assert session.messages[0]["content"] == "pourquoi le test echoue"
     assert session.messages[1]["content"] == "voici la cause"
     assert session.created_at is not None
     assert session.updated_at >= session.created_at
+
+
+def test_claude_code_title_skips_injected_context(tmp_path: Path) -> None:
+    """Injected context turns must not become sidebar titles."""
+    _write_jsonl(
+        tmp_path / "p1" / "bbb.jsonl",
+        [
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "#Agents.md instructions for /home/aymen/projects/x\n\n<do everything>",
+                },
+                "timestamp": "2026-09-04T20:00:00.000Z",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "<command-name>/forge</command-name>\n<command-message>build</command-message>",
+                },
+                "timestamp": "2026-09-04T20:00:01.000Z",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "correction du titre de la sidebar",
+                },
+                "timestamp": "2026-09-04T20:00:02.000Z",
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": "voila"},
+                "timestamp": "2026-09-04T20:00:03.000Z",
+            },
+        ],
+    )
+    sessions = import_sessions._parse_claude_code(tmp_path)
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.title == "correction du titre de la sidebar"
+    contents = [m["content"] for m in session.messages]
+    assert not any(c.startswith("#Agents.md") for c in contents)
+    assert not any(c.startswith("<command-name>") for c in contents)
+
+
+def test_claude_code_two_files_never_merge(tmp_path: Path) -> None:
+    """A resumed transcript carrying a foreign sessionId must stay its own session."""
+    for stem in ("ccc", "ddd"):
+        _write_jsonl(
+            tmp_path / "p1" / f"{stem}.jsonl",
+            [
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": f"session {stem}"},
+                    "timestamp": "2026-09-04T20:10:00.000Z",
+                    # Both files claim the same sessionId (continuation).
+                    "sessionId": "shared-id",
+                },
+            ],
+        )
+    sessions = import_sessions._parse_claude_code(tmp_path)
+    assert sorted(s.session_id for s in sessions) == ["ccc", "ddd"]
+    assert {s.messages[0]["content"] for s in sessions} == {
+        "session ccc",
+        "session ddd",
+    }
+
+
+def test_claude_code_captures_origin_cwd_and_skips_meta(tmp_path: Path) -> None:
+    _write_jsonl(
+        tmp_path / "p1" / "eee.jsonl",
+        [
+            {
+                "type": "user",
+                "isMeta": True,
+                "message": {"role": "user", "content": "meta noise"},
+                "timestamp": "2026-09-04T20:20:00.000Z",
+                "cwd": "/home/aymen/projects/deploy7/navin-ai-v2",
+            },
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "vraie question"},
+                "timestamp": "2026-09-04T20:20:01.000Z",
+                "cwd": "/home/aymen/projects/deploy7/navin-ai-v2",
+            },
+        ],
+    )
+    sessions = import_sessions._parse_claude_code(tmp_path)
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.origin_cwd == "/home/aymen/projects/deploy7/navin-ai-v2"
+    assert [m["content"] for m in session.messages] == ["vraie question"]
 
 
 def test_codex_parser(tmp_path: Path) -> None:
@@ -118,6 +212,20 @@ def test_codex_parser(tmp_path: Path) -> None:
                         {
                             "type": "input_text",
                             "text": "<environment_context> prod",
+                        }
+                    ],
+                },
+            },
+            {
+                "timestamp": "2026-05-01T16:29:35.500Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "# AGENTS.md instructions for /home/aymen/projects/x\n\n<guidance>",
                         }
                     ],
                 },
@@ -293,6 +401,28 @@ def test_imported_timestamps_are_naive(tmp_path: Path) -> None:
         assert not stamp.endswith("Z")
         # Must not raise: the exact autocompact subtraction.
         datetime.now() - datetime.fromisoformat(stamp)
+
+
+def test_import_without_title_gets_fallback(tmp_path: Path) -> None:
+    """Junk-only sessions (".", ".exit") must not show a blank title."""
+    external = ExternalSession(
+        source="codex",
+        session_id="junk-1",
+        title="",
+        messages=[{"role": "user", "content": "."}],
+        origin_path=tmp_path / "rollout.jsonl",
+        created_at=datetime(2026, 9, 13, 0, 15, 26),
+        updated_at=datetime(2026, 9, 13, 0, 15, 26),
+    )
+    report = SourceReport(
+        name="codex", label="Codex", root=tmp_path, status="ready",
+        sessions=[external],
+    )
+    workspace = tmp_path / "ws"
+    import_sessions.import_to_workspace([report], workspace)
+    path = next((workspace / "sessions").glob("*.jsonl"))
+    metadata = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert metadata["metadata"]["title"] == "Session importée"
 
 
 def test_imported_keys_surface_in_webui_sidebar(tmp_path: Path) -> None:

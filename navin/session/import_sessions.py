@@ -35,7 +35,37 @@ _CODEX_INJECTED_PREFIXES = (
     "<permissions instructions>",
     "<environment_context>",
     "<user_instructions>",
+    "<env>",
+    "#agents.md instructions for",
+    "# agents.md instructions for",
+    "#agents.md",
+    "# agents.md",
+    "#claude.md",
+    "# claude.md",
     "<ENVIRONMENT",
+)
+
+# Claude Code prepends runtime context to user turns (slash-command
+# envelopes, continuation summaries, project instruction files like
+# AGENTS.md / CLAUDE.md). They are not conversation and would produce
+# sidebar titles like "#Agents.md instructions for /home/...". Kept out
+# of both messages and titles.
+_CLAUDE_CODE_INJECTED_PREFIXES = (
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "caveat: the messages below",
+    "[request interrupted",
+    "this session is being continued from a previous conversation",
+    "#agents.md instructions for",
+    "# agents.md instructions for",
+    "#agents.md",
+    "# agents.md",
+    "#claude.md",
+    "# claude.md",
+    "# instructions from",
 )
 
 
@@ -178,8 +208,13 @@ def _parse_claude_code(root: Path) -> list[ExternalSession]:
     for path in sorted(root.glob("*/*.jsonl")):
         messages: list[dict[str, Any]] = []
         timestamps: list[str] = []
+        # One transcript per file: the id stays the file stem. Never take
+        # entry["sessionId"] - resumed/continued transcripts carry the id
+        # of the session they were forked from, which made two distinct
+        # sessions collapse into one key (dedup then dropped one).
         session_id = path.stem
         summary_title = ""
+        origin_cwd: str | None = None
         try:
             with open(path, encoding="utf-8") as f:
                 for raw in f:
@@ -200,8 +235,10 @@ def _parse_claude_code(root: Path) -> list[ExternalSession]:
                         continue
                     if kind not in {"user", "assistant"}:
                         continue
-                    if entry.get("isSidechain") is True:
+                    if entry.get("isSidechain") is True or entry.get("isMeta") is True:
                         continue
+                    if isinstance(entry.get("cwd"), str) and entry["cwd"]:
+                        origin_cwd = entry["cwd"]
                     payload = entry.get("message")
                     if not isinstance(payload, dict):
                         continue
@@ -228,12 +265,14 @@ def _parse_claude_code(root: Path) -> list[ExternalSession]:
                                 text_parts.append(block["text"])
                     if has_tool_result:
                         continue
-                    msg = _message(role, "\n".join(text_parts), ts)
+                    text = "\n".join(text_parts)
+                    if role == "user" and text.lstrip().lower().startswith(
+                        _CLAUDE_CODE_INJECTED_PREFIXES
+                    ):
+                        continue
+                    msg = _message(role, text, ts)
                     if msg:
                         messages.append(msg)
-                    sid = entry.get("sessionId")
-                    if isinstance(sid, str) and sid:
-                        session_id = sid
         except OSError:
             continue
         if not messages:
@@ -248,6 +287,7 @@ def _parse_claude_code(root: Path) -> list[ExternalSession]:
                 origin_path=path,
                 created_at=created,
                 updated_at=updated,
+                origin_cwd=origin_cwd,
             )
         )
     return sessions
@@ -302,7 +342,7 @@ def _parse_codex(root: Path) -> list[ExternalSession]:
                             if isinstance(text, str):
                                 text_parts.append(text)
                     text = "\n".join(text_parts)
-                    if role == "user" and text.lstrip().startswith(_CODEX_INJECTED_PREFIXES):
+                    if role == "user" and text.lstrip().lower().startswith(_CODEX_INJECTED_PREFIXES):
                         continue
                     ts = _rfc3339_to_iso(entry.get("timestamp"))
                     if ts:
@@ -997,7 +1037,9 @@ def import_to_workspace(
                     else datetime.now()
                 ),
                 metadata={
-                    "title": external.title,
+                    # Sessions made of throwaway keystrokes (".", ".exit")
+                    # have no real title; show something instead of blank.
+                    "title": external.title.strip() or "Session importée",
                     "import_source": external.source,
                     "origin_path": str(external.origin_path),
                     "imported_at": _utc_now_iso(),
