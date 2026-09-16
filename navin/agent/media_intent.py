@@ -123,6 +123,74 @@ _FULL_VIDEO_PHRASES = re.compile(
     r")"
 )
 
+# Media nouns shared by the reference and production checks below. They cover
+# every family the noun lists above already route.
+_MEDIA_NOUN = (
+    r"(?:video|videos|clip|clips|film|films|court metrage|"
+    r"reel|reels|short|shorts|teaser|teasers|trailer|trailers|bande annonce|"
+    r"musique|musiques|chanson|chansons|melodie|melodies|beat|beats|instrumental|"
+    r"soundtrack|soundtracks|bande son|bande sonore|jingle|jingles|bgm|"
+    r"image|images|photo|photos|photographie|photographies|dessin|dessins|"
+    r"illustration|illustrations|visuel|visuels|logo|logos|affiche|affiches|poster|posters|"
+    r"avatar|avatars|picture|pictures|artwork|wallpaper|vignette|thumbnail|miniature|"
+    r"banniere|bannieres|banner|banners|icone|icones|icon|icons|mockup|mockups|portrait|"
+    r"voix|voix off|narration|narrations|podcast|podcasts|doublage|audio|speech)"
+)
+
+# A production verb that directly governs a medium noun ("genere la video",
+# "make a soundtrack", "fais moi un logo") means the medium is the deliverable.
+# Indefinite articles ("une video") are the natural production phrasing; the
+# check only needs to rescue definite ones from the reference reading.
+_PRODUCTION_GOVERNS_MEDIUM = re.compile(
+    r"\b(?:gener\w*|creer|cree\w*|fais|faites|faire|fabriq\w*|dessin\w*|"
+    r"compos\w*|produis\w*|produire|peins|peign\w*|peindre|"
+    r"generate\w*|creat\w*|make|produce\w*|draw\w*|sketch\w*|paint\w*)\s+"
+    r"(?:(?:moi|me|nous|us|lui|leur)\s+)?"
+    r"(?:(?:une?|des|du|de la|d un|d une|la|le|les|l|the|this|that|these|those|a|an|some|sa|son|ses|ma|mon|mes)\s+)?"
+    + _MEDIA_NOUN
+    + r"\b"
+)
+
+# Pointing at media that already exists: definite or possessive article
+# ("montre moi la video de tout a l heure", "show me the video from earlier").
+_REFERENCE_ARTICLE = re.compile(
+    r"\b(?:la|le|les|cet|cette|ces|mon|ma|mes|ton|ta|tes|son|sa|ses|"
+    r"notre|nos|votre|vos|leur|leurs|the|this|that|these|those)\s+"
+    r"(?:(?:derniere|dernieres|precedente|precedentes|premiere|seule|last|previous|first|same)\s+)?"
+    + _MEDIA_NOUN
+    + r"\b"
+)
+
+# Elided article kept after apostrophe normalization ("l animation de hier").
+_REFERENCE_ELISION = re.compile(r"\bl\s+" + _MEDIA_NOUN + r"\b")
+
+# Past-creation marker attached to the noun ("video generee hier", "uploaded
+# clip"): it names when the artifact was made, not a request to make it.
+_REFERENCE_MARKER = re.compile(
+    r"\b"
+    + _MEDIA_NOUN
+    + r"\s+(?:generee?|creee?|faite|fabriquee?|produite|enregistree?|envoyee|"
+    r"telechargee?|uploadee?|generated|created|made|produced|recorded|uploaded)\b"
+)
+
+def _references_existing_media(normalized: str) -> bool:
+    """True when the text only points at media that already exists.
+
+    "Montre moi la video de tout a l heure" or "fais un resume de la video qu
+    on a generee hier" are display or transformation asks. Reading them as
+    production requests forced a paid generator on innocuous turns.
+    """
+    matched = (
+        _REFERENCE_ARTICLE.search(normalized)
+        or _REFERENCE_ELISION.search(normalized)
+        or _REFERENCE_MARKER.search(normalized)
+    )
+    if not matched:
+        return False
+    # A production verb governing a medium keeps the normal routing even when a
+    # reference also appears ("genere une musique pour la video du produit").
+    return not _PRODUCTION_GOVERNS_MEDIUM.search(normalized)
+
 
 def _normalize(text: str | None) -> str:
     """Casefold, strip accents and collapse whitespace for stable matching."""
@@ -172,6 +240,12 @@ def detect_media_intent(text: str | None) -> MediaIntent | None:
     generating = drawing or bool(_GENERATION_VERBS.search(normalized))
 
     if not generating:
+        return None
+
+    # Pointing at media that already exists is a display or transformation ask,
+    # not a production one. Forcing a generator here burned paid video runs on
+    # innocuous turns ("montre moi la video de tout a l heure").
+    if _references_existing_media(normalized):
         return None
 
     # One deliverable that mixes footage with sound: the montage pipeline owns it.
