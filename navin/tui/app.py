@@ -432,6 +432,7 @@ class NavinApp(App[None]):
         self._history_cursor: int | None = None
         self._pending_approvals: dict[str, ApprovalCard] = {}
         self._pending_choices: dict[str, ChoiceCard] = {}
+        self._retry_wait_note: SystemNote | None = None
         self._activity: list[str] = []
         self._history_index: int | None = None
         self._history_draft = ""
@@ -868,6 +869,24 @@ class NavinApp(App[None]):
     async def _note(self, text: str, level: str = "info") -> None:
         await self.transcript.add(SystemNote(text, level))
 
+    async def _retire_retry_wait_note(self) -> None:
+        """Drop the stale "retrying" note once a turn runs again.
+
+        The retry-wait note describes a pause, not a result. When the recovered
+        turn starts, leaving it in the transcript reads as if the connection is
+        still broken while the work has already resumed.
+        """
+        note = self._retry_wait_note
+        if note is None:
+            return
+        self._retry_wait_note = None
+        # Hide immediately; the DOM detach follows on the widget's own pump.
+        note.display = False
+        try:
+            await note.remove()
+        except Exception:
+            pass
+
     def _activity_push(self, line: str) -> None:
         self._activity.append(line)
         self._activity = self._activity[-30:]
@@ -1296,6 +1315,7 @@ class NavinApp(App[None]):
         if isinstance(event, UiTurnStarted):
             self._stop_pending = False
             self._awaiting_reply = True
+            await self._retire_retry_wait_note()
             self._set_status()
             self._refresh_working_line()
             return
@@ -1447,7 +1467,9 @@ class NavinApp(App[None]):
             )
             return
         if isinstance(event, UiRetryWait):
-            await self._note(f"[$warning]{escape(event.text)}[/]", "warning")
+            note = SystemNote(f"[$warning]{escape(event.text)}[/]", "warning")
+            self._retry_wait_note = note
+            await self.transcript.add(note)
             return
         if isinstance(event, UiApprovalRequested):
             card = ApprovalCard(

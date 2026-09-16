@@ -367,6 +367,10 @@ class NotificationEvent(OutboundEvent):
     level: str = "info"
     detail: str | None = None
     key: str | None = None
+    # When True the entry sharing ``key`` is removed instead of added: the
+    # condition is over (e.g. the interrupted turn resumed), so the stale
+    # warning must not outlive it.
+    clear: bool = False
     source: str = "session"
 
 

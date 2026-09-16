@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -65,6 +66,20 @@ class RuntimeHealthPayloadTest(unittest.TestCase):
         self.assertIn("reasons", payload)
         self.assertIn("pid", payload)
         self.assertIn(payload["level"], {"ok", "warning", "critical"})
+
+
+class EngineIdentityTest(unittest.TestCase):
+    """Desktop shells attach to any listening gateway: the health payload must
+    expose which navin build actually serves the endpoint, so a stale sidecar
+    attached by a fresh install is diagnosable instead of looking like random
+    chat/session bugs."""
+
+    def test_payload_carries_engine_version_and_executable(self) -> None:
+        from navin import __version__ as navin_version
+
+        payload = runtime_health_payload()
+        self.assertEqual(payload["engine"]["version"], navin_version)
+        self.assertEqual(payload["engine"]["executable"], sys.executable)
 
 
 if __name__ == "__main__":

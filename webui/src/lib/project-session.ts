@@ -33,9 +33,11 @@ export function isBlankChat(session: ChatSummary): boolean {
 export function findBlankChatForWorkspace(
   sessions: readonly ChatSummary[],
   projectPath?: string | null,
+  busyChatIds?: ReadonlySet<string>,
 ): ChatSummary | null {
   const matches = sessions.filter((session) => {
     if (!isBlankChat(session) || !isListedSidebarSession(session)) return false;
+    if (busyChatIds?.has(session.chatId)) return false;
     const path = session.workspaceScope?.project_path;
     if (!projectPath?.trim()) return !path;
     if (!path) return true;
@@ -54,22 +56,32 @@ export function findBlankChatForWorkspace(
  * Reuse the current blank "New Chat" when creating a folder, so we bind that
  * agent instead of minting a second empty one. Falls back to any blank for
  * the same workspace so "New chat" never stacks empty rows.
+ *
+ * ``busyChatIds`` lists chats with a turn in flight. A blank chat that is
+ * already running its first prompt is NOT reusable: reusing it would drop the
+ * user's next prompt into the busy agent instead of opening a second session.
  */
 export function findReusableEmptyChat(
   sessions: readonly ChatSummary[],
   preferredKey: string | null | undefined,
   defaultWorkspacePath?: string | null,
+  busyChatIds?: ReadonlySet<string>,
 ): ChatSummary | null {
   if (preferredKey) {
     const active = sessions.find((session) => session.key === preferredKey);
-    if (active && isBlankChat(active) && isListedSidebarSession(active)) {
+    if (
+      active &&
+      isBlankChat(active) &&
+      isListedSidebarSession(active) &&
+      !busyChatIds?.has(active.chatId)
+    ) {
       const path = active.workspaceScope?.project_path;
       if (!path || sameWorkspacePath(path, defaultWorkspacePath)) {
         return active;
       }
     }
   }
-  return findBlankChatForWorkspace(sessions, defaultWorkspacePath);
+  return findBlankChatForWorkspace(sessions, defaultWorkspacePath, busyChatIds);
 }
 
 /** Most recently updated session whose workspace matches ``projectPath``. */

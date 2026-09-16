@@ -15,6 +15,7 @@ import { useClient } from "@/providers/ClientProvider";
 import { onNotification } from "@/lib/notification-bus";
 import {
   addNotification,
+  clearNotificationsByKey,
   dismissNotification,
   markAllRead as markAllReadIn,
   markRead as markReadIn,
@@ -75,7 +76,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   useEffect(
     () =>
-      client.onNotification((incoming) =>
+      client.onNotification((incoming) => {
+        if (incoming.clear && incoming.key) {
+          // The backend retires the condition (e.g. the interrupted turn
+          // resumed): drop the stale entry instead of stacking "restored".
+          setNotifications((current) => clearNotificationsByKey(current, incoming.key as string));
+          return;
+        }
         notify({
           level: asLevel(incoming.level),
           source: asSource(incoming.source),
@@ -83,8 +90,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
           detail: incoming.detail,
           key: incoming.key,
           chatId: incoming.chatId,
-        }),
-      ),
+        });
+      }),
     [client, notify],
   );
 

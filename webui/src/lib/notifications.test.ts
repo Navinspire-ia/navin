@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addNotification,
+  clearNotificationsByKey,
   dismissNotification,
   markAllRead,
   markRead,
@@ -161,6 +162,22 @@ describe("dismissNotification", () => {
     const after = dismissNotification(list, list[0].id);
     expect(after).toHaveLength(1);
     expect(after[0].title).toBe("Accept all failed");
+  });
+});
+
+describe("clearNotificationsByKey", () => {
+  it("drops every entry sharing the key, keeps the rest", () => {
+    const list = seed([
+      { level: "warning", source: "agent", title: "retrying", key: "retry:chat-1" },
+      { level: "info", source: "board", title: "task moved" },
+    ]);
+    const after = clearNotificationsByKey(list, "retry:chat-1");
+    expect(after.map((entry) => entry.title)).toEqual(["task moved"]);
+  });
+
+  it("leaves the list untouched when no entry carries the key", () => {
+    const list = seed([{ level: "info", source: "board", title: "task moved" }]);
+    expect(clearNotificationsByKey(list, "retry:chat-9")).toHaveLength(1);
   });
 });
 

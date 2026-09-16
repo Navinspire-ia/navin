@@ -3107,6 +3107,8 @@ class WebSocketChannel(BaseChannel):
             body["detail"] = event.detail
         if event.key:
             body["key"] = event.key
+        if event.clear:
+            body["clear"] = True
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" notification ")

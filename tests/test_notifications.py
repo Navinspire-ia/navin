@@ -298,6 +298,24 @@ class WebsocketFrameTest(unittest.IsolatedAsyncioTestCase):
         body = json.loads(sent[0])
         self.assertNotIn("detail", body)
         self.assertNotIn("key", body)
+        self.assertNotIn("clear", body)
+
+    async def test_clear_flag_travels_to_the_frame(self):
+        # A recovered turn retires the stale "retrying" warning: the frame must
+        # tell the UI to drop the entry sharing the key, not add another one.
+        channel, sent = self._channel()
+        await channel.send_notification(
+            "chat-1",
+            NotificationEvent(
+                title="Connection restored",
+                level="success",
+                key="retry:chat-1",
+                clear=True,
+            ),
+        )
+        body = json.loads(sent[0])
+        self.assertTrue(body["clear"])
+        self.assertEqual(body["key"], "retry:chat-1")
 
     async def test_nothing_is_sent_without_a_title(self):
         channel, sent = self._channel()
