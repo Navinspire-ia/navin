@@ -175,7 +175,7 @@ class WebSocketConfig(Base):
     allow_from: list[str] = Field(default_factory=lambda: ["*"])
     streaming: bool = True
     # A 100 MB attachment needs about 134 MB once encoded as base64.
-    max_message_bytes: int = Field(default=MAX_UPLOAD_REQUEST_BYTES, ge=1024, le=160 * 1024 * 1024)
+    max_message_bytes: int = Field(default=MAX_UPLOAD_REQUEST_BYTES, ge=1024, le=MAX_UPLOAD_REQUEST_BYTES)
     ping_interval_s: float = Field(default=30.0, ge=5.0, le=300.0)
     # 20s was the websockets library default. The desktop WebView (Tauri /
     # WebView2 / WebKitGTK) often misses a pong while the UI thread paints
