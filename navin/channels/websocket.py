@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hmac
 import json
 import re
@@ -120,6 +121,62 @@ from navin.webui.terminal_ws import (
 from navin.webui.transcription_ws import webui_transcription_event
 from navin.webui.voice_session_ws import close_voice_sessions, webui_voice_session_events
 from navin.webui.websocket_logging import websockets_server_logger
+
+_HTTP_METHODS_COMPAT_INSTALLED = False
+
+
+def _install_http_method_compat() -> None:
+    """Let the websockets server accept plain HTTP methods other than GET.
+
+    websockets >= 14 rejects POST/DELETE inside ``Request.parse``, before
+    ``process_request`` can answer the plain HTTP API routes served on the
+    same port (POST /api/webui/sessions/import, DELETE saved roots, ...).
+    The browser then sees a failed handshake (500 through the dev proxy).
+    Re-allow any HTTP/1.1 method and record it on the request; the WebSocket
+    upgrade path is untouched (upgrades are GET requests).
+    """
+    global _HTTP_METHODS_COMPAT_INSTALLED
+    if _HTTP_METHODS_COMPAT_INSTALLED:
+        return
+    _HTTP_METHODS_COMPAT_INSTALLED = True
+
+    @dataclasses.dataclass
+    class HttpRequest(WsRequest):
+        method: str = "GET"
+
+    def parse(cls: type, read_line: Callable[[int], Any]) -> Any:
+        try:
+            request_line = yield from _ws_http11.parse_line(read_line)
+        except EOFError as exc:
+            raise EOFError(
+                "connection closed while reading HTTP request line"
+            ) from exc
+        try:
+            method, raw_path, protocol = request_line.split(b" ", 2)
+        except ValueError:  # not enough values to unpack (expected 3, got 1-2)
+            raise ValueError(
+                f"invalid HTTP request line: {request_line!r}"
+            ) from None
+        if protocol != b"HTTP/1.1":
+            raise ValueError(
+                f"unsupported protocol; expected HTTP/1.1: {request_line!r}"
+            )
+        path = raw_path.decode("ascii", "surrogateescape")
+        headers = yield from _ws_http11.parse_headers(read_line)
+        # https://datatracker.ietf.org/doc/html/rfc7230#section-3.3.3
+        if "Transfer-Encoding" in headers:
+            raise NotImplementedError("transfer codings aren't supported")
+        content_length = headers.get("Content-Length")
+        # Proxies (vite/http-proxy) add "Content-Length: 0" to bodyless POSTs.
+        if content_length is not None and content_length.strip() != "0":
+            raise ValueError("unsupported request body")
+        return HttpRequest(
+            path=path,
+            headers=headers,
+            method=method.decode("ascii", "surrogateescape").upper(),
+        )
+
+    WsRequest.parse = classmethod(parse)  # type: ignore[method-assign]
 
 # The gateway's HTTP layer has no request bodies, so file-save, notes and
 # assist payloads travel as chunked base64 request headers (one header per
@@ -893,6 +950,7 @@ class WebSocketChannel(BaseChannel):
         self._loop = asyncio.get_running_loop()
         self._install_blocking_pool()
         self._fs_watcher.start()
+        _install_http_method_compat()
 
         ssl_context = self._build_ssl_context()
         scheme = "wss" if ssl_context else "ws"
