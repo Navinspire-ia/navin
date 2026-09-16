@@ -34,6 +34,14 @@ def test_new_and_saved_defaults_transport_a_100_mb_file(config):
     assert create_app(Mock())._client_max_size >= policy.minimum_full_policy_frame_bytes()
 
 
+def test_fresh_default_config_validates():
+    # Regression: the default (288 MB envelope for 200 MB uploads) must satisfy
+    # the field's own upper bound, else a fresh install crashes at startup
+    # with "Input should be less than or equal to 167772160".
+    channel = WebSocketConfig()
+    assert channel.max_message_bytes == 288 * MIB
+
+
 def test_custom_transport_limit_is_preserved():
     assert WebSocketConfig(max_message_bytes=4 * MIB).max_message_bytes == 4 * MIB
 
