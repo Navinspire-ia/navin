@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "LiteLLM private gateway",
+    "subtitle": "Same OpenRouter contract. Navin delegates models. LiteLLM owns providers.",
+    "quality_profile": "showcase",
+    "viewBox": [1280, 780],
+    "views": [
+      {
+        "id": "request-path",
+        "label": "Request path",
+        "focus": ["internet", "edge", "litellm", "bedrock"],
+        "note": "Navin installs hit llm.navin.ai with a virtual key. LiteLLM routes to the enabled provider."
+      },
+      {
+        "id": "control-state",
+        "label": "Keys and spend",
+        "focus": ["litellm", "postgres", "redis"],
+        "note": "Postgres holds virtual keys and spend. Redis holds cache and distributed RPM or TPM."
+      },
+      {
+        "id": "observe",
+        "label": "Observability",
+        "focus": ["litellm", "observe"],
+        "note": "Logs, traces and metrics stay beside LiteLLM. Navin does not rebuild this layer."
+      }
+    ]
+  },
+  "components": [
+    { "id": "internet", "type": "external", "label": "Internet", "sublabel": "Navin installs", "tag": "openai-compat", "pos": [80, 300], "size": [140, 64] },
+    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.ai", "tag": "TLS", "pos": [340, 300], "size": [160, 64] },
+    { "id": "litellm", "type": "backend", "label": "LiteLLM Proxy", "sublabel": "Private OpenRouter", "tag": "/v1", "pos": [620, 300], "size": [160, 64] },
+    { "id": "postgres", "type": "database", "label": "Supabase Postgres", "sublabel": "keys, spend, logs", "pos": [900, 120], "size": [170, 64] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache + limits", "pos": [900, 300], "size": [170, 64] },
+    { "id": "observe", "type": "cloud", "label": "Observability", "sublabel": "Logs / Metrics", "pos": [900, 430], "size": [170, 64] },
+    { "id": "bedrock", "type": "external", "label": "AWS Bedrock", "sublabel": "Claude / Amazon", "pos": [280, 560], "size": [150, 60] },
+    { "id": "zai", "type": "external", "label": "Z.AI", "sublabel": "GLM", "pos": [460, 560], "size": [130, 60] },
+    { "id": "alibaba", "type": "external", "label": "Alibaba", "sublabel": "Qwen", "pos": [640, 560], "size": [130, 60] },
+    { "id": "google", "type": "external", "label": "Google AI Studio", "sublabel": "Gemini", "pos": [820, 560], "size": [160, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Gateway", "wraps": ["edge", "litellm", "postgres", "redis", "observe"], "pad": 28 }
+  ],
+  "connections": [
+    { "id": "internet-to-edge", "from": "internet", "to": "edge", "label": "sk-navin + /v1", "variant": "emphasis" },
+    { "id": "edge-to-litellm", "from": "edge", "to": "litellm" },
+    { "id": "litellm-to-postgres", "from": "litellm", "to": "postgres", "label": "keys + spend", "fromSide": "top", "toSide": "left" },
+    { "id": "litellm-to-redis", "from": "litellm", "to": "redis", "label": "cache" },
+    { "id": "litellm-to-observe", "from": "litellm", "to": "observe", "label": "traces", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "litellm-to-bedrock", "from": "litellm", "to": "bedrock", "fromSide": "bottom", "toSide": "top" },
+    { "id": "litellm-to-zai", "from": "litellm", "to": "zai", "fromSide": "bottom", "toSide": "top" },
+    { "id": "litellm-to-alibaba", "from": "litellm", "to": "alibaba", "fromSide": "bottom", "toSide": "top" },
+    { "id": "litellm-to-google", "from": "litellm", "to": "google", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Same as OpenRouter", "items": ["OpenAI-compat /v1", "Virtual key per install", "Navin catalog delegates models"] },
+    { "dot": "cyan", "title": "LiteLLM stack", "items": ["Nginx or Traefik at the edge", "Postgres + Redis + observability", "Bedrock, Z.AI, Alibaba, Google"] },
+    { "dot": "rose", "title": "Navin does not rebuild", "items": ["Budgets, RPM, retries, 429", "Provider credentials", "Spend and response cache"] }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "LiteLLM scale-out for many installs",
+    "subtitle": "Replica pool behind Traefik. Shared Redis and Postgres. Navin stays a client.",
+    "quality_profile": "showcase",
+    "viewBox": [1280, 760],
+    "views": [
+      {
+        "id": "user-path",
+        "label": "Many installs",
+        "focus": ["clients", "edge", "litellm", "providers"],
+        "note": "Thousands of Navin installs hit one hostname. Traefik spreads streams across LiteLLM replicas."
+      },
+      {
+        "id": "shared-state",
+        "label": "Shared state",
+        "focus": ["litellm", "redis", "postgres"],
+        "note": "Without Redis, two replicas disagree on budgets and RPM. Postgres keeps keys and spend."
+      },
+      {
+        "id": "watch",
+        "label": "Keep it calm",
+        "focus": ["edge", "litellm", "observe"],
+        "note": "Health checks tell you when to add a replica. A noisy user is capped by their virtual key."
+      }
+    ]
+  },
+  "components": [
+    { "id": "clients", "type": "external", "label": "Navin installs", "sublabel": "Thousands of users", "tag": "virtual keys", "pos": [70, 300], "size": [150, 64] },
+    { "id": "edge", "type": "cloud", "label": "Nginx / Traefik", "sublabel": "llm.navin.ai", "tag": "LB + TLS", "pos": [340, 300], "size": [160, 64] },
+    { "id": "litellm", "type": "backend", "label": "LiteLLM pool", "sublabel": "N stateless replicas", "tag": "/v1", "pos": [620, 300], "size": [170, 64] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache + RPM", "pos": [900, 140], "size": [170, 64] },
+    { "id": "postgres", "type": "database", "label": "Supabase Postgres", "sublabel": "keys + spend", "pos": [900, 300], "size": [170, 64] },
+    { "id": "observe", "type": "cloud", "label": "Observability", "sublabel": "logs / metrics", "pos": [900, 450], "size": [170, 64] },
+    { "id": "providers", "type": "external", "label": "Providers", "sublabel": "Bedrock Z.AI Alibaba Google", "pos": [560, 560], "size": [230, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Gateway", "wraps": ["edge", "litellm"], "pad": 28 },
+    { "kind": "region", "label": "Shared state", "wraps": ["redis", "postgres", "observe"], "pad": 28 }
+  ],
+  "connections": [
+    { "id": "clients-to-edge", "from": "clients", "to": "edge", "label": "/v1", "variant": "emphasis" },
+    { "id": "edge-to-litellm", "from": "edge", "to": "litellm" },
+    { "id": "litellm-to-redis", "from": "litellm", "to": "redis", "label": "limits", "fromSide": "top", "toSide": "left" },
+    { "id": "litellm-to-postgres", "from": "litellm", "to": "postgres", "label": "keys" },
+    { "id": "litellm-to-observe", "from": "litellm", "to": "observe", "label": "traces", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "litellm-to-providers", "from": "litellm", "to": "providers", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Why it stays calm", "items": ["One virtual key and budget per install", "Replicas stay interchangeable", "Add a replica without touching Navin"] },
+    { "dot": "cyan", "title": "Must be shared", "items": ["Redis for RPM, cache, spend locks", "Postgres with connection pooling", "Health checks on the edge"] },
+    { "dot": "rose", "title": "Real ceiling", "items": ["Provider quotas, not the gateway", "Start with one replica", "Scale out when streams pile up"] }
+  ]
+}

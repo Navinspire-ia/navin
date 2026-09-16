@@ -131,6 +131,7 @@ import type {
   ChatSummary,
   DocumentTemplateInfo,
   ProjectFileMatch,
+  RecentProjectEntry,
   SettingsPayload,
   SlashCommand,
   SkillSummary,
@@ -266,6 +267,11 @@ interface ThreadShellProps {
   onTurnEnd?: () => void;
   onUserMessage?: (chatId: string, text: string) => void;
   hideSidebarToggleForHostChrome?: boolean;
+  sidebarHidden?: boolean;
+  onImportSessions?: () => void;
+  onCreateProjectFolder?: () => void;
+  onOpenProject?: (projectPath: string, projectName: string) => void;
+  recentProjects?: RecentProjectEntry[];
   hostChromeTitleInset?: boolean;
   hideHeader?: boolean;
   /**
@@ -596,6 +602,11 @@ export function ThreadShell({
   onTurnEnd,
   onUserMessage,
   hideSidebarToggleForHostChrome = false,
+  sidebarHidden = false,
+  onImportSessions,
+  onCreateProjectFolder,
+  onOpenProject,
+  recentProjects = [],
   hostChromeTitleInset = false,
   hideHeader = false,
   artifactCanvasHost = null,
@@ -2468,6 +2479,11 @@ export function ThreadShell({
           workspaceScopeDisabled={workspaceScopeDisabled}
           workspaceError={workspaceError}
           onWorkspaceScopeChange={onWorkspaceScopeChange}
+          sidebarHidden={sidebarHidden}
+          onImportSessions={onImportSessions}
+          onCreateProjectFolder={onCreateProjectFolder}
+          onOpenProject={onOpenProject}
+          recentProjects={recentProjects}
           onNewChat={handleComposerNewChat}
           pendingQueueKey={chatId}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
@@ -2525,6 +2541,11 @@ export function ThreadShell({
           workspaceScopeDisabled={workspaceScopeDisabled}
           workspaceError={workspaceError}
           onWorkspaceScopeChange={onWorkspaceScopeChange}
+          sidebarHidden={sidebarHidden}
+          onImportSessions={onImportSessions}
+          onCreateProjectFolder={onCreateProjectFolder}
+          onOpenProject={onOpenProject}
+          recentProjects={recentProjects}
           onNewChat={handleComposerNewChat}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}

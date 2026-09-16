@@ -26,6 +26,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { DeleteConfirm } from "@/components/DeleteConfirm";
 import { RenameChatDialog } from "@/components/RenameChatDialog";
+import { SessionImportDialog } from "@/components/SessionImportDialog";
 import { Sidebar } from "@/components/Sidebar";
 import { SessionSearchDialog } from "@/components/SessionSearchDialog";
 import type { SettingsSectionKey } from "@/components/settings/SettingsView";
@@ -1629,6 +1630,7 @@ function Shell({
     label: string;
   } | null>(null);
   const [newProjectFolderOpen, setNewProjectFolderOpen] = useState(false);
+  const [sessionImportOpen, setSessionImportOpen] = useState(false);
   const restartSawDisconnectRef = useRef(false);
   const [restartToast, setRestartToast] = useState<string | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -4286,6 +4288,7 @@ function Shell({
     onNewChatInProject,
     onOpenProject,
     onCreateProjectFolder: () => setNewProjectFolderOpen(true),
+    onImportSessions: () => setSessionImportOpen(true),
     onOpenSettings,
     onOpenAccount: () => onOpenSettings("account"),
     onOpenSearch: onOpenSessionSearch,
@@ -4891,6 +4894,11 @@ function Shell({
                 onTurnEnd={onTurnEnd}
                 onUserMessage={noteUserMessage}
                 hideSidebarToggleForHostChrome
+                sidebarHidden={!hostSidebarOpen}
+                onImportSessions={() => setSessionImportOpen(true)}
+                onCreateProjectFolder={() => setNewProjectFolderOpen(true)}
+                onOpenProject={onOpenProject}
+                recentProjects={sidebarState.recent_projects ?? []}
                 hostChromeTitleInset={false}
                 hideHeader={isWorkbenchView(deskView)}
                 artifactCanvasHost={devDocked ? null : artifactCanvasHost}
@@ -4995,6 +5003,13 @@ function Shell({
           placeholder={t("chat.renameProjectPlaceholder")}
           onCancel={() => setPendingProjectRename(null)}
           onConfirm={onConfirmProjectRename}
+        />
+        <SessionImportDialog
+          open={sessionImportOpen}
+          onOpenChange={setSessionImportOpen}
+          onImported={() => {
+            void refresh();
+          }}
         />
         <RenameChatDialog
           open={newProjectFolderOpen}
