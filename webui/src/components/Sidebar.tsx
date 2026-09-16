@@ -43,6 +43,7 @@ import { useStudioModuleDrag } from "@/hooks/useStudioModuleDrag";
 import { updateLocalPreferences } from "@/lib/local-preferences";
 import type {
   ChatSummary,
+  RecentProjectEntry,
   SidebarViewState,
 } from "@/lib/types";
 import {
@@ -94,6 +95,7 @@ interface SidebarProps {
   onNewChatInProject?: (projectPath: string, projectName: string) => void;
   onOpenProject: (projectPath: string, projectName: string) => void;
   onCreateProjectFolder?: () => void;
+  onImportSessions?: () => void;
   onOpenSettings: (section?: SettingsSectionKey) => void;
   onOpenAccount: () => void;
   settingsActive?: boolean;
@@ -159,7 +161,7 @@ interface SidebarProps {
   showArchived?: boolean;
   archivedCount?: number;
   defaultWorkspacePath?: string | null;
-  recentProjects?: Array<{ path: string; name?: string }>;
+  recentProjects?: RecentProjectEntry[];
   hostChromeInset?: boolean;
 }
 
@@ -515,6 +517,7 @@ export function Sidebar(props: SidebarProps) {
             onNewChatInProject={props.onNewChatInProject}
             onOpenProject={props.onOpenProject}
             onCreateProjectFolder={props.onCreateProjectFolder}
+            onImportSessions={props.onImportSessions}
             onNewChat={props.onNewChat}
             pinnedKeys={props.pinnedKeys}
             chatOrder={props.chatOrder}

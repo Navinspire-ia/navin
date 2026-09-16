@@ -93,6 +93,7 @@ from navin.cli.agi import create_agi_app  # noqa: E402
 from navin.cli.app_templates import create_app_templates_app  # noqa: E402
 from navin.cli.gateway import create_gateway_app  # noqa: E402
 from navin.cli.lsp import create_lsp_app  # noqa: E402
+from navin.cli.session_import import create_sessions_app  # noqa: E402
 from navin.cli.stream import StreamRenderer, ThinkingSpinner  # noqa: E402
 from navin.config.paths import get_workspace_path, is_default_workspace  # noqa: E402
 from navin.config.schema import Config  # noqa: E402
@@ -3421,6 +3422,7 @@ app.add_typer(create_agi_app(console=console), name="agi")
 
 plugins_app = typer.Typer(help="Manage optional navin features")
 app.add_typer(plugins_app, name="plugins")
+app.add_typer(create_sessions_app(console=console), name="sessions")
 
 
 @plugins_app.command("list")

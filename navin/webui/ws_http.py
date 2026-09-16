@@ -4144,6 +4144,18 @@ class GatewayHTTPHandler:
             return await self._handle_webui_migration(connection, request, "scan")
         if got == "/api/webui/migration/import":
             return await self._handle_webui_migration(connection, request, "import")
+        if got == "/api/webui/sessions/import/scan":
+            return await self._handle_webui_session_import(
+                connection, request, "scan"
+            )
+        if got == "/api/webui/sessions/import/roots":
+            return await self._handle_webui_session_import_roots(
+                connection, request
+            )
+        if got == "/api/webui/sessions/import":
+            return await self._handle_webui_session_import(
+                connection, request, "import"
+            )
         if got == "/api/webui/preview-proxy/start":
             return await self._handle_webui_preview_proxy_start(connection, request)
         if got == "/api/webui/preview-screenshot":
@@ -4614,6 +4626,94 @@ class GatewayHTTPHandler:
                     return _http_error(403, "migration import is localhost-only")
                 payload = await asyncio.to_thread(run_import, project_root)
         except MigrationError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
+
+    async def _handle_webui_session_import_roots(
+        self, connection: Any, request: WsRequest
+    ) -> Response:
+        """List / add / remove saved extra import roots."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not self.workspace_controls_available(connection):
+            return _http_error(403, "session import is localhost-only")
+        from navin.webui.session_import_api import (
+            SessionImportError,
+            add_saved_root,
+            delete_saved_root,
+        )
+
+        query = _parse_query(request.path)
+        source = (_query_first(query, "source") or "").strip()
+        path = (_query_first(query, "path") or "").strip()
+        method = getattr(request, "method", "GET") or "GET"
+        try:
+            if method in {"POST", "PUT"}:
+                if not source or not path:
+                    return _http_error(400, "source and path are required")
+                payload = await asyncio.to_thread(add_saved_root, source, path)
+            elif method == "DELETE":
+                if not source or not path:
+                    return _http_error(400, "source and path are required")
+                payload = await asyncio.to_thread(
+                    delete_saved_root, source, path
+                )
+            else:
+                from navin.session.import_sessions import load_extra_roots
+
+                payload = {"saved_roots": await asyncio.to_thread(load_extra_roots)}
+        except SessionImportError as exc:
+            return _http_error(exc.status, exc.message)
+        return _http_json_response(payload)
+
+    async def _handle_webui_session_import(
+        self, connection: Any, request: WsRequest, action: str
+    ) -> Response:
+        """Scan / import external chat sessions (claude-code, codex, ...)."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        from navin.webui.session_import_api import (
+            SessionImportError,
+            run_external_session_import,
+            scan_external_sessions,
+        )
+
+        query = _parse_query(request.path)
+        raw_key = (_query_first(query, "session") or "").strip()
+        try:
+            if raw_key:
+                scope = self.workspaces.scope_for_session_key(raw_key)
+            else:
+                scope = self.workspaces.default_scope()
+            project_root = scope.project_path
+        except Exception:
+            return _http_error(400, "cannot resolve the target workspace")
+
+        try:
+            if action == "scan":
+                payload = await asyncio.to_thread(scan_external_sessions)
+            else:
+                if not self.workspace_controls_available(connection):
+                    return _http_error(403, "session import is localhost-only")
+                source = (_query_first(query, "source") or "auto").strip()
+                overwrite = (_query_first(query, "overwrite") or "").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                )
+                raw_limit = (_query_first(query, "limit") or "").strip()
+                try:
+                    limit = int(raw_limit) if raw_limit else 0
+                except ValueError:
+                    return _http_error(400, "limit must be an integer")
+                payload = await asyncio.to_thread(
+                    run_external_session_import,
+                    Path(project_root),
+                    source=source,
+                    overwrite=overwrite,
+                    limit=limit,
+                )
+        except SessionImportError as exc:
             return _http_error(exc.status, exc.message)
         return _http_json_response(payload)
 

@@ -14,9 +14,9 @@ import {
   ArchiveRestore,
   ExternalLink,
   ChevronRight,
+  Download,
   Folder,
   FolderOpen,
-  FolderPlus,
   GitFork,
   GripVertical,
   Mail,
@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { compactRelativeTime, deriveTitle } from "@/lib/format";
+import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import {
   GROUP_VISIBLE_INCREMENT,
   INITIAL_GROUP_VISIBLE_COUNT,
@@ -54,7 +55,13 @@ import {
   type ChatGroupLabels,
 } from "@/lib/chat-groups";
 import { cn } from "@/lib/utils";
-import type { ChatSummary, SidebarDensity, SidebarSortMode } from "@/lib/types";
+import type {
+  ChatSummary,
+  RecentProjectEntry,
+  SidebarDensity,
+  SidebarSortMode,
+} from "@/lib/types";
+import { projectNameFromPath } from "@/lib/workspace";
 
 const ACTION_MENU_CONTENT_CLASS = "w-56 min-w-56";
 const ACTION_MENU_ITEM_CLASS = "grid w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2";
@@ -97,6 +104,7 @@ interface ChatListProps {
   onNewChatInProject?: (projectPath: string, projectName: string) => void;
   onOpenProject?: (projectPath: string, projectName: string) => void;
   onCreateProjectFolder?: () => void;
+  onImportSessions?: () => void;
   onNewChat?: () => void;
   pinnedKeys?: string[];
   chatOrder?: string[];
@@ -111,7 +119,7 @@ interface ChatListProps {
   sort?: SidebarSortMode;
   showArchived?: boolean;
   defaultWorkspacePath?: string | null;
-  recentProjects?: Array<{ path: string; name?: string }>;
+  recentProjects?: RecentProjectEntry[];
   actionMenuPortalContainer?: HTMLElement | null;
   loading?: boolean;
   emptyLabel?: string;
@@ -137,6 +145,7 @@ export const ChatList = memo(function ChatList({
   onNewChatInProject,
   onOpenProject,
   onCreateProjectFolder,
+  onImportSessions,
   onNewChat,
   pinnedKeys = [],
   chatOrder = [],
@@ -220,10 +229,59 @@ export const ChatList = memo(function ChatList({
     );
   }
 
+  const importSessionsAction = onImportSessions ? (
+    <button
+      type="button"
+      onClick={onImportSessions}
+      aria-label={t("sidebar.sessionImport.row", {
+        defaultValue: "Import sessions",
+      })}
+      title={t("sidebar.sessionImport.row", {
+        defaultValue: "Import sessions",
+      })}
+      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-muted-foreground/70 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
+    >
+      <Download className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+      <span>
+        {t("sidebar.sessionImport.short", { defaultValue: "sessions" })}
+      </span>
+    </button>
+  ) : undefined;
+
+  const projectFolderAction =
+    onCreateProjectFolder || onOpenProject ? (
+      <DevProjectSelector
+        variant="sidebar"
+        projectPath={defaultWorkspacePath ?? null}
+        recentProjects={recentProjects}
+        onCreateFolder={onCreateProjectFolder}
+        onSelectProject={(path, name) => {
+          onOpenProject?.(path, name || projectNameFromPath(path));
+        }}
+        portalContainer={actionMenuPortalContainer}
+      />
+    ) : undefined;
+
+  const projectsHeaderActions =
+    importSessionsAction || projectFolderAction ? (
+      <div className="inline-flex items-center gap-0.5">
+        {projectFolderAction}
+        {importSessionsAction}
+      </div>
+    ) : undefined;
+
   if (sessions.length === 0 && recentProjects.length === 0) {
     return (
-      <div className="px-4 py-3 text-[13px] leading-5 text-muted-foreground/70">
-        {emptyLabel ?? t("chat.noSessions")}
+      <div className="min-w-0 overflow-x-hidden px-2 pb-2 pt-2">
+        {projectsHeaderActions ? (
+          <SectionHeader
+            label={labels.projects}
+            actionNode={projectsHeaderActions}
+          />
+        ) : null}
+        <div className="px-2 py-3 text-[13px] leading-5 text-muted-foreground/70">
+          {emptyLabel ?? t("chat.noSessions")}
+        </div>
       </div>
     );
   }
@@ -239,6 +297,12 @@ export const ChatList = memo(function ChatList({
 
   return (
     <div className="min-w-0 overflow-x-hidden px-2 pb-2 pt-2">
+      {firstProjectGroupIndex < 0 && projectsHeaderActions ? (
+        <SectionHeader
+          label={labels.projects}
+          actionNode={projectsHeaderActions}
+        />
+      ) : null}
       {groups.map((group, index) => {
         const isProject = group.kind === "project";
         const isChatsGroup = group.id === "workspace:chats" || group.id === "date:all";
@@ -294,17 +358,7 @@ export const ChatList = memo(function ChatList({
                 label={labels.projects}
                 collapsed={projectsHidden}
                 onToggle={() => onToggleGroup?.(SECTION_PROJECTS_ID)}
-                action={
-                  onCreateProjectFolder
-                    ? {
-                        label: t("chat.newProjectFolderAria", {
-                          defaultValue: "Create a project folder",
-                        }),
-                        icon: <FolderPlus className="h-4 w-4" strokeWidth={1.75} aria-hidden />,
-                        onClick: onCreateProjectFolder,
-                      }
-                    : undefined
-                }
+                actionNode={projectsHeaderActions}
               />
             ) : null}
             {isProject ? (
@@ -685,11 +739,15 @@ function sessionActionEntries({
 function SectionHeader({
   label,
   action,
+  leadingNode,
+  actionNode,
   collapsed,
   onToggle,
 }: {
   label: string;
   action?: { label: string; icon: ReactNode; onClick: () => void };
+  leadingNode?: ReactNode;
+  actionNode?: ReactNode;
   collapsed?: boolean;
   onToggle?: () => void;
 }) {
@@ -720,6 +778,7 @@ function SectionHeader({
           />
         </button>
       ) : null}
+      {leadingNode}
       {onToggle ? (
         <button
           type="button"
@@ -731,7 +790,9 @@ function SectionHeader({
       ) : (
         <span className={titleClass}>{label}</span>
       )}
-      {action ? (
+      {actionNode ? (
+        actionNode
+      ) : action ? (
         <button
           type="button"
           onClick={action.onClick}

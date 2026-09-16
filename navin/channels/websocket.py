@@ -361,6 +361,12 @@ class WebSocketChannel(BaseChannel):
     name = "websocket"
     display_name = "WebSocket"
 
+    #: Max seconds one raw frame may take to hand off to the socket before the
+    #: client is dropped (see ``_safe_send_to``). Long enough for a healthy
+    #: client on a slow link, short enough that one stalled tab cannot freeze
+    #: streaming for every other chat.
+    _SEND_TIMEOUT_S = 10.0
+
     def __init__(
         self,
         config: Any,
@@ -2200,9 +2206,21 @@ class WebSocketChannel(BaseChannel):
             pool.shutdown(wait=False, cancel_futures=True)
 
     async def _safe_send_to(self, connection: Any, raw: str, *, label: str = "") -> None:
-        """Send a raw frame to one connection, cleaning up on ConnectionClosed."""
+        """Send a raw frame to one connection, cleaning up on ConnectionClosed.
+
+        The send is bounded by ``_SEND_TIMEOUT_S``: a stalled client (frozen
+        renderer, throttled background tab, saturated socket) must not block
+        the shared outbound dispatcher forever. Without the bound one slow
+        webui stalls delta delivery to every chat, the outbound queue fills,
+        and the agent loop itself pauses on ``publish_outbound`` - the
+        "streaming stops then resumes" stutter. A client that cannot drain a
+        frame in time is dropped; it reconnects and resyncs.
+        """
         try:
-            await connection.send(raw)
+            await asyncio.wait_for(connection.send(raw), timeout=self._SEND_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            self._cleanup_connection(connection)
+            self.logger.warning("send timed out{}, dropping slow client{}", label, label)
         except ConnectionClosed:
             self._cleanup_connection(connection)
             self.logger.warning("connection gone{}", label)

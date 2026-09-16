@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 
 import "@/i18n";
 import { ChatList, RunningDots } from "@/components/ChatList";
+import type { NavinClient } from "@/lib/navin-client";
 import type { ChatSummary } from "@/lib/types";
+import { ClientProvider } from "@/providers/ClientProvider";
 
 const RECENT = new Date(Date.now() - 2 * 3_600_000).toISOString();
 
@@ -99,5 +101,31 @@ describe("ChatList running indicator", () => {
     expect(html.match(/motion-reduce:animate-none/g)).toHaveLength(4);
     expect(html).toContain('role="img"');
     expect(html).toContain('title="Agent running"');
+  });
+
+  it("puts create and the project selector on the same Projects header button", () => {
+    const html = renderToStaticMarkup(
+      createElement(ClientProvider, {
+        client: { status: "open", onStatus: () => () => {} } as unknown as NavinClient,
+        token: "t",
+        children: createElement(ChatList, {
+          sessions: [session("websocket:aaa", "Signing the build")],
+          activeKey: "websocket:aaa",
+          onSelect: noop,
+          onRequestDelete: noop,
+          onTogglePin: noop,
+          onRequestRename: noop,
+          onToggleArchive: noop,
+          onCreateProjectFolder: noop,
+          onImportSessions: noop,
+          onOpenProject: noop,
+          recentProjects: [{ path: "/home/me/NavinProjects/demo", name: "demo" }],
+        }),
+      }),
+    );
+    expect(html).toContain("Create or open a project");
+    expect(html).toContain("Import sessions");
+    expect(html).toContain(">sessions<");
+    expect(html).not.toContain("Open the project selector");
   });
 });

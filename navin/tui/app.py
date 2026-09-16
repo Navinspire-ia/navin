@@ -334,6 +334,12 @@ class QueuedPrompt:
 
 
 class NavinApp(App[None]):
+    """Textual app hosting the chat transcript and the agent runtime."""
+
+    #: How long a turn-end signal waits for an overtaking final answer before
+    #: the prompt queue is unblocked (see UiTurnEnd handling).
+    AWAITING_REPLY_GRACE_S = 1.5
+
     TITLE = "navin-cli"
     ALLOW_SELECT = True
     COMMANDS = {NavinActions, SlashCommands}
@@ -448,6 +454,7 @@ class NavinApp(App[None]):
         self._queue_sending = False
         self._queue_visible_session = self.runtime.session_key
         self._awaiting_reply = False
+        self._awaiting_grace_timer: Any = None
         self._find_hits: list[Any] = []
         self._find_index = -1
         # Project analysed by Graph / Evolve: where `navin-cli` was launched,
@@ -507,9 +514,7 @@ class NavinApp(App[None]):
             self._queue_visible_session = key
             self._awaiting_reply = self.runtime.turn_active
             self.call_later(self._refresh_queue)
-        if self._queue_ready() and self._queued_prompts.get(key) and key not in self._queue_paused and not self._queue_sending:
-            self._queue_sending = True
-            self.call_later(self._send_next_queued)
+        self._maybe_kick_queue()
 
     def _refresh_context_status(self) -> None:
         if self.runtime.turn_active:
@@ -525,6 +530,38 @@ class NavinApp(App[None]):
         if self.runtime.bus is not None and self.runtime.bus.outbound_size:
             return False
         return self._current is None or self._current.finished
+
+    def _stop_awaiting_grace_timer(self) -> None:
+        timer = getattr(self, "_awaiting_grace_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._awaiting_grace_timer = None
+
+    def _start_awaiting_grace_timer(self) -> None:
+        self._stop_awaiting_grace_timer()
+        self._awaiting_grace_timer = self.set_timer(
+            self.AWAITING_REPLY_GRACE_S, self._clear_awaiting_reply
+        )
+
+    def _clear_awaiting_reply(self) -> None:
+        """Grace period elapsed with no final answer: unblock the queue."""
+        self._awaiting_grace_timer = None
+        if not self._awaiting_reply:
+            return
+        self._awaiting_reply = False
+        self._maybe_kick_queue()
+
+    def _maybe_kick_queue(self) -> None:
+        """Auto-send the next queued prompt once the session is idle."""
+        key = self.runtime.session_key
+        if (
+            self._queue_ready()
+            and self._queued_prompts.get(key)
+            and key not in self._queue_paused
+            and not self._queue_sending
+        ):
+            self._queue_sending = True
+            self.call_later(self._send_next_queued)
 
     async def _refresh_queue(self) -> None:
         key = self.runtime.session_key
@@ -1315,6 +1352,7 @@ class NavinApp(App[None]):
         if isinstance(event, UiTurnStarted):
             self._stop_pending = False
             self._awaiting_reply = True
+            self._stop_awaiting_grace_timer()
             await self._retire_retry_wait_note()
             self._set_status()
             self._refresh_working_line()
@@ -1426,6 +1464,12 @@ class NavinApp(App[None]):
         if isinstance(event, UiTurnEnd):
             self._stop_pending = False
             self._refresh_working_line()
+            if self._awaiting_reply:
+                # The turn ended but no final assistant message arrived (stop,
+                # error path, empty answer). Give the answer a short grace
+                # period to overtake the turn-end signal, then unblock the
+                # queue so a queued prompt still goes out automatically.
+                self._start_awaiting_grace_timer()
             if self._current is not None and not self._current.finished:
                 st = self.runtime.status
                 await self._current.finish(
