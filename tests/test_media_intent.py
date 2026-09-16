@@ -397,3 +397,68 @@ class TestHelpers:
         from navin.agent.media_intent import MediaIntent
 
         assert MediaIntent(KIND_IMAGE, (), False, ()).primary_tool == ""
+
+
+class TestReferencesToExistingMedia:
+    """Pointing at media that exists is display intent, not production.
+
+    Regression: "montre moi la video de tout a l heure" forced a paid
+    generate_video run on an innocuous turn because "montre moi" counted as a
+    generation verb and the bare noun "video" made the turn explicit.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Montre moi la video de tout a l'heure.",
+            "show me the video from earlier",
+            "donne moi le clip qu'on a fait",
+            "montre ma video de vacances",
+            "montre l'animation de hier",
+            "fais un resume de la derniere video",
+            "fais moi un resume de la video qu'on a generee hier",
+            "resume the video we generated yesterday",
+        ],
+    )
+    def test_display_and_summary_asks_route_nothing(self, text):
+        assert detect_media_intent(text) is None, text
+
+    @pytest.mark.parametrize(
+        "text,kind",
+        [
+            ("genere une video de 30 secondes", KIND_VIDEO),
+            # Definite article, but a production verb governs the medium.
+            ("genere la video du lancement", KIND_VIDEO),
+            ("make the soundtrack", KIND_MUSIC),
+            ("dessine la nouvelle affiche", KIND_IMAGE),
+            ("fais moi un logo pour ma marque", KIND_IMAGE),
+            ("genere un chat qui mange une banane", KIND_IMAGE),
+            ("cree une video complete avec musique et voix off", KIND_FULL_VIDEO),
+            ("fais un montage video pour le produit", KIND_FULL_VIDEO),
+            ("generate a short video", KIND_VIDEO),
+        ],
+    )
+    def test_production_asks_keep_their_routing(self, text, kind):
+        intent = detect_media_intent(text)
+        assert intent is not None, text
+        assert intent.kind == kind, text
+
+    def test_a_reference_next_to_a_production_ask_keeps_the_ask(self):
+        # The deliverable is music; the video is only named as context.
+        intent = detect_media_intent(
+            "genere une musique pour la video du produit"
+        )
+        assert intent is not None
+        assert MUSIC_TOOL in intent.tools
+
+    def test_forge_stays_media_free_for_reference_turns(self):
+        from navin.agent.loop import AgentLoop
+        from navin.agent.tool_surface import CODE_BUILD_ALLOWED_TOOLS
+
+        allowed = AgentLoop._allowed_tools(
+            None,
+            {"allowed_tools": sorted(CODE_BUILD_ALLOWED_TOOLS)},
+            "montre moi la video de tout a l heure",
+        )
+        assert allowed is not None
+        assert VIDEO_TOOL not in allowed

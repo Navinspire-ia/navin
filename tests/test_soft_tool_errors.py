@@ -82,6 +82,34 @@ class RepeatedReadonlyToolErrorTest(unittest.TestCase):
         self.assertIn("read_file", blocked or "")
         self.assertIn("Do not repeat it", blocked or "")
 
+    def test_blocked_read_names_the_force_escape_hatch(self) -> None:
+        counts: dict[str, int] = {}
+        for _ in range(3):
+            blocked = repeated_readonly_tool_error(
+                "read_file", {"path": "a.py"}, counts
+            )
+        self.assertIsNotNone(blocked)
+        self.assertIn("force=true", blocked or "")
+
+    def test_blocked_force_reread_does_not_advertise_force_again(self) -> None:
+        counts: dict[str, int] = {}
+        for _ in range(3):
+            blocked = repeated_readonly_tool_error(
+                "read_file", {"path": "a.py", "force": True}, counts
+            )
+        self.assertIsNotNone(blocked)
+        self.assertNotIn("pass force=true once", (blocked or "").casefold())
+        self.assertIn("offset/limit", blocked or "")
+
+    def test_non_read_tools_keep_the_generic_hint(self) -> None:
+        counts: dict[str, int] = {}
+        for _ in range(3):
+            blocked = repeated_readonly_tool_error(
+                "grep", {"pattern": "x", "path": "a"}, counts
+            )
+        self.assertIsNotNone(blocked)
+        self.assertNotIn("force=true", blocked or "")
+
     def test_a_different_path_is_a_fresh_budget(self) -> None:
         counts: dict[str, int] = {}
         repeated_readonly_tool_error("read_file", {"path": "a.py"}, counts)
