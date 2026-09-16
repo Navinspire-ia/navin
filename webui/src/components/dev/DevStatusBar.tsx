@@ -99,6 +99,33 @@ function runtimeHealthBarLabel(health: RuntimeHealth, t: TFunction): string {
   );
 }
 
+export function runtimeHealthTooltip(
+  runtimeHealth: RuntimeHealth,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  return [
+    runtimeHealth.message ||
+      t("dev.status.runtimeHealthTooltip", {
+        defaultValue:
+          "Runtime {{level}} - RAM {{mem}}% used, disk {{disk}}% used",
+        level: runtimeHealth.level,
+        mem: Math.round((runtimeHealth.memory?.usedRatio ?? 0) * 100),
+        disk: Math.round((runtimeHealth.disk?.usedRatio ?? 0) * 100),
+      }),
+    // A desktop shell attaches to any listening gateway: naming the
+    // engine build makes a stale sidecar visible instead of looking
+    // like random chat/session bugs.
+    runtimeHealth.engine?.version
+      ? t("dev.status.engineVersion", {
+          defaultValue: "Engine {{version}}",
+          version: runtimeHealth.engine.version,
+        })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" - ");
+}
+
 export function DevStatusBar({
   connection,
   environment,
@@ -229,16 +256,7 @@ export function DevStatusBar({
             runtimeHealth.level === "warning" &&
               "font-medium text-amber-700 dark:text-amber-400",
           )}
-          title={
-            runtimeHealth.message ||
-            t("dev.status.runtimeHealthTooltip", {
-              defaultValue:
-                "Runtime {{level}} - RAM {{mem}}% used, disk {{disk}}% used",
-              level: runtimeHealth.level,
-              mem: Math.round((runtimeHealth.memory?.usedRatio ?? 0) * 100),
-              disk: Math.round((runtimeHealth.disk?.usedRatio ?? 0) * 100),
-            })
-          }
+          title={runtimeHealthTooltip(runtimeHealth, t)}
         >
           <Gauge className="h-3 w-3" aria-hidden />
           {runtimeHealthBarLabel(runtimeHealth, t)}

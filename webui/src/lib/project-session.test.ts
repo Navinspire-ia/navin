@@ -95,6 +95,27 @@ describe("findReusableEmptyChat", () => {
     ).toBeNull();
   });
 
+  it("does not reuse the active blank chat while its first turn is running", () => {
+    const busy = session({ chatId: "busy" });
+    const busyIds = new Set(["busy"]);
+    expect(
+      findReusableEmptyChat([busy], busy.key, "/home/me/NavinProjects", busyIds),
+    ).toBeNull();
+  });
+
+  it("skips a running blank chat in the workspace fallback too", () => {
+    const titled = session({
+      chatId: "titled",
+      title: "Roadmap",
+      projectPath: "/home/me/app",
+    });
+    const busyBlank = session({ chatId: "busy", projectPath: "/home/me/app" });
+    const busyIds = new Set(["busy"]);
+    expect(
+      findBlankChatForWorkspace([titled, busyBlank], "/home/me/app", busyIds),
+    ).toBeNull();
+  });
+
   it("ignores a chat that already has a title or preview", () => {
     const titled = session({ chatId: "titled", title: "Roadmap" });
     expect(isBlankChat(titled)).toBe(false);

@@ -2851,7 +2851,12 @@ function Shell({
         const scope = workspaceScope ?? activeWorkspaceScope;
         const projectPath =
           scope?.project_path ?? workspaces?.default_scope?.project_path ?? null;
-        const reusable = findReusableEmptyChat(sessions, activeKey, projectPath);
+        const reusable = findReusableEmptyChat(
+          sessions,
+          activeKey,
+          projectPath,
+          runningChatIds,
+        );
         const nextView = viewForCreatedChat(view, {
           keepWorkbench: options?.keepWorkbench,
           isWorkbench: isWorkbenchView(view),
@@ -2904,6 +2909,7 @@ function Shell({
     activeWorkspaceScope,
     createChat,
     navigate,
+    runningChatIds,
     sessions,
     t,
     view,
@@ -3213,7 +3219,12 @@ function Shell({
       activeWorkspaceScope?.project_path ??
       workspaces?.default_scope?.project_path ??
       null;
-    const reusable = findReusableEmptyChat(sessions, activeKey, projectPath);
+    const reusable = findReusableEmptyChat(
+      sessions,
+      activeKey,
+      projectPath,
+      runningChatIds,
+    );
     if (reusable) {
       navigate({
         view: "chat",
@@ -3231,6 +3242,7 @@ function Shell({
     activeKey,
     activeWorkspaceScope?.project_path,
     navigate,
+    runningChatIds,
     sessions,
     workspaces?.default_scope?.project_path,
   ]);

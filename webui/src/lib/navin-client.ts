@@ -255,6 +255,8 @@ export interface ServerNotification {
   source?: string;
   key?: string;
   chatId?: string | null;
+  /** True when the entry sharing `key` should be removed: the condition ended. */
+  clear?: boolean;
 }
 type NotificationHandler = (notification: ServerNotification) => void;
 type SessionUpdateScope = "metadata" | "thread" | string;
@@ -2005,6 +2007,7 @@ export class NavinClient {
         source: typeof frame.source === "string" ? frame.source : undefined,
         key: typeof frame.key === "string" ? frame.key : undefined,
         chatId: typeof frame.chat_id === "string" ? frame.chat_id : null,
+        clear: frame.clear === true,
       };
       for (const handler of this.notificationHandlers) {
         handler(notification);

@@ -2364,6 +2364,7 @@ export interface RuntimeHealth {
   memory?: { usedRatio?: number | null; availableGb?: number | null };
   disk?: { usedRatio?: number | null; freeGb?: number | null; path?: string };
   pid?: number;
+  engine?: { version?: string; executable?: string };
 }
 
 export async function fetchRuntimeHealth(
