@@ -191,6 +191,57 @@ def test_queued_prompts_stay_in_their_session(tmp_path):
     asyncio.run(run())
 
 
+def test_queue_sends_after_turn_end_without_any_assistant_message(tmp_path):
+    """A turn that ends silently (stop, error, empty answer) must not leave
+    the queue blocked forever: after a short grace period the next queued
+    prompt is sent automatically."""
+    async def run():
+        app = make_app(tmp_path)
+        app.AWAITING_REPLY_GRACE_S = 0.1
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("first")
+            await app.runtime.bus.consume_inbound()
+            app.prefs.mode = "agent"
+            await app.submit_text("follow-up")
+            app.prefs.mode = "chat"
+            await pilot.pause()
+            assert len(app.query(QueuedPromptRow)) == 1
+            assert app._awaiting_reply
+
+            # Turn ends without any assistant message ever arriving.
+            app.runtime._finish_turn({})
+            await pilot.pause()
+            # Skip the empty turn-end frame if the runtime emits one; the
+            # queued prompt must arrive on its own after the grace period.
+            sent = None
+            for _ in range(30):
+                try:
+                    message = await asyncio.wait_for(
+                        app.runtime.bus.consume_inbound(), 0.5
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                if message.content:
+                    sent = message
+                    break
+            if sent is None:
+                print("DBG awaiting:", app._awaiting_reply, "ready:", app._queue_ready(),
+                      "outbound:", getattr(app.runtime.bus, "outbound_size", None),
+                      "turn_active:", app.runtime.turn_active,
+                      "tasks:", [t.done() for t in getattr(app.runtime.agent_loop, "_active_tasks", {}).get(app.runtime.session_key, [])],
+                      "current:", app._current, "queue_sending:", app._queue_sending)
+            assert sent is not None
+            assert sent.content == "/forge follow-up"
+            # The queue state machine finishes removing the row right after
+            # publishing; give the event loop the remaining pumps.
+            for _ in range(50):
+                if not app.query(QueuedPromptRow):
+                    break
+                await pilot.pause(0.05)
+            assert not app.query(QueuedPromptRow)
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("width", [48, 100])
 def test_context_percentage_stays_at_right_of_model_provider_line(tmp_path, width):
     async def run():

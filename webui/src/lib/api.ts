@@ -2178,6 +2178,98 @@ export async function deleteSession(
   );
 }
 
+export interface SessionImportSourceStat {
+  name: string;
+  label: string;
+  status: string;
+  discovered: number;
+  imported?: number;
+  skipped_existing?: number;
+  note?: string;
+}
+
+export interface SessionImportScanPayload {
+  sources: SessionImportSourceStat[];
+  saved_roots?: Record<string, string[]>;
+}
+
+export interface SessionImportResultPayload {
+  workspace: string;
+  sources: SessionImportSourceStat[];
+}
+
+export async function scanExternalSessions(
+  token: string,
+  base: string = "",
+): Promise<SessionImportScanPayload> {
+  return request<SessionImportScanPayload>(
+    `${base}/api/webui/sessions/import/scan`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function importExternalSessions(
+  token: string,
+  options?: { source?: string; overwrite?: boolean; limit?: number },
+  base: string = "",
+): Promise<SessionImportResultPayload> {
+  const query = new URLSearchParams();
+  if (options?.source) query.set("source", options.source);
+  if (options?.overwrite) query.set("overwrite", "true");
+  if (options?.limit) query.set("limit", String(options.limit));
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<SessionImportResultPayload>(
+    `${base}/api/webui/sessions/import${suffix}`,
+    token,
+    { method: "POST" },
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function listImportRoots(
+  token: string,
+  base: string = "",
+): Promise<{ saved_roots: Record<string, string[]> }> {
+  return request<{ saved_roots: Record<string, string[]> }>(
+    `${base}/api/webui/sessions/import/roots`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function addImportRoot(
+  token: string,
+  source: string,
+  path: string,
+  base: string = "",
+): Promise<{ saved_roots: Record<string, string[]> }> {
+  const query = new URLSearchParams({ source, path });
+  return request<{ saved_roots: Record<string, string[]> }>(
+    `${base}/api/webui/sessions/import/roots?${query}`,
+    token,
+    { method: "POST" },
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function removeImportRoot(
+  token: string,
+  source: string,
+  path: string,
+  base: string = "",
+): Promise<{ saved_roots: Record<string, string[]> }> {
+  const query = new URLSearchParams({ source, path });
+  return request<{ saved_roots: Record<string, string[]> }>(
+    `${base}/api/webui/sessions/import/roots?${query}`,
+    token,
+    { method: "DELETE" },
+    API_READ_TIMEOUT_MS,
+  );
+}
+
 export async function fetchSettings(
   token: string,
   base: string = "",

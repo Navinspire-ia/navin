@@ -38,6 +38,7 @@ import {
   Bug,
   Check,
   ChevronDown,
+  Download,
   ChevronUp,
   CircleHelp,
   Clapperboard,
@@ -110,10 +111,12 @@ import {
   DocumentTemplatePicker,
 } from "@/components/thread/DocumentTemplatePicker";
 import { commitOnPointerDown, commitOnSelect } from "@/components/thread/menuChoice";
+import { DevProjectSelector } from "@/components/dev/DevProjectSelector";
 import {
   WorkspaceProjectPicker,
   workspaceProjectPickerVisible,
 } from "@/components/thread/WorkspaceControls";
+import { projectNameFromPath } from "@/lib/workspace";
 import {
   DEFAULT_REASONING_EFFORT_VALUES,
   reasoningEffortShortLabel,
@@ -144,6 +147,7 @@ import type {
   OutboundFileMention,
   OutboundMcpPresetMention,
   ProjectFileMatch,
+  RecentProjectEntry,
   SlashCommand,
   SkillSummary,
   WebUIIngressLimits,
@@ -383,6 +387,11 @@ interface ThreadComposerProps {
   workspaceScopeDisabled?: boolean;
   workspaceError?: string | null;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
+  sidebarHidden?: boolean;
+  onImportSessions?: () => void;
+  onCreateProjectFolder?: () => void;
+  onOpenProject?: (projectPath: string, projectName: string) => void;
+  recentProjects?: RecentProjectEntry[];
   onNewChat?: () => void;
   pendingQueueKey?: string | null;
   transcriptionProvider?: string | null;
@@ -929,6 +938,11 @@ function ThreadComposerImpl({
   workspaceScopeDisabled = false,
   workspaceError = null,
   onWorkspaceScopeChange,
+  sidebarHidden = false,
+  onImportSessions,
+  onCreateProjectFolder,
+  onOpenProject,
+  recentProjects = [],
   onNewChat,
   pendingQueueKey = null,
   transcriptionProvider = null,
@@ -2703,6 +2717,44 @@ function ThreadComposerImpl({
           )}
         >
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+            {onImportSessions || onCreateProjectFolder || onOpenProject ? (
+              <div
+                className={cn(
+                  "flex shrink-0 items-center gap-0.5",
+                  !sidebarHidden && "lg:hidden",
+                )}
+              >
+                {onCreateProjectFolder || onOpenProject ? (
+                  <DevProjectSelector
+                    variant="sidebar"
+                    projectPath={workspaceDefaultScope?.project_path ?? null}
+                    recentProjects={recentProjects}
+                    onCreateFolder={onCreateProjectFolder}
+                    onSelectProject={(path, name) => {
+                      onOpenProject?.(path, name || projectNameFromPath(path));
+                    }}
+                  />
+                ) : null}
+                {onImportSessions ? (
+                  <button
+                    type="button"
+                    onClick={onImportSessions}
+                    aria-label={t("sidebar.sessionImport.row", {
+                      defaultValue: "Import sessions",
+                    })}
+                    title={t("sidebar.sessionImport.row", {
+                      defaultValue: "Import sessions",
+                    })}
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-muted-foreground/80 outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring/50"
+                  >
+                    <Download className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                    <span>
+                      {t("sidebar.sessionImport.short", { defaultValue: "sessions" })}
+                    </span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             <ComposerModeMenu
               mode={turnMode}
               disabled={disabled || isStreaming}

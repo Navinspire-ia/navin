@@ -10,6 +10,7 @@ import {
   Clock,
   Folder,
   FolderOpen,
+  FolderPlus,
   FolderSearch,
   GitBranch,
   HardDrive,
@@ -119,20 +120,25 @@ export function DevProjectSelector({
   recentProjects,
   disabled,
   onSelectProject,
+  onCreateFolder,
   compact,
   variant = "menu",
   triggerClassName,
+  portalContainer,
 }: {
   projectPath: string | null;
   projectName?: string | null;
   recentProjects: RecentProjectEntry[];
   disabled?: boolean;
   onSelectProject: (path: string, name?: string) => void;
+  /** Sidebar + button: create a folder under the default Projects root. */
+  onCreateFolder?: () => void;
   compact?: boolean;
   /** `empty` = Open folder + Import Git visible on the editor empty state. */
-  variant?: "menu" | "empty";
+  variant?: "menu" | "empty" | "sidebar";
   /** Overrides on the menu trigger, e.g. to render it as a plain sidebar row. */
   triggerClassName?: string;
+  portalContainer?: HTMLElement | null;
 }) {
   const { token } = useClient();
   const { t } = useTranslation();
@@ -401,48 +407,86 @@ export function DevProjectSelector({
     );
   }
 
+  const sidebarIconClass =
+    "inline-flex h-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-55";
+
   return (
     <>
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            disabled={disabled}
-            title={
-              label && effectiveProjectPath
-                ? `${label} - ${effectiveProjectPath}`
-                : (effectiveProjectPath ?? label ?? undefined)
-            }
-            aria-label={
-              label
-                ? `${t("dev.project.selectorAria", { defaultValue: "Select project" })}: ${label}`
-                : t("dev.project.selectorAria", { defaultValue: "Select project" })
-            }
-            className={cn(
-              "inline-flex h-7 items-center rounded-lg border border-border/50",
-              "bg-background/70 text-[12px] font-medium text-foreground/85 transition-colors",
-              "hover:bg-muted/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-55",
-              compact
-                ? "gap-0.5 px-1.5"
-                : "min-w-0 max-w-[16rem] gap-1.5 px-2.5",
-              triggerClassName,
-            )}
-          >
-            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-            {compact ? null : (
-              <span className="min-w-0 truncate">
-                {label ?? t("dev.project.none", { defaultValue: "Open project" })}
-              </span>
-            )}
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-          </button>
-        </DropdownMenuTrigger>
+        {variant === "sidebar" ? (
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-label={t("chat.projectFolderButtonAria", {
+                defaultValue: "Create or open a project",
+              })}
+              title={t("chat.projectFolderButtonAria", {
+                defaultValue: "Create or open a project",
+              })}
+              className={cn(sidebarIconClass, "w-6")}
+            >
+              <FolderPlus className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+        ) : (
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled}
+              title={
+                label && effectiveProjectPath
+                  ? `${label} - ${effectiveProjectPath}`
+                  : (effectiveProjectPath ?? label ?? undefined)
+              }
+              aria-label={
+                label
+                  ? `${t("dev.project.selectorAria", { defaultValue: "Select project" })}: ${label}`
+                  : t("dev.project.selectorAria", { defaultValue: "Select project" })
+              }
+              className={cn(
+                "inline-flex h-7 items-center rounded-lg border border-border/50",
+                "bg-background/70 text-[12px] font-medium text-foreground/85 transition-colors",
+                "hover:bg-muted/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-55",
+                compact
+                  ? "gap-0.5 px-1.5"
+                  : "min-w-0 max-w-[16rem] gap-1.5 px-2.5",
+                triggerClassName,
+              )}
+            >
+              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+              {compact ? null : (
+                <span className="min-w-0 truncate">
+                  {label ?? t("dev.project.none", { defaultValue: "Open project" })}
+                </span>
+              )}
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+        )}
         <DropdownMenuContent
           align="end"
           side="bottom"
           sideOffset={8}
+          portalContainer={portalContainer}
           className="max-h-[min(var(--radix-dropdown-menu-content-available-height),48rem)] w-[min(26rem,calc(100vw-2rem))] rounded-2xl"
         >
+          {variant === "sidebar" && onCreateFolder ? (
+            <>
+              <DropdownMenuItem
+                onSelect={onCreateFolder}
+                className="flex cursor-default gap-2.5 rounded-xl px-2.5 py-2"
+              >
+                <FolderPlus className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">
+                  {t("chat.newProjectFolderInDefault", {
+                    defaultValue: "New folder in Projects",
+                  })}
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           {effectiveProjectPath ? (
             <>
               <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
