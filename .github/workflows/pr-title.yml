@@ -1,4 +1,4 @@
-name: PR title
+name: Conventional commit title
 
 on:
   pull_request:
@@ -15,13 +15,15 @@ permissions:
   pull-requests: read
 
 jobs:
-  conventional:
-    runs-on: ubuntu-latest
+  check-title:
+    name: Check PR title
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Self-test
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run commit-convention self-test
         run: python3 scripts/commit_convention.py --self-test
-      - name: Check PR title
+      - name: Check pull request title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
