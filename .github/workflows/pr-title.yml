@@ -1,0 +1,157 @@
+name: Conventional commit title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  SUCCESS_ICON: '<img src="https://api.iconify.design/octicon:check-circle-fill-16.svg?color=%231f883d" width="16" alt="passed" />'
+  FAIL_ICON: '<img src="https://api.iconify.design/octicon:x-circle-fill-16.svg?color=%23cf222e" width="16" alt="failed" />'
+
+jobs:
+  check-title:
+    name: Check PR title
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run commit-convention self-test
+        id: self-test
+        continue-on-error: true
+        run: |
+          if python3 scripts/commit_convention.py --self-test; then
+            echo "result=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check pull request title
+        id: check-title
+        continue-on-error: true
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set +e
+          python3 scripts/commit_convention.py check-title \
+            > /tmp/title.json 2> /tmp/title.err
+          code=$?
+          if [ "$code" -eq 0 ]; then
+            echo "result=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            cat /tmp/title.err >&2
+          fi
+
+      - name: Write job summary
+        if: always()
+        env:
+          SELF_TEST: ${{ steps.self-test.outputs.result }}
+          TITLE_CHECK: ${{ steps.check-title.outputs.result }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
+        run: |
+          python3 <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          from pathlib import Path
+
+          success = os.environ["SUCCESS_ICON"]
+          fail = os.environ["FAIL_ICON"]
+          git_logo = '<img src="https://cdn.simpleicons.org/git/F05032" width="18" alt="Git" />'
+          gha_logo = '<img src="https://cdn.simpleicons.org/githubactions/2088FF" width="18" alt="GitHub Actions" />'
+
+          def badge(result: str) -> str:
+              return f"{success} passed" if result == "passed" else f"{fail} failed"
+
+          self_test = os.environ.get("SELF_TEST") or "failed"
+          title_check = os.environ.get("TITLE_CHECK") or "failed"
+          job_ok = self_test == "passed" and title_check == "passed"
+          job_status = f"{success} passed" if job_ok else f"{fail} failed"
+
+          parsed = {}
+          title_path = Path("/tmp/title.json")
+          if title_path.is_file() and title_path.stat().st_size:
+              try:
+                  parsed = json.loads(title_path.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  parsed = {}
+          err = Path("/tmp/title.err").read_text(encoding="utf-8").strip() if Path("/tmp/title.err").is_file() else ""
+
+          pr_title = os.environ.get("PR_TITLE") or ""
+          pr_url = os.environ.get("PR_URL") or ""
+          pr_number = os.environ.get("PR_NUMBER") or ""
+          labels = os.environ.get("PR_LABELS") or "(none)"
+          title_link = f"[#{pr_number}]({pr_url})" if pr_url else f"#{pr_number}"
+
+          lines = [
+              f"| Job | Result | Work covered |",
+              "| --- | --- | --- |",
+              f"| {gha_logo} Check PR title | {job_status} | Conventional Commits title, breaking footer, `semver:major` |",
+              "",
+              "<details>",
+              "<summary>Title check details</summary>",
+              "",
+              "## Checks",
+              "",
+              "| Check | Result |",
+              "| --- | --- |",
+              f"| Self-test | {badge(self_test)} |",
+              f"| PR title | {badge(title_check)} |",
+              "",
+              "## Pull request",
+              "",
+              "| Field | Value |",
+              "| --- | --- |",
+              f"| PR | {title_link} |",
+              f"| Title | `{pr_title}` |",
+              f"| Labels | {labels} |",
+          ]
+          if parsed:
+              lines += [
+                  "",
+                  "## Parsed title",
+                  "",
+                  "| Field | Value |",
+                  "| --- | --- |",
+                  f"| Type | `{parsed.get('type')}` |",
+                  f"| Scope | `{parsed.get('scope') or '(none)'}` |",
+                  f"| Breaking | {'yes' if parsed.get('breaking') else 'no'} |",
+                  f"| Subject | {parsed.get('subject')} |",
+              ]
+          if err:
+              lines += [
+                  "",
+                  "## Error",
+                  "",
+                  f"```",
+                  err,
+                  "```",
+              ]
+          lines += ["", "</details>", ""]
+          print("\n".join(lines))
+          PY
+
+      - name: Fail job if checks did not pass
+        if: always()
+        env:
+          SELF_TEST: ${{ steps.self-test.outputs.result }}
+          TITLE_CHECK: ${{ steps.check-title.outputs.result }}
+        run: |
+          if [ "${SELF_TEST}" != "passed" ] || [ "${TITLE_CHECK}" != "passed" ]; then
+            exit 1
+          fi

@@ -11,6 +11,21 @@ Use this file for project-specific preferences, recurring workflow conventions, 
 - Architecture, diagrams, PPT visuals, tender/RFP technical answers, and Markdown plans/explanations use skill `archify` by default (HTML + SVG, not a Mermaid dump).
 - Do not mark an app done until Preview shows a working happy path and `verify` is clean.
 
+## Pull requests (always)
+
+GitHub squash-merge uses the PR title as the git subject. The release bot
+reads that subject to bump SemVer. Contract:
+[`.github/COMMIT_CONVENTION.md`](.github/COMMIT_CONVENTION.md).
+
+- MUST title PRs `<type>(<optional-scope>)!: <subject>` (at most 72
+  characters, lowercase subject, no trailing period).
+- MUST run `python3 scripts/commit_convention.py check-title` before
+  `gh pr create` or `gh pr edit --title`.
+- MUST NOT open a breaking PR (`type!:`) without a `BREAKING CHANGE:`
+  footer, a Migration section, and the `semver:major` label.
+- MUST NOT rewrite history on `main` to make old commits conventional.
+
+
 ## Scheduled Reminders
 
 - Before scheduling reminders, check available skills and follow skill guidance first.
