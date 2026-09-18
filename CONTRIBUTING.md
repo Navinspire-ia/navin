@@ -136,5 +136,5 @@ python3 scripts/commit_convention.py next-version
 
 Agents MUST run `scripts/commit_convention.py check-title` before opening or editing a PR. Contract: [`.github/COMMIT_CONVENTION.md`](.github/COMMIT_CONVENTION.md).
 
-Baseline: tag `v2.0.4` on the already-shipped 2.0.4 commit so the first generated changelog only contains later conventional PRs.
+Baseline: tag `v2.0.5` on the already-shipped 2.0.5 snapshot so later conventional PRs start at 2.1.0.
 
