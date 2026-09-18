@@ -1,0 +1,183 @@
+- name: bug
+  description: Confirmed defect or unexpected behavior reported via the bug template.
+  color: "#d73a4a"
+- name: regression
+  description: Previously working behavior that broke after a change.
+  color: "#d93f0b"
+- name: enhancement
+  description: New capability or product surface requested via the feature template.
+  color: "#a2eeef"
+- name: support
+  description: Question or usage help reported via the support template.
+  color: "#0075ca"
+- name: documentation
+  description: Docs gap or copy change reported via the docs template.
+  color: "#0075ca"
+- name: security
+  description: Vulnerability or hardening concern reported via the security template.
+  color: "#b60205"
+- name: "area: agent-runtime"
+  description: Issues touching the agent runtime, tool loop, or session orchestration.
+  color: "#1d76db"
+- name: "area: cli"
+  description: Issues in the navin-cli command surface, args, or help output.
+  color: "#1d76db"
+- name: "area: desktop-ui"
+  description: Issues in the desktop shell, native window, or tray controls.
+  color: "#1d76db"
+- name: "area: webui"
+  description: Issues in the browser-based WebUI or its build pipeline.
+  color: "#1d76db"
+- name: "area: gateway"
+  description: Issues in the local gateway HTTP API or websocket transports.
+  color: "#1d76db"
+- name: "area: api"
+  description: Issues in the public Python or HTTP API surface.
+  color: "#1d76db"
+- name: "area: memory"
+  description: Issues in memory store, recall, or persistence layers.
+  color: "#1d76db"
+- name: "area: skills"
+  description: Issues in skill loading, contracts, or runtime discovery.
+  color: "#1d76db"
+- name: "area: mcp"
+  description: Issues in Model Context Protocol servers, clients, or transports.
+  color: "#1d76db"
+- name: "area: providers"
+  description: Issues in provider adapters, auth, or model selection.
+  color: "#1d76db"
+- name: "area: world-model"
+  description: Issues in the world model state, telemetry, or projection layer.
+  color: "#1d76db"
+- name: "area: policy-learning"
+  description: Issues in policy learning, feedback, or preference storage.
+  color: "#1d76db"
+- name: "area: evaluations"
+  description: Issues in evaluation harness, benchmarks, or scoring.
+  color: "#1d76db"
+- name: "area: packaging"
+  description: Issues in packaging scripts, metadata, or installer logic.
+  color: "#1d76db"
+- name: "area: installers"
+  description: Issues in install flows, bootstrap scripts, or update paths.
+  color: "#1d76db"
+- name: "area: docs"
+  description: Issues in documentation site, guides, or reference copy.
+  color: "#1d76db"
+- name: "area: ci"
+  description: Issues in continuous integration workflows or pipeline scripts.
+  color: "#1d76db"
+- name: "area: security"
+  description: Catch-all security theatre concerns that are not vulnerability reports.
+  color: "#1d76db"
+- name: "area: performance"
+  description: Issues around latency, throughput, or resource use.
+  color: "#1d76db"
+- name: "platform: windows"
+  description: Issue applies to Windows builds and runtime.
+  color: "#5319e7"
+- name: "platform: macos-arm64"
+  description: Issue applies to Apple Silicon macOS builds and runtime.
+  color: "#5319e7"
+- name: "platform: macos-x64"
+  description: Issue applies to Intel macOS builds and runtime.
+  color: "#5319e7"
+- name: "platform: linux"
+  description: Issue applies to Linux desktop builds and runtime.
+  color: "#5319e7"
+- name: "platform: wsl"
+  description: Issue applies inside Windows Subsystem for Linux.
+  color: "#5319e7"
+- name: "platform: docker"
+  description: Issue applies inside the published Docker image.
+  color: "#5319e7"
+- name: "platform: source"
+  description: Issue applies to source builds from a cloned checkout.
+  color: "#5319e7"
+- name: "packaging: msi"
+  description: Issue affects the Windows MSI installer artifact.
+  color: "#6f57ff"
+- name: "packaging: exe"
+  description: Issue affects the Windows EXE installer artifact.
+  color: "#6f57ff"
+- name: "packaging: store"
+  description: Issue affects a future Windows Store distribution path.
+  color: "#6f57ff"
+- name: "packaging: dmg"
+  description: Issue affects the macOS DMG installer artifact.
+  color: "#6f57ff"
+- name: "packaging: appimage"
+  description: Issue affects the Linux AppImage artifact.
+  color: "#6f57ff"
+- name: "packaging: deb"
+  description: Issue affects the Debian/Ubuntu deb package artifact.
+  color: "#6f57ff"
+- name: "packaging: rpm"
+  description: Issue affects the Fedora/RHEL rpm package artifact.
+  color: "#6f57ff"
+- name: "packaging: pacman"
+  description: Issue affects the Arch pacman package artifact.
+  color: "#6f57ff"
+- name: "packaging: pkg-tar-zst"
+  description: Issue affects the Arch pkg-tar-zst artifact.
+  color: "#6f57ff"
+- name: "packaging: aur"
+  description: Issue affects the AUR package definition.
+  color: "#6f57ff"
+- name: "packaging: onefile"
+  description: Issue affects the cross-platform onefile binary.
+  color: "#6f57ff"
+- name: "packaging: cli-archive"
+  description: Issue affects the cross-platform CLI archive artifact.
+  color: "#6f57ff"
+- name: "severity: critical"
+  description: Causes data loss, security exposure, or a blocked install.
+  color: "#b60205"
+- name: "severity: high"
+  description: Breaks a primary workflow with no acceptable workaround.
+  color: "#d93f0b"
+- name: "severity: medium"
+  description: Breaks an edge case that has an existing workaround.
+  color: "#fbca04"
+- name: "severity: low"
+  description: Polish or cosmetic issue with no functional impact.
+  color: "#0e8a16"
+- name: "priority: P0"
+  description: Drop everything - blocking or production safety.
+  color: "#b60205"
+- name: "priority: P1"
+  description: Required for the current milestone or MVP.
+  color: "#d93f0b"
+- name: "priority: P2"
+  description: Important but not blocking the current milestone.
+  color: "#fbca04"
+- name: "priority: P3"
+  description: Follow-up or polish, schedule after the current push.
+  color: "#0e8a16"
+- name: "status: needs-triage"
+  description: Awaiting a maintainer to apply area and labels.
+  color: "#cccccc"
+- name: "status: needs-repro"
+  description: Awaiting reproduction steps from the reporter.
+  color: "#cccccc"
+- name: "status: needs-design"
+  description: Awaiting design or scope decision from a maintainer.
+  color: "#cccccc"
+- name: "status: ready"
+  description: Triaged and ready for someone to pick up.
+  color: "#cccccc"
+- name: "status: in-progress"
+  description: Someone is actively working on this issue.
+  color: "#cccccc"
+- name: "status: blocked"
+  description: Work cannot continue until an external dependency clears.
+  color: "#cccccc"
+- name: "status: wontfix"
+  description: Maintainers decided not to address this issue.
+  color: "#cccccc"
+- name: "status: duplicate"
+  description: Already tracked by another open or closed issue.
+  color: "#cccccc"
+- name: "status: stale"
+  description: Inactive for a long period and likely needs a refresh.
+  color: "#cccccc"

@@ -1,0 +1,88 @@
+name: "Question / support"
+description: "Ask the community before opening a bug or feature."
+title: "[Support]: "
+labels: ["support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when you need help using Navin, hit confusing behavior, or want to confirm the right way to do something.
+
+        Before you file here:
+        - For open ended questions, brainstorming, or community feedback, prefer [GitHub Discussions](https://github.com/Navinspire-ia/navin/discussions).
+        - For confirmed bugs with reproducible steps, open a `Bug` report instead.
+        - For feature ideas, use the `Feature request` template instead.
+
+        Do not paste API keys, tokens, or `~/.navin/config.json` contents in this report.
+  - type: dropdown
+    id: navin-version
+    attributes:
+      label: "Navin version"
+      description: "Tell us which build you are running."
+      options:
+        - latest stable
+        - latest RC
+        - n/a - docs only
+        - not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: platform-influence
+    attributes:
+      label: "Affected platforms"
+      description: "Tick every platform you reproduced the issue on. Triagers may adjust."
+      options:
+        - label: "platform: windows"
+        - label: "platform: macos-arm64"
+        - label: "platform: macos-x64"
+        - label: "platform: linux"
+        - label: "platform: wsl"
+        - label: "platform: docker"
+        - label: "platform: source"
+        - label: "packaging: msi"
+        - label: "packaging: exe"
+        - label: "packaging: store"
+        - label: "packaging: dmg"
+        - label: "packaging: appimage"
+        - label: "packaging: deb"
+        - label: "packaging: rpm"
+        - label: "packaging: pacman"
+        - label: "packaging: pkg-tar-zst"
+        - label: "packaging: aur"
+        - label: "packaging: onefile"
+        - label: "packaging: cli-archive"
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: "Your question"
+      description: "State the goal, what you tried, and the exact error or unexpected behavior."
+      placeholder: "State the goal, what you tried, and the exact error or unexpected behavior."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Evidence / context"
+      description: "Redacted logs (no API keys), screenshots, config snippets - keep secrets out."
+      placeholder: "Redacted logs (no API keys), screenshots, config snippets - keep secrets out."
+    validations:
+      required: true
+  - type: textarea
+    id: attempted-workarounds
+    attributes:
+      label: "What you already tried"
+      description: "Show you investigated before filing."
+      placeholder: "Same idea - what is the closest thing you have today?"
+    validations:
+      required: true
+  - type: checkboxes
+    id: user-agreement
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "I searched existing issues and Discussions for this question."
+          required: true
+        - label: "I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report."
+          required: true

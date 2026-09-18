@@ -1,0 +1,74 @@
+name: "Security vulnerability report"
+description: "Private disclosure channel for vulnerabilities. Public tracking here is intentionally limited."
+title: "[Security]: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template creates a PUBLIC GitHub issue. Use it ONLY for non-sensitive, already-disclosed findings or to request CVE coordination.
+
+        Otherwise email `security@navin.live` directly and reference this issue number.
+
+        Sensitive details - exploit payloads, leaked secrets, internal hostnames, reproduction commands, or any proof-of-concept that could be weaponized - must NEVER appear in this public thread.
+
+        Our PGP key fingerprint is available on https://navin.live/.well-known/security.asc if you need encrypted email.
+  - type: input
+    id: summary
+    attributes:
+      label: "Short public summary"
+      description: "One-line public description, no exploitation detail."
+      placeholder: "One-line public description, no exploitation detail."
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: "Vulnerability category"
+      description: "Best-effort category. Adjust during triage."
+      options:
+        - Credential or secret handling
+        - Code execution / sandbox escape
+        - Network or request handling
+        - Packaging or installer tampering
+        - Supply chain (image, model, dependency)
+        - Other / unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: severity-self
+    attributes:
+      label: "Self-assessed severity"
+      description: "Your best estimate. Triagers will verify."
+      options:
+        - Critical - silent on production installs
+        - High - exploitable but requires conditions
+        - Medium - limited impact
+        - Low - hardening recommendation
+    validations:
+      required: true
+  - type: input
+    id: disclosure-channel
+    attributes:
+      label: "Have you also emailed security@navin.live?"
+      description: "We respond faster via private email. Public thread is for visibility only."
+      placeholder: "Yes - reference number, or 'no - starting here'"
+    validations:
+      required: true
+  - type: textarea
+    id: coordinated-disclosure-plan
+    attributes:
+      label: "Coordinated disclosure plan"
+      description: "Suggested embargo window, contact preference, or N/A if already public."
+      placeholder: "Suggested embargo, contact preference, or N/A - already public."
+    validations:
+      required: true
+  - type: checkboxes
+    id: user-agreement
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: "I will not post exploit code, reproduction payloads, or secrets in this public issue."
+          required: true
+        - label: "I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report."
+          required: true

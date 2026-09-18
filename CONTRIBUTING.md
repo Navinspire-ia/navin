@@ -47,6 +47,42 @@ curl https://navin.live/install -fsS | bash
 irm 'https://navin.live/install?win32=true' | iex
 ```
 
+## Issue intake
+
+Open issues through the GitHub chooser; blank issues are closed by config.
+Templates auto-apply one kind label (`bug`, `regression`, `enhancement`,
+`support`, `documentation`, `security`).
+
+| Template | When |
+| --- | --- |
+| Bug | Defect on a specific platform or installer |
+| Regression | Used to work, then stopped |
+| Feature | New capability, mode, or product surface |
+| Support | Question, debugging help, workflow advice |
+| Docs | Doc fix, clarification, missing coverage |
+| Security | Private disclosure (email `security@navin.live` first) |
+
+Maintainers triage and apply extra labels from these families:
+
+- **Area** (`area: agent-runtime`, `area: cli`, `area: desktop-ui`,
+  `area: webui`, `area: gateway`, `area: api`, `area: memory`,
+  `area: skills`, `area: mcp`, `area: providers`, `area: world-model`,
+  `area: policy-learning`, `area: evaluations`, `area: packaging`,
+  `area: installers`, `area: docs`, `area: ci`, `area: security`,
+  `area: performance`).
+- **Platform** (`platform: windows`, `platform: macos-arm64`,
+  `platform: macos-x64`, `platform: linux`, `platform: wsl`,
+  `platform: docker`, `platform: source`).
+- **Packaging** (`packaging: msi`, `packaging: exe`, `packaging: dmg`,
+  `packaging: appimage`, `packaging: deb`, `packaging: rpm`,
+  `packaging: pacman`, `packaging: pkg-tar-zst`, `packaging: aur`,
+  `packaging: onefile`, `packaging: cli-archive`).
+- **Severity / Priority / Status** (per `label.yml`).
+
+Never paste API keys, tokens, or `~/.navin/config.json` in a report.
+For vulnerabilities, use the Security template only after emailing
+`security@navin.live` with the private detail.
+
 ## Pull requests
 
 - Small, reviewable diffs.

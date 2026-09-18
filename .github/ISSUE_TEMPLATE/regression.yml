@@ -1,0 +1,108 @@
+name: Regression
+description: Report behavior that worked in a prior Navin release and now fails.
+title: "[Regression]: "
+labels: ["regression"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when something that used to work in an earlier Navin release no longer works in a newer one - after an upgrade, a config migration, a CLI flag change, a UI rework, or a dependency bump.
+
+        Use the other templates when:
+        - The behavior was never correct in any release: use `[Bug]:`.
+        - The behavior is correct today but you want it changed: use `[Feature]:`.
+        - The problem is in a doc page, install guide, or CLI reference: use `[Docs]:`.
+        - You have a private security concern (token leak, RCE, secret disclosure): use `[Security]:`.
+        - You need help running Navin or have a usage question: use `[Support]:`.
+
+        Do not paste API keys, tokens, or `~/.navin/config.json` contents.
+  - type: dropdown
+    id: navin-version
+    attributes:
+      label: Navin version
+      description: Pick the closest match. Triagers will adjust with the exact build.
+      options:
+        - latest stable
+        - latest RC
+        - n/a - docs only
+        - not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: affected-installations
+    attributes:
+      label: Affected installations
+      description: Tick every packaging channel where the regression reproduces. Leave blank if unsure; triagers will follow up.
+      options:
+        - label: Windows MSI
+        - label: Windows EXE
+        - label: Windows Store
+        - label: macOS arm64
+        - label: macOS x64
+        - label: Linux AppImage
+        - label: Linux .deb
+        - label: Linux .rpm
+        - label: Linux Pacman
+        - label: Linux .pkg.tar.zst
+        - label: Linux AUR
+        - label: Linux CLI archive
+        - label: desktop onefile
+        - label: WSL
+        - label: Docker
+        - label: from-source build
+        - label: n/a - docs
+    validations:
+      required: false
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Reproduction steps
+      description: "Step-by-step: starting state, command or UI action, observed result. Include upgrade path or config migration if relevant."
+      placeholder: |
+        1. Install prior Navin via ...
+        2. Confirm feature X works.
+        3. Upgrade to current version.
+        4. Repeat step 2; observe failure.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What Navin should still do after the upgrade - matching prior release behavior.
+      placeholder: "After upgrade, `navin-cli doctor` should still report all green as in 2.0.0."
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: What Navin actually does now. Include redacted logs, screenshots, exit codes, or stack traces from the new release.
+      placeholder: "After upgrade, `navin-cli doctor` exits 1 with `E_CONFIG_SCHEMA`. No such error in 2.0.0."
+    validations:
+      required: true
+  - type: input
+    id: prior-version
+    attributes:
+      label: Prior version
+      description: The last Navin release where this still worked. Leave blank if unsure.
+      placeholder: "2.0.0 (last working). Leave blank if unsure."
+    validations:
+      required: false
+  - type: textarea
+    id: what-i-tried
+    attributes:
+      label: What I tried
+      description: Downgrade attempts, config diffs, workarounds, prior fixes - to discourage drive-by reports.
+      placeholder: "Searched issues for `E_CONFIG_SCHEMA`; compared `~/.navin/config.json` between 2.0.0 and current; no migration step in release notes."
+    validations:
+      required: true
+  - type: checkboxes
+    id: user-agreement
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and Discussions for this question.
+          required: true
+        - label: I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report.
+          required: true
