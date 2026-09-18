@@ -1,0 +1,21 @@
+name: Release please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # Do not auto-merge. Maintainers merge chore(release): vX.Y.Z.
+          skip-github-pull-request: false
