@@ -47,6 +47,34 @@ curl https://navin.live/install -fsS | bash
 irm 'https://navin.live/install?win32=true' | iex
 ```
 
+## Issue intake
+
+Open issues through the GitHub chooser; blank issues are disabled.
+Templates auto-apply one kind label (`bug`, `regression`, `enhancement`,
+`support`, `documentation`, `security`).
+
+| Template | When |
+| --- | --- |
+| Bug | Defect on a specific platform or installer |
+| Regression | Used to work, then stopped |
+| Feature | New capability, mode, or product surface |
+| Support | Question, debugging help, workflow advice |
+| Docs | Doc fix, clarification, missing coverage |
+| Security | Email `security@navinspire.com` and see [SECURITY.md](./SECURITY.md) |
+
+Triagers add the rest of the labels during triage: `area:*`, `platform:*`,
+`packaging:*`, plus `severity`, `priority`, and `status`. There is no need
+to memorize or paste the full label set.
+
+Never paste API keys, tokens, license files, or `~/.navin/config.json` in a
+report. For vulnerabilities, see [SECURITY.md](./SECURITY.md) and email
+`security@navinspire.com` first.
+
+Agents (and anyone using the GitHub API) MUST open issues with
+`python3 scripts/new-issue.py` instead of `gh issue create`. The browser
+forms are not applied over the API. See [`.github/ISSUE_INTAKE.md`](.github/ISSUE_INTAKE.md).
+
+
 ## Pull requests
 
 - Small, reviewable diffs.

@@ -1,0 +1,111 @@
+name: "Feature request"
+description: "Propose a new capability, mode, or product surface for Navin."
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a concrete feature idea you want Navin to ship.
+
+        Before you file here:
+        - Open ended questions, "how do I" usage help, or install trouble belong in `[Support]`.
+        - Bugs and broken behavior belong in the `Bug` template, not here.
+
+        Do not paste API keys, tokens, or `~/.navin/config.json` contents in this report.
+  - type: input
+    id: problem
+    attributes:
+      label: "Problem this solves"
+      description: "What user pain or product gap does this address?"
+      placeholder: "I'm always trying to ... but Navin forces me to ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: audience
+    attributes:
+      label: "Primary audience"
+      description: "Who benefits most if this lands?"
+      options:
+        - End user
+        - Developer / contributor
+        - Sysadmin / enterprise
+        - Agent / programmatic user
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-behavior
+    attributes:
+      label: "Proposed behavior"
+      description: "Describe the desired interaction in observable terms."
+      placeholder: "When I click ..., Navin should ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: capability-area
+    attributes:
+      label: "Capability area"
+      description: "Which Navin surface does this primarily touch?"
+      options:
+        - Agent mode
+        - CLI
+        - Desktop UI
+        - WebUI
+        - Memory
+        - Skills
+        - MCP / integrations
+        - Providers
+        - World model
+        - Policy learning
+        - Evaluations
+        - Packaging / installers
+        - Other - I will adjust during triage
+    validations:
+      required: true
+  - type: checkboxes
+    id: affected-installations
+    attributes:
+      label: "Affected installations (best guess)"
+      description: "Tick every packaging channel this feature would change. Leave blank if unsure; triagers will follow up."
+      options:
+        - label: Windows .exe setup
+        - label: Windows .msi
+        - label: macOS Apple Silicon (.dmg)
+        - label: macOS Intel (.dmg)
+        - label: Linux AppImage
+        - label: Linux .deb
+        - label: Linux .rpm
+        - label: Linux pacman / .pkg.tar.zst
+        - label: Linux AUR
+        - label: CLI one-liner or archive
+        - label: WSL
+        - label: Docker
+        - label: From source
+        - label: Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives considered"
+      description: "Workarounds, related tools, or stopgaps you use today."
+      placeholder: "What workarounds do you use today?"
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Evidence / examples"
+      description: "Screenshots, clipboard transcripts, links to similar tools. None is fine."
+      placeholder: "Screenshots, clipboard transcripts, links to similar tools. None is fine."
+    validations:
+      required: false
+  - type: checkboxes
+    id: user-agreement
+    attributes:
+      label: "Confirmations"
+      options:
+        - label: I searched existing issues for this report.
+          required: true
+        - label: I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report.
+          required: true

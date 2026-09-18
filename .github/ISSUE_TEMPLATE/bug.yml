@@ -1,0 +1,115 @@
+name: Bug
+description: "Report a defect, broken behavior, or unexpected failure in Navin."
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when something in Navin is broken or behaves incorrectly: crashes, wrong output, failed installs, broken UI, missing capability, or any defect you can reproduce.
+
+        Use the other templates when:
+        - The behavior is correct today but you want it changed: use `[Feature]:`.
+        - A previously working behavior just stopped working after an upgrade: use `[Regression]:`.
+        - The problem is in a doc page, install guide, or CLI reference: use `[Docs]:`.
+        - You have a private security concern (token leak, RCE, secret disclosure): see `SECURITY.md` and email `security@navinspire.com`.
+        - You need help running Navin or have a usage question: use `[Support]:`.
+
+        Do not paste API keys, tokens, or `~/.navin/config.json` contents.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Desktop app
+        - CLI (navin-cli)
+        - Both desktop and CLI
+        - Source / dev checkout
+    validations:
+      required: true
+  - type: input
+    id: exact-version
+    attributes:
+      label: Exact version
+      description: "Paste the output of `navin --version` or `navin-cli --version`."
+      placeholder: "2.0.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: navin-channel
+    attributes:
+      label: Release channel
+      options:
+        - latest stable
+        - latest RC
+        - nightly / unreleased
+        - from source
+        - not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: affected-installations
+    attributes:
+      label: Affected installations
+      description: "Tick every packaging channel where you reproduced the bug. Triagers may add platform or packaging labels during triage."
+      options:
+        - label: Windows .exe setup
+        - label: Windows .msi
+        - label: macOS Apple Silicon (.dmg)
+        - label: macOS Intel (.dmg)
+        - label: Linux AppImage
+        - label: Linux .deb
+        - label: Linux .rpm
+        - label: Linux pacman / .pkg.tar.zst
+        - label: Linux AUR
+        - label: CLI one-liner or archive
+        - label: WSL
+        - label: Docker
+        - label: From source
+        - label: Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Reproduction steps
+      description: "Step-by-step: starting state, command or UI action, observed result. Include OS, install channel, and config that matters."
+      placeholder: |
+        1. Install Navin via ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: "What Navin should do based on docs, CLI help, or prior releases."
+      placeholder: "Per docs/installation.md, `navin-cli doctor` should report all green."
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: "What Navin actually did. Include redacted logs, screenshots, exit codes, or stack traces."
+      placeholder: "`navin-cli doctor` exits 1 with `E_CONFIG_SCHEMA` on a fresh install. Full redacted log attached."
+    validations:
+      required: true
+  - type: textarea
+    id: what-i-tried
+    attributes:
+      label: What I tried
+      description: "Searches, docs, flags, workarounds, prior fixes - to discourage drive-by reports."
+      placeholder: "Searched existing issues for `E_CONFIG_SCHEMA`; tried `navin-cli doctor --reset`; re-installed from MSI - same error."
+    validations:
+      required: true
+  - type: checkboxes
+    id: user-agreement
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues for this report.
+          required: true
+        - label: I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report.
+          required: true
