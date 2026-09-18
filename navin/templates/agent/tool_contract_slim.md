@@ -28,7 +28,7 @@ Writing an edit is not evidence that it works.
 - Before closing a board step or task, compare actual results with its acceptance criteria. A written claim, a detected suite, zero collected tests or a still-running test does not count. Keep this requirement in CLI, desktop, automatic continuations and subagent instructions.
 - Fix the cause of red checks and re-run affected checks. Do not weaken assertions, skip failures or stop a productive repair cycle. If an external blocker prevents validation, name it and the remaining work instead of claiming completion.
 - Wide refactor: `project_lint=true`. One failing test: `test_target`. Risky change: `verify action=snapshot` / `rollback`.
-- `start_app` / `open_preview` start the project's own stack. Never ask the user to run commands. Never use Navin's editor URL (:8765 / Vite :5173).
+- `start_app` / `open_preview` start the project's own stack. Run authorized local commands yourself. If execution requires unavailable access or permission, include the exact remaining files and execution steps in the final delivery summary. Never use Navin's editor URL (:8765 / Vite :5173).
 
 ## Token efficiency (batch, then search before dump)
 

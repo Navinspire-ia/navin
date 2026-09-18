@@ -85,11 +85,22 @@ class ContextBuilder:
     _MAX_PROJECT_RULES_TOKENS = 4_000  # hard cap on imported project rules section
     _RUNTIME_CONTEXT_END = RUNTIME_CONTEXT_END
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        timezone: str | None = None,
+        disabled_skills: list[str] | None = None,
+        trust_workspace_harness_skills: bool = True,
+    ):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
+        self.trust_workspace_harness_skills = trust_workspace_harness_skills
+        self.skills = SkillsLoader(
+            workspace,
+            disabled_skills=set(disabled_skills) if disabled_skills else None,
+            trust_workspace_harness_skills=trust_workspace_harness_skills,
+        )
 
     def _action_skill_context(
         self,
@@ -161,6 +172,7 @@ class ContextBuilder:
                 root,
                 builtin_skills_dir=self.skills.builtin_skills,
                 disabled_skills=disabled,
+                trust_workspace_harness_skills=self.trust_workspace_harness_skills,
             )
 
         bootstrap = self._load_bootstrap_files(root)
@@ -360,6 +372,8 @@ class ContextBuilder:
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
         """Get the core identity section."""
+        from navin.utils.wsl import is_unc
+
         root = workspace or self.workspace
         workspace_path = str(root.expanduser().resolve())
         system = platform.system()
@@ -369,7 +383,10 @@ class ContextBuilder:
             "agent/identity.md",
             workspace_path=workspace_path,
             runtime=runtime,
-            platform_policy=render_template("agent/platform_policy.md", system=system),
+            platform_policy=render_template(
+                "agent/platform_policy.md", system=system,
+                workspace_is_wsl=system == "Windows" and is_unc(workspace_path),
+            ),
             channel=channel or "",
         )
 

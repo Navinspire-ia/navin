@@ -55,7 +55,10 @@ class GitStore:
 
     def __init__(self, workspace: Path, tracked_files: list[str]):
         self._workspace = workspace
-        self._tracked_files = tracked_files
+        # A trailing "/" marks a tracked directory: every file under it belongs
+        # to the store (gitignore re-include, staging, diff summaries).
+        self._tracked_files = [t for t in tracked_files if not t.endswith("/")]
+        self._tracked_dirs = [t for t in tracked_files if t.endswith("/")]
 
     def is_initialized(self) -> bool:
         """Check if the git repo has been initialized."""
@@ -94,9 +97,14 @@ class GitStore:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 if not p.exists():
                     p.write_text("", encoding="utf-8")
+            for rel in self._tracked_dirs:
+                (self._workspace / rel).mkdir(parents=True, exist_ok=True)
 
             # Initial commit
-            porcelain.add(str(self._workspace), paths=[".gitignore"] + self._tracked_files)
+            porcelain.add(
+                str(self._workspace),
+                paths=[".gitignore"] + self._tracked_files + self._tracked_dirs,
+            )
             porcelain.commit(
                 str(self._workspace),
                 message=b"init: navin memory store",
@@ -161,10 +169,20 @@ class GitStore:
         try:
             from dulwich import porcelain
 
-            # .gitignore excludes everything except tracked files,
-            # so any staged/unstaged change must be in our files.
+            # .gitignore excludes everything except tracked files, so any
+            # staged/unstaged/untracked change must be in our files. Untracked
+            # carries brand-new files (dulwich only lists tracked changes in
+            # unstaged): a new SKILL.md from Dream must still be committed.
             st = porcelain.status(str(self._workspace))
-            if not st.unstaged and not any(st.staged.values()):
+            def in_scope(rel: str) -> bool:
+                return rel in self._tracked_files or any(
+                    rel.startswith(d) for d in self._tracked_dirs
+                )
+            relevant = [
+                path.decode("utf-8") if isinstance(path, bytes) else str(path)
+                for path in list(st.unstaged) + list(st.untracked)
+            ]
+            if not any(in_scope(rel) for rel in relevant) and not any(st.staged.values()):
                 return None
 
             msg_bytes = message.encode("utf-8") if isinstance(message, str) else message
@@ -172,6 +190,14 @@ class GitStore:
                 rel for rel in self._tracked_files
                 if (self._workspace / rel).exists()
             ]
+            for rel in self._tracked_dirs:
+                base = self._workspace / rel
+                if base.is_dir():
+                    present.extend(
+                        rel + child.relative_to(base).as_posix()
+                        for child in sorted(base.rglob("*"))
+                        if child.is_file()
+                    )
             # The store owns .gitignore; refresh_gitignore() may have updated
             # it (layout change), and leaving it unstaged would keep status
             # dirty forever, turning every Dream run into an empty commit.
@@ -258,19 +284,39 @@ class GitStore:
         because git cannot re-include a file whose parent stays excluded.
         """
         dirs: list[str] = []
-        for f in self._tracked_files:
+        for f in list(self._tracked_files) + list(self._tracked_dirs):
             prefix = ""
             for part in Path(f).parts[:-1]:
                 prefix = f"{prefix}{part}/"
                 if prefix not in dirs:
                     dirs.append(prefix)
+        # A tracked directory must itself be re-included (`!dir/`) before its
+        # children are re-ignored (`dir/*`): git cannot re-include anything
+        # below a directory that stays excluded.
+        for d in self._tracked_dirs:
+            if d not in dirs:
+                dirs.append(d)
         lines = ["/*"]
         for d in sorted(dirs):
-            lines.append(f"!{d}")
-            lines.append(f"{d}*")
+            # No trailing slash: dulwich's gitignore matcher does not honor
+            # `dir/` negation patterns, while `!dir` works in both git and
+            # dulwich for re-including a directory.
+            lines.append(f"!{d.rstrip('/')}")
+            # A tracked directory itself must not be re-ignored: dulwich's
+            # gitignore matcher does not reliably honor later negations, so
+            # excluding `dir/*` would hide every file below it forever.
+            if d not in self._tracked_dirs:
+                lines.append(f"{d}*")
         for f in self._tracked_files:
             lines.append(f"!{f}")
         lines.append("!.gitignore")
+        # Tracked directories re-include their direct children (`!dir/*`),
+        # after the per-directory re-ignore above. Files deeper down need no
+        # rule of their own: once a child directory is re-included, nothing
+        # below it is excluded. (`**` is avoided because dulwich's gitignore
+        # matcher does not honor it.)
+        for d in self._tracked_dirs:
+            lines.append(f"!{d}*")
         return "\n".join(lines) + "\n"
 
     # -- query -----------------------------------------------------------------
@@ -406,6 +452,22 @@ class GitStore:
         except ImportError:
             return ""
 
+        # Directory prefixes expand to the files actually present, so Dream
+        # edits anywhere in a tracked directory surface in the summary.
+        expanded: list[str] = []
+        for path in paths:
+            if path.endswith("/"):
+                expanded.extend(self._tracked_dir_files(path))
+            else:
+                expanded.append(path)
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for path in expanded:
+            if path not in seen:
+                seen.add(path)
+                ordered.append(path)
+        paths = ordered
+
         summary_lines: list[str] = []
         diff_lines: list[str] = []
         total_added = 0
@@ -478,6 +540,19 @@ class GitStore:
         if diff_lines:
             body += f"\n\n```diff\n{diff_text}\n```"
         return body
+
+    def _tracked_dir_files(self, prefix: str, cap: int = 500) -> list[str]:
+        """Working-tree files under a tracked directory prefix (relative paths)."""
+        base = self._workspace / prefix
+        if not base.is_dir():
+            return []
+        out: list[str] = []
+        for child in sorted(base.rglob("*")):
+            if child.is_file():
+                out.append(prefix + child.relative_to(base).as_posix())
+                if len(out) >= cap:
+                    break
+        return out
 
     @staticmethod
     def _head_tree(repo) -> object | None:

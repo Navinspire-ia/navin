@@ -142,7 +142,13 @@ class ToolRegistry:
         if isinstance(tool, ContextAware) and (ctx := current_request_context()) is not None:
             tool.set_context(ctx)
 
-        params = self._coerce_params(tool, params)
+        try:
+            params = self._coerce_params(tool, params)
+        except ValueError as exc:
+            return tool, params, ToolResult.error(
+                f"Error: Invalid parameters for tool '{name}': {exc}",
+                recovery_hint=self._parameter_recovery_hint(tool),
+            )
         if not isinstance(params, dict):
             schema = tool.parameters or {}
             required = schema.get("required")
@@ -187,6 +193,10 @@ class ToolRegistry:
             required.append(f"{name} ({field_type})" if isinstance(field_type, str) else str(name))
         if required:
             hint += " Required fields: " + ", ".join(required) + "."
+        from navin.agent.tools.file_arguments import file_argument_guidance
+
+        if guidance := file_argument_guidance(tool.name):
+            hint += " " + guidance
         return hint + " Supply the actual values; do not repeat the same invalid arguments."
 
     @classmethod
@@ -277,6 +287,7 @@ class ToolRegistry:
     def _coerce_params(cls, tool: Tool, params: Any) -> Any:
         params = cls._coerce_argument_value(params)
         params = cls._unwrap_arguments_payload(tool, params)
+        params = tool.normalize_params(params)
         return cls._wrap_single_string_param(tool, params)
 
     @classmethod

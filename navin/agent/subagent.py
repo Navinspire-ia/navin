@@ -248,6 +248,7 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         image_generation_provider_configs: dict[str, Any] | None = None,
         disabled_skills: list[str] | None = None,
+        trust_workspace_harness_skills: bool = True,
         max_iterations: int | None = None,
         max_concurrent_subagents: int | None = None,
         fail_on_tool_error: bool | None = None,
@@ -264,6 +265,7 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.image_generation_provider_configs = dict(image_generation_provider_configs or {})
         self.disabled_skills = set(disabled_skills or [])
+        self.trust_workspace_harness_skills = trust_workspace_harness_skills
         self.max_iterations = (
             max_iterations
             if max_iterations is not None
@@ -1373,6 +1375,9 @@ class SubagentManager:
         skills_summary = SkillsLoader(
             root,
             disabled_skills=self.disabled_skills,
+            trust_workspace_harness_skills=getattr(
+                self, "trust_workspace_harness_skills", True
+            ),
         ).build_skills_index()
         prompt = render_template(
             "agent/subagent_system.md",

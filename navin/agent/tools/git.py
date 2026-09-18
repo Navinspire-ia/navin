@@ -32,6 +32,8 @@ from typing import Any
 
 from navin.agent.tools.base import ToolResult
 from navin.agent.tools.filesystem import _FsTool
+from navin.utils import wsl
+from navin.utils.git_argv import git_route
 from navin.utils.git_state import RepoState, clear_cache, repo_state
 from navin.utils.proc import no_window_kwargs
 
@@ -148,15 +150,18 @@ async def _git(
     timeout: float = _TIMEOUT,
 ) -> tuple[int, str, str]:
     """Run one git command, never through a shell and never paging."""
-    binary = _git_binary()
-    if binary is None:
+    route = git_route(cwd)
+    if route is None:
         return 127, "", "git is not installed or not on PATH"
+    env = _git_env()
+    if route.distro:
+        # wsl.exe only imports explicitly listed Windows environment values.
+        forwarded = ["GIT_TERMINAL_PROMPT", "GIT_EDITOR", "GIT_PAGER", "GIT_SSH_COMMAND"]
+        env["WSLENV"] = ":".join(filter(None, [env.get("WSLENV", ""), *forwarded]))
     try:
         proc = await asyncio.create_subprocess_exec(
-            binary,
+            *route.argv,
             "--no-pager",
-            "-C",
-            str(cwd),
             "-c",
             "core.quotepath=false",
             "-c",
@@ -166,7 +171,7 @@ async def _git(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=_git_env(),
+            env=env,
             **no_window_kwargs(),
         )
     except (OSError, ValueError) as exc:
@@ -185,13 +190,29 @@ async def _git(
     )
 
 
+class _GitDiscoveryError(RuntimeError):
+    pass
+
+
+def _from_git_path(root: Path, path: str) -> Path:
+    location = wsl.parse_unc(str(root))
+    if location and path.startswith("/") and not path.startswith("//"):
+        return Path(wsl.to_unc(location.distro, path))
+    return Path(path)
+
+
 async def _repo_root(start: Path) -> Path | None:
     """The top level of the repository containing ``start``, or None."""
-    code, out, _ = await _git(start, ["rev-parse", "--show-toplevel"], timeout=_SHORT_TIMEOUT)
+    code, out, err = await _git(start, ["rev-parse", "--show-toplevel"], timeout=_SHORT_TIMEOUT)
     text = out.strip()
-    if code != 0 or not text:
+    if code != 0 and "not a git repository" in err.lower():
         return None
-    return Path(text)
+    if code != 0 or not text:
+        raise _GitDiscoveryError(
+            f"Cannot access Git in {start}: {err.strip() or 'repository lookup returned no path'}. "
+            "Resolve the Git access error before retrying; do not initialize a replacement repository."
+        )
+    return _from_git_path(start, text)
 
 
 async def _in_progress(root: Path) -> str | None:
@@ -199,7 +220,7 @@ async def _in_progress(root: Path) -> str | None:
     code, out, _ = await _git(root, ["rev-parse", "--git-dir"], timeout=_SHORT_TIMEOUT)
     if code != 0:
         return None
-    raw = Path(out.strip())
+    raw = _from_git_path(root, out.strip())
     git_dir = raw if raw.is_absolute() else root / raw
     for marker, label in (
         ("rebase-merge", "rebase"),
@@ -315,7 +336,7 @@ class GitTool(_FsTool):
 
     @classmethod
     def enabled(cls, ctx: Any) -> bool:
-        return super().enabled(ctx) and _git_binary() is not None
+        return super().enabled(ctx) and git_route(ctx.workspace) is not None
 
     @classmethod
     def create(cls, ctx: Any) -> Any:
@@ -691,7 +712,10 @@ class GitTool(_FsTool):
         if action in {"clone", "init"}:
             root = Path(workspace)
         else:
-            root = await _repo_root(Path(workspace))
+            try:
+                root = await _repo_root(Path(workspace))
+            except _GitDiscoveryError as exc:
+                return ToolResult.error(f"Error: {exc}")
             if root is None:
                 return ToolResult.error(
                     f"Error: {workspace} is not inside a git repository. "
@@ -1078,8 +1102,14 @@ class GitTool(_FsTool):
             dest_name = _clone_folder_name(url)
         dest = root if dest_name in {".", "./"} else (root / dest_name)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        route = git_route(root)
+        clone_dest = str(dest)
+        if route and route.distro:
+            location = wsl.parse_unc(clone_dest)
+            if location:
+                clone_dest = location.posix
         code, out, err = await _git(
-            root, ["clone", "--", url, str(dest)], timeout=_NETWORK_TIMEOUT
+            root, ["clone", "--", url, clone_dest], timeout=_NETWORK_TIMEOUT
         )
         if code != 0:
             return ToolResult.error(f"Error: {_combined(out, err) or 'git clone failed'}")

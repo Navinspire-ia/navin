@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -99,6 +100,32 @@ def development_path(path: str) -> bool:
     return candidate.suffix in _CHECK_SUFFIXES or candidate.name in _CHECK_FILENAMES
 
 
+def python_test_script(command: str) -> bool:
+    """A direct Python test script still needs an executed-test summary."""
+    try:
+        tokens = shlex.split(command.replace("\\", "/"))
+    except ValueError:
+        return False
+    for index, token in enumerate(tokens):
+        if not re.fullmatch(r"(?:python[0-9.]*|pypy[0-9.]*|py)(?:\.exe)?", PurePosixPath(token).name):
+            continue
+        args = tokens[index + 1:]
+        while args and args[0] in {"-B", "-u", "-E", "-s", "-S", "-I", "-3"}:
+            args.pop(0)
+        if args:
+            name = PurePosixPath(args[0]).name
+            return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+    return False
+
+
+def _script_tests_ran(text: str) -> bool:
+    if re.search(r"\b[1-9]\d* (?:passed|passing)\b", text, re.I):
+        return True
+    ran = re.search(r"\bRan ([1-9]\d*) tests?\b", text)
+    skipped = re.search(r"\bskipped=(\d+)\b", text)
+    return bool(ran and re.search(r"\bOK\b", text) and int(ran[1]) > (int(skipped[1]) if skipped else 0))
+
+
 def _legacy_evidence(name: str, params: dict[str, Any], text: str) -> VerificationEvidence:
     """Compatibility for custom quality tools that still return plain strings.
 
@@ -135,6 +162,7 @@ class CodeValidationState:
     test_failure: str = ""
     # A running test validates the revision at launch, not subsequent edits.
     pending_tests: dict[str, int] = field(default_factory=dict)
+    pending_script_outputs: dict[str, str] = field(default_factory=dict)
     last_nudge_key: tuple[Any, ...] | None = None
     ignored_nudges: int = 0
     workspace_snapshot: dict[str, tuple[int, int] | None] | None = None
@@ -223,17 +251,30 @@ class CodeValidationState:
             session_match = _SESSION_ID.search(text)
             if session_match:
                 self.pending_tests[session_match[1]] = revision
+                if python_test_script(command):
+                    self.pending_script_outputs[session_match[1]] = (text + "\n")[-16000:]
         else:
             session_id = str(params.get("session_id") or "")
             if session_id not in self.pending_tests:
                 return
             revision = self.pending_tests[session_id]
+            if session_id in self.pending_script_outputs:
+                text = self.pending_script_outputs[session_id] + text
+                self.pending_script_outputs[session_id] = text[-16000:]
         codes = _EXIT_CODE.findall(text)
         if not codes:
             return
+        standalone_script = (
+            python_test_script(command) if name == "exec" else session_id in self.pending_script_outputs
+        )
         if name == "write_stdin":
             self.pending_tests.pop(session_id, None)
+            self.pending_script_outputs.pop(session_id, None)
         ok = codes[-1] == "0" and status == "ok"
+        if standalone_script and ok and not _script_tests_ran(text):
+            # Importing a file full of uncalled test functions exits zero too.
+            # Only a runner summary proves this standalone script ran tests.
+            return
         skipped_only = re.search(r"\b[1-9]\d* skipped\b", text) and not re.search(r"\b[1-9]\d* (?:passed|passing)\b", text)
         if ok and (_NO_TESTS.search(text) or skipped_only):
             return
@@ -261,6 +302,13 @@ class CodeValidationState:
             details.append(self.test_failure)
         if self.needs_tests and self.tests_revision != self.revision:
             details.append("Run meaningful tests for the requested behavior after the latest code/test edits.")
+            targets = sorted(path for path in self.paths if (
+                PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
+            ))
+            if targets:
+                command = "python -m pytest " + " ".join(shlex.quote(path) for path in targets)
+                details.append("Run the changed tests, for example with exec: " + command)
+            details.append("Wait for the test process to finish, inspect its results, fix failures, then retry closing the task.")
         elif max(self.checks_revision, self.tests_revision) != self.revision:
             details.append("Run an appropriate check after the latest edits.")
         if self.paths:

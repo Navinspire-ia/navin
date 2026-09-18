@@ -213,6 +213,9 @@ class _LegacyErrorPrefixTool(Tool):
         if callable(set_context):
             set_context(ctx)
 
+    def normalize_params(self, params: Any) -> Any:
+        return self._wrapped.normalize_params(params)
+
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._wrapped.cast_params(params)
 

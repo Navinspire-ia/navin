@@ -14,12 +14,12 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from navin.config.loader import get_config_path, set_config_path
 from navin.config.schema import Config
 from navin.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from navin.providers.factory import ProviderSnapshot
 from navin.tui.app import NavinApp
 from navin.tui.prefs import TuiPrefs
 from navin.tui.widgets import PromptQueue, QueuedPromptRow, UserMessage
@@ -99,8 +99,8 @@ def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
         prefs.save = lambda: None
         app = NavinApp(config, prefs=prefs)
 
-        def fake_snapshot(cfg):
-            return SimpleNamespace(provider=provider)
+        def fake_snapshot(*args, **kwargs):
+            return ProviderSnapshot(provider, "test-send-now-tui", 128_000, ("test-send-now-tui",))
 
         with (
             patch(
@@ -109,8 +109,12 @@ def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
             ),
             patch(
                 "navin.providers.factory.load_provider_snapshot_allowing_unconfigured",
-                lambda *a, **k: SimpleNamespace(provider=provider),
+                fake_snapshot,
             ),
+            patch("navin.agent.skills._home_skill_dirs", return_value=[]),
+            patch("navin.agent.loop.AgentLoop._connect_mcp", new_callable=AsyncMock),
+            patch("navin.optional_live.live_modules_available", return_value=False),
+            patch("navin.tui.app.live_modules_available", return_value=False),
             patch("navin.cron.service.CronService"),
             patch("navin.cron.spend.CronSpendHook", NoopHook),
             patch("navin.webui.token_usage.TokenUsageHook", NoopHook),

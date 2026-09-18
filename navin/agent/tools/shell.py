@@ -15,7 +15,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from loguru import logger
@@ -818,6 +818,9 @@ class _ExecCompletionAnnouncer:
                 "by default (pwsh when available, else powershell). Pass 'cmd' "
                 "for cmd.exe syntax, 'wsl' to run the command in the default "
                 "WSL distribution, or 'bash' for git-bash when installed."
+                " For a project opened through a WSL UNC path, commands run "
+                "inside that project's distribution with Linux syntax and "
+                "bash by default; a shell override names a Linux shell there."
                 if _IS_WINDOWS
                 else "Override the Unix shell only when needed. Omit to use "
                 "bash by default. Pass 'sh' for POSIX sh or 'zsh' for "
@@ -1679,7 +1682,9 @@ class ExecTool(Tool):
             else:
                 command = self._wrap_path_export(command, env)
 
-        shell_program, shell_error = self._resolve_shell(shell)
+        shell_program, shell_error = self._resolve_shell(
+            shell, wsl_project=_IS_WINDOWS and wsl.parse_unc(cwd) is not None,
+        )
         if shell_error:
             return shell_error
 
@@ -1742,7 +1747,9 @@ class ExecTool(Tool):
         if _IS_WINDOWS:
             location = wsl.parse_unc(cwd)
             if location is not None:
-                return await ExecTool._spawn_in_wsl(command, location, env, stdin=stdin)
+                return await ExecTool._spawn_in_wsl(
+                    command, location, env, shell_program, login, stdin=stdin,
+                )
             return await ExecTool._spawn_windows(command, cwd, env, shell_program, login, stdin=stdin)
         return await ExecTool._spawn_unix(command, cwd, env, shell_program, login, stdin=stdin)
 
@@ -1865,6 +1872,8 @@ class ExecTool(Tool):
         command: str,
         location: wsl.WslLocation,
         env: dict[str, str],
+        shell_program: str | None = None,
+        login: bool = False,
         *,
         stdin: int = asyncio.subprocess.DEVNULL,
     ) -> asyncio.subprocess.Process:
@@ -1883,7 +1892,9 @@ class ExecTool(Tool):
         puts the distribution's own toolchain - nvm, pyenv, cargo - on PATH.
         """
         distro = wsl.resolve_distro(location.distro) or location.distro
-        argv = [*wsl.command_prefix(distro, location.path), "bash", "-lc", command]
+        program = shell_program or "bash"
+        login_shell = (shell_program is None or login) and PurePosixPath(program).name in {"bash", "zsh"}
+        argv = [*wsl.command_prefix(distro, location.path), program, "-lc" if login_shell else "-c", command]
         return await asyncio.create_subprocess_exec(
             *argv,
             stdin=stdin,
@@ -1940,11 +1951,30 @@ class ExecTool(Tool):
             f"Error: unsupported shell {shell!r}. Allowed by tools.exec.allowedShells: {allowed}"
         )
 
-    def _resolve_shell(self, shell: str | None) -> tuple[str | None, str | None]:
+    def _resolve_shell(
+        self, shell: str | None, *, wsl_project: bool = False,
+    ) -> tuple[str | None, str | None]:
         if not shell:
             return None, None
         if "\0" in shell or "\n" in shell or "\r" in shell:
             return None, ToolResult.error("Error: shell contains invalid characters")
+        if wsl_project:
+            # The Linux executable is resolved by the distribution, not by
+            # Windows shutil.which or Windows Path.is_file.
+            if "\\" in shell or PureWindowsPath(shell).drive:
+                return None, ToolResult.error(
+                    "Error: this WSL project requires a Linux shell name or absolute "
+                    "Linux path, for example 'bash' or '/bin/bash'."
+                )
+            name = PurePosixPath(shell).name
+            if ("/" in shell and not shell.startswith("/")) or (" " in shell and "/" not in shell):
+                return None, ToolResult.error("Error: shell must be a shell name or absolute Linux path")
+            if not self._shell_allowed(name):
+                return self._refuse_shell(shell)
+            # 'wsl' explicitly selects the bridge already selected by the cwd.
+            if shell.lower() in {"wsl", "wsl.exe"}:
+                return None, None
+            return shell, None
         path = Path(shell).expanduser()
         if path.is_absolute():
             if not self._shell_allowed(path.name):

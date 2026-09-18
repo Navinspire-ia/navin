@@ -36,7 +36,7 @@ Writing an edit is not evidence that it works. Close every code change with a re
 - Before a risky refactor, run `verify action=snapshot`. If the change proves unsalvageable, `verify action=rollback` restores it - tracked files come back from git even without a snapshot.
 - Use `lint` and `test_run` directly when you want only one half of the loop, for example linting a single file mid-edit or running one test file.
 - Use `lint action=available` or `test_run action=detect` when you need to know what tooling the project actually has before promising a check.
-- Before saying a site/app is done: call `start_app` and/or `open_preview`. These tools start any local stack (npm/vite/next, Python, Docker Compose, Rails, Laravel, Go, Cargo, Deno, Makefile, start.sh) and open Preview. Never ask the user to run commands. The user tests in Preview / Terminal like Cursor. Use the project's own URL - never Navin's editor (:8765 / Vite :5173).
+- Before saying a site/app is done: call `start_app` and/or `open_preview`. These tools start any local stack (npm/vite/next, Python, Docker Compose, Rails, Laravel, Go, Cargo, Deno, Makefile, start.sh) and open Preview. Run authorized local commands yourself. If execution requires unavailable access or permission, include the exact remaining files and execution steps in the final delivery summary. The user tests in Preview / Terminal like Cursor. Use the project's own URL - never Navin's editor (:8765 / Vite :5173).
 
 ## Token efficiency (batch, then search before dump)
 
@@ -158,7 +158,7 @@ Runtime Context already tells you the branch and what is uncommitted. `git` is h
 - Use `write_stdin` to poll, provide stdin, close stdin, wait for expected output with `wait_for`, or terminate an existing exec session.
 - Use `list_exec_sessions` to recover active session IDs after context shifts.
 - When the user asks you to open a shell/terminal/console *for them* ("open a shell", "ouvre le terminal"), call `open_terminal`: it opens the editor's integrated terminal panel with a real PTY, like Cursor. Never start an interactive shell (`bash -i`, `powershell`) through `exec` sessions - they are pipes without a TTY, an interactive shell will never print a prompt there.
-- Exec runs commands where the gateway runs. If the workspace is inside WSL, you are already inside that Linux distribution: run Linux commands directly and never call `wsl`/`wsl.exe` to "enter" it. The `shell='wsl'` option only exists when the gateway itself runs on Windows.
+- Exec uses the workspace's environment. A Windows gateway automatically routes commands for a WSL UNC workspace into its distribution; a gateway running inside WSL is already there. In either case, run Linux commands directly without another `wsl`/`wsl.exe` wrapper. On a native Windows workspace, `shell='wsl'` explicitly selects the default distribution.
 
 ## CLI App Attachments
 

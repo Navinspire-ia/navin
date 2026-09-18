@@ -27,6 +27,7 @@ from textual.widgets import Input, TextArea
 from navin.optional_live import live_modules_available
 from navin.tui.agi import AgiScreen
 from navin.tui.evolve import EvolveScreen
+from navin.tui.frames import background_lines, terminal_gc_policy
 from navin.tui.graph import GraphScreen
 from navin.tui.hubs import (
     DOMAINS,
@@ -64,6 +65,7 @@ from navin.tui.runtime import (
     UiEngineError,
     UiEvent,
     UiFileEdit,
+    UiFilePreview,
     UiModelUpdated,
     UiNotification,
     UiProgress,
@@ -314,6 +316,20 @@ class NavinScreen(Screen):
     against an empty selection. Swallow button 3 before that happens.
     """
 
+    @property
+    def is_current(self) -> bool:
+        # Textual also updates screens in the background stack. An opaque
+        # modal covers this one completely, so defer its pending layout and
+        # repaint until it is visible again. The engine keeps processing.
+        return super().is_current and (
+            self.app.screen is self or self.app.screen.styles.background.a < 1
+        )
+
+    def render_lines(self, crop):
+        if self.app.is_inline or self.styles.background.a < 1:
+            return super().render_lines(crop)
+        return background_lines(self, crop)
+
     def _forward_event(self, event: events.Event) -> None:
         button = getattr(event, "button", 0)
         if isinstance(event, events.MouseEvent) and button == 3:
@@ -335,6 +351,10 @@ class QueuedPrompt:
 
 class NavinApp(App[None]):
     """Textual app hosting the chat transcript and the agent runtime."""
+
+    async def _process_messages(self, *args, **kwargs) -> None:
+        with terminal_gc_policy():
+            await super()._process_messages(*args, **kwargs)
 
     #: How long a turn-end signal waits for an overtaking final answer before
     #: the prompt queue is unblocked (see UiTurnEnd handling).
@@ -453,6 +473,17 @@ class NavinApp(App[None]):
         self._queue_serial = 0
         self._queue_sending = False
         self._queue_visible_session = self.runtime.session_key
+        from navin.tui.session_state import TuiSessionStore
+
+        self._session_store = TuiSessionStore(
+            self.prefs.path().parent / "tui-sessions", Path(config.workspace_path),
+        )
+        self._drafts: dict[str, str] = {}
+        self._saved_session_states: dict[str, Any] = {}
+        self._requested_session_states: dict[str, Any] = {}
+        self._pending_session_states: dict[str, Any] = {}
+        self._session_save_task: asyncio.Task | None = None
+        self._restore_unsent_work(self.runtime.session_key)
         self._awaiting_reply = False
         self._awaiting_grace_timer: Any = None
         self._find_hits: list[Any] = []
@@ -483,7 +514,9 @@ class NavinApp(App[None]):
                 yield FindBar(id="find")
                 with Vertical(id="composer-block"):
                     with ComposerShell(id="composer-shell"):
-                        yield Composer(placeholder="Ask anything...")
+                        composer = Composer(placeholder="Ask anything...")
+                        composer.set_text(self._drafts.get(self.runtime.session_key, ""))
+                        yield composer
                         yield ComposerMeta(id="composer-meta")
                         yield TideRule()
                     yield DockBar(id="dock")
@@ -505,20 +538,84 @@ class NavinApp(App[None]):
         self.run_worker(self._boot(), exclusive=True, name="boot")
 
     def _tick_spinner(self) -> None:
-        if self.runtime.status.turn_active:
+        visible = isinstance(self.screen, NavinScreen)
+        if visible and self.runtime.status.turn_active:
             self._spin += 1
             self._set_status(animation_only=True)
-        self._refresh_working_line()
+        if visible:
+            self._refresh_working_line()
         key = self.runtime.session_key
         if self._queue_visible_session != key:
+            self._save_unsent_work()
             self._queue_visible_session = key
+            if key not in self._drafts:
+                self._restore_unsent_work(key)
+            self.composer.set_text(self._drafts.get(key, ""))
             self._awaiting_reply = self.runtime.turn_active
             self.call_later(self._refresh_queue)
         self._maybe_kick_queue()
 
-    def _refresh_context_status(self) -> None:
+    def _restore_unsent_work(self, key: str) -> None:
+        state = self._session_store.load(key)
+        self._drafts[key] = state.get("draft") if isinstance(state.get("draft"), str) else ""
+        items = state.get("queue", [])
+        self._queued_prompts[key] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or not all(isinstance(item.get(k), str) for k in ("text", "inbound")):
+                continue
+            self._queue_serial += 1
+            self._queued_prompts[key].append(QueuedPrompt(self._queue_serial, item["text"], item["inbound"]))
+        # Restore work for review. The existing Resume control starts it.
+        if self._queued_prompts[key] or state.get("paused"):
+            self._queue_paused.add(key)
+
+    def _save_unsent_work(self) -> None:
+        key = self._queue_visible_session
+        try:
+            draft = self.composer.expand_for_submit()
+        except Exception:
+            draft = self._drafts.get(key, "")
+        self._drafts[key] = draft
+        queue = [{"text": item.text, "inbound": item.inbound} for item in self._queued_prompts.get(key, [])]
+        state = (draft, queue, key in self._queue_paused)
+        if self._requested_session_states.get(key) == state:
+            return
+        self._requested_session_states[key] = state
+        self._pending_session_states[key] = state
+        if self._session_save_task is None or self._session_save_task.done():
+            self._session_save_task = asyncio.create_task(self._write_unsent_work())
+
+    async def _write_unsent_work(self) -> None:
+        # One ordered writer coalesces bursts of typing without an fsync on
+        # the input loop or an older draft overwriting a newer one.
+        while self._pending_session_states:
+            key = next(iter(self._pending_session_states))
+            state = self._pending_session_states.pop(key)
+            draft, queue, paused = state
+            try:
+                await asyncio.to_thread(self._session_store.save, key, draft=draft, queue=queue, paused=paused)
+                self._saved_session_states[key] = state
+                if self.prefs.last_session != self.runtime.session_key:
+                    self.prefs.last_session = self.runtime.session_key
+                    await asyncio.to_thread(self.prefs.save)
+            except OSError as exc:
+                if self._requested_session_states.get(key) == state:
+                    self._requested_session_states.pop(key, None)
+                self.notify(f"Could not save unsent messages: {exc}", severity="error")
+
+    async def _flush_unsent_work(self) -> None:
+        self._save_unsent_work()
+        if self._session_save_task is not None:
+            await asyncio.shield(self._session_save_task)
+
+    @on(TextArea.Changed, "Composer")
+    def _save_composer_draft(self, _event: TextArea.Changed) -> None:
+        self._save_unsent_work()
+
+    @work(group="context-status", exclusive=True)
+    async def _refresh_context_status(self) -> None:
         if self.runtime.turn_active:
-            self.runtime._refresh_status()
+            await asyncio.to_thread(self.runtime._refresh_status)
             self._set_status()
 
     def _queue_ready(self) -> bool:
@@ -565,7 +662,12 @@ class NavinApp(App[None]):
 
     async def _refresh_queue(self) -> None:
         key = self.runtime.session_key
-        await self.query_one(PromptQueue).set_items(
+        queue = next(iter(self.query(PromptQueue)), None)
+        await self._flush_unsent_work()
+        # A durable write may finish after shutdown or a session switch.
+        if queue is None or not queue.is_attached or key != self.runtime.session_key:
+            return
+        await queue.set_items(
             [(item.id, item.text) for item in self._queued_prompts.get(key, [])],
             paused=key in self._queue_paused,
         )
@@ -601,7 +703,7 @@ class NavinApp(App[None]):
         item = next((row for row in self._queued_prompts.get(key, []) if row.id == event.prompt_id), None)
         if item is None:
             return
-        draft = self.composer.text.strip()
+        draft = self.composer.expand_for_submit().strip()
         self._queued_prompts[key] = [row for row in self._queued_prompts.get(key, []) if row.id != event.prompt_id]
         if draft:
             self._queue_serial += 1
@@ -664,6 +766,7 @@ class NavinApp(App[None]):
         taken = {str(r["command"]) for r in engine_rows}
         self.slash_rows = [dict(r) for r in _TUI_SLASH if r["command"] not in taken] + engine_rows
         self._engine_ready = True
+        await self._refresh_queue()
         await self._render_history()
         self._refresh_side()
         self._set_status()
@@ -707,8 +810,9 @@ class NavinApp(App[None]):
 
     async def on_unmount(self) -> None:
         self._restore_terminal_background()
+        await self._flush_unsent_work()
         self.prefs.last_session = self.runtime.session_key
-        self.prefs.save()
+        await asyncio.to_thread(self.prefs.save)
         with contextlib.suppress(Exception):
             await self.runtime.close()
 
@@ -1395,6 +1499,9 @@ class NavinApp(App[None]):
                 self._activity_push(f"✓ {escape(event.name)}")
             self.transcript.follow()
             return
+        if isinstance(event, UiFilePreview):
+            self._open_file_preview(event.path)
+            return
         if isinstance(event, UiFileEdit):
             if self.prefs.show_tools:
                 block = await self._ensure_assistant()
@@ -1957,6 +2064,39 @@ class NavinApp(App[None]):
     def _chat_scroll(self, event: Composer.ChatScroll) -> None:
         self.transcript.nudge(event.delta)
 
+    def _open_file_preview(self, raw_path: str) -> None:
+        """Show a file the agent asked to preview (open_file_preview tool)."""
+        from pathlib import Path as _Path
+
+        path = _Path(raw_path)
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            self.notify(f"Cannot preview {path.name}: {exc}", severity="error", timeout=3)
+            return
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            self.notify(
+                f"{path} is binary - open it with a desktop viewer.",
+                timeout=3,
+            )
+            return
+        if len(text) > 60000:
+            text = text[:60000] + "\n\n... (truncated)"
+        suffix = path.suffix.lower()
+        if suffix in {".md", ".markdown"}:
+            body = text
+        else:
+            body = f"**{path}**\n\n```\n{text}\n```"
+        self.call_later(self._push_preview_screen, body)
+
+    def _push_preview_screen(self, markdown: str) -> None:
+        self.run_worker(self._push_preview_wait(markdown), exclusive=True, group="picker")
+
+    async def _push_preview_wait(self, markdown: str) -> None:
+        await self.push_screen(MarkdownScreen(markdown))
+
     def _write_last_copy(self, text: str) -> str:
         root = Path(getattr(self.runtime.status, "workspace", "") or self.project_root)
         path = root / ".navin" / "last-copy.txt"
@@ -2034,10 +2174,13 @@ class NavinApp(App[None]):
         from navin.tui.clipboard import osc52_allowed
 
         selected = self._selected_text()
-        # A large auto-copy fills the OS clipboard; WT right-click / Ctrl+V
-        # then opens the 5 KiB paste warning. Keep short selections only.
-        if selected and osc52_allowed(selected):
-            self.copy_to_clipboard(selected, quiet=True)
+        if not selected:
+            return
+        # The in-app clipboard always gets the selection so Ctrl+V pastes it,
+        # whatever its size. The OS clipboard only takes short selections: a
+        # large OSC 52 fill makes WT right-click / Ctrl+V open the 5 KiB
+        # paste warning.
+        self.copy_to_clipboard(selected, quiet=True, to_os=osc52_allowed(selected))
 
     def copy_from_pointer(self) -> None:
         """Right-click: copy the selection or the last message."""
@@ -2119,7 +2262,7 @@ class NavinApp(App[None]):
     async def _pick_model(self) -> None:
         if not self._engine_ready:
             return
-        rows = self.runtime.preset_details()
+        rows = await asyncio.to_thread(self.runtime.preset_details)
         items = model_pick_items(rows)
         chosen = await self.push_screen_wait(
             ModelPickerScreen(

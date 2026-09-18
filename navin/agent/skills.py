@@ -32,6 +32,7 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 # per-turn latency on workspaces with many skills. Module-level because the
 # loader itself is rebuilt every turn.
 _SKILL_META_CACHE: dict[str, tuple[int, int, dict | None]] = {}
+_SKILL_META_CACHE_MAX = 512
 
 # shutil.which per required binary, re-run for every skill on every turn, is
 # a PATH scan each time. Binaries appear/disappear rarely, and this runs on
@@ -114,6 +115,10 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
     """
     if not base.is_dir():
         return []
+    try:
+        resolved_base = base.resolve()
+    except OSError:
+        return []
     found: list[tuple[str, Path]] = []
     seen: set[str] = set()
     try:
@@ -129,6 +134,13 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
             skill_file = child / "SKILL.md"
             if not skill_file.is_file() or child.name in seen:
                 continue
+            # A symlinked SKILL.md (or a symlinked folder) resolving outside
+            # the library must not reach the prompt.
+            try:
+                if not skill_file.resolve().is_relative_to(resolved_base):
+                    continue
+            except OSError:
+                continue
             seen.add(child.name)
             found.append((child.name, skill_file))
     if harness_root:
@@ -141,23 +153,55 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
         name = child.stem
         if not name or name in seen:
             continue
+        try:
+            if not child.resolve().is_relative_to(resolved_base):
+                continue
+        except OSError:
+            continue
         seen.add(name)
         found.append((name, child))
     return found
 
 
+def _contained_in_root(path: Path, root: Path) -> bool:
+    """True when path (after resolving symlinks) stays under root."""
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+_SKILL_SOURCE_LABELS = {
+    "workspace": "workspace of this project (its repo ships it)",
+    "user": "user home library (installed by you)",
+    "builtin": "built into navin",
+}
+
+
+def skill_source_label(source: str) -> str:
+    """Human-readable origin of a skill, stamped into the injected body."""
+    if source.startswith("plugin:"):
+        return f"plugin pack '{source.partition(':')[2]}'"
+    return _SKILL_SOURCE_LABELS.get(source, "unknown origin")
+
+
 def resolve_skill_file(root: Path, name: str) -> Path | None:
-    """``root/<name>/SKILL.md`` first, then ``root/<name>.md``, then ``root/SKILL.md``."""
+    """``root/<name>/SKILL.md`` first, then ``root/<name>.md``, then ``root/SKILL.md``.
+
+    A symlinked file that resolves outside the root is refused: name
+    validation blocks traversal through the name, not through the
+    filesystem.
+    """
     if not _valid_skill_name(name):
         return None
     nested = root / name / "SKILL.md"
-    if nested.is_file():
+    if nested.is_file() and _contained_in_root(nested, root):
         return nested
     loose = root / f"{name}.md"
-    if loose.is_file():
+    if loose.is_file() and _contained_in_root(loose, root):
         return loose
     direct = root / "SKILL.md"
-    if direct.is_file():
+    if direct.is_file() and _contained_in_root(direct, root):
         folder = root.name[1:] if root.name.startswith(".") else root.name
         if folder == name:
             return direct
@@ -349,6 +393,16 @@ class SkillsLoader:
 
     Skills are markdown files (SKILL.md) that teach the agent how to use
     specific tools or perform certain tasks.
+
+    Trust model (audit M2): the loader scans every dot-folder of the
+    workspace and $HOME, so a cloned repository ships ``.anything/SKILL.md``
+    that reaches the prompt ahead of builtins. Injected bodies are stamped
+    with their origin (``skill_source_label``) so the model can weigh a
+    repo-shipped playbook differently from one the user installed; set
+    ``trust_workspace_harness_skills=False`` (agents.defaults) to stop
+    reading harness dot-folders (``.claude/``, ``.cursor/``, ...) from the
+    workspace entirely - only the owned ``.navin`` library and plain
+    folders stay active.
     """
 
     # Project config folders shared across coding harnesses. Navin reads them
@@ -358,7 +412,13 @@ class SkillsLoader:
     # is scanned after them, so unknown tools work too.
     HARNESS_DIRS = HARNESS_DIRS
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        disabled_skills: set[str] | None = None,
+        trust_workspace_harness_skills: bool = True,
+    ):
         from navin import workspace_layout
 
         self.workspace = workspace
@@ -372,6 +432,16 @@ class SkillsLoader:
             *_harness_skill_dirs(workspace, harness_dirs(workspace)),
         ]
         self.workspace_skill_dirs = _dedup_paths(candidates)
+        # Trust gate (audit M2): a cloned repository ships .claude/, .cursor/,
+        # .omp/... folders whose SKILL.md gets injected ahead of builtins.
+        # With the gate off, only the owned .navin library and plain folders
+        # (legacy dir, workspace/skills) are read from the workspace; harness
+        # dot-folders are skipped. User and plugin libraries are unaffected.
+        self.trust_workspace_harness_skills = trust_workspace_harness_skills
+        if not trust_workspace_harness_skills:
+            self.workspace_skill_dirs = self._gate_workspace_roots(
+                self.workspace_skill_dirs
+            )
         # Skills the user keeps for every project, the way OMP and Claude Code
         # do (~/.omp/agent/skills, ~/.claude/skills, ...). Without these, a
         # library installed once in $HOME was invisible to every workspace.
@@ -383,6 +453,27 @@ class SkillsLoader:
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
         self._scan_cache: tuple[float, int, list[dict[str, str]], dict[str, Path]] | None = None
+
+    def _gate_workspace_roots(self, paths: list[Path]) -> list[Path]:
+        """Drop workspace dot-folder libraries other than the owned .navin one.
+
+        Trust gate (audit M2): a cloned repo's .claude/.cursor/... SKILL.md
+        files stop being read when agents.defaults disables harness trust.
+        Plain folders and $HOME libraries are untouched.
+        """
+        workspace_root = self.workspace.resolve(strict=False)
+
+        def _trusted(path: Path) -> bool:
+            try:
+                rel = path.resolve(strict=False).relative_to(workspace_root)
+            except (ValueError, OSError):
+                return True
+            if not rel.parts:
+                return False
+            first = rel.parts[0]
+            return not first.startswith(".") or first == ".navin"
+
+        return [path for path in paths if _trusted(path)]
 
     def _scan(self) -> tuple[list[dict[str, str]], dict[str, Path]]:
         """Every skill under every root in priority order, plus name -> file.
@@ -409,6 +500,10 @@ class SkillsLoader:
             self.workspace / "skills",
             *_harness_skill_dirs(self.workspace, harness_dirs(self.workspace)),
         ])
+        if not self.trust_workspace_harness_skills:
+            self.workspace_skill_dirs = self._gate_workspace_roots(
+                self.workspace_skill_dirs
+            )
         self.user_skill_dirs = [
             path for path in _dedup_paths(_home_skill_dirs())
             if path not in self.workspace_skill_dirs
@@ -449,6 +544,28 @@ class SkillsLoader:
         """Forget the cached directory scan (after writing a skill file)."""
         self._scan_cache = None
 
+    def skill_source(self, name: str) -> str:
+        """Where a skill comes from: workspace / user / plugin:<pack> / builtin."""
+        for entry in self._scan()[0]:
+            if entry["name"] == name:
+                return entry.get("source") or "unknown"
+        # Not in the scan: probe like _skill_path does, cheapest check first.
+        if name in self.disabled_skills:
+            return "unknown"
+        for source, bases in (
+            ("workspace", self.workspace_skill_dirs),
+            ("user", self.user_skill_dirs),
+        ):
+            for root in bases:
+                if resolve_skill_file(root, name) is not None:
+                    return source
+        for plugin_name, skills_dir in self._plugin_skill_dirs():
+            if resolve_skill_file(skills_dir, name) is not None:
+                return f"plugin:{plugin_name}"
+        if self.builtin_skills and resolve_skill_file(self.builtin_skills, name) is not None:
+            return "builtin"
+        return "unknown"
+
     def _skill_entries_from_dir(self, base: Path, source: str, *, skip_names: set[str] | None = None) -> list[dict[str, str]]:
         if not base.exists():
             return []
@@ -459,7 +576,7 @@ class SkillsLoader:
             if name not in blocked
         ]
         direct = base / "SKILL.md"
-        if direct.is_file():
+        if direct.is_file() and _contained_in_root(direct, base):
             name = base.name[1:] if base.name.startswith(".") else base.name
             if name and name not in blocked and name not in {item["name"] for item in entries}:
                 entries.append({"name": name, "path": str(direct), "source": source})
@@ -540,24 +657,58 @@ class SkillsLoader:
                 matches[name] = min(matches.get(name, match.start()), match.start())
         return sorted(matches, key=matches.get)
 
+    def _skill_roots(self) -> list[Path]:
+        roots = list(self.workspace_skill_dirs)
+        roots.extend(self.user_skill_dirs)
+        roots.extend(skills_dir for _, skills_dir in self._plugin_skill_dirs())
+        if self.builtin_skills:
+            roots.append(self.builtin_skills)
+        return roots
+
+    def _contained_in_skill_roots(self, path: Path) -> bool:
+        """True when the file, symlinks resolved, stays under a skill root."""
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return False
+        # Build ancestors once. Path.is_relative_to walks and reconstructs
+        # them for every root, multiplying prompt work by the library count.
+        # Keep resolving the file on every read so retargeted symlinks are
+        # still rejected, with Path's platform-specific equality semantics.
+        ancestors = {resolved, *resolved.parents}
+        return any(root in ancestors for root in self._resolved_roots())
+
+    def _resolved_roots(self) -> list[Path]:
+        """Resolved skill roots, cached with the scan (resolve() is stat-heavy)."""
+        cached = getattr(self, "_resolved_roots_cache", None)
+        if cached is not None and cached[0] == _SCAN_GENERATION:
+            return cached[1]
+        resolved: list[Path] = []
+        for root in self._skill_roots():
+            try:
+                resolved.append(root.resolve())
+            except OSError:
+                continue
+        self._resolved_roots_cache = (_SCAN_GENERATION, resolved)
+        return resolved
+
     def _skill_path(self, name: str) -> Path | None:
         """Resolve the SKILL.md that wins for *name*, or None."""
         if not _valid_skill_name(name):
             return None
         _, by_name = self._scan()
         known = by_name.get(name)
-        if known is not None and known.is_file():
+        if (
+            known is not None
+            and known.is_file()
+            and self._contained_in_skill_roots(known)
+        ):
             return known
         # Not in the scan: a skill written a moment ago, a name the scan
         # skips on purpose (README.md style), or a stale entry. Probe the roots.
-        roots = list(self.workspace_skill_dirs)
-        roots.extend(self.user_skill_dirs)
-        roots.extend(skills_dir for _, skills_dir in self._plugin_skill_dirs())
-        if self.builtin_skills:
-            roots.append(self.builtin_skills)
-        for root in roots:
+        for root in self._skill_roots():
             path = resolve_skill_file(root, name)
-            if path is not None:
+            if path is not None and self._contained_in_skill_roots(path):
                 return path
         return None
 
@@ -624,10 +775,15 @@ class SkillsLoader:
             # model into commands or JSON reads as an escape sequence.
             folder = self.skill_dir(name)
             prefix = f"(Skill folder: {folder.as_posix()})\n\n" if folder else ""
+            # Origin stamp (audit M2): the model should weigh a playbook
+            # differently when the cloned repo it is working in ships it,
+            # versus one the user installed or navin ships itself.
+            origin = f"(Origin: {skill_source_label(self.skill_source(name))})\n\n"
             if slim and name not in keep_full:
                 desc = self._get_skill_description(name) or name
                 parts.append(
                     f"### Skill: {name}\n\n"
+                    f"{origin}"
                     f"{desc}\n\n"
                     f"(Slim preload. MANDATORY: before doing work in this "
                     f"skill's domain, load it with "
@@ -640,13 +796,13 @@ class SkillsLoader:
                 capsule = self._capsule_body(body)
                 if capsule != body:
                     parts.append(
-                        f"### Skill: {name}\n\n{prefix}{capsule}\n\n"
+                        f"### Skill: {name}\n\n{origin}{prefix}{capsule}\n\n"
                         f"(Capsule. Load the rest with "
                         f"`skill action=read name={name}` before following "
                         f"recipes not shown above.)"
                     )
                     continue
-            parts.append(f"### Skill: {name}\n\n{prefix}{body}")
+            parts.append(f"### Skill: {name}\n\n{origin}{prefix}{body}")
         return "\n\n---\n\n".join(parts)
 
     def _index_cache_key(self, exclude: set[str] | None) -> tuple:
@@ -964,6 +1120,12 @@ class SkillsLoader:
         if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
             return cached[2]
         metadata = self._parse_skill_frontmatter(path)
+        if key not in _SKILL_META_CACHE and len(_SKILL_META_CACHE) >= _SKILL_META_CACHE_MAX:
+            # Bound the cache (audit L3): deleted or renamed skills must not
+            # pin entries forever, and every workspace adds more. FIFO keeps
+            # it from growing without limit.
+            _SKILL_META_CACHE.pop(next(iter(_SKILL_META_CACHE)))
+        _SKILL_META_CACHE.pop(key, None)
         _SKILL_META_CACHE[key] = (stat.st_mtime_ns, stat.st_size, metadata)
         return metadata
 

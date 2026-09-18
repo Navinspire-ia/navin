@@ -190,6 +190,10 @@ def _is_test_command(command: str) -> bool:
                 args.pop(0)
             if len(args) >= 2 and args[0] == "-m" and args[1] in {"pytest", "unittest", "nose2", "behave"}:
                 return True
+            from navin.agent.code_validation import python_test_script
+
+            if python_test_script(simple):
+                return True
             continue
         if program == "node" and "--test" in args:
             return True
@@ -409,6 +413,7 @@ class AgentLoopGuard:
     tool_failures: dict[str, int] = field(default_factory=dict)
     readonly_calls: dict[str, int] = field(default_factory=dict)
     invalid_tool_iterations: int = 0
+    file_argument_fallback: frozenset[str] = field(default_factory=frozenset)
     no_progress_streak: int = 0
     no_progress_nudge_count: int = 0
     validation: CodeValidationState = field(default_factory=CodeValidationState)
@@ -542,7 +547,7 @@ class AgentRunner:
 
         return filter_tool_definitions(
             spec.tools.get_definitions(),
-            spec.denied_tools,
+            spec.denied_tools | (spec.loop_guard.file_argument_fallback if spec.loop_guard else frozenset()),
             allowed=spec.allowed_tools,
             compact=True,
         )
@@ -856,7 +861,7 @@ class AgentRunner:
         # the right tool.
         tools_for_model = FilteredToolDefinitions(
             spec.tools,
-            lambda: spec.denied_tools,
+            lambda: spec.denied_tools | loop_guard.file_argument_fallback,
             allowed=lambda: spec.allowed_tools,
             compact=True,
         )
@@ -890,7 +895,8 @@ class AgentRunner:
                 # those synthetic edits must not shift the append boundary used
                 # later when the caller saves only the new turn.
                 with measure(timing, PHASE_CONTEXT):
-                    messages_for_model = self.context_governor.prepare_for_model(
+                    messages_for_model = await asyncio.to_thread(
+                        self.context_governor.prepare_for_model,
                         governance_config,
                         messages,
                         compacted_tool_call_ids,
@@ -1021,11 +1027,35 @@ class AgentRunner:
                     and invalid_tool_iterations >= spec.max_invalid_tool_iterations
                 ):
                     names = ", ".join(dict.fromkeys(call.name for call in response.tool_calls))
-                    fatal_error = RuntimeError(
-                        f"Stopped after {invalid_tool_iterations} consecutive responses "
-                        f"with invalid tool arguments for {names}. No tool from these "
-                        "responses was executed."
-                    )
+                    failed_names = frozenset(call.name for call in response.tool_calls)
+                    available = {
+                        ToolRegistry._schema_name(definition)
+                        for definition in self._model_tool_definitions(spec)
+                    }
+                    alternatives = (available & {"apply_patch", "edit_file", "write_file"}) - failed_names
+                    if (
+                        not loop_guard.file_argument_fallback
+                        and failed_names <= {"apply_patch", "edit_file", "write_file"}
+                        and alternatives and not spec.read_only_tools and not spec.plan_read_only
+                    ):
+                        # One bounded recovery through the remaining file tools.
+                        # Keep the registry and permissions intact; only change
+                        # what the model is offered for this accepted request.
+                        loop_guard.file_argument_fallback = failed_names
+                        invalid_tool_iterations = loop_guard.invalid_tool_iterations = 0
+                        results[-1] = str(results[-1]) + (
+                            f"\n\nFile operation recovery: {names} could not be called correctly. "
+                            f"Continue the task using {', '.join(sorted(alternatives))}. "
+                            "Read existing files before editing; use exact old_text/new_text "
+                            "replacements, and full content only for new files or intentional "
+                            "full rewrites. No rejected call changed a file."
+                        )
+                    else:
+                        fatal_error = RuntimeError(
+                            f"Stopped after {invalid_tool_iterations} consecutive responses "
+                            f"with invalid tool arguments for {names}. No tool from these "
+                            "responses was executed."
+                        )
                 completed_tool_results: list[dict[str, Any]] = []
                 for tool_call, result, tool_event in zip(response.tool_calls, results, new_events):
                     tool_message = {
@@ -1097,15 +1127,24 @@ class AgentRunner:
                     )
                     if hook.wants_streaming():
                         await hook.on_stream_end(context, resuming=False)
-                    final_content = await self._try_finalize_after_max_iterations(
-                        spec, hook, messages, usage,
-                        finalization_message=build_no_progress_finalization_message(),
-                    )
+                    if validation.pending:
+                        final_content = (
+                            "The changes are saved, but validation is still incomplete. "
+                            "The board task remains open.\n\n" + validation.missing()
+                        )
+                        error = final_content
+                        stop_reason = "validation_failed"
+                    else:
+                        final_content = await self._try_finalize_after_max_iterations(
+                            spec, hook, messages, usage,
+                            finalization_message=build_no_progress_finalization_message(),
+                        )
+                        stop_reason = "no_progress"
                     if is_blank_text(final_content):
                         final_content = NO_PROGRESS_STOP_FALLBACK
                     self._append_final_message(messages, final_content)
-                    stop_reason = "no_progress"
                     context.final_content = final_content
+                    context.error = error
                     context.stop_reason = stop_reason
                     await hook.after_iteration(context)
                     break
@@ -2203,12 +2242,12 @@ class AgentRunner:
         )
         if closing_work and validation is not None and validation.pending:
             detail = "Validation required before closing this work.\n" + validation.missing()
-            limit = spec.verify_fail_nudge_limit
-            limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
-            fatal = RuntimeError(detail) if validation.nudge() > limit else None
-            return ToolResult.error(detail), {
+            # A refused board/goal transition is recoverable. It must not use
+            # up the separate final-answer budget and crash the whole turn.
+            escalation = repeated_tool_failure_hint(tool_call.name, tool_call.arguments, tool_failure_counts)
+            return ToolResult.error(detail + (escalation or "")), {
                 "name": tool_call.name, "status": "error", "detail": "validation required before completion",
-            }, fatal
+            }, None
         if spec.read_only_tools or spec.plan_read_only:
             candidate = tool
             if candidate is None:

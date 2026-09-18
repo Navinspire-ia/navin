@@ -69,6 +69,11 @@ hiddenimports = (
     # miss it on some Windows Python installs.
     + ["unicodedata"]
     + collect_submodules("wcwidth")
+    # tiktoken loads its encoding tables through entry-point plugins
+    # (tiktoken_ext.openai_public) discovered at runtime, so PyInstaller never
+    # sees the import: without these two lines every frozen build fails
+    # get_encoding() and token estimation silently returns 0.
+    + collect_submodules("tiktoken_ext")
     + bundle_contents.hidden_imports()
 )
 
@@ -95,6 +100,9 @@ datas = (
     # keyring discovers the OS vault backends through distribution entry points.
     + copy_metadata("keyring")
     + copy_metadata("prompt_toolkit")
+    # tiktoken finds its encoding plugins through the same entry-point scan;
+    # without the dist-info the bundle ships no tiktoken_ext entry points.
+    + copy_metadata("tiktoken")
     + collect_data_files("wcwidth", include_py_files=False)
     + bundle_contents.template_data()
     + bundle_contents.script_data()

@@ -166,6 +166,41 @@ def test_edit_after_green_tests_invalidates_the_evidence():
     assert not state.pending
 
 
+@pytest.mark.parametrize("summary, expected", [
+    ("Ran 3 tests in 0.01s\nOK", True),
+    ("Ran 3 tests in 0.01s\nOK (skipped=3)", False),
+    ("Ran 3 tests in 0.01s\nOK (skipped=1)", True),
+    ("", False),
+    ("3 passed in 0.01s", True),
+])
+def test_direct_audit_script_requires_executed_tests(summary, expected):
+    state = edited_state()
+    observe(state, "exec", {"command": "python -B supabase/audit/test_stock_fix.py"}, summary + "\nExit code: 0")
+    assert state.pending is not expected
+
+
+def test_background_audit_script_keeps_summary_until_process_exits():
+    state = edited_state()
+    observe(state, "exec", {"command": "python supabase/audit/test_stock_fix.py"}, "session_id: audit-1")
+    observe(state, "write_stdin", {"session_id": "audit-1"}, "Ran 2 tests in 0.01s\nOK\n")
+    assert state.pending
+    observe(state, "write_stdin", {"session_id": "audit-1"}, "Exit code: 0")
+    assert not state.pending
+
+
+def test_direct_unittest_audit_script_really_executes(tmp_path):
+    async def run():
+        script = tmp_path / "test_audit.py"
+        script.write_text("import unittest\nclass Audit(unittest.TestCase):\n    def test_total(self):\n        self.assertEqual(sum([2, 3]), 5)\nunittest.main()\n")
+        state = edited_state()
+        command = shlex.quote(sys.executable) + " test_audit.py"
+        result = await ExecTool(working_dir=str(tmp_path)).execute(command=command)
+        observe(state, "exec", {"command": command}, result)
+        assert "Ran 1 test" in str(result)
+        assert not state.pending
+    asyncio.run(run())
+
+
 def test_tests_do_not_hide_a_lint_failure():
     state = edited_state()
     observe(state, "lint", {"action": "file"}, ToolResult("lint failed", verification=VerificationEvidence(checks_ok=False, summary="syntax error")))
@@ -320,7 +355,8 @@ def test_real_repair_cycles_have_no_total_verification_retry_cap(tmp_path):
     asyncio.run(run())
 
 
-def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_path):
+@pytest.mark.parametrize("rejected_closures", [1, 3])
+def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_path, rejected_closures):
     async def run():
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
         store = ProjectBoardStore(tmp_path)
@@ -328,7 +364,7 @@ def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_p
         closing = {"action": "move", "task_id": task["id"], "status": "done", "actor": "agent", "evidence": "Discounts tested."}
         provider = ScriptedProvider([
             tool_call("write_file", path="pricing.py", content=_PRICING),
-            tool_call("board", **closing),
+            *(tool_call("board", **closing) for _ in range(rejected_closures)),
             tool_call("write_file", path="test_pricing.py", content=_PRICING_TESTS),
             tool_call("test_run", action="run", runner="pytest", target="test_pricing.py"),
             tool_call("board", **closing),
@@ -345,8 +381,8 @@ def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_p
         ))
         assert result.stop_reason == "completed"
         assert store.get_task(task["id"])["status"] == "done"
-        assert [event["status"] for event in result.tool_events if event["name"] == "board"] == ["error", "ok"]
-        assert provider.calls == 6
+        assert [event["status"] for event in result.tool_events if event["name"] == "board"] == ["error"] * rejected_closures + ["ok"]
+        assert provider.calls == 5 + rejected_closures
     asyncio.run(run())
 
 

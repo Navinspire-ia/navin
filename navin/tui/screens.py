@@ -30,6 +30,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
 
+from navin.tui.frames import background_lines
+
 # ---------------------------------------------------------------------------
 # Generic filterable picker
 # ---------------------------------------------------------------------------
@@ -49,8 +51,13 @@ class PickItem:
 class PickerScreen(ModalScreen[str | None]):
     """A searchable list; dismisses with the selected id (or None)."""
 
+    def render_lines(self, crop):
+        if self.app.is_inline or self.styles.background.a < 1:
+            return super().render_lines(crop)
+        return background_lines(self, crop)
+
     DEFAULT_CSS = """
-    PickerScreen { align: center middle; }
+    PickerScreen { align: center middle; background: $background; }
     PickerScreen * { text-style: none; }
     PickerScreen > Vertical {
         width: 76;
@@ -68,7 +75,7 @@ class PickerScreen(ModalScreen[str | None]):
     PickerScreen #filter {
         height: 1;
         margin: 0 0 1 0;
-        background: #2A2A2A;
+        background: $boost;
         color: $foreground;
         padding: 0 1;
         text-style: none;
@@ -123,7 +130,14 @@ class PickerScreen(ModalScreen[str | None]):
 
     def on_mount(self) -> None:
         self._fill(self._items)
-        self.query_one("#options", OptionList).focus()
+        options = self.query_one("#options", OptionList)
+        self.set_focus(options)
+        # The picker is ready now. Resolve its first frame before queued
+        # background transcript messages can delay the navigation feedback.
+        self._refresh_layout(self.app.size)
+        # Highlighting before the first layout cannot resolve a scroll
+        # position. Reveal the current session once the viewport exists.
+        self.call_after_refresh(options.scroll_to_highlight, True)
 
     def _paint_field(self) -> None:
         if not self.is_mounted:

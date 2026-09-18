@@ -213,7 +213,20 @@ def _format_summary(summary: _PatchSummary) -> str:
                     minimum=1,
                     nullable=True,
                 ),
+                create_only=BooleanSchema(
+                    description="For add: refuse if the file already exists.",
+                    default=False,
+                ),
+                match_lines=BooleanSchema(
+                    description="For replace: old_text must match complete lines.",
+                    default=False,
+                ),
+                at_eof=BooleanSchema(
+                    description="For replace with match_lines: match only at end of file.",
+                    default=False,
+                ),
                 required=["path", "action"],
+                additional_properties=False,
             ),
             description="List of edits to apply. Each edit specifies a file and the change to make.",
             min_items=1,
@@ -304,6 +317,9 @@ class ApplyPatchTool(_FsTool):
                         content = ""
                         exists = False
 
+                    if exists and edit.get("create_only"):
+                        raise _PatchError(f"file to add already exists: {path}; use replace to edit it")
+
                     if exists:
                         uses_crlf = "\r\n" in content
                         new_norm = _append_text(content, new_text)
@@ -352,6 +368,29 @@ class ApplyPatchTool(_FsTool):
                     terminated = norm_content.endswith("\n")
 
                     positions = _exact_positions(norm_content, norm_old)
+                    norm_new = new_text.replace("\r\n", "\n")
+                    if edit.get("match_lines"):
+                        if not norm_old.endswith("\n"):
+                            raise _PatchError(f"match_lines requires old_text ending with a newline: {path}")
+                        positions = [
+                            pos for pos in positions if pos == 0 or norm_content[pos - 1] == "\n"
+                        ]
+                        # A complete text hunk can include an unterminated EOF.
+                        # Only remove that final separator when matching there.
+                        eof_old = norm_old[:-1]
+                        eof_pos = len(norm_content) - len(eof_old)
+                        eof_match = (
+                            not terminated and eof_old and norm_content.endswith(eof_old)
+                            and (eof_pos == 0 or norm_content[eof_pos - 1] == "\n")
+                        )
+                        if edit.get("at_eof"):
+                            positions = [pos for pos in positions if pos + len(norm_old) == len(norm_content)]
+                        if eof_match:
+                            if positions:
+                                raise _PatchError(f"old_text matches multiple complete-line locations in {path}")
+                            norm_old = eof_old
+                            norm_new = norm_new.removesuffix("\n")
+                            positions = [eof_pos]
                     if not positions:
                         raise _PatchError(_not_found_detail(norm_old, norm_content, path))
 
@@ -374,7 +413,7 @@ class ApplyPatchTool(_FsTool):
                     pos = positions[(occurrence or 1) - 1]
                     new_norm = (
                         norm_content[:pos]
-                        + new_text.replace("\r\n", "\n")
+                        + norm_new
                         + norm_content[pos + len(norm_old) :]
                     )
                     # A file that had no final newline keeps none: adding one

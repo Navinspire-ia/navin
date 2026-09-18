@@ -162,6 +162,7 @@ import {
   updateLiveVoiceSettings,
   updateVideoGenerationSettings,
   updateWebSearchSettings,
+  updateSemanticSearchSettings,
   updatePreferences,
   type UpdateInfo,
   type UpdateStatus,
@@ -236,6 +237,7 @@ import type {
   VideoGenerationSettingsUpdate,
   VoiceSettingsUpdate,
   WebSearchSettingsUpdate,
+  SemanticSearchSettingsUpdate,
   WebuiDefaultAccessMode,
 } from "@/lib/types";
 import { useAccount } from "@/hooks/useAccount";
@@ -826,6 +828,17 @@ function webSearchFormFromPayload(
 
 type WebSearchProviderOption = SettingsPayload["web_search"]["providers"][number];
 
+function semanticFormFromPayload(payload: SettingsPayload): SemanticSearchSettingsUpdate {
+  const sem = payload.semantic_search;
+  return {
+    enabled: sem.enabled_auto ? "auto" : sem.enabled === true,
+    provider: sem.provider,
+    model: sem.model,
+    dimensions: sem.dimensions,
+    maxChunks: sem.max_chunks,
+  };
+}
+
 function webSearchProviderAcceptsApiKey(provider?: WebSearchProviderOption): boolean {
   return provider?.credential === "api_key" || provider?.credential === "optional_api_key";
 }
@@ -1053,6 +1066,10 @@ export function SettingsView({
   );
   const [webSearchKeyVisible, setWebSearchKeyVisible] = useState(false);
   const [webSearchKeyEditing, setWebSearchKeyEditing] = useState(false);
+  const [semanticForm, setSemanticForm] = useState<SemanticSearchSettingsUpdate>(() =>
+    initialSettings ? semanticFormFromPayload(initialSettings) : { enabled: "auto" },
+  );
+  const [semanticSaving, setSemanticSaving] = useState(false);
   const [form, setForm] = useState<AgentSettingsDraft>(() =>
     initialSettings ? agentDraftFromPayload(initialSettings) : DEFAULT_AGENT_SETTINGS_DRAFT,
   );
@@ -1073,6 +1090,7 @@ export function SettingsView({
       setForm(agentDraftFromPayload(payload));
     }
     setWebSearchForm((prev) => webSearchFormFromPayload(payload, prev));
+    setSemanticForm(semanticFormFromPayload(payload));
     setImageGenerationForm(imageGenerationFormFromPayload(payload));
     setVideoGenerationForm(videoGenerationFormFromPayload(payload));
     if (options?.speechSaved || !speechDirtyRef.current.transcription) {
@@ -2109,6 +2127,21 @@ export function SettingsView({
     }
   };
 
+  const saveSemanticSearch = async () => {
+    if (!settings || semanticSaving) return;
+    setSemanticSaving(true);
+    try {
+      const payload = await updateSemanticSearchSettings(token, semanticForm);
+      applyPayload(payload);
+      setSemanticForm(semanticFormFromPayload(payload));
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSemanticSaving(false);
+    }
+  };
+
   const resetProviderDraft = useCallback((providerName: string) => {
     const provider = settings?.providers.find((item) => item.name === providerName);
     if (!provider) return;
@@ -2578,6 +2611,10 @@ export function SettingsView({
             }}
             onReset={resetWebSearchDraft}
             onSave={saveWebSearch}
+            semanticForm={semanticForm}
+            semanticSaving={semanticSaving}
+            onChangeSemanticForm={setSemanticForm}
+            onSaveSemantic={saveSemanticSearch}
             showBrandLogos={localPrefs.brandLogos}
             onRestart={restartViaSettingsSurface}
             isRestarting={isRestarting || hostEngineApplying}
@@ -6468,6 +6505,10 @@ function WebSettings({
   onToggleKeyEditing,
   onReset,
   onSave,
+  semanticForm,
+  semanticSaving,
+  onChangeSemanticForm,
+  onSaveSemantic,
   showBrandLogos,
   onRestart,
   isRestarting,
@@ -6487,6 +6528,10 @@ function WebSettings({
   onToggleKeyEditing: () => void;
   onReset: () => void;
   onSave: () => void;
+  semanticForm: SemanticSearchSettingsUpdate;
+  semanticSaving: boolean;
+  onChangeSemanticForm: Dispatch<SetStateAction<SemanticSearchSettingsUpdate>>;
+  onSaveSemantic: () => void;
   showBrandLogos: boolean;
   onRestart?: () => void;
   isRestarting?: boolean;
@@ -6639,6 +6684,131 @@ function WebSettings({
               />
             </SettingsRow>
           ) : null}
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>
+          {tx("settings.sections.semanticSearch", "Semantic code search")}
+        </SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.semanticSearch.enabled", "Mode")}
+            description={tx(
+              "settings.semanticSearch.enabledHelp",
+              "Auto keeps semantic search on for free local providers only. On forces it on (a hosted provider bills per repository).",
+            )}
+          >
+            <select
+              aria-label={tx("settings.semanticSearch.enabled", "Mode")}
+              value={semanticForm.enabled === "auto" ? "auto" : semanticForm.enabled ? "on" : "off"}
+              onChange={(event) => {
+                const value = event.target.value;
+                onChangeSemanticForm((prev) => ({
+                  ...prev,
+                  enabled: value === "auto" ? "auto" : value === "on",
+                }));
+              }}
+              className="h-9 rounded-full border border-input bg-background px-3 text-[13px]"
+            >
+              <option value="auto">{tx("settings.semanticSearch.auto", "Auto (free providers)")}</option>
+              <option value="on">{tx("settings.semanticSearch.on", "On")}</option>
+              <option value="off">{tx("settings.semanticSearch.off", "Off")}</option>
+            </select>
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.semanticSearch.provider", "Embedding provider")}
+            description={tx(
+              "settings.semanticSearch.providerHelp",
+              "Any configured provider entry; its key and base URL are reused. Ollama, LM Studio, vLLM and similar local runners are free.",
+            )}
+          >
+            <Input
+              value={semanticForm.provider ?? ""}
+              onChange={(event) =>
+                onChangeSemanticForm((prev) => ({ ...prev, provider: event.target.value }))
+              }
+              placeholder="ollama"
+              className="h-9 w-[280px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.semanticSearch.model", "Embedding model")}
+            description={tx(
+              "settings.semanticSearch.modelHelp",
+              "Model name served by the provider, for example nomic-embed-text.",
+            )}
+          >
+            <Input
+              value={semanticForm.model ?? ""}
+              onChange={(event) =>
+                onChangeSemanticForm((prev) => ({ ...prev, model: event.target.value }))
+              }
+              placeholder="nomic-embed-text"
+              className="h-9 w-[280px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.semanticSearch.dimensions", "Dimensions")}
+            description={tx(
+              "settings.semanticSearch.dimensionsHelp",
+              "0 uses the model's native width. A smaller value trades a little recall for a smaller cache.",
+            )}
+          >
+            <Input
+              type="number"
+              min={0}
+              max={4096}
+              value={semanticForm.dimensions ?? 0}
+              onChange={(event) =>
+                onChangeSemanticForm((prev) => ({
+                  ...prev,
+                  dimensions: Number(event.target.value) || 0,
+                }))
+              }
+              className="h-9 w-[120px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.semanticSearch.maxChunks", "Max indexed symbols")}
+            description={tx(
+              "settings.semanticSearch.maxChunksHelp",
+              "Ceiling on embedded symbols, so a monorepo cannot run up an unbounded bill.",
+            )}
+          >
+            <Input
+              type="number"
+              min={100}
+              max={200000}
+              value={semanticForm.maxChunks ?? 20000}
+              onChange={(event) =>
+                onChangeSemanticForm((prev) => ({
+                  ...prev,
+                  maxChunks: Number(event.target.value) || 0,
+                }))
+              }
+              className="h-9 w-[120px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.semanticSearch.save", "Save")}
+            description={tx(
+              "settings.semanticSearch.saveHint",
+              "Applies to new semantic searches; the index rebuilds on the next query.",
+            )}
+          >
+            <Button
+              type="button"
+              size="sm"
+              className="rounded-full"
+              disabled={semanticSaving}
+              onClick={onSaveSemantic}
+            >
+              {semanticSaving
+                ? tx("settings.semanticSearch.saving", "Saving...")
+                : tx("settings.actions.save", "Save")}
+            </Button>
+          </SettingsRow>
         </SettingsGroup>
       </section>
 

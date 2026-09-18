@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from navin.utils.atomic_io import atomic_write_text
+
 DEFAULT_THEME = "navin"
 _LEGACY_DEFAULT_THEMES = {"tokyo-night", "textual-dark"}
 DEFAULT_MODE = "agent"  # same default as the desktop composer
@@ -74,7 +76,7 @@ class TuiPrefs:
         path = self.path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            atomic_write_text(path,
                 json.dumps(asdict(self), ensure_ascii=False, indent=2), encoding="utf-8"
             )
         except Exception:  # noqa: BLE001

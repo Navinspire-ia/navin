@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -38,6 +38,7 @@ from navin.bus.outbound_events import (
     ChoiceClosedEvent,
     ChoiceRequestedEvent,
     ContextCompactedEvent,
+    FilePreviewOpenRequestedEvent,
     NotificationEvent,
     OutboundEvent,
     ProgressEvent,
@@ -83,6 +84,13 @@ class UiStreamEnd(UiEvent):
 class UiReasoning(UiEvent):
     text: str
     end: bool = False
+
+
+@dataclass(frozen=True)
+class UiFilePreview(UiEvent):
+    """The agent asked to show a file to the user in the terminal."""
+
+    path: str
 
 
 @dataclass(frozen=True)
@@ -296,6 +304,11 @@ def split_session_id(session_id: str) -> tuple[str, str]:
     return "cli", session_id or "direct"
 
 
+# Opening the sessions picker must stay fast: fix up at most this many
+# untitled sessions per call (each fixup may load a full session file).
+MAX_SESSION_TITLE_FIXUPS = 10
+
+
 # ---------------------------------------------------------------------------
 # Runtime
 # ---------------------------------------------------------------------------
@@ -483,6 +496,9 @@ class TuiRuntime:
         if self.agent_loop is not None:
             with contextlib.suppress(Exception):
                 await self.agent_loop.close_mcp()
+            sessions = getattr(self.agent_loop, "sessions", None)
+            if sessions is not None:
+                await asyncio.to_thread(sessions.flush_all)
         with contextlib.suppress(Exception):
             from navin.cli.commands import _close_agent_subprocesses
 
@@ -506,16 +522,43 @@ class TuiRuntime:
         return msg.channel == self.channel and msg.chat_id == self.chat_id
 
     async def _consume_outbound(self) -> None:
+        pending = None
         while True:
             try:
-                msg = await asyncio.wait_for(self.bus.consume_outbound(), timeout=1.0)
+                msg = pending if pending is not None else await self.bus.consume_outbound()
+                pending = None
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
             try:
                 if self._is_ours(msg):
+                    event = outbound_event_from_message(msg)
+                    if isinstance(event, StreamDeltaEvent):
+                        chunks = [msg.content or ""]
+                        # Drain only adjacent deltas of this stream. A tool,
+                        # stream-end or another session is an ordering barrier.
+                        for _ in range(255):
+                            try:
+                                following = self.bus.outbound.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            next_event = outbound_event_from_message(following)
+                            if (
+                                following.channel != msg.channel or following.chat_id != msg.chat_id
+                                or not isinstance(next_event, StreamDeltaEvent)
+                                or next_event.stream_id != event.stream_id
+                            ):
+                                pending = following
+                                break
+                            chunks.append(following.content or "")
+                        content = "".join(chunks)
+                        msg = replace(msg, content=content, event=replace(event, content=content))
                     await self._dispatch(msg)
+                # Queue.get() and mounted widget callbacks can both complete
+                # without yielding. Give keyboard and navigation a turn even
+                # when several tasks continuously fill the bus.
+                await asyncio.sleep(0)
             except Exception:  # noqa: BLE001
                 logger.exception("TUI failed to dispatch outbound message")
                 await self._emit(UiEngineError("Could not display a response. Check /history or send another message."))
@@ -614,6 +657,9 @@ class TuiRuntime:
             return
         if isinstance(event, ChoiceClosedEvent):
             await self._emit(UiChoiceClosed(event.request_id, event.option_id, event.skipped))
+            return
+        if isinstance(event, FilePreviewOpenRequestedEvent):
+            await self._emit(UiFilePreview(path=str(event.path)))
             return
         if isinstance(event, OutboundEvent):
             # Desktop-only UI events (board, montage, preview, editor...) are
@@ -883,7 +929,13 @@ class TuiRuntime:
         return loop.sessions.set_title(key, title)
 
     def ensure_session_titles(self) -> None:
-        """Fill missing names from the first user line and persist them."""
+        """Fill missing names from the first user line and persist them.
+
+        Bounded on purpose: sessions without a usable list preview are skipped
+        (a full load from disk cannot help) and only a handful of untitled
+        sessions are fixed up per call, so opening the picker stays fast even
+        with hundreds of chats.
+        """
         loop = self.agent_loop
         if loop is None:
             return
@@ -891,12 +943,18 @@ class TuiRuntime:
         from navin.session.webui_turns import apply_provisional_title
         from navin.tui.session_labels import session_display_title
 
+        fixups = 0
         for row in self.session_rows():
             if session_display_title(row) != "Untitled chat":
                 continue
             key = str(row.get("key") or "")
-            if not key:
+            # A row with a preview already shows something useful in the
+            # picker; a full session load cannot improve it visibly.
+            if not key or str(row.get("preview") or "").strip():
                 continue
+            if fixups >= MAX_SESSION_TITLE_FIXUPS:
+                break
+            fixups += 1
             session = loop.sessions.peek(key)
             if session is None:
                 continue

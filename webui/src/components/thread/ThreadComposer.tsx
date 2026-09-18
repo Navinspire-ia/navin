@@ -16,6 +16,7 @@ import {
 } from "react";
 
 import { MarkdownText, preloadMarkdownText } from "@/components/MarkdownText";
+import { TurnWorkingStatus } from "@/components/thread/TurnWorkingStatus";
 import {
   CliAppMentionToken,
   FileMentionToken,
@@ -379,6 +380,7 @@ interface ThreadComposerProps {
   liveVoice?: { state: LiveVoiceState; toggle: () => void; disabled?: boolean } | null;
   /** Unix seconds from server; turn elapsed timer above input while set. */
   runStartedAt?: number | null;
+  activityText?: string | null;
   /** Sustained objective for this chat (WebSocket ``goal_state``). */
   goalState?: GoalStateWsPayload;
   workspaceScope?: WorkspaceScopePayload | null;
@@ -685,18 +687,15 @@ function mcpPresetMentionPayload(preset: McpPresetInfo): OutboundMcpPresetMentio
   };
 }
 
-function RunElapsedStrip({
+function GoalStatusStrip({
   goalState,
 }: {
-  startedAt: number | null;
   goalState?: GoalStateWsPayload;
 }) {
   const { t } = useTranslation();
   const [goalPanelOpen, setGoalPanelOpen] = useState(false);
   const stripLabel = goalStateStripPreview(goalState, t);
   const showGoal = !!stripLabel?.trim();
-  // Elapsed "Running · 2s" stays out of the chat chrome. The turn still
-  // streams, tools still run, Stop still works - only that status copy is hidden.
   const active = showGoal;
   const [renderStrip, setRenderStrip] = useState(active);
   const [leaving, setLeaving] = useState(false);
@@ -931,6 +930,7 @@ function ThreadComposerImpl({
   onTranscribeAudio,
   liveVoice = null,
   runStartedAt = null,
+  activityText = null,
   goalState,
   workspaceScope = null,
   workspaceDefaultScope = null,
@@ -2429,6 +2429,7 @@ function ThreadComposerImpl({
       onDrop={onDrop}
       className={cn("relative w-full", isHero ? "px-0" : "px-1 pb-1.5 pt-1 sm:px-0")}
     >
+      <TurnWorkingStatus active={isStreaming} startedAt={runStartedAt} activityText={activityText} wide={isHero} />
       {showSlashMenu ? (
         <SlashCommandPalette
           commands={filteredSlashCommands}
@@ -2642,7 +2643,7 @@ function ThreadComposerImpl({
             ))}
           </div>
         ) : null}
-        <RunElapsedStrip startedAt={runStartedAt} goalState={goalState} />
+        <GoalStatusStrip goalState={goalState} />
         <div className="relative">
           {hasMentionDecorations ? (
             <ComposerCliMentionOverlay

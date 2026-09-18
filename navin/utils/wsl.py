@@ -97,6 +97,20 @@ def to_unc(distro: str, path: str | PurePosixPath) -> str:
     return f"{base}\\{tail}" if tail else base
 
 
+def host_tool_path(path: str, workspace: str, *, platform: str | None = None) -> str:
+    """Map a WSL command's absolute Linux path back to Windows file access.
+
+    Relative paths still belong to the workspace. A Linux absolute path names
+    the same file whether it was printed by git, a test or a directory listing;
+    it must not turn into an extra 'home/user/project' folder inside the project.
+    The caller still applies its normal containment and permission checks.
+    """
+    if (platform or sys.platform) != "win32" or not path.startswith("/") or path.startswith("//"):
+        return path
+    location = parse_unc(workspace)
+    return to_unc(location.distro, path) if location is not None else path
+
+
 def drive_to_mount(text: str) -> str | None:
     """Translate ``C:\\Users\\me`` to ``/mnt/c/Users/me`` for ``wsl.exe --cd``.
 

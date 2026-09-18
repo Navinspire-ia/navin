@@ -706,6 +706,7 @@ class AgentLoop:
         hook_factories: list[AgentTurnHookFactory] | None = None,
         unified_session: bool = False,
         disabled_skills: list[str] | None = None,
+        trust_workspace_harness_skills: bool = True,
         tools_config: ToolsConfig | None = None,
         image_generation_provider_config: ProviderConfig | None = None,
         image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
@@ -803,7 +804,12 @@ class AgentLoop:
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
+        self.context = ContextBuilder(
+            workspace,
+            timezone=timezone,
+            disabled_skills=disabled_skills,
+            trust_workspace_harness_skills=trust_workspace_harness_skills,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         if self._hook_factories:
             from navin.improvement.skills import resume_learning_in_background
@@ -823,6 +829,7 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
             image_generation_provider_configs=self._image_generation_provider_configs,
             disabled_skills=disabled_skills,
+            trust_workspace_harness_skills=trust_workspace_harness_skills,
             max_iterations=self.max_iterations,
             max_concurrent_subagents=max_concurrent_subagents,
             fail_on_tool_error=fail_on_tool_error,
@@ -1016,6 +1023,7 @@ class AgentLoop:
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
             disabled_skills=defaults.disabled_skills,
+            trust_workspace_harness_skills=defaults.trust_workspace_harness_skills,
             session_ttl_minutes=defaults.session_ttl_minutes,
             consolidation_ratio=defaults.consolidation_ratio,
             tools_config=config.tools,
@@ -2855,7 +2863,8 @@ class AgentLoop:
 
         from navin.command.modules import metadata_requests_evidence_only
 
-        messages = self.context.build_messages(
+        messages = await asyncio.to_thread(
+            self.context.build_messages,
             history=history,
             current_message="" if is_subagent else msg.content,
             channel=channel,
@@ -3274,7 +3283,8 @@ class AgentLoop:
 
         ctx.request_context = self._request_context_for_turn(ctx)
         ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
-        ctx.initial_messages = self._build_initial_messages(
+        ctx.initial_messages = await asyncio.to_thread(
+            self._build_initial_messages,
             ctx.msg,
             ctx.session,
             ctx.history,

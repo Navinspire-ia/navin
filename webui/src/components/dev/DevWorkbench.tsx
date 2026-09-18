@@ -251,6 +251,7 @@ import { DevHtmlPreview } from "./DevHtmlPreview";
 import { DevStatusBar } from "./DevStatusBar";
 import { DevTreeLevel, type TreeNodeState } from "./DevTreeLevel";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { EditorTabStrip, type WorkbenchTab } from "./EditorTabStrip";
 import {
   agentTermTitle,
   applyOptimisticTreeFile,
@@ -340,11 +341,8 @@ const AGENT_TERM_BUFFER_CHARS = 200_000;
 
 let terminalCounter = 0;
 
-type OpenTab = {
-  path: string;
-  displayPath: string;
-  name: string;
-};
+/** One open editor file; the tab strip component owns the shared shape. */
+type OpenTab = WorkbenchTab;
 
 function PlainFileEditor({
   value,
@@ -6009,94 +6007,43 @@ export function DevWorkbench({
             "opening a file replaced the last one". A row of their own cannot be
             squeezed by the toolbar, and costs height only once a file is open. */}
         {tabs.length > 0 && mode !== "diff" ? (
-          <div
-            className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/55 bg-muted/10 px-2"
-            data-testid="editor-tabs"
-          >
-            {tabs.map((tab) => {
-              // Diff mode never renders this strip (the diff shell has its own
-              // file switcher), so only the code view can mark a tab active.
-              const isActive =
-                mode === "code" &&
-                (activeTab === tab.path ||
-                  (splitTab != null && splitTab === tab.path));
-              return (
-              <div
-                key={tab.path}
-                className={cn(
-                  "group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors",
-                  isActive
-                    ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-                onClick={() => {
-                  setMode("code");
-                  // With the split view open, the click targets the focused
-                  // pane, mirroring how Cursor routes files between groups.
-                  if (splitTab != null && focusedPane === "right") {
-                    setSplitTab(tab.path);
-                  } else {
-                  setActiveTab(tab.path);
-                  }
-                  if (!previewsRef.current[tab.path] && !loadingPaths[tab.path]) {
-                    void loadPreview(tab.path);
-                  }
-                }}
-                onAuxClick={(event) => {
-                  // Middle-click closes any tab, including the last one.
-                  if (event.button === 1) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeTab(tab.path);
-                  }
-                }}
-              >
-                <FileTypeIcon name={tab.name} />
-                <span
-                  className={cn(
-                    "max-w-[10rem] truncate",
-                    (diagnosticsByPath[tab.path]?.errors ?? 0) > 0
-                      ? "text-red-500"
-                      : (diagnosticsByPath[tab.path]?.warnings ?? 0) > 0
-                        ? "text-orange-400"
-                        : reviewByPath.has(tab.path)
-                          ? reviewStatusBadge(reviewByPath.get(tab.path)!.status).className
-                          : dirtyPaths.has(tab.path)
-                            ? "text-amber-500"
-                            : undefined,
-                  )}
-                  title={tab.displayPath}
-                >
-                  {tab.name}
-                </span>
-                {dirtyPaths.has(tab.path) ? (
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/90"
-                    aria-label={tx("dev.unsaved", "Unsaved changes")}
-                  />
-                ) : null}
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeTab(tab.path);
-                  }}
-                  className={cn(
-                    "rounded p-0.5 transition-opacity hover:bg-muted",
-                    // Always visible on the active tab so the last open file
-                    // can still be closed (hover-only X was easy to miss).
-                    isActive
-                      ? "opacity-70 hover:opacity-100"
-                      : "opacity-0 group-hover:opacity-100",
-                  )}
-                  aria-label={tx("dev.closeTab", "Close tab")}
-                >
-                  <X className="h-3 w-3" aria-hidden />
-                </button>
-              </div>
-              );
-            })}
-          </div>
+          <EditorTabStrip
+            tabs={tabs}
+            isTabActive={(tab) =>
+              // Diff mode never renders this strip (the diff shell has its
+              // own file switcher), so only the code view can mark a tab
+              // active.
+              mode === "code" &&
+              (activeTab === tab.path ||
+                (splitTab != null && splitTab === tab.path))
+            }
+            isDirty={(tab) => dirtyPaths.has(tab.path)}
+            textClassName={(tab) =>
+              (diagnosticsByPath[tab.path]?.errors ?? 0) > 0
+                ? "text-red-500"
+                : (diagnosticsByPath[tab.path]?.warnings ?? 0) > 0
+                  ? "text-orange-400"
+                  : reviewByPath.has(tab.path)
+                    ? reviewStatusBadge(reviewByPath.get(tab.path)!.status).className
+                    : dirtyPaths.has(tab.path)
+                      ? "text-amber-500"
+                      : undefined
+            }
+            onSelect={(tab) => {
+              setMode("code");
+              // With the split view open, the click targets the focused
+              // pane, mirroring how Cursor routes files between groups.
+              if (splitTab != null && focusedPane === "right") {
+                setSplitTab(tab.path);
+              } else {
+                setActiveTab(tab.path);
+              }
+              if (!previewsRef.current[tab.path] && !loadingPaths[tab.path]) {
+                void loadPreview(tab.path);
+              }
+            }}
+            onClose={closeTab}
+          />
         ) : null}
 
         {/* After accept-all / last hunk: stay on #/code and offer run/preview. */}

@@ -91,6 +91,7 @@ import type {
   TranscriptionSettingsUpdate,
   VoiceSettingsUpdate,
   WebSearchSettingsUpdate,
+  SemanticSearchSettingsUpdate,
   WorkspacesPayload,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
@@ -2221,11 +2222,13 @@ export async function importExternalSessions(
   if (options?.source) query.set("source", options.source);
   if (options?.overwrite) query.set("overwrite", "true");
   if (options?.limit) query.set("limit", String(options.limit));
-  const suffix = query.toString() ? `?${query}` : "";
+  // The gateway handshake only forwards GET; declare the verb in the query.
+  query.set("_method", "POST");
+  const suffix = `?${query}`;
   return request<SessionImportResultPayload>(
     `${base}/api/webui/sessions/import${suffix}`,
     token,
-    { method: "POST" },
+    undefined,
     API_READ_TIMEOUT_MS,
   );
 }
@@ -2248,11 +2251,11 @@ export async function addImportRoot(
   path: string,
   base: string = "",
 ): Promise<{ saved_roots: Record<string, string[]> }> {
-  const query = new URLSearchParams({ source, path });
+  const query = new URLSearchParams({ source, path, _method: "POST" });
   return request<{ saved_roots: Record<string, string[]> }>(
     `${base}/api/webui/sessions/import/roots?${query}`,
     token,
-    { method: "POST" },
+    undefined,
     API_READ_TIMEOUT_MS,
   );
 }
@@ -2263,11 +2266,11 @@ export async function removeImportRoot(
   path: string,
   base: string = "",
 ): Promise<{ saved_roots: Record<string, string[]> }> {
-  const query = new URLSearchParams({ source, path });
+  const query = new URLSearchParams({ source, path, _method: "DELETE" });
   return request<{ saved_roots: Record<string, string[]> }>(
     `${base}/api/webui/sessions/import/roots?${query}`,
     token,
-    { method: "DELETE" },
+    undefined,
     API_READ_TIMEOUT_MS,
   );
 }
@@ -6889,6 +6892,27 @@ export async function updateWebSearchSettings(
   }
   return request<SettingsPayload>(
     `${base}/api/settings/web-search/update?${query}`,
+    token,
+  );
+}
+
+export async function updateSemanticSearchSettings(
+  token: string,
+  update: SemanticSearchSettingsUpdate,
+  base: string = "",
+): Promise<SettingsPayload> {
+  const query = new URLSearchParams();
+  if (update.enabled !== undefined) {
+    query.set("enabled", update.enabled === "auto" ? "auto" : String(update.enabled));
+  }
+  if (update.provider !== undefined) query.set("provider", update.provider);
+  if (update.model !== undefined) query.set("model", update.model);
+  if (update.dimensions !== undefined)
+    query.set("dimensions", String(update.dimensions));
+  if (update.maxChunks !== undefined)
+    query.set("max_chunks", String(update.maxChunks));
+  return request<SettingsPayload>(
+    `${base}/api/settings/semantic-search/update?${query}`,
     token,
   );
 }

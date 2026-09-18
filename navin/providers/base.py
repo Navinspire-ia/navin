@@ -984,17 +984,17 @@ class LLMProvider(ABC):
                 return response
             last_response = response
             if should_retry_guard is not None and not should_retry_guard():
-                is_timeout = (response.error_kind or "").lower() == "timeout"
-                if is_timeout:
+                recoverable = self._is_transient_response(response)
+                if recoverable:
                     if on_stream_recover:
                         logger.warning(
-                            "LLM stream stalled after content was emitted; "
+                            "LLM stream interrupted after content was emitted; "
                             "starting a new stream segment and retrying"
                         )
                         await on_stream_recover()
                     else:
                         logger.warning(
-                            "LLM stream stalled after content was emitted; "
+                            "LLM stream interrupted after content was emitted; "
                             "suppressing delta callbacks and retrying"
                         )
                         kw.setdefault("on_content_delta", None)
