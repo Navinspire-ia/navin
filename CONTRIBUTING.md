@@ -96,7 +96,7 @@ Breaking changes need all three:
 
 A breaking change is anything that requires the user or a script to take an action to keep working: removing or renaming a CLI flag, env var, HTTP route, or documented config field; changing a documented default; changing the persisted session format so older Navin cannot read it; changing a public Python / TS / Rust API exported from `navin.*` or `@navin/*`; dropping a previously supported OS, Python version, or install channel. Internal renames with a compat alias in the same commit are not breaking.
 
-The release bot still computes `v(X+1).0.0` from that history. The resulting `chore(release): vX.Y.Z` PR is **never auto-merged**. A maintainer merges it. Desktop files that `scripts/set-version.sh` stamps may need that script if they lag `pyproject.toml`.
+The release bot still computes `v(X+1).0.0` from that history. The resulting `chore(release): vX.Y.Z` PR is **never auto-merged**. A maintainer merges it. Desktop files that `scripts/set-version.sh` stamps may need that script if they lag `pyproject.toml`. GitHub's built-in `GITHUB_TOKEN` cannot open pull requests here; the workflow uses repo secret `RELEASE_PLEASE_TOKEN` (a PAT with `contents` and `pull requests`).
 
 Check a title locally:
 
