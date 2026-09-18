@@ -11,6 +11,7 @@ and model-keyed thinking styles for recent Qwen models.
 from __future__ import annotations
 
 import json
+import ssl
 import types
 import unittest
 from unittest import mock
@@ -264,6 +265,56 @@ class CodexExtraBodyTest(unittest.IsolatedAsyncioTestCase):
     async def test_no_override_leaves_the_body_alone(self):
         provider = OpenAICodexProvider()
         self.assertEqual(provider._extra_body, {})
+
+
+class CodexTlsFailClosedTest(unittest.IsolatedAsyncioTestCase):
+    """A CERTIFICATE_VERIFY_FAILED must never trigger a verify=False retry:
+    the retry would send the OAuth account_id / access token to a MITM."""
+
+    async def test_tls_failure_fails_closed_without_unverified_retry(self):
+        provider = OpenAICodexProvider()
+        calls: list[object] = []
+
+        async def request(url, headers, body, verify, **_kw):
+            calls.append(verify)
+            raise RuntimeError(
+                "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                "self-signed certificate in certificate chain (_ssl.c:1000)"
+            )
+
+        token = types.SimpleNamespace(account_id="acct", access="tok")
+        with (
+            mock.patch(
+                "navin.providers.openai_codex_provider.get_codex_token",
+                return_value=token,
+            ),
+            mock.patch("navin.providers.openai_codex_provider._request_codex", request),
+        ):
+            response = await provider.chat([{"role": "user", "content": "hi"}])
+        self.assertEqual(len(calls), 1, "no unverified retry after TLS failure")
+        self.assertIsInstance(calls[0], ssl.SSLContext, "verification stays on")
+        self.assertEqual(response.finish_reason, "error")
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", response.content)
+
+    async def test_request_uses_a_default_ssl_context(self):
+        provider = OpenAICodexProvider()
+        captured: dict = {}
+
+        async def request(url, headers, body, verify, **_kw):
+            captured["verify"] = verify
+            return "ok", [], "stop", {}, None
+
+        token = types.SimpleNamespace(account_id="acct", access="tok")
+        with (
+            mock.patch(
+                "navin.providers.openai_codex_provider.get_codex_token",
+                return_value=token,
+            ),
+            mock.patch("navin.providers.openai_codex_provider._request_codex", request),
+        ):
+            await provider.chat([{"role": "user", "content": "hi"}])
+        self.assertIsInstance(captured["verify"], ssl.SSLContext)
+        self.assertEqual(captured["verify"].verify_mode, ssl.CERT_REQUIRED)
 
 
 class QwenThinkingTest(unittest.TestCase):

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,67 @@ class CloneGitProjectTest(unittest.TestCase):
                             parent=str(parent),
                         )
             self.assertIn("already exists", ctx.exception.message)
+
+    def test_clone_strips_bundle_library_path(self) -> None:
+        # Regression #2: the frozen desktop build prepends its _internal
+        # dir to LD_LIBRARY_PATH; git-remote-https then loads the bundled
+        # libssl (OPENSSL_3.0.0) and aborts against host libcurl.
+        fake = mock.Mock(returncode=0, stdout="", stderr="")
+
+        def _run(argv, **kwargs):
+            Path(argv[-1]).mkdir(parents=True, exist_ok=True)
+            captured["env"] = kwargs["env"]
+            return fake
+
+        captured: dict = {}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LD_LIBRARY_PATH": "/usr/lib/Navin/navin-dist/_internal:/opt/custom/lib",
+                "DYLD_LIBRARY_PATH": "/usr/lib/Navin/navin-dist/_internal",
+            },
+        ):
+            with mock.patch(
+                "navin.webui.git_clone.shutil.which", return_value="/usr/bin/git"
+            ):
+                with mock.patch(
+                    "navin.webui.git_clone.subprocess.run", side_effect=_run
+                ):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        clone_git_project(
+                            "https://github.com/org/demo.git", parent=tmp
+                        )
+        env = captured["env"]
+        self.assertNotIn("navin-dist", env.get("LD_LIBRARY_PATH", ""))
+        self.assertEqual(env.get("LD_LIBRARY_PATH"), "/opt/custom/lib")
+        self.assertNotIn("DYLD_LIBRARY_PATH", env)
+
+    def test_clone_error_keeps_stderr_head_and_tail(self) -> None:
+        # Regression #2: the [-400:] slice hid the first OPENSSL lines of
+        # the failure dump; the message must keep head and tail.
+        head = "OPENSSL_3.2.0 not found (required by libcurl)" + "x" * 150
+        tail = "fatal: remote helper 'https' aborted session"
+        stderr = f"{head}\n{tail}"
+        fake = mock.Mock(returncode=128, stdout="", stderr=stderr)
+
+        def _run(argv, **_kwargs):
+            Path(argv[-1]).mkdir(parents=True, exist_ok=True)
+            return fake
+
+        with mock.patch(
+            "navin.webui.git_clone.shutil.which", return_value="/usr/bin/git"
+        ):
+            with mock.patch(
+                "navin.webui.git_clone.subprocess.run", side_effect=_run
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(GitCloneError) as ctx:
+                        clone_git_project(
+                            "https://github.com/org/demo.git", parent=tmp
+                        )
+        message = ctx.exception.message
+        self.assertIn("OPENSSL_3.2.0 not found", message)
+        self.assertIn("fatal: remote helper", message)
 
 
 if __name__ == "__main__":

@@ -2206,7 +2206,9 @@ export async function scanExternalSessions(
     `${base}/api/webui/sessions/import/scan`,
     token,
     undefined,
-    API_READ_TIMEOUT_MS,
+    // Walking five external stores (~/.cursor sqlite, ...) can take a
+    // while; the 20s read timeout showed a bogus "engine took too long".
+    API_SLOW_TIMEOUT_MS,
   );
 }
 

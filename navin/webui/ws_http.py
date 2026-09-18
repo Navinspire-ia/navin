@@ -160,9 +160,6 @@ from navin.webui.http_utils import (
     parse_request_path as _parse_request_path,
 )
 from navin.webui.http_utils import (
-    query_all as _query_all,
-)
-from navin.webui.http_utils import (
     query_first as _query_first,
 )
 from navin.webui.http_utils import (
@@ -335,7 +332,7 @@ def bootstrap_refusal(
         if not _issue_route_secret_matches(headers, secret):
             return (401, "Unauthorized")
         return None
-    if not secret and not is_local_browser:
+    if not secret and not local_bypass:
         return (403, "bootstrap is localhost-only")
     return None
 
@@ -427,8 +424,10 @@ def _extra_file_roots(query: Any, scope: Any) -> list[Path]:
         seen.add(root)
         roots.append(root)
 
-    for raw in _query_all(query, "root"):
-        add(raw)
+    # Client-supplied ?root= values are intentionally ignored: an authenticated
+    # caller could otherwise promote any existing directory (/, /etc, another
+    # user's home) to a preview workspace. Only server-side trusted sources
+    # below (sidebar recent projects, the install dir) may extend the roots.
 
     try:
         from navin.webui.sidebar_state import read_webui_sidebar_state

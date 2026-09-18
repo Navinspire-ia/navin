@@ -196,6 +196,24 @@ class ModelRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("ctrl+s")
             self.assertEqual(saved[-1].model_routes["deep"], "claude")
 
+    async def test_applying_a_preset_adds_no_model_preset_note(self):
+        # Regression: changing the model used to append a persistent
+        # "model preset → ..." note at the bottom of the transcript.
+        prefs = TuiPrefs(sidebar=False)
+        prefs.save = lambda: None
+        app = ChatHost(self.config, prefs=prefs)
+        app._load_config_data = lambda: self.config.model_dump(mode="json", by_alias=True)
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.pause()
+            await app._apply_preset("minimax")
+            await pilot.pause()
+            self.assertEqual(app.runtime.status.model_preset, "minimax")
+            texts = " ".join(
+                str(getattr(widget, "renderable", "") or "")
+                for widget in app.query("SystemNote")
+            )
+            self.assertNotIn("model preset", texts)
+
     async def test_chat_reasoning_click_model_shortcut_and_routing_navigation(self):
         prefs = TuiPrefs(sidebar=False)
         prefs.save = lambda: None

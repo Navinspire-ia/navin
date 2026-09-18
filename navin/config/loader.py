@@ -104,11 +104,34 @@ def _merge_config_edits(before: Any, edited: Any, latest: Any) -> Any:
     return edited
 
 
+def _remote_channel_enabled(config: Config) -> bool:
+    """True when a messaging channel reachable by remote users is enabled.
+
+    Telegram, Slack, Teams, Discord and friends accept prompts from an
+    untrusted chat, so the agent must not fetch private/internal addresses on
+    their behalf (SSRF to 169.254.169.254, RFC1918, loopback). The local
+    WebSocket/WebUI channel is excluded: it only serves the operator's own
+    machine and commonly needs to reach the dev server it just started.
+    """
+    channels = getattr(config.channels, "model_extra", None) or {}
+    local_names = {"websocket", "webui", "local"}
+    for name, value in channels.items():
+        if name in local_names:
+            continue
+        if isinstance(value, dict):
+            if value.get("enabled"):
+                return True
+        elif getattr(value, "enabled", False):
+            return True
+    return False
+
+
 def _apply_ssrf_whitelist(config: Config) -> None:
     """Apply the SSRF policy from config to the network security module."""
     from navin.security.network import configure_ssrf_protection, configure_ssrf_whitelist
 
-    configure_ssrf_protection(config.tools.ssrf_protection)
+    enabled = bool(config.tools.ssrf_protection) or _remote_channel_enabled(config)
+    configure_ssrf_protection(enabled)
     configure_ssrf_whitelist(config.tools.ssrf_whitelist)
 
 

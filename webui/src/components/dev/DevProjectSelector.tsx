@@ -668,11 +668,14 @@ export function FolderBrowserDialog({
   startPath,
   onOpenChange,
   onPick,
+  showHidden: showHiddenDefault = false,
 }: {
   open: boolean;
   startPath: string | null;
   onOpenChange: (open: boolean) => void;
   onPick: (path: string) => void;
+  /** Session import needs ~/.claude, ~/.codex, ... so it opts in. */
+  showHidden?: boolean;
 }) {
   const { token } = useClient();
   const { t } = useTranslation();
@@ -682,6 +685,7 @@ export function FolderBrowserDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [roots, setRoots] = useState<FsRootsPayload | null>(null);
+  const [showHidden, setShowHidden] = useState(showHiddenDefault);
 
   const load = useCallback(
     async (path: string) => {
@@ -689,7 +693,7 @@ export function FolderBrowserDialog({
       setLoading(true);
       setError(null);
       try {
-        const payload = await fetchFsList(token, path);
+        const payload = await fetchFsList(token, path, { hidden: showHidden });
         setCurrentPath(payload.path);
         setParent(payload.parent);
         setDirs(payload.directories);
@@ -699,7 +703,7 @@ export function FolderBrowserDialog({
         setLoading(false);
       }
     },
-    [token],
+    [token, showHidden],
   );
 
   useEffect(() => {
@@ -769,6 +773,15 @@ export function FolderBrowserDialog({
                 </button>
               </span>
             ))}
+            <label className="ml-auto inline-flex shrink-0 cursor-pointer items-center gap-1.5 select-none">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={showHidden}
+                onChange={(event) => setShowHidden(event.target.checked)}
+              />
+              {t("dev.project.showHidden", { defaultValue: "Show hidden" })}
+            </label>
           </div>
           <div className="h-64 overflow-y-auto overflow-x-hidden rounded-xl border border-border/50 bg-background/60">
             {loading ? (

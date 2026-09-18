@@ -107,6 +107,28 @@ class FileDownloadTest(unittest.TestCase):
         self.assertEqual(filename, "auth.py")
         self.assertIn(b"verify", body)
 
+    def test_client_root_query_is_ignored_for_extra_roots(self) -> None:
+        """?root= must not become a preview workspace: any authenticated caller
+        could otherwise read files under any existing directory on the host.
+        Server-side trusted sources (sidebar recent projects) still work."""
+        from unittest import mock
+
+        from navin.webui.ws_http import _extra_file_roots
+
+        attacker_root = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(lambda: __import__("shutil").rmtree(attacker_root, ignore_errors=True))
+        (attacker_root / "secret.txt").write_text("private", encoding="utf-8")
+
+        extra = _extra_file_roots({"root": [str(attacker_root)]}, self.scope)
+        self.assertNotIn(attacker_root, extra)
+
+        trusted = {"recent_projects": [{"path": str(attacker_root)}]}
+        with mock.patch(
+            "navin.webui.sidebar_state.read_webui_sidebar_state", return_value=trusted
+        ):
+            extra = _extra_file_roots({}, self.scope)
+        self.assertIn(attacker_root, extra)
+
     def test_extra_root_finds_file_outside_session_workspace(self) -> None:
         """Code can have a project open that is not the chat session folder."""
         other = Path(tempfile.mkdtemp()).resolve()
