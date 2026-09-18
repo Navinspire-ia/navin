@@ -92,11 +92,16 @@ class OpenFilePreviewTool(Tool):
             return ToolResult.error("Error: Missing path.")
 
         ctx = current_request_context()
-        if ctx is None or ctx.channel != "websocket":
+        if ctx is None:
+            return ToolResult.error(
+                "Error: no request context available to reach a preview UI."
+            )
+        channel = ctx.channel
+        if channel not in {"websocket", "cli"}:
             return ToolResult.error(
                 "Error: the File Preview panel only exists in the Navin WebUI "
-                "/ desktop. On this channel, point the user to the file path "
-                "instead."
+                "/ desktop and the navin-cli terminal. On this channel, point "
+                "the user to the file path instead."
             )
         if self._bus is None:
             return ToolResult.error(
@@ -118,6 +123,21 @@ class OpenFilePreviewTool(Tool):
                 f"Error: file not found: {raw} (resolved to {target}). "
                 f"Relative paths resolve against the project root, {root}."
             )
+
+        if channel == "cli":
+            # The TUI consumes this event and opens its own preview screen.
+            try:
+                self._bus.outbound.put_nowait(
+                    outbound_message_for_event(
+                        channel="cli",
+                        chat_id=ctx.chat_id,
+                        event=FilePreviewOpenRequestedEvent(path=str(target)),
+                    )
+                )
+            except Exception as exc:
+                return ToolResult.error(f"Error: could not reach the terminal preview: {exc}")
+            return f"{target} opened in the terminal preview."
+
         # Under the workspace restriction the preview panel refuses anything
         # above the root, so sending it would be reported as opened and then
         # show nothing at all. Better to say so here, while there is still an

@@ -4740,7 +4740,8 @@
       "voiceRealtime": "Conversation vocale Live",
       "webBehavior": "Comportement",
       "webSearch": "Recherche web",
-      "webuiSafety": "Sécurité WebUI"
+      "webuiSafety": "Sécurité WebUI",
+      "semanticSearch": "Recherche de code semantique"
     },
     "sidebar": {
       "ariaLabel": "Sections des réglages",
@@ -5306,6 +5307,24 @@
       "saveTogether": "L'écoute et la voix seront enregistrées ensemble.",
       "savedHint": "Les réglages enregistrés seront utilisés au prochain démarrage de Live.",
       "saveFailed": "Les réglages vocaux n'ont pas pu être enregistrés. Vérifiez la langue et les limites saisies, puis réessayez. Vos choix restent dans le formulaire."
+    },
+    "semanticSearch": {
+      "enabled": "Mode",
+      "enabledHelp": "Auto n'active la recherche semantique que pour les fournisseurs locaux gratuits. On la force (un fournisseur heberge facture par depot).",
+      "auto": "Auto (fournisseurs gratuits)",
+      "on": "Active",
+      "off": "Desactivee",
+      "provider": "Fournisseur embeddings",
+      "providerHelp": "N'importe quelle entree fournisseur configuree ; sa cle et son URL sont reutilisees. Ollama, LM Studio, vLLM et similaires sont gratuits.",
+      "model": "Modele embeddings",
+      "modelHelp": "Nom du modele servi par le fournisseur, par exemple nomic-embed-text.",
+      "dimensions": "Dimensions",
+      "dimensionsHelp": "0 utilise la largeur native du modele. Une valeur plus petite echange un peu de rappel contre un cache plus leger.",
+      "maxChunks": "Symboles indexes max",
+      "maxChunksHelp": "Plafond de symboles indexes, pour qu un monorepo ne genere pas une facture illimitee.",
+      "save": "Enregistrer",
+      "saveHint": "S'applique aux nouvelles recherches ; l'index se reconstruit a la prochaine requete.",
+      "saving": "Enregistrement..."
     }
   },
   "sidebar": {

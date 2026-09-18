@@ -14,6 +14,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Iterable
 
+from navin.utils.wsl import host_tool_path
+
 WORKSPACE_BOUNDARY_NOTE = (
     " (restrict to workspace is on; a card in the chat asks before "
     "leaving the project)"
@@ -193,9 +195,15 @@ def project_rooted_path(
     missing file inside the project instead of a policy violation, which is what
     the agent needs in order to retry sensibly.
 
-    Returns the path unchanged when it does not apply. The rewrite can only ever
-    point further inside the project, never out of it.
+    On a Windows-hosted WSL project, first translate Linux absolute paths to
+    their UNC equivalent, keeping their absolute meaning. Otherwise the
+    leading-slash shorthand can only point further inside the project. Callers
+    apply their normal containment checks to the returned path in either case.
     """
+    if workspace is not None:
+        host_path = host_tool_path(path, str(workspace))
+        if host_path != path:
+            return host_path
     path = _posix_separators(path, workspace)
     if workspace is None:
         return path

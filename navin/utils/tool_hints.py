@@ -830,6 +830,7 @@ def preview_rows(
     output_lines: list[str] | None = None,
     diff_text: str | None = None,
     limit: int = MAX_TRANSCRIPT_LINES,
+    include_run_output: bool = False,
 ) -> list[tuple[int | None, str, str]]:
     """Numbered preview rows: ``(line_no, add|del|ctx, text)``."""
     args = arguments if isinstance(arguments, dict) else {}
@@ -853,6 +854,7 @@ def preview_rows(
         for line in display_tool_error(error).splitlines():
             if line.strip():
                 rows.append((None, "error", line.rstrip()))
+    metadata_count = len(rows)
     command = _command_from_args(args)
     run_is_git = command.strip().startswith("git")
     text = _result_text(result, output_lines)
@@ -870,7 +872,7 @@ def preview_rows(
         # compact strip (chain joined by arrows, hubs/deps as short rows)
         # instead of numbered transcript lines.
         rows.extend(_graph_compact_rows(text))
-    elif verb == "run" and not run_is_git:
+    elif verb == "run" and not run_is_git and not include_run_output:
         # Journal off for command runs: only git commands print their output.
         pass
     elif text:
@@ -883,7 +885,15 @@ def preview_rows(
         question = args.get("question")
         if isinstance(question, str) and question.strip():
             rows.append((None, "ctx", " ".join(question.split())))
-    return rows[: max(1, int(limit))]
+    row_limit = max(1, int(limit))
+    if (verb == "run" and include_run_output and output_lines
+            and row_limit >= MAX_TRANSCRIPT_LINES and len(rows) > row_limit
+            and not _looks_like_unified_diff(text)):
+        # At the retention limit, an error or final result must not push
+        # the newest stdout lines out of the copyable activity.
+        metadata = rows[:min(metadata_count, row_limit - 1)]
+        return metadata + rows[-(row_limit - len(metadata)):]
+    return rows[:row_limit]
 
 
 def _graph_compact_rows(text: str, max_rows: int = 8) -> list[tuple[int | None, str, str]]:
@@ -1051,17 +1061,23 @@ def format_tool_preview_markup(
     limit: int = PREVIEW_OPEN_LINES,
     width: int = 0,
     dark: bool = True,
+    include_run_output: bool = False,
+    rows: list[tuple[int | None, str, str]] | None = None,
 ) -> str:
     """Numbered preview for the TUI body: data, metadata, add/del backgrounds."""
-    rows = preview_rows(
-        name,
-        arguments,
-        result=result,
-        error=error,
-        output_lines=output_lines,
-        diff_text=diff_text,
-        limit=limit,
-    )
+    if rows is None:
+        rows = preview_rows(
+            name,
+            arguments,
+            result=result,
+            error=error,
+            output_lines=output_lines,
+            diff_text=diff_text,
+            limit=limit,
+            include_run_output=include_run_output,
+        )
+    else:
+        rows = rows[:max(1, int(limit))]
     filename = _first_path(arguments or {}) if diff_text or any(row[1] in {"add", "del"} for row in rows) else ""
     return "\n".join(
         format_preview_markup_line(*row, width=width, dark=dark, filename=filename) for row in rows
@@ -1077,6 +1093,7 @@ def format_tool_detail(
     output_lines: list[str] | None = None,
     diff_text: str | None = None,
     limit: int = MAX_TRANSCRIPT_LINES,
+    include_run_output: bool = False,
 ) -> str:
     """Click-to-expand preview: numbered lines, + / - like an edit."""
     rows = preview_rows(
@@ -1087,6 +1104,7 @@ def format_tool_detail(
         output_lines=output_lines,
         diff_text=diff_text,
         limit=limit,
+        include_run_output=include_run_output,
     )
     if not rows:
         return ""

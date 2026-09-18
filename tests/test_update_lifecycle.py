@@ -15,6 +15,7 @@ from unittest import mock
 import pytest
 
 from navin.update import notice, service
+from tests.test_update_desktop import ready_helper
 
 
 @pytest.fixture
@@ -115,7 +116,7 @@ def test_desktop_helper_runs_outside_the_installation(update_home, monkeypatch, 
     monkeypatch.setattr(service.sys, "platform", "win32")
     monkeypatch.setattr(service, "_desktop_app", lambda: desktop)
     monkeypatch.setattr(service, "_desktop_pid", lambda: 9876)
-    popen = mock.Mock()
+    popen = mock.Mock(side_effect=ready_helper)
     monkeypatch.setattr(service.subprocess, "Popen", popen)
 
     result = service.install_update()

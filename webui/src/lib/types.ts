@@ -1759,6 +1759,14 @@ export interface SettingsPayload {
       credential: "none" | "api_key" | "optional_api_key" | "base_url";
     }>;
   };
+  semantic_search: {
+    enabled: boolean | null;
+    enabled_auto: boolean;
+    provider: string;
+    model: string;
+    dimensions: number;
+    max_chunks: number;
+  };
   web: {
     enable: boolean;
     proxy?: string | null;
@@ -2504,6 +2512,15 @@ export interface WebSearchSettingsUpdate {
   maxResults?: number;
   timeout?: number;
   useJinaReader?: boolean;
+}
+
+export interface SemanticSearchSettingsUpdate {
+  /** "auto" keeps the default behaviour (free providers only). */
+  enabled?: "auto" | boolean;
+  provider?: string;
+  model?: string;
+  dimensions?: number;
+  maxChunks?: number;
 }
 
 export interface NetworkSafetySettingsUpdate {

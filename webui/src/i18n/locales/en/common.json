@@ -4742,7 +4742,8 @@
       "voiceRealtime": "Realtime voice",
       "webBehavior": "Behavior",
       "webSearch": "Web search",
-      "webuiSafety": "Web safety"
+      "webuiSafety": "Web safety",
+      "semanticSearch": "Semantic code search"
     },
     "sidebar": {
       "ariaLabel": "Settings sections",
@@ -5308,6 +5309,24 @@
       "saveTogether": "Listening and voice will be saved together.",
       "savedHint": "Your saved settings will be used the next time you start Live.",
       "saveFailed": "Voice settings could not be saved. Check the language and limits, then try again. Your choices are still in the form."
+    },
+    "semanticSearch": {
+      "enabled": "Mode",
+      "enabledHelp": "Auto keeps semantic search on for free local providers only. On forces it on (a hosted provider bills per repository).",
+      "auto": "Auto (free providers)",
+      "on": "On",
+      "off": "Off",
+      "provider": "Embedding provider",
+      "providerHelp": "Any configured provider entry; its key and base URL are reused. Ollama, LM Studio, vLLM and similar local runners are free.",
+      "model": "Embedding model",
+      "modelHelp": "Model name served by the provider, for example nomic-embed-text.",
+      "dimensions": "Dimensions",
+      "dimensionsHelp": "0 uses the model's native width. A smaller value trades a little recall for a smaller cache.",
+      "maxChunks": "Max indexed symbols",
+      "maxChunksHelp": "Ceiling on embedded symbols, so a monorepo cannot run up an unbounded bill.",
+      "save": "Save",
+      "saveHint": "Applies to new semantic searches; the index rebuilds on the next query.",
+      "saving": "Saving..."
     }
   },
   "sidebar": {

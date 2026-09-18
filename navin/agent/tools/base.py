@@ -288,6 +288,14 @@ class Tool(ABC):
                 casted[k] = v
         return casted
 
+    def normalize_params(self, params: Any) -> Any:
+        """Normalize equivalent argument formats before schema validation.
+
+        Implementations must preserve the requested operation and content, and
+        reject conflicting values rather than picking one of them.
+        """
+        return params
+
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply safe schema-driven casts before validation."""
         schema = self.parameters or {}

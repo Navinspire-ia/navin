@@ -11,10 +11,10 @@ import os
 import re
 import threading
 import weakref
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import IO, TYPE_CHECKING, Any, Callable, Iterator
 
 from loguru import logger
 
@@ -38,6 +38,11 @@ from navin.utils.workspace_prompts import (
     load_workspace_prompt_override,
     workspace_prompt_file,
 )
+
+try:  # POSIX advisory locking; Windows falls back to the threading lock.
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from navin.utils.llm_runtime import LLMRuntime
@@ -96,12 +101,27 @@ class MemoryStore:
         self._oversize_logged = False  # rate-limit oversized-entry warning
         self._dream_prompt_oversize_logged = False
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
-        self._git = GitStore(workspace, tracked_files=[
+        self._history_lock_path = self.memory_dir / ".history.lock"
+        from navin import workspace_layout
+
+        skills_dir = workspace_layout.coalesce_owned_skills(workspace)
+        try:
+            skills_prefix = skills_dir.relative_to(workspace).as_posix() + "/"
+        except ValueError:  # pragma: no cover - skills dir outside the workspace
+            skills_prefix = ""
+        self._skills_prefix = skills_prefix
+        tracked = [
             ".navin/SOUL.md",
             ".navin/USER.md",
             ".navin/memory/MEMORY.md",
             ".navin/memory/.dream_cursor",
-        ])
+        ]
+        if skills_prefix:
+            # Dream can edit any SKILL.md in the owned library; those bodies are
+            # injected into future prompts, so every edit must be committed and
+            # surfaced in the diff, not silently rewritten.
+            tracked.append(skills_prefix)
+        self._git = GitStore(workspace, tracked_files=tracked)
         if self._git.is_initialized() and self._git.owns_gitignore():
             # Legacy stores ignore .navin/: without this, Dream commits would
             # silently stop after the layout migration. Guarded so a project's
@@ -277,6 +297,35 @@ class MemoryStore:
 
     # -- history.jsonl - append-only, JSONL format ---------------------------
 
+    @contextmanager
+    def _cross_process_history_lock(self) -> Iterator[None]:
+        """Advisory flock serializing cursor allocation across processes.
+
+        The threading lock only serializes threads of one MemoryStore; the
+        CLI and the gateway are separate processes on the same project and
+        used to compute the same next cursor (audit L2). flock() on a
+        dedicated lock file closes that gap; separate open() file
+        descriptions serialize even within one process. Best effort: when
+        flock is unavailable (Windows) the in-process lock still applies.
+        """
+        handle: IO[str] | None = None
+        if fcntl is not None:
+            try:
+                handle = open(self._history_lock_path, "a+")
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                if handle is not None:
+                    handle.close()
+                    handle = None
+        try:
+            yield
+        finally:
+            if handle is not None:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+
     def append_history(
         self,
         entry: str,
@@ -314,7 +363,9 @@ class MemoryStore:
         content = strip_think(raw)
         # Cursor allocation and the append must be atomic: concurrent writers
         # could otherwise read the same current cursor and emit duplicates.
-        with self._append_lock:
+        # The threading lock covers the in-process case, the flock the
+        # CLI + gateway on the same project.
+        with self._append_lock, self._cross_process_history_lock():
             cursor = self._next_cursor()
             if raw and not content:
                 logger.debug(
@@ -632,7 +683,10 @@ class MemoryStore:
         """
         if not self._git.is_initialized():
             return ""
-        return self._git.summarize_working_tree(list(self._DREAM_CONTENT_PATHS))
+        paths = list(self._DREAM_CONTENT_PATHS)
+        if self._skills_prefix:
+            paths.append(self._skills_prefix)
+        return self._git.summarize_working_tree(paths)
 
     def build_dream_tools(self):
         """Build the restricted tool registry used by Dream runs."""
@@ -1031,9 +1085,25 @@ class Consolidator:
         if not project:
             return
         try:
-            resume_path = (
-                Path(str(project)).expanduser() / ".navin" / "continuity" / "RESUME.md"
-            )
+            # Containment (audit L1): session metadata is data, not a write
+            # target. The mirror follows a session that legitimately runs on
+            # another project workspace (subagents, linked repos), so a
+            # foreign path is accepted only when it already IS a navin
+            # workspace: an existing .navin/continuity directory. A corrupted
+            # scope cannot redirect the write into an arbitrary location.
+            project_root = Path(str(project)).expanduser().resolve(strict=False)
+            continuity_dir = project_root / ".navin" / "continuity"
+            if (
+                project_root != self.store.workspace.resolve(strict=False)
+                and not continuity_dir.is_dir()
+            ):
+                logger.debug(
+                    "Handoff brief not mirrored: project_path {} is not the "
+                    "consolidator workspace and carries no continuity dir",
+                    project,
+                )
+                return
+            resume_path = continuity_dir / "RESUME.md"
             if not resume_path.parent.is_dir():
                 return
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1064,7 +1134,7 @@ class Consolidator:
             try:
                 from navin.continuity.resume_seed import append_decisions_from_brief
 
-                append_decisions_from_brief(project, brief)
+                append_decisions_from_brief(project_root, brief)
             except Exception:
                 logger.debug(
                     "Could not append Decisions from handoff brief for {}",

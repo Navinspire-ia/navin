@@ -418,6 +418,11 @@ class AgentDefaults(Base):
     bot_icon: str = ""  # Short icon (emoji or text) shown next to the bot name in CLI; "" to omit
     unified_session: bool = False  # Share one session across all channels (single-user multi-device)
     disabled_skills: list[str] = Field(default_factory=list)  # Skill names to exclude from loading (e.g. ["summarize", "skill-creator"])
+    trust_workspace_harness_skills: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("trustWorkspaceHarnessSkills", "trust_workspace_harness_skills"),
+        serialization_alias="trustWorkspaceHarnessSkills",
+    )  # False = ignore skills discovered in workspace dot-folders (.claude/, .cursor/, ...) other than .navin/skills: a cloned repo can ship instructions that get injected into the prompt
     session_ttl_minutes: int = Field(
         default=15,
         ge=0,

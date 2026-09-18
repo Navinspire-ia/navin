@@ -29,6 +29,20 @@ class ProgressHost(App):
             yield self.block
 
 
+def test_progress_is_literal_and_never_taller_than_two_lines():
+    async def run():
+        app = ProgressHost()
+        async with app.run_test(size=(48, 28)) as pilot:
+            for text in ["Je verifie [ces fichiers. " * 20, "[/dim] C:\\work\\"]:
+                await app.block.progress(text)
+                await pilot.pause()
+                lines = list(app.block.query(ProgressLine))
+                assert len(lines) == 1
+                assert str(lines[0].content) == f"· {text}"
+                assert 1 <= lines[0].region.height <= 2
+    asyncio.run(run())
+
+
 def test_progress_lines_replace_each_other_and_clear_on_finish():
     async def run():
         app = ProgressHost()

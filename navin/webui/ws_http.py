@@ -4645,7 +4645,11 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         source = (_query_first(query, "source") or "").strip()
         path = (_query_first(query, "path") or "").strip()
-        method = getattr(request, "method", "GET") or "GET"
+        # The gateway handshake only forwards GET frames, so the client
+        # declares the verb as a query parameter instead of an HTTP method.
+        method = (_query_first(query, "_method") or "").strip().upper()
+        if not method:
+            method = getattr(request, "method", "GET") or "GET"
         try:
             if method in {"POST", "PUT"}:
                 if not source or not path:

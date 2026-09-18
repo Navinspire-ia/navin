@@ -52,6 +52,13 @@ class SlimContractTest(unittest.TestCase):
 
 
 class HouseStyleTest(unittest.TestCase):
+    def test_delivery_summary_is_shared_by_cli_and_desktop(self):
+        for channel in ("cli", "websocket"):
+            identity = render_template("agent/identity.md", channel=channel)
+            self.assertIn("Files to execute", identity)
+            self.assertIn("prepared but not executed", identity)
+            self.assertIn("execution order, destination environment", identity)
+
     def test_the_batching_section_carries_no_unicode_dash(self):
         """AGENTS.md bans em/en dashes; line 19 documents them, so scope this."""
         contract = render_template("agent/tool_contract.md")

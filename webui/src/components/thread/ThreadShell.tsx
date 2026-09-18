@@ -816,6 +816,7 @@ export function ThreadShell({
     runStartedAt,
     goalState,
     activeTaskProgress,
+    activityText,
     send,
     transcribeAudio,
     stop,
@@ -2472,6 +2473,7 @@ export function ThreadShell({
           onTranscribeAudio={transcribeAudio}
           liveVoice={liveVoiceToggle}
           runStartedAt={runStartedAt}
+          activityText={activityText}
           goalState={goalState}
           workspaceScope={workspaceScope}
           workspaceDefaultScope={workspaceDefaultScope}
@@ -2532,6 +2534,7 @@ export function ThreadShell({
           sessionAction={composerSessionAction}
           skills={skills}
           runStartedAt={runStartedAt}
+          activityText={activityText}
           onTranscribeAudio={transcribeAudio}
           liveVoice={welcomeVoiceToggle}
           goalState={goalState}

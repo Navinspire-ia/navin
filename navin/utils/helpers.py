@@ -694,7 +694,26 @@ def estimate_prompt_tokens(
         message_tokens = len(enc.encode("\n".join(parts))) if parts else 0
         return message_tokens + tool_tokens + per_message_overhead
     except Exception:
-        return 0
+        return _estimate_prompt_tokens_fallback(messages, tools)
+
+
+def _estimate_prompt_tokens_fallback(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+) -> int:
+    """Chars-per-token fallback when tiktoken cannot provide an encoding.
+
+    Frozen builds may ship without tiktoken's encoding plugins, so
+    get_encoding() raises. Budgeting callers must still get a usable number
+    (auto-compact dies at 0), so this mirrors estimate_message_tokens'
+    characters-per-token ratio with the consolidator's conservative overhead.
+    """
+    total = sum(estimate_message_tokens(msg) for msg in messages)
+    total += len(messages) * 4
+    if tools:
+        chars = len(json.dumps(tools, ensure_ascii=False))
+        total += max(8, chars // 3)
+    return total
 
 
 def estimate_message_tokens(message: dict[str, Any]) -> int:

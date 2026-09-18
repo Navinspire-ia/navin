@@ -2166,6 +2166,7 @@ def settings_payload(
             "timeout": search_config.timeout,
             "providers": list(_WEB_SEARCH_PROVIDER_OPTIONS),
         },
+        "semantic_search": _semantic_search_payload(config),
         "web": {
             "enable": config.tools.web.enable,
             "proxy": config.tools.web.proxy,
@@ -3483,6 +3484,72 @@ def update_web_search_settings(query: QueryParams) -> dict[str, Any]:
     if changed:
         save_config(config)
     return settings_payload(requires_restart=restart_required)
+
+
+def _semantic_search_payload(config: Any) -> dict[str, Any]:
+    sem = config.tools.semantic_search
+    return {
+        "enabled": sem.enabled,
+        "enabled_auto": sem.enabled is None,
+        "provider": sem.provider,
+        "model": sem.model,
+        "dimensions": sem.dimensions,
+        "max_chunks": sem.max_chunks,
+    }
+
+
+def update_semantic_search_settings(query: QueryParams) -> dict[str, Any]:
+    """Update ``tools.semanticSearch`` from the settings UI."""
+    config = load_config()
+    sem = config.tools.semantic_search
+    changed = False
+
+    def set_value(attr: str, value: object) -> None:
+        nonlocal changed
+        if getattr(sem, attr) != value:
+            setattr(sem, attr, value)
+            changed = True
+
+    enabled_raw = _query_first_alias(query, "enabled", "enabled")
+    if enabled_raw is not None:
+        normalized = enabled_raw.strip().lower()
+        if normalized in {"auto", "default", ""}:
+            set_value("enabled", None)
+        elif normalized in {"1", "true", "yes", "on"}:
+            set_value("enabled", True)
+        elif normalized in {"0", "false", "no", "off"}:
+            set_value("enabled", False)
+        else:
+            raise WebUISettingsError("enabled must be auto, true or false")
+
+    provider = _query_first_alias(query, "provider", "provider")
+    if provider is not None:
+        provider = provider.strip()
+        if not provider:
+            raise WebUISettingsError("provider must not be empty")
+        set_value("provider", provider)
+
+    model = _query_first_alias(query, "model", "model")
+    if model is not None:
+        model = model.strip()
+        if not model:
+            raise WebUISettingsError("model must not be empty")
+        set_value("model", model)
+
+    for name, lo, hi in (("dimensions", 0, 4096), ("max_chunks", 100, 200000)):
+        raw = _query_first_alias(query, name, "".join(part.capitalize() for part in name.split("_")))
+        if raw is not None:
+            try:
+                parsed = int(raw)
+            except ValueError:
+                raise WebUISettingsError(f"{name} must be an integer") from None
+            if parsed < lo or parsed > hi:
+                raise WebUISettingsError(f"{name} must be between {lo} and {hi}")
+            set_value(name, parsed)
+
+    if changed:
+        save_config(config)
+    return settings_payload()
 
 
 def update_api_settings(query: QueryParams) -> dict[str, Any]:

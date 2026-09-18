@@ -662,12 +662,23 @@ _WAIT_FOR_APP = (
     'if [ "$2" != "0" ]; then kill "$2" 2>/dev/null; gone "$2" 15; fi; '
 )
 
+# Two-way handoff: the gateway stays open until preparation succeeds, and a
+# helper whose launch timed out cannot close the application later on.
+_UPDATE_HANDOFF = (
+    'if [ -n "${NAVIN_UPDATE_READY:-}" ]; then '
+    'printf ready > "$NAVIN_UPDATE_READY" || exit 1; i=0; '
+    'while [ ! -f "$NAVIN_UPDATE_PROCEED" ]; do '
+    'i=$((i+1)); [ "$i" -lt 30 ] || exit 1; sleep 1; done; fi; '
+)
+
 # $3 disk image, $4 the .app to replace, $5 where the old one waits.
 # Mount at a known empty directory instead of parsing ``hdiutil attach``
 # columns: a volume name with spaces, extra tabs, or a localized "Volumes"
 # line used to leave $mount empty and the install died with no UI.
 _MACOS_INSTALL_SCRIPT = (
-    _WAIT_FOR_APP + 'target="$4"; abort() { open -a "$target" >/dev/null 2>&1; exit 1; }; '
+    'target="$4"; abort() { '
+    'if [ -z "${NAVIN_UPDATE_READY:-}" ] || [ -f "$NAVIN_UPDATE_PROCEED" ]; then '
+    'open -a "$target"; fi; exit 1; }; '
     'mnt=$(mktemp -d "${TMPDIR:-/tmp}/navin-dmg.XXXXXX") || abort; '
     'unmount() { hdiutil detach "$mnt" -force >/dev/null 2>&1; rm -rf "$mnt"; }; '
     'hdiutil attach "$3" -mountpoint "$mnt" -readonly -nobrowse -noautoopen '
@@ -680,6 +691,7 @@ _MACOS_INSTALL_SCRIPT = (
     'rm -rf "$4.new" || { unmount; abort; }; '
     'ditto "$src" "$4.new" || { unmount; rm -rf "$4.new"; abort; }; '
     'unmount; xattr -dr com.apple.quarantine "$4.new" >/dev/null 2>&1; '
+    + _UPDATE_HANDOFF + _WAIT_FOR_APP +
     'rm -rf "$5" && mv "$4" "$5" || { rm -rf "$4.new"; abort; }; '
     'if mv "$4.new" "$4"; then '
     'if open -a "$4"; then rm -rf "$5"; '
@@ -691,12 +703,12 @@ _MACOS_INSTALL_SCRIPT = (
 # binary. The running app holds the old inode open, so the file can be swapped
 # under it. $3 the downloaded file, $4 the one in place, $5 the backup.
 _FILE_SWAP_INSTALL_SCRIPT = (
-    _WAIT_FOR_APP
     # Staged next to the target so the rename is atomic and never crosses a
     # filesystem, then swapped, so a failure mid-copy leaves the old one intact.
-    + 'cp -f "$3" "$4.new" && chmod +x "$4.new" && mv -f "$4" "$5" '
+    'cp -f "$3" "$4.new" && chmod +x "$4.new" || { rm -f "$4.new"; exit 1; }; '
+    + _UPDATE_HANDOFF + _WAIT_FOR_APP + 'mv -f "$4" "$5" '
     '&& mv -f "$4.new" "$4" || { rm -f "$4.new"; '
-    '[ -f "$4" ] || mv -f "$5" "$4"; exit 1; }; '
+    '[ -f "$4" ] || mv -f "$5" "$4"; "$4" & exit 1; }; '
     '"$4" >/dev/null 2>&1 & newpid=$!; sleep 20; '
     # An app that dies in its first twenty seconds is a broken update, and the
     # user is left with nothing. Put the version that worked back.
@@ -708,7 +720,43 @@ _FILE_SWAP_INSTALL_SCRIPT = (
 def _updater_environment() -> dict[str, str]:
     # The new application outlives the old frozen process and must load its
     # own libraries instead of inheriting the old bundle's runtime directory.
-    return {**child_environment(), "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    env = {**child_environment(), "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    # AppImage and desktop identity belong to the old launch. Inheriting them
+    # can point the new shell at an unmounted runtime or the previous PID.
+    for key in ("APPIMAGE", "APPDIR", "ARGV0", "OWD", "NAVIN_DESKTOP_PID", "NAVIN_DESKTOP_APP", "NAVIN_INSTALL_KIND"):
+        env.pop(key, None)
+    return env
+
+
+def _start_desktop_updater(command: list[str], *, timeout: float = 180) -> None:
+    """Do not close Navin until the detached helper confirms it is ready."""
+    root = Path.home() / ".navin" / "updates" / f"handoff-{uuid.uuid4().hex}"
+    root.mkdir(parents=True)
+    ready, proceed = root / "ready", root / "proceed"
+    log = root / "updater.log"
+    env = {
+        **_updater_environment(),
+        "NAVIN_UPDATE_READY": _os_path(ready),
+        "NAVIN_UPDATE_PROCEED": _os_path(proceed),
+    }
+    with log.open("ab") as output:
+        process = subprocess.Popen(
+            command, cwd=_os_path(root), env=env,
+            stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            close_fds=True, **_updater_spawn_kwargs(),
+        )
+    deadline = time.monotonic() + timeout
+    while True:
+        exited = process.poll()
+        if exited is not None:
+            raise UpdateError(f"The update helper exited before installation (code {exited}). Details: {log}")
+        if ready.is_file():
+            proceed.write_text("proceed", encoding="utf-8")
+            return
+        if time.monotonic() >= deadline:
+            process.terminate()
+            raise UpdateError(f"The update helper did not become ready. Navin remains open. Details: {log}")
+        time.sleep(0.05)
 
 
 def _install_posix_app(
@@ -727,7 +775,7 @@ def _install_posix_app(
             status=409,
         )
     backup = target.with_name(f"{target.name}.old")
-    subprocess.Popen(
+    _start_desktop_updater(
         [
             "/bin/sh",
             "-c",
@@ -739,9 +787,6 @@ def _install_posix_app(
             _os_path(target),
             _os_path(backup),
         ],
-        env=_updater_environment(),
-        close_fds=True,
-        **detached_no_window_kwargs(),
     )
 
 
@@ -1208,11 +1253,10 @@ def _install_update() -> dict[str, Any]:
             _os_path(_desktop_app() or executable),
             "--restart",
             _os_path(relaunch),
+            "--version",
+            str(info.get("latestVersion") or ""),
         ]
-        subprocess.Popen(
-            command, cwd=_os_path(helper.parent), env=_updater_environment(),
-            close_fds=True, **_updater_spawn_kwargs(),
-        )
+        _start_desktop_updater(command)
     elif kind == "macos-app":
         _install_macos_app(Path(path), pid=pid, desktop_pid=desktop_pid)
     elif kind == "linux-appimage":

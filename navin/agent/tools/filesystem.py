@@ -133,6 +133,11 @@ class _FsTool(Tool):
 
     config_key = "file"
 
+    def normalize_params(self, params: Any) -> Any:
+        from navin.agent.tools.file_arguments import normalize_file_arguments
+
+        return normalize_file_arguments(self.name, params)
+
     @classmethod
     def config_cls(cls):
         return FileToolsConfig

@@ -24,6 +24,12 @@ from unittest import mock
 from navin.update import service
 
 
+def ready_helper(command, **kwargs):
+    """A launched helper acknowledges readiness before Navin may close."""
+    Path(kwargs["env"]["NAVIN_UPDATE_READY"]).write_text("ready")
+    return mock.Mock(poll=mock.Mock(return_value=None))
+
+
 def _manifest(version: str = "1.0.1", **artifacts: dict) -> dict:
     return {
         "schemaVersion": 1,
@@ -125,7 +131,8 @@ class AppImageInstallTests(unittest.TestCase):
         artifact.write_bytes(b"new")
         with (
             mock.patch.dict(os.environ, {"NAVIN_DESKTOP_APP": str(target)}),
-            mock.patch.object(service.subprocess, "Popen") as popen,
+            mock.patch.object(service.subprocess, "Popen", side_effect=ready_helper) as popen,
+            mock.patch.object(Path, "home", return_value=self.tmp),
         ):
             service._install_appimage(artifact, pid=1234, desktop_pid=99)
         argv = popen.call_args.args[0]
@@ -336,7 +343,7 @@ class EndToEndAppImageTests(unittest.TestCase):
                 mock.patch.object(
                     service.subprocess,
                     "Popen",
-                    lambda command, **_: spawned.append(command) or mock.Mock(),
+                    lambda command, **kwargs: spawned.append(command) or ready_helper(command, **kwargs),
                 ),
                 mock.patch.object(service, "_schedule_shutdown"),
             ):
@@ -432,7 +439,7 @@ class WindowsInstallArgvTests(unittest.TestCase):
                 },
             ),
             mock.patch.object(Path, "home", return_value=self.tmp / "home"),
-            mock.patch.object(service.subprocess, "Popen") as popen,
+            mock.patch.object(service.subprocess, "Popen", side_effect=ready_helper) as popen,
             mock.patch.object(service, "_schedule_shutdown"),
             mock.patch.object(service, "notify"),
         ):

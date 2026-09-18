@@ -675,6 +675,8 @@ export function useNavinStream(
   goalState: GoalStateWsPayload | undefined;
   /** Latest ``agent_ui.task_progress`` for the active turn (bars / ETA strip). */
   activeTaskProgress: TaskProgressData | null;
+  /** Latest user-facing progress sentence, separate from private reasoning. */
+  activityText: string | null;
   send: (content: string, images?: SendAttachment[], options?: SendOptions) => void;
   transcribeAudio: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
   stop: () => void;
@@ -721,6 +723,7 @@ export function useNavinStream(
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
   const [activeTaskProgress, setActiveTaskProgress] = useState<TaskProgressData | null>(null);
+  const [activityText, setActivityText] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
@@ -755,6 +758,7 @@ export function useNavinStream(
   useEffect(() => {
     setContextCompaction(null);
     setCheckpointNotice(null);
+    setActivityText(null);
   }, [chatId]);
 
   useEffect(() => {
@@ -1068,11 +1072,11 @@ export function useNavinStream(
   // history response after the optimistic first message has already rendered.
   useEffect(() => {
     setMessages(initialMessages);
+    const startedAt = chatId ? client.getRunStartedAt(chatId) : null;
     setIsStreaming(
-      hasPendingAgentActivity(initialMessages) || hasPendingToolCalls,
+      startedAt != null || hasPendingAgentActivity(initialMessages) || hasPendingToolCalls,
     );
     setStreamError(null);
-    const startedAt = chatId ? client.getRunStartedAt(chatId) : null;
     runStartedAtRef.current = startedAt;
     setRunStartedAt(startedAt);
     setGoalState(chatId ? client.getGoalState(chatId) : undefined);
@@ -1260,6 +1264,7 @@ export function useNavinStream(
         runStartedAtRef.current = null;
         setRunStartedAt(null);
         setActiveTaskProgress(null);
+        setActivityText(null);
         // A card that outlived its turn is unanswerable: the tool that asked has
         // already been told no. The client drops them, this follows - choices
         // included, or a question card stays stuck on screen after the turn.
@@ -1358,6 +1363,11 @@ export function useNavinStream(
             normalizeToolProgressEvents(ev.tool_events),
             progress,
           );
+          if (!sideChannelEvent) {
+            const label = progress?.step || progress?.label
+              || (ev.kind === "progress" && structuredEvents.length === 0 ? ev.text : "");
+            if (label?.trim()) setActivityText(label.replace(/\s+/g, " ").trim());
+          }
           const turn = turnFieldsFromEvent(ev, "activity");
           // Progress-only frames (no tool_events) still update the strip.
           if (structuredEvents.length === 0 && progress) {
@@ -1606,6 +1616,8 @@ export function useNavinStream(
         // Don't wait for goal_status:running (which only fires once BUILD finishes).
         // Seed the elapsed clock immediately so the first-message wait never looks frozen.
         if (runStartedAtRef.current == null) {
+          setActivityText(null);
+          setActiveTaskProgress(null);
           const startedAt = Date.now() / 1000;
           runStartedAtRef.current = startedAt;
           setRunStartedAt(startedAt);
@@ -1656,6 +1668,7 @@ export function useNavinStream(
     runStartedAtRef.current = null;
     setRunStartedAt(null);
     setActiveTaskProgress(null);
+    setActivityText(null);
     setIsStreaming(false);
     setMessages((prev) => {
       buffer.current = null;
@@ -1699,6 +1712,7 @@ export function useNavinStream(
     runStartedAt,
     goalState,
     activeTaskProgress,
+    activityText,
     send,
     transcribeAudio,
     stop,

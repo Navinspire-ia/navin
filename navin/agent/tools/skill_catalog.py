@@ -14,6 +14,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from navin.agent.skills import skill_source_label
 from navin.agent.tools.base import Tool
 
 
@@ -23,19 +24,29 @@ class SkillCatalogTool(Tool):
         workspace: Path | None = None,
         disabled_skills: set[str] | None = None,
         builtin_skills_dir: Path | None = None,
+        trust_workspace_harness_skills: bool = True,
     ) -> None:
         self._workspace = workspace
         self._disabled = disabled_skills or set()
         self._builtin_skills_dir = builtin_skills_dir
+        self._trust_workspace_harness_skills = trust_workspace_harness_skills
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
         disabled: set[str] = set()
+        trust_harness = True
         try:
             disabled = set(ctx.config.agents.defaults.disabled_skills or [])
+            trust_harness = bool(
+                getattr(ctx.config.agents.defaults, "trust_workspace_harness_skills", True)
+            )
         except Exception:
             disabled = set()
-        return cls(workspace=Path(ctx.workspace), disabled_skills=disabled)
+        return cls(
+            workspace=Path(ctx.workspace),
+            disabled_skills=disabled,
+            trust_workspace_harness_skills=trust_harness,
+        )
 
     @property
     def name(self) -> str:
@@ -104,6 +115,7 @@ class SkillCatalogTool(Tool):
             root,
             builtin_skills_dir=self._builtin_skills_dir,
             disabled_skills=self._disabled,
+            trust_workspace_harness_skills=self._trust_workspace_harness_skills,
         )
 
     async def execute(self, action: str = "find", query: str = "", name: str = "", **kwargs: Any) -> Any:
@@ -215,6 +227,11 @@ class SkillCatalogTool(Tool):
                     f"(Warning - missing dependencies: {why}. Install them "
                     "first or pick another approach.)\n\n"
                 )
+            # Origin stamp (audit M2): a workspace-shipped playbook and a
+            # builtin do not carry the same trust.
+            header += (
+                f"(Origin: {skill_source_label(loader.skill_source(key))})\n\n"
+            )
             return header + f"### Skill: {key}\n\n{loader._strip_frontmatter(content)}"
         if action == "list":
             index = loader.build_skills_index()

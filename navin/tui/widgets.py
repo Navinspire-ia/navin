@@ -12,22 +12,27 @@ import re
 import time
 from typing import Any
 
+from markdown_it import MarkdownIt
 from rich.markup import escape
 from rich.rule import Rule
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
+from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
+from textual.widgets._markdown import MarkdownParagraph
 from textual.widgets.option_list import Option
 
 from navin.tui.brand import MARK, tide_text, wave_frame
+from navin.tui.frames import paint_input
 from navin.tui.markdown import install_path_styles
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
@@ -65,7 +70,8 @@ from navin.utils.tool_hints import (
 install_path_styles()
 
 # Coalesce bursts without making input or the engine wait for each paint.
-STREAM_FRAME_SECONDS = 1 / 30
+STREAM_FRAME_SECONDS = 1 / 20
+TOOL_OUTPUT_FRAME_SECONDS = 0.1
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -502,6 +508,9 @@ class ReasoningBlock(Vertical):
         self._paint_timer = None
         if not self.is_attached:
             return
+        if not self._done and self.screen is not self.app.screen:
+            self._paint_timer = self.set_timer(0.1, self._paint)
+            return
         joined = "".join(self._buffer)
         if self._open:
             self.query_one(".reasoning-body", Static).update(escape(joined[-6000:]))
@@ -631,6 +640,8 @@ class ToolCall(Vertical, can_focus=True):
         self._spin_timer: Timer | None = None
         self._output_timer: Timer | None = None
         self._painted_head: tuple[str, bool] | None = None
+        self._body_size: tuple[int, int] | None = None
+        self._preview_overflow = False
         if tool_verb(name) in {"edit", "create"}:
             self._open = True
         self.add_class("-running")
@@ -654,13 +665,15 @@ class ToolCall(Vertical, can_focus=True):
         self._refresh_head()
         self._refresh_body()
 
-    def _refresh_head(self, *, notify_cluster: bool = True) -> None:
+    def _refresh_head(self, *, notify_cluster: bool = True, animation_only: bool = False) -> None:
         if not self.is_mounted:
             return
         try:
             key = (self._plain_head(), self.app.current_theme.dark)
             if key != self._painted_head:
-                self.query_one(".tool-head", Static).update(activity_head_text(key[0], dark=key[1]))
+                self.query_one(".tool-head", Static).update(
+                    activity_head_text(key[0], dark=key[1]), layout=not animation_only,
+                )
                 self._painted_head = key
         except Exception:  # noqa: BLE001 - children not composed yet
             pass
@@ -676,9 +689,10 @@ class ToolCall(Vertical, can_focus=True):
             node = getattr(node, "parent", None)
 
     def _tick(self) -> None:
-        if self.phase in {"start", "output"}:
+        if (self.phase in {"start", "output"} and self.screen is self.app.screen
+                and self.screen.can_view_partial(self)):
             self._spin = (self._spin + 1) % self.SPINNER_STEPS
-            self._refresh_head(notify_cluster=False)
+            self._refresh_head(notify_cluster=False, animation_only=True)
 
     def _status_glyph(self) -> str:
         # Three cells wide in every state so the tool names stay aligned.
@@ -759,7 +773,7 @@ class ToolCall(Vertical, can_focus=True):
             if progress_changed:
                 self._refresh_head()
             if self._output_timer is None:
-                self._output_timer = self.set_timer(STREAM_FRAME_SECONDS, self._paint_output)
+                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_output)
             return
         if self._output_timer is not None:
             self._output_timer.stop()
@@ -784,11 +798,25 @@ class ToolCall(Vertical, can_focus=True):
 
     def _paint_output(self) -> None:
         self._output_timer = None
-        self._flush_output_buffer()
         if not self.is_attached:
             return
-        self._refresh_head()
+        if self._defer_output_paint():
+            # Keep all output in memory, but don't parse and style thousands
+            # of hidden lines while the user types or opens a picker. The
+            # latest output paints as soon as this activity comes into view.
+            self._output_timer = self.set_timer(0.1, self._paint_output)
+            return
+        self._flush_output_buffer()
+        if self.phase != "output":
+            self._refresh_head()
         self._refresh_body()
+
+    def _defer_output_paint(self) -> bool:
+        return (
+            self.phase == "output" and self._preview_overflow
+            and self._body_size is not None and self._body_size[1] >= PREVIEW_OPEN_LINES
+            and (self.screen is not self.app.screen or not self.screen.can_view_partial(self))
+        )
 
     def adopt(self, call_id: str, arguments: dict[str, Any] | None) -> None:
         """Fold another edit of the same file into this row."""
@@ -807,7 +835,9 @@ class ToolCall(Vertical, can_focus=True):
             self._spin_timer.resume()
 
     def copy_text(self) -> str:
-        return clip_transcript(
+        # The detail formatter already caps the output. Capping it again
+        # after adding the heading would discard the newest retained lines.
+        return (
             self._plain_head() + "\n"
             + (self._command_details() + "\n" if self._command_details() else "")
             + format_tool_detail(
@@ -817,6 +847,7 @@ class ToolCall(Vertical, can_focus=True):
                 error=self.error,
                 output_lines=self.output_lines,
                 diff_text=self.diff_text,
+                include_run_output=True,
             )
             + ("\nDiff truncated by source." if self.file_truncated else "")
         )
@@ -833,6 +864,12 @@ class ToolCall(Vertical, can_focus=True):
     def _refresh_body(self) -> None:
         if not self.is_mounted:
             return
+        if self.screen is not self.app.screen or self._defer_output_paint():
+            # Resize and theme messages may have been queued before a modal
+            # opened or output scrolled away. Defer hidden output there too.
+            if self._output_timer is None:
+                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_output)
+            return
         try:
             body = self.query_one(".tool-body", Static)
             viewport = self.query_one(".tool-output", VerticalScroll)
@@ -848,7 +885,9 @@ class ToolCall(Vertical, can_focus=True):
         rows = preview_rows(
             self.tool_name, self.arguments, result=self.result, error=self.error,
             output_lines=self.output_lines, diff_text=self.diff_text,
+            include_run_output=True,
         )
+        self._preview_overflow = len(rows) > PREVIEW_OPEN_LINES
         limit = MAX_TRANSCRIPT_LINES if self._show_full else PREVIEW_OPEN_LINES
         text = format_tool_preview_markup(
             self.tool_name,
@@ -860,6 +899,8 @@ class ToolCall(Vertical, can_focus=True):
             limit=limit,
             width=width,
             dark=self.app.current_theme.dark,
+            include_run_output=True,
+            rows=rows,
         )
         note = ""
         if self.file_truncated:
@@ -879,19 +920,29 @@ class ToolCall(Vertical, can_focus=True):
             )
         # Rich escapes and Textual escapes are different. Pass styled text,
         # so an unmatched '[' in code cannot consume a closing style tag.
-        body.update(Text.from_markup(text))
+        rendered = Text.from_markup(text)
+        if body.content != rendered:
+            # Preview rows are already wrapped and padded to the viewport.
+            # New text at the same width/height only repaints those cells;
+            # relaying out the whole transcript stalls typing on live logs.
+            size = (width, rendered.plain.count("\n") + bool(rendered.plain))
+            body.update(rendered, layout=size != self._body_size)
+            self._body_size = size
         body.display = self._open and bool(text)
         command = self.query_one(".tool-command", Static)
         details = self._command_details()
-        command.update(details)
+        if command.content != details:
+            command.update(details)
         command.display = self._open and self._show_full and bool(details)
         viewport.display = body.display or command.display
         more = self.query_one(".tool-more", Button)
         more.display = self._open and (len(rows) > PREVIEW_OPEN_LINES or bool(details))
-        more.label = "Show less" if self._show_full else (
+        label = "Show less" if self._show_full else (
             f"Show all (+{len(rows) - PREVIEW_OPEN_LINES} lines)" if len(rows) > PREVIEW_OPEN_LINES
             else "Show command"
         )
+        if more.label.plain != label:
+            more.label = label
         more.tooltip = "F expands the full output. Enter folds this activity."
 
     def on_resize(self) -> None:
@@ -927,6 +978,7 @@ class ToolCall(Vertical, can_focus=True):
                 output_lines=self.output_lines,
                 diff_text=self.diff_text,
                 limit=2,
+                include_run_output=True,
             )
         )
 
@@ -1131,6 +1183,8 @@ class ToolCluster(Vertical, can_focus=True):
 class ProgressLine(Static):
     DEFAULT_CSS = """
     ProgressLine {
+        height: auto;
+        max-height: 2;
         margin: 0 2 0 2;
         padding: 0 2;
         color: $text-muted;
@@ -1139,7 +1193,7 @@ class ProgressLine(Static):
     """
 
     def __init__(self, text: str) -> None:
-        super().__init__(f"· {escape(text)}", markup=True)
+        super().__init__(f"· {text}", markup=False)
 
 
 def format_elapsed(seconds: float) -> str:
@@ -1198,11 +1252,11 @@ class WorkingLine(Static):
     """
 
     def set_line(self, text: str) -> None:
-        content = f"◦ {escape(text)}" if text else ""
-        if self.content == content and self.display == bool(text):
+        content = f"◦ {text}" if text else ""
+        if str(self.content) == content and self.display == bool(text):
             return
         if text:
-            self.update(content)
+            self.update(Text(content))
             self.display = True
             self.add_class("-visible")
             return
@@ -1299,10 +1353,69 @@ class SubagentCard(Static):
         self.set_class(bool(error), "-error")
 
 
+class TranscriptMarkdown(Markdown):
+    """Markdown children own the content; only paint visible background lines."""
+
+    def render_line(self, y: int) -> Strip:
+        return Strip.blank(self.size.width, self.visual_style.rich_style)
+
+    def append(self, markdown: str) -> AwaitComplete:
+        """Stream paragraphs without Textual's application-wide paint lock.
+
+        Complex Markdown keeps the framework's atomic update path. Plain
+        paragraphs can update in place and mount new siblings while input
+        and modal screens continue painting.
+        """
+        last = self.children[-1] if self.children else None
+        if last is not None and last.source_range is not None:
+            # update() may leave its cursor beyond a completed final block.
+            # Reparse from that block so appending never replaces it with a
+            # different paragraph or loses the start of a multiline block.
+            self._last_parsed_line = last.source_range[0]
+        if last is not None and not isinstance(last, MarkdownParagraph):
+            return super().append(markdown)
+        source = self.source + markdown
+        start_line = self._last_parsed_line
+        fragment = "".join(source.splitlines(keepends=True)[start_line:])
+        parser = MarkdownIt("gfm-like") if self._parser_factory is None else self._parser_factory()
+        tokens = parser.parse(fragment)
+        if not tokens or any(token.type not in {"paragraph_open", "inline", "paragraph_close"} for token in tokens):
+            return super().append(markdown)
+        self._markdown = source
+
+        async def append_paragraphs() -> None:
+            async with self.lock:
+                blocks = list(self._parse_markdown(tokens))
+                for token in reversed(tokens):
+                    if token.map is not None and token.level == 0:
+                        self._last_parsed_line = start_line + token.map[0]
+                        break
+                for block in blocks:
+                    start, end = block.source_range
+                    block.source_range = (start_line + start, start_line + end)
+                if last is not None and blocks:
+                    replacement = blocks.pop(0)
+                    last.source_range = replacement.source_range
+                    if last._content.is_same(replacement._content):
+                        last._copy_context(replacement)
+                    else:
+                        await last._update_from_block(replacement)
+                for offset in range(0, len(blocks), 16):
+                    await self.mount_all(blocks[offset:offset + 16])
+                    await asyncio.sleep(0)
+
+        return AwaitComplete(append_paragraphs())
+
+
 class AssistantMessage(Vertical):
     """An assistant turn: reasoning, activity (tools), streamed Markdown body."""
 
     ALLOW_SELECT = True
+
+    def render_line(self, y: int) -> Strip:
+        # A turn may be thousands of rows tall. The default container renderer
+        # builds a blank strip for every row on each resize while streaming.
+        return Strip.blank(self.size.width, self.visual_style.rich_style)
 
     DEFAULT_CSS = """
     AssistantMessage {
@@ -1432,7 +1545,7 @@ class AssistantMessage(Vertical):
             yield Static(head, classes="assistant-head", markup=False)
         yield Static("", classes="assistant-preview", markup=True)
         yield Static(Rule("finish", characters="─", align="left", style=""), classes="assistant-finish")
-        yield Markdown("", classes="assistant-body")
+        yield TranscriptMarkdown("", classes="assistant-body")
         yield Static("", classes="assistant-foot", markup=True)
 
     def on_mount(self) -> None:
@@ -1607,7 +1720,7 @@ class AssistantMessage(Vertical):
         # Interim narration replaces the previous line instead of stacking:
         # each tool batch would otherwise leave its sentence on screen forever.
         if self._progress_line is not None and self._progress_line.is_attached:
-            self._progress_line.update(f"· {escape(text)}")
+            self._progress_line.update(f"· {text}")
             self.move_child(self._progress_line, before=preview)
             self._refresh_preview()
             return
@@ -1697,7 +1810,8 @@ class AssistantMessage(Vertical):
         except Exception:  # noqa: BLE001
             return
         if self._open or (self._progress_line is not None and not self.text.strip()):
-            preview.update("")
+            if preview.content:
+                preview.update("")
             preview.display = False
             return
         preview.display = True
@@ -1731,7 +1845,7 @@ class AssistantMessage(Vertical):
             text = readable_assistant_markdown(self.text) if force else self.text
             if text == self._painted_markdown:
                 return
-            if not force and text.startswith(self._painted_markdown):
+            if text.startswith(self._painted_markdown):
                 await body.append(text[len(self._painted_markdown):])
             else:
                 await body.update(text)
@@ -1740,6 +1854,12 @@ class AssistantMessage(Vertical):
     async def _flush_stream(self) -> None:
         if not self.is_attached:
             self._paint_timer = None
+            return
+        if self.screen is not self.app.screen:
+            # The full source stays in the buffer while a modal is open.
+            # Mounting hidden paragraphs would still reflow the background
+            # screen and delay navigation in the foreground.
+            self._paint_timer = self.set_timer(0.1, self._flush_stream)
             return
         count = len(self._buffer)
         try:
@@ -1983,26 +2103,26 @@ class ApprovalCard(Vertical):
         self.closed = False
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            f"⚠ Permission needed  [dim]{escape(self.tool)}[/dim]",
-            classes="card-title",
-            markup=True,
-        )
-        lines = [escape(self.action)]
+        # Commands may contain unmatched brackets or end in a backslash.
+        # Keep external text out of the markup parser, including after truncation.
+        title = Text("⚠ Permission needed  ")
+        title.append(self.tool, style="dim")
+        yield Static(title, classes="card-title", markup=False)
+        detail = Text(self.action)
         if self.reason:
-            lines.append(f"[dim]why:[/dim] {escape(self.reason)}")
+            detail.append("\nwhy:", style="dim").append(f" {self.reason}")
         if self.detail:
-            lines.append(escape(self.detail[:600]))
+            detail.append(f"\n{self.detail[:600]}")
         if self.consequence:
-            lines.append(f"[dim]impact:[/dim] {escape(self.consequence)}")
+            detail.append("\nimpact:", style="dim").append(f" {self.consequence}")
         if self.scope:
-            lines.append(f"[dim]scope:[/dim] {escape(self.scope)}")
-        yield Static("\n".join(lines), classes="card-detail", markup=True)
+            detail.append("\nscope:", style="dim").append(f" {self.scope}")
+        yield Static(detail, classes="card-detail", markup=False)
         with Horizontal():
-            yield Button("Allow  [y]", variant="success", id="allow")
+            yield Button(Text("Allow  [y]"), variant="success", id="allow")
             if self.remember_offered:
-                yield Button("Always  [a]", variant="primary", id="always")
-            yield Button("Deny  [n]", variant="error", id="deny")
+                yield Button(Text("Always  [a]"), variant="primary", id="always")
+            yield Button(Text("Deny  [n]"), variant="error", id="deny")
 
     @on(Button.Pressed)
     def _pressed(self, event: Button.Pressed) -> None:
@@ -2019,10 +2139,11 @@ class ApprovalCard(Vertical):
         self.closed = True
         self.add_class("-closed")
         verdict = "allowed" if allowed else "denied"
-        extra = f"  [dim]{escape(reason)}[/dim]" if reason else ""
-        self.query_one(".card-title", Static).update(
-            f"{'✓' if allowed else '✗'} Permission {verdict}  [dim]{escape(self.tool)}[/dim]{extra}"
-        )
+        title = Text(f"{'✓' if allowed else '✗'} Permission {verdict}  ")
+        title.append(self.tool, style="dim")
+        if reason:
+            title.append(f"  {reason}", style="dim")
+        self.query_one(".card-title", Static).update(title)
 
 
 class ChoiceCard(Vertical):
@@ -2071,16 +2192,18 @@ class ChoiceCard(Vertical):
         self.closed = False
 
     def compose(self) -> ComposeResult:
-        yield Static(f"❔ {escape(self.question)}", classes="card-title", markup=True)
+        yield Static(f"❔ {self.question}", classes="card-title", markup=False)
         items: list[Option] = []
         for idx, opt in enumerate(self.options, start=1):
             oid = str(opt.get("id") or opt.get("value") or idx)
             label = str(opt.get("label") or opt.get("title") or oid)
             desc = str(opt.get("description") or "")
-            star = " [b $accent]★[/]" if oid == self.recommended_id else ""
-            text = f"[b]{idx}.[/b] {escape(label)}{star}"
+            text = Text(f"{idx}.", style="bold")
+            text.append(f" {label}", style="not bold")
+            if oid == self.recommended_id:
+                text.append(" ★", style=f"bold {self.app.get_css_variables()['accent']}")
             if desc:
-                text += f"\n   [dim]{escape(desc)}[/dim]"
+                text.append(f"\n   {desc}", style="dim not bold")
             items.append(Option(text, id=oid))
         yield OptionList(*items)
         yield Input(placeholder="Or type a custom answer and press Enter…", id="custom")
@@ -2140,9 +2263,9 @@ class ChoiceCard(Vertical):
             for opt in self.options:
                 if str(opt.get("id") or opt.get("value") or "") == option_id:
                     chosen = str(opt.get("label") or option_id)
-        self.query_one(".card-title", Static).update(
-            f"✓ {escape(self.question)}  [dim]→ {escape(chosen)}[/dim]"
-        )
+        title = Text(f"✓ {self.question}  ")
+        title.append(f"→ {chosen}", style="dim")
+        self.query_one(".card-title", Static).update(title)
 
 
 # ---------------------------------------------------------------------------
@@ -2297,6 +2420,19 @@ class ComposerShell(Vertical):
             return
         event.stop()
         self.post_message(Composer.ChatScroll(3))
+
+    def on_click(self, event: events.Click) -> None:
+        """Clicking anywhere in the prompt shell focuses the composer."""
+        if isinstance(event.widget, Composer):
+            return
+        node = event.widget
+        while node is not None:
+            if isinstance(node, ComposerMeta):
+                return  # the meta row opens its own pickers
+            node = node.parent
+        composer = self.query(Composer)
+        if composer:
+            composer.first().focus()
 
     def set_busy(self, busy: bool) -> None:
         self.set_class(busy, "-busy")
@@ -2505,6 +2641,7 @@ class Composer(TextArea):
         self._last_paste_source = ""
         self._paste_generation = 0
         self._pastes: dict[str, str] = {}
+        self._input_frame: tuple | None = None
 
     def _shell(self) -> ComposerShell | None:
         parent = self.parent
@@ -2587,6 +2724,15 @@ class Composer(TextArea):
                 self.post_message(self.HistoryRequested(-1 if event.key == "up" else 1))
                 return
         await super()._on_key(event)
+        self._paint_input()
+
+    def _paint_input(self) -> None:
+        state = (self.text, self.selection, self.scroll_offset, self.region)
+        if state != self._input_frame and paint_input(self):
+            self._input_frame = state
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        self._paint_input()
 
     def action_newline(self) -> None:
         self.insert("\n")
@@ -2664,6 +2810,7 @@ class Composer(TextArea):
         self.post_message(self.ChatScroll(3))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        self._paint_input()
         text = self.text
         prefix = text if text.startswith("/") and "\n" not in text and " " not in text else None
         if prefix != self._last_slash_prefix:
@@ -2831,10 +2978,13 @@ class Transcript(VerticalScroll):
     """
 
     auto_follow = reactive(True)
-    _follow_pending = False
     has_older = False
     loading_history = False
     history_generation = 0
+
+    def watch_auto_follow(self, follow: bool) -> None:
+        if self.is_attached:
+            self.anchor(follow)
 
     def request_older(self) -> None:
         if self.has_older and not self.loading_history:
@@ -2872,14 +3022,10 @@ class Transcript(VerticalScroll):
         self.follow()
 
     def follow(self) -> None:
-        if self.auto_follow and not self._follow_pending:
-            self._follow_pending = True
-            self.call_after_refresh(self._follow_after_refresh)
-
-    def _follow_after_refresh(self) -> None:
-        self._follow_pending = False
         if self.is_attached and self.auto_follow:
-            self.scroll_end(animate=False)
+            # Resolve the bottom position in the same layout as the new
+            # content, instead of painting and scrolling in separate frames.
+            self.anchor()
 
 
 def compact_shortcut(key: str) -> str:

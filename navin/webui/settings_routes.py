@@ -80,6 +80,7 @@ from navin.webui.settings_api import (
     update_music_generation_settings,
     update_network_safety_settings,
     update_provider_settings,
+    update_semantic_search_settings,
     update_transcription_settings,
     update_video_generation_settings,
     update_voice_settings,
@@ -221,6 +222,8 @@ class WebUISettingsRouter:
             return await self._handle_settings_omniroute_action(request, "configure")
         if path == "/api/settings/web-search/update":
             return self._handle_settings_web_search_update(request)
+        if path == "/api/settings/semantic-search/update":
+            return self._handle_settings_semantic_search_update(request)
         if path == "/api/settings/api-service":
             return self._handle_settings_api_service(request)
         if path == "/api/settings/api-service/start":
@@ -649,6 +652,15 @@ class WebUISettingsRouter:
             return self._unauthorized()
         try:
             payload = update_web_search_settings(self._query(request))
+        except WebUISettingsError as e:
+            return self._error_response(e.status, e.message)
+        return self._json_response(self._with_restart_state(payload, section="browser"))
+
+    def _handle_settings_semantic_search_update(self, request: WsRequest) -> Response:
+        if not self._authorized(request):
+            return self._unauthorized()
+        try:
+            payload = update_semantic_search_settings(self._query(request))
         except WebUISettingsError as e:
             return self._error_response(e.status, e.message)
         return self._json_response(self._with_restart_state(payload, section="browser"))
