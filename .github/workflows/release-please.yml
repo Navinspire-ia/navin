@@ -20,11 +20,22 @@ jobs:
     name: Open release PR
     runs-on: ubuntu-26.04
     steps:
+      - name: Require RELEASE_PLEASE_TOKEN
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_PLEASE_TOKEN}" ]; then
+            echo "GITHUB_TOKEN cannot open pull requests in this organization."
+            echo "Set repo secret RELEASE_PLEASE_TOKEN to a PAT with contents and pull requests."
+            exit 1
+          fi
+
       - name: Run release-please
         id: release
         continue-on-error: true
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: .github/release-please-config.json
           manifest-file: .release-please-manifest.json
           # Do not auto-merge. Maintainers merge chore(release): vX.Y.Z.
