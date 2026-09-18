@@ -70,6 +70,11 @@ Never paste API keys, tokens, license files, or `~/.navin/config.json` in a
 report. For vulnerabilities, see [SECURITY.md](./SECURITY.md) and email
 `security@navinspire.com` first.
 
+Agents (and anyone using the GitHub API) MUST open issues with
+`python3 scripts/new-issue.py` instead of `gh issue create`. The browser
+forms are not applied over the API. See [`.github/ISSUE_INTAKE.md`](.github/ISSUE_INTAKE.md).
+
+
 ## Pull requests
 
 - Small, reviewable diffs.
