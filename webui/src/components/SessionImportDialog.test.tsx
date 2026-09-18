@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// vitest.config.ts does not set globals:true, so RTL auto-cleanup never
+// runs: without this, dialogs from earlier tests stay mounted and their
+// stale state leaks into later assertions.
+afterEach(cleanup);
 
 class ResizeObserverStub {
   observe() {}
@@ -57,22 +62,24 @@ vi.mock("@/components/dev/DevProjectSelector", async (importOriginal) => {
   >();
   return {
     ...actual,
-    FolderBrowserDialog: ({
-      open,
-      onPick,
-    }: {
+    FolderBrowserDialog: (props: {
       open: boolean;
       onPick: (path: string) => void;
-    }) =>
-      open ? (
-        <button type="button" onClick={() => onPick("/tmp/picked")}>
+      showHidden?: boolean;
+    }) => {
+      latestBrowserProps = props;
+      return props.open ? (
+        <button type="button" onClick={() => props.onPick("/tmp/picked")}>
           fake-browser-pick
         </button>
-      ) : null,
+      ) : null;
+    },
   };
 });
 
 import { SessionImportDialog } from "@/components/SessionImportDialog";
+
+let latestBrowserProps: { showHidden?: boolean } = {};
 
 describe("SessionImportDialog custom roots", () => {
   beforeEach(() => {
@@ -99,6 +106,17 @@ describe("SessionImportDialog custom roots", () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain("/tmp/picked");
     });
+  });
+
+  it("shows hidden folders in the import browser (dotfile stores)", async () => {
+    // Regression #4: ~/.claude, ~/.codex, ~/.omp are hidden dirs; the
+    // import picker must opt into showHidden or they are unusable.
+    render(<SessionImportDialog open onOpenChange={() => undefined} />);
+
+    await screen.findByRole("button", { name: /Cursor/ });
+    fireEvent.click(screen.getAllByText("Browse folders...")[0]);
+    fireEvent.click(screen.getByText("fake-browser-pick"));
+    expect(latestBrowserProps.showHidden).toBe(true);
   });
 
   it("renders the source picker as a themed dropdown, not a native select", async () => {
@@ -153,5 +171,52 @@ describe("SessionImportDialog custom roots", () => {
     const importButton = screen.getByRole("button", { name: /Import/ });
     expect(importButton.hasAttribute("disabled")).toBe(true);
     expect(importExternalSessions).not.toHaveBeenCalled();
+  });
+
+  it("shows a scan-slow message, not the generic engine timeout (issue #3)", async () => {
+    // Regression #3: a 20s read timeout surfaced "engine took too long"
+    // copy; the scan now gets the slow timeout and the dialog explains.
+    scanExternalSessions.mockRejectedValueOnce(
+      new Error("Request took too long"),
+    );
+    render(<SessionImportDialog open onOpenChange={() => undefined} />);
+
+    const alert = await screen.findByRole("alert", {}, { timeout: 2000 });
+    expect(alert.textContent).toContain("lent");
+    expect(alert.textContent).not.toContain("took too long");
+    // The source dropdown stays usable despite the failed scan.
+    expect(screen.getByRole("button", { name: /Cursor/ })).toBeTruthy();
+  });
+
+  it("keeps the source dropdown usable after a scan failure (issue #3)", async () => {
+    // Regression #3: a scan timeout used to leave the dropdown stuck on
+    // the raw default "cursor" with no items to pick from.
+    scanExternalSessions.mockRejectedValueOnce(new Error("scan timeout"));
+    render(<SessionImportDialog open onOpenChange={() => undefined} />);
+
+    // The trigger still shows a human label, not the raw source id.
+    const trigger = await screen.findByRole("button", { name: /Cursor/ });
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+    // The fallback list offers every known source, not just cursor.
+    const item = await screen.findByRole(
+      "menuitem",
+      { name: "oh-my-pi" },
+      { timeout: 2000 },
+    );
+    fireEvent.click(item);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /oh-my-pi/ })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByText("Browse folders...")[0]);
+    fireEvent.click(screen.getByText("fake-browser-pick"));
+    await waitFor(() => {
+      expect(addImportRoot).toHaveBeenCalledWith(
+        "test-token",
+        "oh-my-pi",
+        "/tmp/picked",
+      );
+    });
   });
 });

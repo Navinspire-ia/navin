@@ -40,6 +40,15 @@ class NoSecretTest(unittest.TestCase):
     def test_anything_else_is_localhost_only(self) -> None:
         self.assertEqual(refusal(is_local_browser=False), (403, "bootstrap is localhost-only"))
 
+    def test_a_local_browser_on_a_lan_bind_is_refused(self) -> None:
+        # Same policy as token_issue_refusal: bound beyond loopback, a
+        # local-looking peer can be a proxy relaying the outside world.
+        for bind in ("0.0.0.0", "192.168.1.20", "::"):
+            with self.subTest(bind=bind):
+                self.assertEqual(
+                    refusal(bind_host=bind), (403, "bootstrap is localhost-only")
+                )
+
 
 class LoopbackBypassTest(unittest.TestCase):
     def test_a_local_browser_needs_no_secret_on_a_loopback_gateway(self) -> None:

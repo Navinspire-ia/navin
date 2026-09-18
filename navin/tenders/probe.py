@@ -56,17 +56,18 @@ def probe_url(url: str) -> dict[str, Any]:
     if code in {0, 400, 403, 405, 501}:
         code, final, err = _open(url, method="GET")
     if code == 0 and "CERTIFICATE_VERIFY_FAILED" in err:
-        code, final, retry_err = _open(url, method="GET", verify=False)
-        if code in _OK:
-            return {
-                "url": url,
-                "status": code,
-                "final": final,
-                "ok": True,
-                "blocked": False,
-                "error": "TLS certificate failed verification; host still answered",
-            }
-        err = retry_err or err
+        # Fail closed on TLS: report the failure, never re-probe with
+        # verification disabled. An unverified 200 would promote a MITM'd
+        # host to "reachable", which a portal probe must never claim.
+        return {
+            "url": url,
+            "status": 0,
+            "final": final,
+            "ok": False,
+            "blocked": False,
+            "tls_failed": True,
+            "error": "TLS certificate failed verification; host not trusted",
+        }
     ok = code in _OK
     blocked = code in {400, 403, 405} or "captcha" in err.lower() or "waf" in err.lower()
     return {

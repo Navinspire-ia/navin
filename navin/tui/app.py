@@ -2147,10 +2147,6 @@ class NavinApp(App[None]):
             await self._note(f"[$error]{escape(str(exc))}[/]", "error")
             return
         self._refresh_side()
-        await self._note(
-            f"model preset → [b]{escape(name)}[/b]  ·  {escape(self.runtime.status.model)}",
-            "success",
-        )
 
     async def _pick_mode(self) -> None:
         items = [PickItem(m.id, m.label, m.description, m.command or "plain text") for m in MODES]

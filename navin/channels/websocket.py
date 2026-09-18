@@ -100,6 +100,9 @@ from navin.webui.collab_tokens import (
 from navin.webui.forking import handle_webui_fork_chat
 from navin.webui.gateway_services import GatewayServices
 from navin.webui.http_utils import (
+    is_loopback_host as _bind_is_loopback,
+)
+from navin.webui.http_utils import (
     normalize_config_path as _normalize_config_path,
 )
 from navin.webui.http_utils import (
@@ -289,12 +292,15 @@ class WebSocketConfig(Base):
 
     @model_validator(mode="after")
     def wildcard_host_requires_auth(self) -> Self:
-        if self.host not in ("0.0.0.0", "::"):
+        # Any non-loopback bind (0.0.0.0, a LAN IP, a WSL address) is reachable
+        # by other machines, so a token or token-issue secret is required - not
+        # just the all-interfaces case.
+        if _bind_is_loopback(self.host):
             return self
         if self.token.strip() or self.token_issue_secret.strip():
             return self
         raise ValueError(
-            "host is 0.0.0.0 (all interfaces) but neither token nor "
+            f"host {self.host!r} is not loopback but neither token nor "
             "token_issue_secret is set - set one to prevent unauthenticated access"
         )
 

@@ -62,6 +62,44 @@ class DefaultTest(_PolicyTest):
         self.assertFalse(contains_internal_url("curl -sS http://localhost:3000/health"))
 
 
+class RemoteChannelTest(_PolicyTest):
+    """A non-local channel (Telegram/Slack/Teams/...) means untrusted prompts:
+    private-range blocking turns on even though the config knob stays off."""
+
+    def _apply(self, channels: dict) -> None:
+        from navin.config.loader import _apply_ssrf_whitelist
+
+        config = Config()
+        config.channels = type(config.channels).model_validate(channels)
+        _apply_ssrf_whitelist(config)
+
+    def test_telegram_enables_protection(self) -> None:
+        self._apply({"telegram": {"enabled": True}})
+        self.assertTrue(ssrf_protection_enabled())
+
+    def test_slack_and_teams_enable_protection(self) -> None:
+        self._apply({"msteams": {"enabled": True}})
+        self.assertTrue(ssrf_protection_enabled())
+        self._apply({"slack": {"enabled": True}})
+        self.assertTrue(ssrf_protection_enabled())
+
+    def test_disabled_channels_do_not_enable_protection(self) -> None:
+        self._apply({"telegram": {"enabled": False}, "slack": {"enabled": False}})
+        self.assertFalse(ssrf_protection_enabled())
+
+    def test_the_local_websocket_channel_does_not_enable_protection(self) -> None:
+        self._apply({"websocket": {"enabled": True}})
+        self.assertFalse(ssrf_protection_enabled())
+
+    def test_an_explicit_knob_still_wins_even_without_channels(self) -> None:
+        from navin.config.loader import _apply_ssrf_whitelist
+
+        config = Config()
+        config.tools.ssrf_protection = True
+        _apply_ssrf_whitelist(config)
+        self.assertTrue(ssrf_protection_enabled())
+
+
 class EnabledTest(_PolicyTest):
     """Turning it on restores every refusal, unchanged."""
 

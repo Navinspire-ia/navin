@@ -32,6 +32,19 @@ import {
 
 type Phase = "idle" | "scanning" | "ready" | "importing" | "done" | "error";
 
+/**
+ * Fallback list used when a scan failed or timed out and returned no
+ * sources: the custom-root dropdown must stay usable (issue #3) instead
+ * of being stuck on the raw default "cursor" with no items.
+ */
+const KNOWN_SOURCES: Array<{ name: string; label: string }> = [
+  { name: "claude-code", label: "Claude Code" },
+  { name: "codex", label: "Codex" },
+  { name: "opencode", label: "OpenCode" },
+  { name: "oh-my-pi", label: "oh-my-pi" },
+  { name: "cursor", label: "Cursor" },
+];
+
 function statusLabel(status: string): string {
   if (status === "ready") return "";
   if (status === "missing") return "not installed";
@@ -78,7 +91,14 @@ export function SessionImportDialog({
       );
       setPhase("ready");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // A slow scan used to surface the generic "engine took too long"
+      // transport copy; say what actually happened instead.
+      setError(
+        /too long|timeout|timed out/i.test(message)
+          ? "Le scan des stores externes est lent (grands historiques). Les sources restent selectionnables ci-dessous - reessayez ou importez depuis une racine personnalisee."
+          : message,
+      );
       setPhase("error");
     }
   }, [token]);
@@ -160,6 +180,11 @@ export function SessionImportDialog({
   }, [token, sources, selected, t, onImported]);
 
   const busy = phase === "scanning" || phase === "importing";
+  const dropdownSources = sources.length ? sources : KNOWN_SOURCES;
+  const newRootLabel =
+    sources.find((s) => s.name === newRootSource)?.label ??
+    KNOWN_SOURCES.find((s) => s.name === newRootSource)?.label ??
+    newRootSource;
   const selectedTotal = sources
     .filter((s) => selected[s.name])
     .reduce((sum, s) => sum + s.discovered, 0);
@@ -271,13 +296,12 @@ export function SessionImportDialog({
                     size="sm"
                     className="h-7 shrink-0 gap-1 px-2 text-xs"
                   >
-                    {sources.find((s) => s.name === newRootSource)?.label ??
-                      newRootSource}
+                    {newRootLabel}
                     <ChevronDown className="h-3 w-3 opacity-60" aria-hidden />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
-                  {sources.map((s) => (
+                  {dropdownSources.map((s) => (
                     <DropdownMenuItem
                       key={s.name}
                       onSelect={() => setNewRootSource(s.name)}
@@ -308,6 +332,7 @@ export function SessionImportDialog({
           open={browserOpen}
           startPath={null}
           onOpenChange={setBrowserOpen}
+          showHidden
           onPick={(path) => {
             setBrowserOpen(false);
             void addRoot(path);

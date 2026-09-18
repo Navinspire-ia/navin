@@ -10,6 +10,7 @@ explicit parent), then the WebUI opens and remembers the resulting path.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -77,6 +78,33 @@ def repo_name_from_url(url: str) -> str:
     return name
 
 
+def _host_git_env() -> dict[str, str]:
+    """Parent env minus the PyInstaller library paths.
+
+    The frozen desktop build prepends
+    ``/usr/lib/Navin/navin-dist/_internal`` to ``LD_LIBRARY_PATH``; a child
+    ``git-remote-https`` then loads the bundled ``libssl.so.3`` (OpenSSL
+    3.0) while the host ``libcurl`` needs ``OPENSSL_3.2.0``/``3.5.0`` and
+    aborts. Git is a host binary: it must use host libraries.
+    """
+    env = dict(os.environ)
+    marker = "navin-dist"
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        value = env.get(key)
+        if not value or marker not in value:
+            continue
+        kept = [
+            part
+            for part in value.split(os.pathsep)
+            if part and marker not in part and "_internal" not in part
+        ]
+        if kept:
+            env[key] = os.pathsep.join(kept)
+        else:
+            env.pop(key, None)
+    return env
+
+
 def _existing_remote_url(path: Path) -> str | None:
     try:
         proc = subprocess.run(  # noqa: S603
@@ -87,6 +115,7 @@ def _existing_remote_url(path: Path) -> str | None:
             errors="replace",
             timeout=15,
             check=False,
+            env=_host_git_env(),
             **no_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
@@ -197,6 +226,7 @@ def clone_git_project(
             errors="replace",
             timeout=_GIT_CLONE_TIMEOUT_S,
             check=False,
+            env=_host_git_env(),
             **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired as exc:
@@ -217,7 +247,14 @@ def clone_git_project(
     if proc.returncode != 0:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        detail = (proc.stderr or proc.stdout or "").strip()[-400:]
+        raw = (proc.stderr or proc.stdout or "").strip()
+        # Keep the head (the first error, e.g. the OPENSSL symbol dump) and
+        # the tail (the final "fatal:" line): a plain [-400:] slice hid the
+        # beginning of the failure behind truncated middle lines.
+        if len(raw) <= 400:
+            detail = raw
+        else:
+            detail = f"{raw[:200]}\n...\n{raw[-200:]}"
         # Auth / network failures from git are client-facing, not opaque 500s.
         status = 502
         lower = detail.lower()

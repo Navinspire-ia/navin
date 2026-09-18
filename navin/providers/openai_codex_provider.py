@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import ssl
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -108,25 +109,26 @@ class OpenAICodexProvider(LLMProvider):
             headers = _build_headers(token.account_id, token.access)
 
             stage = "codex_request"
+            # TLS verification is never disabled, even on CERTIFICATE_VERIFY_FAILED.
+            # Failing closed prevents an on-path MITM (captive portal, corporate
+            # TLS intercept) from receiving the OAuth account_id / access token.
+            # Corporate CAs are honored via SSL_CERT_FILE (default ssl context).
             try:
                 content, tool_calls, finish_reason, usage, reasoning_content = await _request_codex(
-                    DEFAULT_CODEX_URL, headers, body, verify=True,
+                    DEFAULT_CODEX_URL, headers, body, verify=_default_ssl_context(),
                     proxy=self.proxy,
                     on_content_delta=on_content_delta,
                     on_thinking_delta=on_thinking_delta,
                     on_tool_call_delta=on_tool_call_delta,
                 )
             except Exception as e:
-                if "CERTIFICATE_VERIFY_FAILED" not in str(e):
-                    raise
-                logger.warning("SSL verification failed for Codex API; retrying with verify=False")
-                content, tool_calls, finish_reason, usage, reasoning_content = await _request_codex(
-                    DEFAULT_CODEX_URL, headers, body, verify=False,
-                    proxy=self.proxy,
-                    on_content_delta=on_content_delta,
-                    on_thinking_delta=on_thinking_delta,
-                    on_tool_call_delta=on_tool_call_delta,
-                )
+                if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                    logger.error(
+                        "SSL certificate verification failed for Codex API; refusing to "
+                        "send credentials over an unverified connection. Configure a "
+                        "corporate CA via SSL_CERT_FILE or proxy settings."
+                    )
+                raise
             return LLMResponse(
                 content=content,
                 tool_calls=tool_calls,
@@ -182,6 +184,11 @@ class OpenAICodexProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return self.default_model
+
+
+def _default_ssl_context() -> ssl.SSLContext:
+    """Default SSL context honoring SSL_CERT_FILE (corporate CA bundles)."""
+    return ssl.create_default_context()
 
 
 def _strip_model_prefix(model: str) -> str:
