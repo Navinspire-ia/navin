@@ -57,6 +57,15 @@ class ReleaseWorkflowTest(unittest.TestCase):
             commands = " ".join(_run_steps(self.jobs[job_name]))
             self.assertIn(script, commands, f"{job_name} never builds the desktop app")
 
+    def test_windows_release_requires_azure_signing_and_passes_credentials(self):
+        job = self.jobs["windows"]
+        self.assertEqual(job["env"]["NAVIN_REQUIRE_SIGNING"], "1")
+        build = next(step for step in job["steps"] if "build-desktop.ps1" in step.get("run", ""))
+        for name in ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"):
+            self.assertEqual(build["env"][name], "${{ secrets." + name + " }}")
+        script = (REPO_ROOT / "packaging/windows/build-desktop.ps1").read_text(encoding="utf-8")
+        self.assertLess(script.index("Azure signing credentials are incomplete"), script.index("Building the sidecar"))
+
     def test_every_platform_keeps_a_cli_update_archive_in_its_release(self):
         for job_name, script in (
             ("linux", "packaging/linux/build-offline.sh"),
