@@ -9,8 +9,7 @@ body:
         Use this form for a concrete feature idea you want Navin to ship.
 
         Before you file here:
-        - Open ended questions, "how do I" usage help, or install trouble belong in [Support].
-        - Vague ideas belong in [Discussions](https://github.com/Navinspire-ia/navin/discussions) so the community can shape them first.
+        - Open ended questions, "how do I" usage help, or install trouble belong in `[Support]`.
         - Bugs and broken behavior belong in the `Bug` template, not here.
 
         Do not paste API keys, tokens, or `~/.navin/config.json` contents in this report.
@@ -64,32 +63,27 @@ body:
     validations:
       required: true
   - type: checkboxes
-    id: platform-influence
+    id: affected-installations
     attributes:
-      label: "Affected platforms (best guess)"
-      description: "Tick every platform packaging this feature would change. Triagers may adjust."
+      label: "Affected installations (best guess)"
+      description: "Tick every packaging channel this feature would change. Leave blank if unsure; triagers will follow up."
       options:
-        - label: "platform: windows"
-        - label: "platform: macos-arm64"
-        - label: "platform: macos-x64"
-        - label: "platform: linux"
-        - label: "platform: wsl"
-        - label: "platform: docker"
-        - label: "platform: source"
-        - label: "packaging: msi"
-        - label: "packaging: exe"
-        - label: "packaging: store"
-        - label: "packaging: dmg"
-        - label: "packaging: appimage"
-        - label: "packaging: deb"
-        - label: "packaging: rpm"
-        - label: "packaging: pacman"
-        - label: "packaging: pkg-tar-zst"
-        - label: "packaging: aur"
-        - label: "packaging: onefile"
-        - label: "packaging: cli-archive"
+        - label: Windows .exe setup
+        - label: Windows .msi
+        - label: macOS Apple Silicon (.dmg)
+        - label: macOS Intel (.dmg)
+        - label: Linux AppImage
+        - label: Linux .deb
+        - label: Linux .rpm
+        - label: Linux pacman / .pkg.tar.zst
+        - label: Linux AUR
+        - label: CLI one-liner or archive
+        - label: WSL
+        - label: Docker
+        - label: From source
+        - label: Not sure
     validations:
-      required: true
+      required: false
   - type: textarea
     id: alternatives
     attributes:
@@ -97,7 +91,7 @@ body:
       description: "Workarounds, related tools, or stopgaps you use today."
       placeholder: "What workarounds do you use today?"
     validations:
-      required: true
+      required: false
   - type: textarea
     id: evidence
     attributes:
@@ -105,13 +99,13 @@ body:
       description: "Screenshots, clipboard transcripts, links to similar tools. None is fine."
       placeholder: "Screenshots, clipboard transcripts, links to similar tools. None is fine."
     validations:
-      required: true
+      required: false
   - type: checkboxes
     id: user-agreement
     attributes:
       label: "Confirmations"
       options:
-        - label: "I searched existing issues and Discussions for this question."
+        - label: I searched existing issues for this report.
           required: true
-        - label: "I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report."
+        - label: I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report.
           required: true

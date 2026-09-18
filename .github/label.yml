@@ -16,6 +16,27 @@
 - name: security
   description: Vulnerability or hardening concern reported via the security template.
   color: "#b60205"
+- name: duplicate
+  description: This issue or pull request already exists.
+  color: "#cfd3d7"
+- name: wontfix
+  description: This will not be worked on.
+  color: "#ffffff"
+- name: invalid
+  description: This doesn't seem right.
+  color: "#e4e669"
+- name: question
+  description: Further information is requested.
+  color: "#d876e3"
+- name: "help wanted"
+  description: Extra attention is needed.
+  color: "#008672"
+- name: "good first issue"
+  description: Good for newcomers.
+  color: "#7057ff"
+- name: accessibility
+  description: Accessibility or a11y improvement issue.
+  color: "#f143ab"
 - name: "area: agent-runtime"
   description: Issues touching the agent runtime, tool loop, or session orchestration.
   color: "#1d76db"
@@ -68,10 +89,22 @@
   description: Issues in continuous integration workflows or pipeline scripts.
   color: "#1d76db"
 - name: "area: security"
-  description: Catch-all security theatre concerns that are not vulnerability reports.
+  description: Security posture that is not a vulnerability report.
   color: "#1d76db"
 - name: "area: performance"
   description: Issues around latency, throughput, or resource use.
+  color: "#1d76db"
+- name: "area:git-import"
+  description: Issues in git import or repository ingestion.
+  color: "#1d76db"
+- name: "area:session-import"
+  description: Issues in importing prior sessions.
+  color: "#1d76db"
+- name: "area:external-sessions"
+  description: Issues with external session sources.
+  color: "#1d76db"
+- name: "area:file-picker"
+  description: Issues in the file picker dialog.
   color: "#1d76db"
 - name: "platform: windows"
   description: Issue applies to Windows builds and runtime.
@@ -94,14 +127,17 @@
 - name: "platform: source"
   description: Issue applies to source builds from a cloned checkout.
   color: "#5319e7"
+- name: "os:arch"
+  description: Issues on Arch Linux and Arch-based distros.
+  color: "#5319e7"
+- name: "os:omarchy"
+  description: Issues specific to the Omarchy distribution.
+  color: "#5319e7"
 - name: "packaging: msi"
   description: Issue affects the Windows MSI installer artifact.
   color: "#6f57ff"
 - name: "packaging: exe"
   description: Issue affects the Windows EXE installer artifact.
-  color: "#6f57ff"
-- name: "packaging: store"
-  description: Issue affects a future Windows Store distribution path.
   color: "#6f57ff"
 - name: "packaging: dmg"
   description: Issue affects the macOS DMG installer artifact.
@@ -129,6 +165,9 @@
   color: "#6f57ff"
 - name: "packaging: cli-archive"
   description: Issue affects the cross-platform CLI archive artifact.
+  color: "#6f57ff"
+- name: packaging:pyinstaller
+  description: Issues in the PyInstaller build pipeline.
   color: "#6f57ff"
 - name: "severity: critical"
   description: Causes data loss, security exposure, or a blocked install.
@@ -172,12 +211,12 @@
 - name: "status: blocked"
   description: Work cannot continue until an external dependency clears.
   color: "#cccccc"
-- name: "status: wontfix"
-  description: Maintainers decided not to address this issue.
-  color: "#cccccc"
-- name: "status: duplicate"
-  description: Already tracked by another open or closed issue.
-  color: "#cccccc"
 - name: "status: stale"
   description: Inactive for a long period and likely needs a refresh.
   color: "#cccccc"
+- name: "ux:error-message"
+  description: Issues with user-facing error messages or copy.
+  color: "#ededed"
+- name: "ux:hidden-files"
+  description: Issues with hidden file handling in pickers or browsers.
+  color: "#ededed"

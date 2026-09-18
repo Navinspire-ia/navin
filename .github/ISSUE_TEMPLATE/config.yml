@@ -3,12 +3,9 @@ contact_links:
   - name: Navin documentation
     url: https://navin.live/en/docs
     about: Official install, CLI, gateway, capabilities and troubleshooting.
-  - name: GitHub Discussions
-    url: https://github.com/Navinspire-ia/navin/discussions
-    about: Ask the community, share workflows, propose ideas.
   - name: Navin homepage
     url: https://navin.live
     about: Download Navin, see releases, enterprise license.
   - name: Report a security vulnerability
-    url: mailto:security@navin.live
-    about: Private disclosure only - vulnerabilities, secrets, and abuse go here, not in public issues.
+    url: https://github.com/Navinspire-ia/navin/security/advisories/new
+    about: "Private GitHub advisory form. Prefer emailing security@navinspire.com first. Do not file public issues for unreleased vulnerabilities."

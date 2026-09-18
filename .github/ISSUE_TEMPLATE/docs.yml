@@ -1,5 +1,5 @@
 name: Docs
-description: Report an error, gap, or unclear instruction in the Navin documentation.
+description: "Report an error, gap, or unclear instruction in the Navin documentation."
 title: "[Docs]: "
 labels: ["documentation"]
 body:
@@ -12,7 +12,7 @@ body:
         - The code behaves differently than documented and you want the code fixed: use `[Bug]:`.
         - A previously working example no longer works after a release: use `[Regression]:`.
         - The behavior is correct but the docs should describe a new feature: use `[Feature]:`.
-        - You have a private security concern (token leak, RCE, secret disclosure): use `[Security]:`.
+        - You have a private security concern (token leak, RCE, secret disclosure): see `SECURITY.md` and email `security@navinspire.com`.
         - You need help running Navin or have a usage question: use `[Support]:`.
 
         Do not paste API keys, tokens, or `~/.navin/config.json` contents.
@@ -20,7 +20,7 @@ body:
     id: doc-audience
     attributes:
       label: Doc audience
-      description: Pick the audience that the doc page is primarily written for.
+      description: "Pick the audience that the doc page is primarily written for."
       options:
         - End user
         - Developer
@@ -32,7 +32,7 @@ body:
     id: doc-type
     attributes:
       label: Doc type
-      description: Pick the doc section that the issue belongs to.
+      description: "Pick the doc section that the issue belongs to."
       options:
         - install guide
         - CLI reference
@@ -46,7 +46,7 @@ body:
     id: doc-location
     attributes:
       label: Doc location
-      description: Direct URL or local file path to the page or section that needs to change.
+      description: "Direct URL or local file path to the page or section that needs to change."
       placeholder: "https://navin.live/en/docs/installation or local file path"
     validations:
       required: true
@@ -54,28 +54,28 @@ body:
     id: what-is-wrong
     attributes:
       label: What is wrong
-      description: Quote the incorrect or unclear passage and explain why it is misleading.
-      placeholder: "Step 3 says `navin-cli start` but the actual entry point is `navin-cli`. New users hit `command not found`."
+      description: "Quote the incorrect or unclear passage and explain why it is misleading."
+      placeholder: "Step 3 says `navin-cli start` but the actual entry point is the navin-cli command. New users hit `command not found`."
     validations:
       required: true
   - type: textarea
     id: suggested-fix
     attributes:
       label: Suggested fix
-      description: Propose the corrected text, link, or code sample. Triagers will work with you on wording.
+      description: "Propose the corrected text, link, or code sample. Triagers will work with you on wording. The product CLI entry point is `navin-cli`; the desktop launcher is `navin .`."
       placeholder: |
         Replace step 3 with:
         ```
-        navin-cli start
+        navin-cli
         ```
-        and add a note that `navin tui` and `navin agent` are deprecated entry points.
+        and note that `navin .` is the desktop launcher.
     validations:
       required: true
   - type: textarea
     id: what-i-tried
     attributes:
       label: What I tried
-      description: Cross-references, related pages, prior fixes - to discourage drive-by reports.
+      description: "Cross-references, related pages, prior fixes - to discourage drive-by reports."
       placeholder: "Searched docs for `navin-cli start`; checked docs/cli/install.md and docs/README.md; no mention of deprecation."
     validations:
       required: true
@@ -84,7 +84,7 @@ body:
     attributes:
       label: Confirmations
       options:
-        - label: I searched existing issues and Discussions for this question.
+        - label: I searched existing issues for this report.
           required: true
         - label: I read [CONTRIBUTING.md](https://github.com/Navinspire-ia/navin/blob/main/CONTRIBUTING.md) and excluded secrets from my report.
           required: true

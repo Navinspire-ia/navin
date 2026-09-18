@@ -1,18 +1,16 @@
 name: "Security vulnerability report"
-description: "Private disclosure channel for vulnerabilities. Public tracking here is intentionally limited."
+description: "Public CVE-coordination or already-disclosed findings only. Email security@navinspire.com first."
 title: "[Security]: "
 labels: ["security"]
 body:
   - type: markdown
     attributes:
       value: |
-        This template creates a PUBLIC GitHub issue. Use it ONLY for non-sensitive, already-disclosed findings or to request CVE coordination.
+        This form creates a PUBLIC GitHub issue. Use it only for already-public findings or to coordinate disclosure of an issue that has already been disclosed elsewhere.
 
-        Otherwise email `security@navin.live` directly and reference this issue number.
+        Email `security@navinspire.com` first and reference this issue number. A second channel is the GitHub private advisory form: https://github.com/Navinspire-ia/navin/security/advisories/new
 
-        Sensitive details - exploit payloads, leaked secrets, internal hostnames, reproduction commands, or any proof-of-concept that could be weaponized - must NEVER appear in this public thread.
-
-        Our PGP key fingerprint is available on https://navin.live/.well-known/security.asc if you need encrypted email.
+        Never include exploit payloads, leaked secrets, internal hostnames, or proof-of-concept code that could be weaponized. There is no published PGP key; if you need encrypted email, ask in your first message and we will arrange a channel.
   - type: input
     id: summary
     attributes:
@@ -50,7 +48,7 @@ body:
   - type: input
     id: disclosure-channel
     attributes:
-      label: "Have you also emailed security@navin.live?"
+      label: "Have you also emailed security@navinspire.com?"
       description: "We respond faster via private email. Public thread is for visibility only."
       placeholder: "Yes - reference number, or 'no - starting here'"
     validations:
