@@ -1,0 +1,152 @@
+{
+  "repo": "Navinspire-ia/navin",
+  "security_email": "security@navinspire.com",
+  "kinds": {
+    "bug": {
+      "label": "bug",
+      "title_prefix": "[Bug]: ",
+      "required": [
+        "title",
+        "surface",
+        "exact_version",
+        "channel",
+        "installations",
+        "reproduction",
+        "expected",
+        "actual",
+        "tried"
+      ]
+    },
+    "regression": {
+      "label": "regression",
+      "title_prefix": "[Regression]: ",
+      "required": [
+        "title",
+        "surface",
+        "exact_version",
+        "channel",
+        "installations",
+        "reproduction",
+        "expected",
+        "actual",
+        "tried"
+      ],
+      "optional": ["prior_version"]
+    },
+    "feature": {
+      "label": "enhancement",
+      "title_prefix": "[Feature]: ",
+      "required": ["title", "problem", "audience", "proposed"],
+      "optional": ["capability_area", "installations", "alternatives", "evidence"]
+    },
+    "support": {
+      "label": "support",
+      "title_prefix": "[Support]: ",
+      "required": ["title", "surface", "channel", "question", "evidence", "tried"],
+      "optional": ["exact_version", "installations"]
+    },
+    "docs": {
+      "label": "documentation",
+      "title_prefix": "[Docs]: ",
+      "required": [
+        "title",
+        "audience",
+        "doc_type",
+        "location",
+        "what_is_wrong",
+        "suggested_fix",
+        "tried"
+      ]
+    },
+    "security": {
+      "label": "security",
+      "title_prefix": "[Security]: ",
+      "refuse": true
+    }
+  },
+  "enums": {
+    "surface": [
+      "Desktop app",
+      "CLI (navin-cli)",
+      "Both desktop and CLI",
+      "Source / dev checkout"
+    ],
+    "channel": [
+      "latest stable",
+      "latest RC",
+      "nightly / unreleased",
+      "from source",
+      "not sure"
+    ],
+    "installations": [
+      "Windows .exe setup",
+      "Windows .msi",
+      "macOS Apple Silicon (.dmg)",
+      "macOS Intel (.dmg)",
+      "Linux AppImage",
+      "Linux .deb",
+      "Linux .rpm",
+      "Linux pacman / .pkg.tar.zst",
+      "Linux AUR",
+      "CLI one-liner or archive",
+      "WSL",
+      "Docker",
+      "From source",
+      "Not sure"
+    ],
+    "audience": [
+      "End user",
+      "Developer / contributor",
+      "Sysadmin / enterprise",
+      "Agent / programmatic user",
+      "Developer",
+      "Sysadmin",
+      "All"
+    ],
+    "doc_type": [
+      "install guide",
+      "CLI reference",
+      "WebUI guide",
+      "capabilities",
+      "troubleshooting",
+      "other"
+    ],
+    "capability_area": [
+      "Agent mode",
+      "CLI",
+      "Desktop UI",
+      "WebUI",
+      "Memory",
+      "Skills",
+      "MCP / integrations",
+      "Providers",
+      "World model",
+      "Policy learning",
+      "Evaluations",
+      "Packaging / installers",
+      "Other - I will adjust during triage"
+    ]
+  },
+  "headings": {
+    "surface": "Surface",
+    "exact_version": "Exact version",
+    "channel": "Release channel",
+    "installations": "Affected installations",
+    "reproduction": "Reproduction steps",
+    "expected": "Expected behavior",
+    "actual": "Actual behavior",
+    "tried": "What I tried",
+    "prior_version": "Prior version",
+    "problem": "Problem this solves",
+    "audience": "Primary audience",
+    "proposed": "Proposed behavior",
+    "capability_area": "Capability area",
+    "alternatives": "Alternatives considered",
+    "evidence": "Evidence / context",
+    "question": "Your question",
+    "doc_type": "Doc type",
+    "location": "Doc location",
+    "what_is_wrong": "What is wrong",
+    "suggested_fix": "Suggested fix"
+  }
+}
