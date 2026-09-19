@@ -20,6 +20,40 @@ _COMMAND = re.compile(
 )
 
 
+def readable_validation_report(text: str) -> str | None:
+    """Render stored pre-report validation messages without rewriting history."""
+    reasons = {
+        "The changes are saved, but the task is not validated.": "repeated",
+        "The changes are saved, but validation is still incomplete.": "no_progress",
+        "The task ended before validation was completed.": "ended",
+    }
+    reason = next((reason for prefix, reason in reasons.items() if text.startswith(prefix)), None)
+    if reason is None:
+        return None
+    from navin.agent.code_validation import CodeValidationState
+
+    _, separator, details = text.partition("\n\n")
+    if not separator:
+        return None
+    body, _, paths = details.partition("Changed files: ")
+    state = CodeValidationState(
+        revision=1,
+        needs_tests="Run meaningful tests for the requested behavior" in body,
+        paths={path.strip() for path in paths.strip().split(", ") if path.strip()},
+    )
+    instructions = (
+        "Run meaningful tests for the requested behavior",
+        "Run the changed tests, for example with exec:",
+        "Wait for the test process to finish, inspect its results",
+        "Run an appropriate check after the latest edits.",
+    )
+    # Preserve diagnostics we cannot classify rather than treating them as proof
+    # that tests passed or failed. This adapter only changes the presentation.
+    remaining = [line for line in body.splitlines() if line.strip() and not line.startswith(instructions)]
+    state.test_result_note = "\n\n".join(remaining)
+    return state.completion_message(reason=reason)
+
+
 def restyle_inline_code(content: Content) -> Content:
     """Accent commands and paths while leaving identifiers neutral."""
     if not content.spans:

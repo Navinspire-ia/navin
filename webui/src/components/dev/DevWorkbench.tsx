@@ -132,6 +132,7 @@ import { DevDebugPanel } from "@/components/dev/DevDebugPanel";
 import { DevRulesPanel } from "@/components/dev/DevRulesPanel";
 import { useRailCounts } from "@/hooks/useRailCounts";
 import { railCountText } from "@/lib/rail-counts";
+import { retainAgentTerminals } from "@/lib/agent-terminals";
 import { DevSearchPanel } from "@/components/dev/DevSearchPanel";
 import { DevSymbolPicker } from "@/components/dev/DevSymbolPicker";
 import { DevDiffView } from "@/components/dev/DevDiffView";
@@ -1469,6 +1470,18 @@ export function DevWorkbench({
     new Map(),
   );
 
+  useEffect(() => {
+    const kept = retainAgentTerminals(terminals, activeTerminal);
+    if (kept !== terminals) setTerminals(kept);
+    const retainedIds = new Set(kept.map((term) => term.id));
+    for (const id of agentTermBuffersRef.current.keys()) {
+      if (!retainedIds.has(id)) {
+        agentTermBuffersRef.current.delete(id);
+        agentTermListenersRef.current.delete(id);
+      }
+    }
+  }, [terminals, activeTerminal]);
+
   const subscribeAgentTerm = useCallback(
     (id: string, handler: (chunk: string) => void) => {
       let handlers = agentTermListenersRef.current.get(id);
@@ -1491,6 +1504,8 @@ export function DevWorkbench({
 
   const pushAgentTermChunk = useCallback((id: string, chunk: string) => {
     const buffers = agentTermBuffersRef.current;
+    // A dismissed tab must not rebuild an invisible buffer on later output.
+    if (!buffers.has(id)) return;
     const next = (buffers.get(id) ?? "") + chunk;
     buffers.set(
       id,
@@ -6692,7 +6707,7 @@ export function DevWorkbench({
               </div>
             </div>
             <div className="relative min-h-0 flex-1">
-              {terminals.map((term) => (
+              {terminals.filter((term) => term.kind !== "agent" || term.id === activeTerminal).map((term) => (
                 <div key={term.id} className="absolute inset-0">
                   <PanelErrorBoundary>
                   <Suspense fallback={null}>

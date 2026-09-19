@@ -521,7 +521,7 @@ class BoardTool(Tool):
             )
         except BoardError as e:
             return ToolResult.error(f"Error: {e.message}")
-        if action in _MUTATING_ACTIONS:
+        if action in _MUTATING_ACTIONS and getattr(result, "made_progress", None) is not False:
             session_focus.remember(current_request_session_key(), touched)
             publish_board_update(self._bus, str(store.project_path))
         return result
@@ -1039,7 +1039,7 @@ class BoardTool(Tool):
         who_type: str,
     ) -> str:
         """PR on done, issue close on done, warning on blocked; ledger sync."""
-        ledger_note = self._sync_ledger_with_status(store, task, who=who)
+        self._sync_ledger_with_status(store, task, who=who)
         try:
             project = store.project_path
             status = task.get("status")
@@ -1205,6 +1205,22 @@ class BoardTool(Tool):
             ledger = ledger_store.load()
             if not ledger:
                 raise BoardError("no mission ledger; call ledger_init first")
+            if status == "done":
+                by_id = {task["id"]: task for task in store.read_tasks()}
+                unfinished = [
+                    by_id.get(step["id"], step)
+                    for step in ledger.get("steps") or []
+                    if by_id.get(step["id"], step).get("status") not in {"done", "completed"}
+                ]
+                if unfinished:
+                    pending = ", ".join(
+                        f"{step['id']} [{step.get('status')}]" for step in unfinished[:10]
+                    )
+                    raise BoardError(
+                        f"cannot mark mission done: unfinished steps: {pending}. "
+                        "Continue the unfinished work and validate each step before closing it. "
+                        "Repeating ledger_update status=done does not complete a step."
+                    )
             fields: dict[str, Any] = {}
             # How a mission is closed, which is what frees the project for the
             # next one without abandoning this one.
@@ -1227,7 +1243,16 @@ class BoardTool(Tool):
                 fields["acceptance_criteria"] = acceptance_criteria
             if not fields:
                 raise BoardError("ledger_update requires at least one field")
+            previous_version = ledger["version"]
             ledger = ledger_store.apply_manual_edit(ledger, fields, actor=who)
+            if ledger["version"] == previous_version:
+                return ToolResult(
+                    f"Mission ledger unchanged at v{previous_version}; no new progress. "
+                    "The requested values are already saved. Do not repeat this update. "
+                    "Continue the unfinished implementation or validation; if all work is "
+                    "complete, report the result directly in chat.",
+                    made_progress=False,
+                )
             ledger_store.save(ledger)
             return f"Mission ledger updated to v{ledger['version']}"
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from navin.agent.tools.board import BoardTool
 from navin.board.ledger import (
@@ -152,6 +153,19 @@ class MissionLedgerCoreTest(unittest.TestCase):
         self.store.save(ledger)
         self.assertEqual(ledger["goal"], "New goal")
         self.assertEqual(ledger["history"][-1]["actor"], "human")
+
+    def test_identical_normalized_edits_do_not_create_plan_versions(self) -> None:
+        ledger = self.store.create(goal="Ship feature", facts=["Tests pass"])
+        before = self.store.load()
+        unchanged = self.store.apply_manual_edit(
+            ledger, {"goal": " Ship feature ", "facts": ["Tests pass", "Tests pass"]},
+        )
+        self.assertEqual(unchanged, before)
+        changed = self.store.apply_manual_edit(
+            ledger, {"goal": "Ship feature", "facts": ["Preview works"]},
+        )
+        self.assertEqual(changed["version"], 2)
+        self.assertEqual(changed["history"][-1]["changes"], ["facts"])
 
     def test_runtime_lines(self) -> None:
         self.store.create(goal="Ship auth", acceptance_criteria=["Works"])
@@ -563,6 +577,43 @@ class OneMissionAtATimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Mission ledger created", opened)
         self.assertEqual(self.ledger.load()["goal"], "Generate a deck")
 
+    async def test_67_identical_completions_do_not_rewrite_or_republish_the_plan(self) -> None:
+        await self.tool.execute(action="ledger_update", status="done")
+        before = self.ledger.path.read_bytes()
+        with (
+            patch.object(MissionLedgerStore, "save", wraps=self.ledger.save) as save,
+            patch("navin.agent.tools.board.publish_board_update") as notify,
+        ):
+            for _ in range(67):
+                result = await self.tool.execute(action="ledger_update", status="done")
+                self.assertFalse(result.is_error)
+                self.assertFalse(result.made_progress)
+                self.assertIn("unchanged at v2", result)
+            save.assert_not_called()
+            notify.assert_not_called()
+        self.assertEqual(self.ledger.path.read_bytes(), before)
+
+    async def test_mission_completion_checks_live_board_steps(self) -> None:
+        board = ProjectBoardStore(self.project)
+        task = board.create_task(
+            title="Implement local storage", actor="agent", actor_type="agent",
+            status="in_progress", validation="manual",
+        )
+        # Even a stale ledger claiming completion cannot hide an open task.
+        ledger = self.ledger.load()
+        ledger["steps"] = [{"id": task["id"], "title": task["title"], "status": "completed"}]
+        self.ledger.save(ledger)
+        result = await self.tool.execute(action="ledger_update", status="done")
+        self.assertTrue(result.is_error)
+        self.assertIn(task["id"], result)
+        self.assertEqual(self.ledger.load()["status"], "draft")
+        board.update_task(
+            task["id"], fields={"status": "done"}, actor="agent", actor_type="agent",
+        )
+        result = await self.tool.execute(action="ledger_update", status="done")
+        self.assertFalse(getattr(result, "is_error", False))
+        self.assertEqual(self.ledger.load()["status"], "done")
+
     async def test_replace_is_the_deliberate_way_to_abandon_a_mission(self) -> None:
         opened = await self.tool.execute(
             action="ledger_init", goal="Generate a deck", replace=True, actor="a",
@@ -591,6 +642,24 @@ class OneMissionAtATimeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class BoardApiMissionPayloadTest(unittest.TestCase):
+    def test_unchanged_web_update_returns_the_board_without_writing_activity(self) -> None:
+        from types import SimpleNamespace
+
+        from navin.webui.board_api import board_update_payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = MissionLedgerStore(root)
+            ledger.create(goal="Keep the modules")
+            before = ledger.path.read_bytes()
+            payload = board_update_payload(
+                SimpleNamespace(project_path=root),
+                {"action": "update_mission", "fields": {"goal": "Keep the modules"}},
+            )
+            self.assertEqual(payload["mission"]["version"], 1)
+            self.assertEqual(ledger.path.read_bytes(), before)
+            self.assertEqual(ProjectBoardStore(root).read_activity(), [])
+
     def test_payload_includes_mission_and_enriched_session_plan(self) -> None:
         from navin.board import session_focus
         from navin.webui.board_api import board_payload

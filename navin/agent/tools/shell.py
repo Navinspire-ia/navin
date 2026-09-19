@@ -165,7 +165,11 @@ async def handle_exec_policy_reload(state: Any, msg: Any, registry: Any) -> bool
         tools_config = getattr(state, "tools_config", None)
         if tools_config is not None:
             tools_config.approvals = config.tools.approvals
+            tools_config.exec = config.tools.exec
+            tools_config.security_profile = config.tools.security_profile
             tools_config.restrict_to_workspace = config.tools.restrict_to_workspace
+        if hasattr(state, "exec_config"):
+            state.exec_config = config.tools.exec
         restrict = bool(config.tools.restrict_to_workspace)
         if hasattr(state, "restrict_to_workspace"):
             state.restrict_to_workspace = restrict
@@ -189,6 +193,11 @@ async def handle_exec_policy_reload(state: Any, msg: Any, registry: Any) -> bool
             seen.add(id(item))
             if hasattr(item, "_restrict_to_workspace"):
                 item._restrict_to_workspace = restrict
+        from navin.agent.tools.exec_session import WriteStdinTool
+
+        stdin = registry.get("write_stdin")
+        if isinstance(stdin, WriteStdinTool):
+            stdin.apply_policy(config.tools.exec, config.tools.approvals)
         tool = registry.get("exec")
         if isinstance(tool, ExecTool):
             tool.apply_policy(

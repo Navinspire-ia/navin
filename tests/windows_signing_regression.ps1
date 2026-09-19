@@ -65,7 +65,88 @@ try {
         ) | Out-Null
         if ($Errors.Count) { throw ($Errors | Out-String) }
     }
-    Write-Output "PASS signing retry policy: 403/401/expired stop, 503 retries, secrets redacted, scripts parse"
+
+    # Published-copy step of build-desktop.ps1: a destination held open by
+    # another process (previous installer running, antivirus scan, preview
+    # pane) must be retried, and the final error must point at the blocking
+    # process instead of dying with a bare Copy-Item message. Get-Process and
+    # Start-Sleep are replaced so the scenario is fast and deterministic.
+    $AstBuild = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $Root "packaging\windows\build-desktop.ps1"), [ref]$Tokens, [ref]$Errors
+    )
+    if ($Errors.Count) { throw ($Errors | Out-String) }
+    $CopyPublished = $AstBuild.Find({ param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $Node.Name -eq "Copy-PublishedFile"
+    }, $false)
+    if (-not $CopyPublished) { throw "Missing published-copy helper: Copy-PublishedFile" }
+    . ([scriptblock]::Create($CopyPublished.Extent.Text))
+
+    $SrcFile = Join-Path $Temp "signed.bin"
+    [System.IO.File]::WriteAllBytes($SrcFile, [byte[]](0..255 + 0..127))
+
+    # A free destination is replaced with byte-identical content.
+    $Free = Join-Path $Temp "published.bin"
+    Copy-PublishedFile -Src $SrcFile -Dst $Free -MaxAttempts 2 -RetrySeconds 0
+    $Got = [System.IO.File]::ReadAllBytes($Free)
+    $Want = [System.IO.File]::ReadAllBytes($SrcFile)
+    if ($Got.Length -ne $Want.Length) { throw "Published copy length differs" }
+    for ($i = 0; $i -lt $Want.Length; $i++) {
+        if ($Got[$i] -ne $Want[$i]) { throw "Published copy differs at byte $i" }
+    }
+
+    function Start-Sleep { param($Seconds) $script:Sleeps++ }
+    function Get-Process {
+        [CmdletBinding()] param()
+        if ($script:FakeBlockingProcess) {
+            @([pscustomobject]@{
+                Path = $script:FakeBlockingProcess
+                Id = 4242
+                ProcessName = "Navin-Desktop-2.0.6-windows-x64-setup"
+            })
+        }
+    }
+
+    $Locked = Join-Path $Temp "locked.bin"
+    [System.IO.File]::WriteAllBytes($Locked, [byte[]](1, 2, 3))
+
+    # Culprit found: the error names the process holding the file.
+    $script:FakeBlockingProcess = $Locked
+    $script:Sleeps = 0
+    $CulpritMessage = ""
+    $Holder = [System.IO.File]::Open(
+        $Locked, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+    )
+    try {
+        try { Copy-PublishedFile -Src $SrcFile -Dst $Locked -MaxAttempts 3 -RetrySeconds 0 }
+        catch { $CulpritMessage = $_.Exception.Message }
+    } finally {
+        $Holder.Close()
+    }
+    if ($CulpritMessage -notmatch "PID 4242") {
+        throw "Locked destination did not name the blocking process: $CulpritMessage"
+    }
+
+    # Culprit not identifiable: the error stays actionable and the retry
+    # budget is respected (2 pauses for 3 attempts).
+    $script:FakeBlockingProcess = $null
+    $script:Sleeps = 0
+    $GenericMessage = ""
+    $Holder = [System.IO.File]::Open(
+        $Locked, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read
+    )
+    try {
+        try { Copy-PublishedFile -Src $SrcFile -Dst $Locked -MaxAttempts 3 -RetrySeconds 0 }
+        catch { $GenericMessage = $_.Exception.Message }
+    } finally {
+        $Holder.Close()
+    }
+    if ($GenericMessage -notmatch "Could not publish") {
+        throw "Locked destination error is not actionable: $GenericMessage"
+    }
+    if ($script:Sleeps -ne 2) { throw "Retry pause count is wrong: $($script:Sleeps)" }
+
+    Write-Output "PASS signing retry policy: 403/401/expired stop, 503 retries, secrets redacted, scripts parse, published copy retries locked destinations"
 } finally {
     $env:AZURE_CLIENT_SECRET = $PreviousSecret
     $env:AZURE_CLIENT_ID = $PreviousClient

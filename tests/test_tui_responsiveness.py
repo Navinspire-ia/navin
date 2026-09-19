@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Markdown, OptionList, Static
 
@@ -138,12 +139,19 @@ class InterruptTests(unittest.IsolatedAsyncioTestCase):
             return original_read(candidate)
 
         tool = ReadFileTool(workspace=app.config.workspace_path)
-        async with app.run_test(size=(100, 32)) as pilot:
+        async with app.run_test(size=(100, 32)):
             with patch.object(Path, "read_bytes", read_bytes):
                 reading = asyncio.create_task(tool.execute(path=str(path)))
                 try:
                     self.assertTrue(await asyncio.to_thread(started.wait, 1))
-                    await pilot.press(*"fluide")
+                    # Pilot.press waits for process-wide CPU idle between keys.
+                    # Observe delivery instead, while the disk gate is still held.
+                    assert app._driver is not None
+                    for key in "fluide":
+                        app._driver.send_message(events.Key(key, key))
+                    async with asyncio.timeout(2):
+                        while app.composer.text != "fluide":
+                            await asyncio.sleep(0.01)
                     self.assertEqual(app.composer.text, "fluide")
                     self.assertFalse(reading.done(), "disk I/O blocked input until the read finished")
                 finally:

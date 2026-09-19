@@ -36,6 +36,11 @@ _NO_TESTS = re.compile(
 )
 _SESSION_ID = re.compile(r"\bsession_id:\s*([\w.-]+)")
 _EXIT_CODE = re.compile(r"\bExit code: (-?\d+)")
+_PYTEST_COUNT = r"\d+ (?:passed|failed|errors?|skipped|deselected|xfailed|xpassed|warnings?)"
+_PYTEST_SUMMARY = re.compile(
+    rf"^[= \t]*(?P<counts>{_PYTEST_COUNT}(?:,\s*{_PYTEST_COUNT})*)"
+    r" in \d+(?:\.\d+)?s(?: \([\d:]+\))?[= \t]*$", re.MULTILINE,
+)
 _GENERATED_DIRS = frozenset({
     ".git", ".hg", ".svn", ".navin", ".venv", "venv", "node_modules",
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
@@ -126,6 +131,63 @@ def _script_tests_ran(text: str) -> bool:
     return bool(ran and re.search(r"\bOK\b", text) and int(ran[1]) > (int(skipped[1]) if skipped else 0))
 
 
+def _filtered_pytest_command(command: str, is_test_command: Callable[[str], bool]) -> bool:
+    """Recognize output-only pipelines whose pytest summary can prove the result.
+
+    The shell exit belongs to tail/tee, so it is never enough by itself. Only
+    these filters preserve a completed summary; arbitrary commands, head and
+    tail reading a different file cannot supply validation evidence.
+    """
+    try:
+        lexer = shlex.shlex(command.replace("\\", "/"), posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    stages: list[list[str]] = [[]]
+    index = 0
+    while index < len(tokens):
+        if tokens[index:index + 3] == ["2", ">&", "1"] and len(stages) == 1:
+            index += 3
+            continue
+        token = tokens[index]
+        if token == "|":
+            stages.append([])
+        elif token == "&&" and len(stages) == 1:
+            if len(stages[0]) < 2 or stages[0][0] != "cd":
+                return False
+            stages[0] = []
+        elif token in {";", "&", "&&", "||", "<", ">", ">>", ">&", "|&"}:
+            return False
+        else:
+            stages[-1].append(token)
+        index += 1
+    if len(stages) < 2 or not all(stages) or not is_test_command(shlex.join(stages[0])):
+        return False
+    if not any(PurePosixPath(token).name in {"pytest", "py.test", "pytest.exe", "py.test.exe"} for token in stages[0]):
+        return False
+    for stage in stages[1:]:
+        program, args = PurePosixPath(stage[0]).name, stage[1:]
+        if program == "tail":
+            if not (not args or (len(args) == 1 and re.fullmatch(r"-\d+|-n\d+|--lines=\d+", args[0]))
+                    or (len(args) == 2 and args[0] in {"-n", "--lines"} and args[1].isdigit())):
+                return False
+        elif program != "tee":
+            return False
+    return True
+
+
+def _pytest_summary_outcome(text: str) -> bool | None:
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    summaries = list(_PYTEST_SUMMARY.finditer(text))
+    if not summaries:
+        return None
+    counts = summaries[-1]["counts"]
+    if re.search(r"\b[1-9]\d* (?:failed|errors?)\b", counts):
+        return False
+    return True if re.search(r"\b[1-9]\d* passed\b", counts) else None
+
+
 def _legacy_evidence(name: str, params: dict[str, Any], text: str) -> VerificationEvidence:
     """Compatibility for custom quality tools that still return plain strings.
 
@@ -163,6 +225,8 @@ class CodeValidationState:
     # A running test validates the revision at launch, not subsequent edits.
     pending_tests: dict[str, int] = field(default_factory=dict)
     pending_script_outputs: dict[str, str] = field(default_factory=dict)
+    pending_filtered_outputs: dict[str, str] = field(default_factory=dict)
+    test_result_note: str = ""
     last_nudge_key: tuple[Any, ...] | None = None
     ignored_nudges: int = 0
     workspace_snapshot: dict[str, tuple[int, int] | None] | None = None
@@ -196,6 +260,7 @@ class CodeValidationState:
         self.paths.update(paths)
         self.revision += 1
         self.needs_tests |= require_tests
+        self.test_result_note = ""
 
     def record(self, evidence: VerificationEvidence, *, revision: int | None = None) -> None:
         checked_revision = self.revision if revision is None else revision
@@ -208,6 +273,8 @@ class CodeValidationState:
                 if checked_revision == self.revision:
                     setattr(self, f"{kind}_revision", checked_revision)
                     setattr(self, failure_attr, "")
+                    if kind == "tests":
+                        self.test_result_note = ""
             else:
                 setattr(self, f"{kind}_revision", -1)
                 setattr(self, failure_attr, evidence.summary)
@@ -246,18 +313,30 @@ class CodeValidationState:
         revision = self.revision if execution_revision is None else execution_revision
         if name == "exec":
             command = str(params.get("command") or params.get("cmd") or "")
-            if not is_test_command(command):
+            filtered_pytest = _filtered_pytest_command(command, is_test_command)
+            if not is_test_command(command) and not filtered_pytest:
+                if "|" in command and is_test_command(command.split("|", 1)[0]):
+                    self.test_result_note = (
+                        "The last test command used an unsupported output filter or fallback. "
+                        "Run the tests directly, without a pipe or fallback, so their result can be verified."
+                    )
                 return
             session_match = _SESSION_ID.search(text)
             if session_match:
                 self.pending_tests[session_match[1]] = revision
                 if python_test_script(command):
                     self.pending_script_outputs[session_match[1]] = (text + "\n")[-16000:]
+                if filtered_pytest:
+                    self.pending_filtered_outputs[session_match[1]] = (text + "\n")[-16000:]
         else:
             session_id = str(params.get("session_id") or "")
             if session_id not in self.pending_tests:
                 return
             revision = self.pending_tests[session_id]
+            filtered_pytest = session_id in self.pending_filtered_outputs
+            if filtered_pytest:
+                text = self.pending_filtered_outputs[session_id] + text
+                self.pending_filtered_outputs[session_id] = text[-16000:]
             if session_id in self.pending_script_outputs:
                 text = self.pending_script_outputs[session_id] + text
                 self.pending_script_outputs[session_id] = text[-16000:]
@@ -270,7 +349,18 @@ class CodeValidationState:
         if name == "write_stdin":
             self.pending_tests.pop(session_id, None)
             self.pending_script_outputs.pop(session_id, None)
+            self.pending_filtered_outputs.pop(session_id, None)
         ok = codes[-1] == "0" and status == "ok"
+        if filtered_pytest:
+            outcome = _pytest_summary_outcome(text)
+            if ok and outcome is None:
+                self.test_result_note = (
+                    "The filtered test output contained no complete pytest result with executed tests. "
+                    "Run pytest directly without the output filter."
+                )
+                return
+            self.record(VerificationEvidence(tests_ok=ok and outcome is True, summary=text[-800:]), revision=revision)
+            return
         if standalone_script and ok and not _script_tests_ran(text):
             # Importing a file full of uncalled test functions exits zero too.
             # Only a runner summary proves this standalone script ran tests.
@@ -301,11 +391,20 @@ class CodeValidationState:
         if self.test_failure:
             details.append(self.test_failure)
         if self.needs_tests and self.tests_revision != self.revision:
-            details.append("Run meaningful tests for the requested behavior after the latest code/test edits.")
+            current_tests = sorted(key for key, revision in self.pending_tests.items() if revision == self.revision)
+            if current_tests:
+                details.append(
+                    "Tests are still running. Use write_stdin to collect their final results "
+                    "for session_id: " + ", ".join(current_tests) + ". Do not start duplicate tests."
+                )
+            else:
+                details.append("Run meaningful tests for the requested behavior after the latest code/test edits.")
+            if self.test_result_note:
+                details.append(self.test_result_note)
             targets = sorted(path for path in self.paths if (
                 PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
             ))
-            if targets:
+            if targets and not current_tests:
                 command = "python -m pytest " + " ".join(shlex.quote(path) for path in targets)
                 details.append("Run the changed tests, for example with exec: " + command)
             details.append("Wait for the test process to finish, inspect its results, fix failures, then retry closing the task.")
@@ -314,6 +413,74 @@ class CodeValidationState:
         if self.paths:
             details.append("Changed files: " + ", ".join(sorted(self.paths)[:12]))
         return "\n".join(details)
+
+    def completion_message(self, *, reason: str = "repeated") -> str:
+        """A user-facing report, separate from the agent's repair instructions."""
+        if self.test_failure:
+            test_status = "Failed"
+        elif self.tests_revision == self.revision:
+            test_status = "Passed"
+        elif self.pending_tests:
+            test_status = "Still running"
+        elif self.tests_revision >= 0:
+            test_status = "Needs rerun after edits"
+        else:
+            test_status = "No current result"
+        explanation = (
+            "A verification failed. Its result must be resolved before the task can be closed."
+            if self.failed else
+            "Tests are still running. Their final result has not been received."
+            if self.pending_tests else
+            "No passing test result was recorded for the latest code changes."
+            if self.needs_tests else
+            "No successful check was recorded for the latest changes."
+        )
+        stopped = {
+            "repeated": "The agent tried to finish repeatedly without resolving validation, so the run stopped.",
+            "no_progress": "The run stopped because repeated actions were no longer making progress.",
+            "ended": "The run ended before validation was completed.",
+        }.get(reason, "The run ended before validation was completed.")
+        lines = [
+            "## Validation pending", "",
+            "Changes are saved. The task is not validated yet.", "",
+            "| Item | Status |", "| --- | --- |", "| Changes | Saved |",
+        ]
+        if self.needs_tests or self.test_failure or self.pending_tests:
+            lines.append(f"| Tests | {test_status} |")
+        if self.check_failure:
+            lines.append("| Code checks | Failed |")
+        elif self.checks_revision == self.revision:
+            lines.append("| Code checks | Passed |")
+        elif not self.needs_tests:
+            lines.append("| Code checks | No current result |")
+        lines.extend(["", "### Why it stopped", "", explanation, "", stopped])
+        if self.test_result_note:
+            lines.extend(["", self.test_result_note])
+        for title, detail in (("Check failure", self.check_failure), ("Test failure", self.test_failure)):
+            if detail:
+                fence = "`" * max(3, 1 + max((len(run) for run in re.findall(r"`+", detail)), default=0))
+                lines.extend(["", f"### {title}", "", f"{fence}text", detail.strip(), fence])
+        lines.extend(["", "### Next step", ""])
+        targets = sorted(path for path in self.paths if (
+            PurePosixPath(path).name.startswith("test_") and path.endswith(".py")
+        ))
+        if self.pending_tests:
+            lines.append("Wait for the running tests to finish and inspect their results before retrying completion.")
+        elif self.needs_tests:
+            lines.append("Run meaningful tests for the requested behavior from the project root.")
+            if targets:
+                lines.extend(["", "```bash", "python -m pytest " + " ".join(shlex.quote(path) for path in targets), "```"])
+            lines.extend(["", "Inspect the results, fix any failures, then retry completing the task."])
+        else:
+            lines.append("Run the relevant checks, fix any failures, then retry completing the task.")
+        if self.paths:
+            lines.extend(["", f"### Changed files ({len(self.paths)})", ""])
+            for path in sorted(self.paths)[:12]:
+                fence = "`" * (1 + max((len(run) for run in re.findall(r"`+", path)), default=0))
+                lines.append(f"- {fence}{path}{fence}")
+            if len(self.paths) > 12:
+                lines.extend(["", f"{len(self.paths) - 12} more changed paths are listed in the activity above."])
+        return "\n".join(lines)
 
     def nudge(self) -> int:
         # Repair edits reopen a full opportunity to validate. Repeating a

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -251,14 +252,16 @@ class _ExecSession:
     async def kill(self) -> None:
         if self.process.returncode is not None:
             return
-        self.process.kill()
         # Long-running sessions are the whole point of this class, and what they
         # run - a dev server, a watcher - is a child of the shell. kill() stops
         # at the shell, so ending a session would leave the server holding its
         # port with no session left to stop it. taskkill /T walks the tree on
         # Windows; killpg covers the group the shell leads on POSIX.
-        kill_windows_process_tree(self.process.pid)
+        if sys.platform == "win32":
+            await asyncio.to_thread(kill_windows_process_tree, self.process.pid)
         kill_posix_process_group(self.process.pid)
+        with suppress(ProcessLookupError):
+            self.process.kill()
         try:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self.process.wait(), timeout=5.0)
@@ -532,10 +535,11 @@ class ExecSessionManager:
         async with self._lock:
             sessions = list(self._sessions.values())
             self._sessions.clear()
-        for session in sessions:
+        async def stop(session):
             session.exit_reported = True
             with suppress(Exception):
                 await session.kill()
+        await asyncio.gather(*(stop(session) for session in sessions))
         return len(sessions)
 
     async def _spawn(
@@ -694,6 +698,12 @@ class WriteStdinTool(Tool):
         return cls(stdin_guard=StdinCommandGuard.from_config(
             ctx.config.exec, ctx.config.approvals,
         ))
+
+    def apply_policy(self, exec_config: Any, approvals_config: Any) -> None:
+        """Use the updated confirmation policy for the next terminal input."""
+        from navin.agent.tools.shell import StdinCommandGuard
+
+        self._stdin_guard = StdinCommandGuard.from_config(exec_config, approvals_config)
 
     @property
     def exclusive(self) -> bool:

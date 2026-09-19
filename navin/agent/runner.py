@@ -95,7 +95,7 @@ PROGRESS_TOOL_NAMES = _EDIT_TOOL_NAMES | {
     "write_stdin",
 }
 _PROGRESS_TOOL_NAMES = PROGRESS_TOOL_NAMES
-# Only repeated calls already refused by a loop guard count as a stall.
+# Blocked duplicate calls and explicit no-op results count as a stall.
 # Successful reads of different files are progress, including long audits.
 _REPEATED_CALL_BLOCKS = frozenset({
     "repeated identical tool call blocked",
@@ -1111,8 +1111,11 @@ class AgentRunner:
                 empty_content_retries = 0
                 length_recovery_count = 0
                 if new_events and all(
-                    event.get("status") == "error"
-                    and event.get("detail") in _REPEATED_CALL_BLOCKS
+                    event.get("progress") == "none"
+                    or (
+                        event.get("status") == "error"
+                        and event.get("detail") in _REPEATED_CALL_BLOCKS
+                    )
                     for event in new_events
                 ):
                     no_progress_streak += 1
@@ -1121,17 +1124,14 @@ class AgentRunner:
                 loop_guard.no_progress_streak = no_progress_streak
                 if no_progress_streak >= _NO_PROGRESS_STOP:
                     logger.warning(
-                        "Only blocked duplicate calls for {} iterations in {}; stopping",
+                        "Only blocked or unchanged calls for {} iterations in {}; stopping",
                         no_progress_streak,
                         spec.session_key or "default",
                     )
                     if hook.wants_streaming():
                         await hook.on_stream_end(context, resuming=False)
                     if validation.pending:
-                        final_content = (
-                            "The changes are saved, but validation is still incomplete. "
-                            "The board task remains open.\n\n" + validation.missing()
-                        )
+                        final_content = validation.completion_message(reason="no_progress")
                         error = final_content
                         stop_reason = "validation_failed"
                     else:
@@ -1297,11 +1297,7 @@ class AgentRunner:
                 limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
                 attempts = validation.nudge()
                 if attempts > limit:
-                    final_content = (
-                        "The changes are saved, but the task is not validated. "
-                        "The agent repeatedly tried to finish without resolving these checks.\n\n"
-                        + validation.missing()
-                    )
+                    final_content = validation.completion_message()
                     error = final_content
                     stop_reason = "validation_failed"
                     self._append_final_message(messages, final_content)
@@ -1439,7 +1435,7 @@ class AgentRunner:
             final_content = None
             if spec.finalize_on_max_iterations:
                 if validation.pending:
-                    final_content = "The task ended before validation was completed.\n\n" + validation.missing()
+                    final_content = validation.completion_message(reason="ended")
                     stop_reason = "validation_failed"
                     error = final_content
                 else:
@@ -2241,12 +2237,21 @@ class AgentRunner:
             or (tool_call.name == "update_goal" and params.get("action") == "complete")
         )
         if closing_work and validation is not None and validation.pending:
-            detail = "Validation required before closing this work.\n" + validation.missing()
-            # A refused board/goal transition is recoverable. It must not use
-            # up the separate final-answer budget and crash the whole turn.
-            escalation = repeated_tool_failure_hint(tool_call.name, tool_call.arguments, tool_failure_counts)
-            return ToolResult.error(detail + (escalation or "")), {
+            detail = (
+                "Validation pending: task remains open.\n"
+                "This is a validation prerequisite, not a request for user permission.\n"
+                + validation.missing()
+                + "\nContinue the required validation automatically. Retry closing only after it passes. "
+                "If a required command actually needs permission, request approval for that command "
+                "and explain why. User approval does not replace passing validation."
+            )
+            # Missing evidence is a prerequisite, not an execution failure.
+            # Counting it in the identical-call throttle would permanently
+            # reject a valid retry after the tests pass. The no-progress guard
+            # still stops repeated closures that do no validation work.
+            return ToolResult.error(detail, recovery_hint=""), {
                 "name": tool_call.name, "status": "error", "detail": "validation required before completion",
+                "error_kind": "validation_required", "progress": "none",
             }, None
         if spec.read_only_tools or spec.plan_read_only:
             candidate = tool
@@ -2444,6 +2449,8 @@ class AgentRunner:
         elif len(detail) > 120:
             detail = detail[:120] + "..."
         event = {"name": tool_call.name, "status": "ok", "detail": detail}
+        if isinstance(result, ToolResult) and result.made_progress is False:
+            event["progress"] = "none"
         if tool_call.name == "exec":
             event.update(_exec_event_fields(params, result))
         return result, event, None

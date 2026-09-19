@@ -102,6 +102,14 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         accepts_args=True,
     ),
     BuiltinCommandSpec(
+        "/permission",
+        "Change permissions",
+        "Show or change command confirmations immediately for this Navin configuration.",
+        "shield",
+        "[auto|ask|always]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
         "/history",
         "Show conversation history",
         "Print the last N persisted conversation messages.",
@@ -850,6 +858,74 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         content="New session started.",
         metadata=dict(ctx.msg.metadata or {})
     )
+
+
+async def cmd_permission(ctx: CommandContext) -> OutboundMessage:
+    """Change the existing confirmation policy without involving the model."""
+    from navin.agent.tools.shell import handle_exec_policy_reload
+    from navin.bus.events import (
+        INBOUND_META_RUNTIME_CONTROL,
+        RUNTIME_CONTROL_ACK,
+        RUNTIME_CONTROL_EXEC_POLICY_RELOAD,
+    )
+    from navin.webui.exec_policy_api import exec_policy_payload, update_exec_policy
+
+    def reply(content: str) -> OutboundMessage:
+        return OutboundMessage(
+            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id, content=content,
+            metadata=dict(ctx.msg.metadata or {}),
+        )
+
+    usage = (
+        "- `/permission auto` - run without confirmation.\n"
+        "- `/permission ask` - confirm risky actions.\n"
+        "- `/permission always` - confirm every shell command.\n\n"
+        "The setting is saved for this Navin configuration. "
+        "This controls confirmations; file access is configured separately."
+    )
+    aliases = {
+        "auto": "autonomous", "autonomous": "autonomous", "full": "autonomous",
+        "ask": "risky", "risky": "risky", "always": "always",
+    }
+    argument = ctx.args.strip().lower()
+    if argument in {"", "status", "help"}:
+        try:
+            payload = await asyncio.to_thread(exec_policy_payload)
+        except (OSError, ValueError):
+            return reply("Could not read the permission settings.\n\n" + usage)
+        return reply(f"Command confirmations: **{payload['approval_mode']}**.\n\n" + usage)
+    if argument not in aliases:
+        return reply("Unknown permission mode.\n\n" + usage)
+    if ctx.msg.channel not in {"cli", "websocket"} or ctx.msg.sender_id in {"system", "subagent"}:
+        return reply("Change permissions from the Navin CLI or desktop.\n\n" + usage)
+
+    mode = aliases[argument]
+    try:
+        await asyncio.to_thread(update_exec_policy, {"approval_mode": mode})
+    except (OSError, ValueError):
+        return reply("Could not save the permission settings. The running policy was not changed.")
+
+    # Apply directly: waiting for a message on this same run loop would
+    # deadlock when the command is sent while a tool is waiting for approval.
+    ack = asyncio.get_running_loop().create_future()
+    control = dataclasses.replace(ctx.msg, metadata={
+        INBOUND_META_RUNTIME_CONTROL: RUNTIME_CONTROL_EXEC_POLICY_RELOAD,
+        RUNTIME_CONTROL_ACK: ack,
+    })
+    await handle_exec_policy_reload(ctx.loop, control, ctx.loop.tools)
+    outcome = ack.result()
+    if not outcome.get("ok"):
+        return reply(f"Saved command confirmations: **{mode}**. Restart Navin to apply the setting.")
+
+    broker = ctx.loop.approvals
+    broker.forget(ctx.key)
+    if mode == "autonomous":
+        for request in broker.open_requests(ctx.key):
+            broker.resolve(
+                request["request_id"], allowed=True,
+                reason="Approved by the user's /permission auto command.",
+            )
+    return reply(f"Command confirmations: **{mode}**\n\nSaved and applied immediately.\n\n" + usage)
 
 
 def _format_preset_names(names: list[str]) -> str:
@@ -3875,6 +3951,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
+    router.exact("/permission", cmd_permission)
+    router.prefix("/permission ", cmd_permission)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
     router.exact("/goal", cmd_goal)

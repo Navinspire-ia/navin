@@ -37,7 +37,7 @@ export default function AgentExecTerminal({
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || !active) return;
 
     const term = new Terminal({
       fontSize: 12.5,
@@ -91,9 +91,9 @@ export default function AgentExecTerminal({
       termRef.current = null;
       fitRef.current = null;
     };
-    // The feed lives as long as the component instance.
+    // Only the visible command needs a renderer. Backlog replays on selection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [termId, subscribe]);
+  }, [termId, subscribe, active]);
 
   useEffect(() => {
     const term = termRef.current;

@@ -692,16 +692,14 @@ class MissionLedgerStore:
         unknown = set(fields) - allowed
         if unknown:
             raise BoardError(f"unknown ledger fields: {', '.join(sorted(unknown))}")
-        changes: list[str] = []
+        updates: dict[str, Any] = {}
         for key, value in fields.items():
             if key == "goal":
                 cleaned = _clean_str(value, max_len=_MAX_STR)
                 if cleaned:
-                    ledger["goal"] = cleaned
-                    changes.append("goal")
+                    updates["goal"] = cleaned
             elif key in ("constraints", "facts", "missing_info", "acceptance_criteria"):
-                ledger[key] = _clean_str_list(value)
-                changes.append(key)
+                updates[key] = _clean_str_list(value)
             elif key == "steps" and isinstance(value, list):
                 cleaned_steps: list[dict[str, Any]] = []
                 seen: set[str] = set()
@@ -710,13 +708,15 @@ class MissionLedgerStore:
                     if step and step["id"] not in seen:
                         seen.add(step["id"])
                         cleaned_steps.append(step)
-                ledger["steps"] = cleaned_steps
-                changes.append("steps")
+                updates["steps"] = cleaned_steps
             elif key == "status" and value in LEDGER_STATUSES:
-                ledger["status"] = value
-                changes.append("status")
-        if not changes:
+                updates["status"] = value
+        if not updates:
             raise BoardError("manual edit requires at least one field")
+        changes = [key for key, value in updates.items() if ledger.get(key) != value]
+        if not changes:
+            return ledger
+        ledger.update(updates)
         return self.bump_version(
             ledger,
             reason="manual edit",

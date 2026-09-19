@@ -62,16 +62,22 @@ def test_invalid_input_is_rejected(price, percent):
 
 
 @pytest.mark.parametrize("surface", ["cli", "desktop", "desktop_stream"])
-def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, surface):
+@pytest.mark.parametrize("premature_board_closures", [False, True])
+def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, surface, premature_board_closures):
     """No Build metadata: a premature final must still lead to real validation."""
     async def run():
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
+        store = ProjectBoardStore(tmp_path)
+        board_task = store.create_task(title="Fix discounts", status="in_progress", actor="agent", actor_type="agent")
+        closing = {"action": "move", "task_id": board_task["id"], "status": "done", "actor": "agent"}
         provider = ScriptedProvider([
             tool_call("write_file", path="pricing.py", content=_PRICING),
-            LLMResponse(content="The function is done."),
+            *([tool_call("board", **closing) for _ in range(5)] if premature_board_closures
+              else [LLMResponse(content="The function is done.")]),
             tool_call("write_file", path="test_pricing.py", content=_PRICING_TESTS),
             tool_call("test_run", action="run", runner="pytest", target="test_pricing.py"),
             tool_call("verify", action="check", paths=["pricing.py", "test_pricing.py"], with_tests=False),
+            *([tool_call("board", **closing)] if premature_board_closures else []),
             LLMResponse(content="Done: discounts and invalid input verified by 5 passing tests."),
         ])
         loop = AgentLoop(provider=provider, workspace=tmp_path, bus=MessageBus(), max_iterations=2)
@@ -79,6 +85,7 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
         loop.tools = registry(tmp_path)
         loop.tools.register(RunTestsTool(workspace=tmp_path))
         loop.tools.register(VerifyTool(workspace=tmp_path))
+        loop.tools.register(BoardTool(workspace=tmp_path))
         task = None
         deltas = []
         key = "cli:direct" if surface == "cli" else "websocket:acceptance-tests"
@@ -100,14 +107,16 @@ def test_default_entry_point_creates_and_executes_acceptance_tests(tmp_path, sur
                         if response.event is None or isinstance(response.event, StreamedResponseEvent):
                             break
             assert response.content == "Done: discounts and invalid input verified by 5 passing tests."
-            assert provider.calls == 6
+            assert provider.calls == (11 if premature_board_closures else 6)
+            if premature_board_closures:
+                assert store.get_task(board_task["id"])["status"] == "done"
             assert (tmp_path / "test_pricing.py").read_text() == _PRICING_TESTS
             session = loop.sessions.get_or_create(key)
             outputs = [str(m.get("content")) for m in session.messages if m["role"] == "tool"]
             assert any("5 passed" in output for output in outputs)
             assert any("PASS" in output and "Lint: clean" in output for output in outputs)
             assert key not in loop._loop_guards
-            if surface != "cli":
+            if surface != "cli" and not premature_board_closures:
                 assert session.metadata["_turn_budget_continuation_rounds"] == 2
             if surface == "desktop_stream":
                 assert "The function is done." not in "".join(deltas)
@@ -134,6 +143,34 @@ def edited_state():
     return state
 
 
+def test_completion_report_distinguishes_missing_failed_running_and_stale_results():
+    state = edited_state()
+    assert "| Tests | No current result |" in state.completion_message()
+    observe(state, "exec", {"command": "pytest"}, "1 failed\nExit code: 1")
+    assert "| Tests | Failed |" in state.completion_message()
+    assert "```text\n1 failed\nExit code: 1\n```" in state.completion_message()
+    observe(state, "exec", {"command": "pytest"}, "6 passed\nExit code: 0")
+    observe(state, "edit_file", {"path": "src/service.py"}, "Edited")
+    assert "| Tests | Needs rerun after edits |" in state.completion_message()
+    observe(state, "exec", {"command": "pytest"}, "Process running. session_id: tests-1")
+    report = state.completion_message(reason="ended")
+    assert "| Tests | Still running |" in report
+    assert "Wait for the running tests" in report
+    assert "Run meaningful tests" not in report
+
+
+def test_running_test_guidance_waits_for_the_current_revision_only():
+    state = edited_state()
+    observe(state, "exec", {"command": "pytest"}, "Process running. session_id: checks-1")
+    assert "write_stdin" in state.missing()
+    assert "session_id: checks-1" in state.missing()
+    assert "Run meaningful tests" not in state.missing()
+    observe(state, "edit_file", {"path": "src/service.py"}, "Edited again")
+    assert "Run meaningful tests" in state.missing()
+    observe(state, "write_stdin", {"session_id": "checks-1"}, "6 passed\nExit code: 0")
+    assert state.pending
+
+
 @pytest.mark.parametrize("name, params, result", [
     ("test_run", {"action": "detect"}, "pytest: available"),
     ("verify", {"action": "snapshot"}, "Snapshot saved"),
@@ -153,6 +190,86 @@ def test_discovery_lint_and_masked_test_results_cannot_prove_behavior(name, para
     state = edited_state()
     observe(state, name, params, result)
     assert state.pending
+
+
+@pytest.mark.parametrize("command", [
+    "cd supabase/audit && python3 -m pytest test_clean_dump.py 2>&1 | tail -1",
+    "pytest -q | tail -n 1",
+    "pytest -q | tee result.txt | tail --lines=3",
+    "uv run pytest -q | tee result.txt",
+])
+def test_filtered_pytest_summary_counts_as_validation(command):
+    state = edited_state()
+    observe(state, "exec", {"command": command},
+            "============================== 6 passed in 4.66s ===============================\nExit code: 0")
+    assert not state.pending
+
+
+@pytest.mark.parametrize("summary, failed", [
+    ("1 failed, 5 passed in 4.66s", True),
+    ("5 passed, 1 error in 4.66s", True),
+    ("6 skipped in 4.66s", False),
+    ("no tests ran in 0.01s", False),
+    ("6 passed", False),
+    ("", False),
+])
+def test_filter_exit_zero_is_not_proof_of_passing_tests(summary, failed):
+    state = edited_state()
+    observe(state, "exec", {"command": "python -m pytest 2>&1 | tail -1"}, summary + "\nExit code: 0")
+    assert state.pending
+    assert state.failed is failed
+    if not failed:
+        assert "Run pytest directly without the output filter" in state.missing()
+
+
+@pytest.mark.parametrize("command", [
+    "pytest | tail -1 other-results.txt",
+    "pytest | head -1",
+    "pytest | grep passed",
+    "pytest | tail -1 || true",
+    "pytest | tail -1; echo done",
+    "pytest && false | tail -1",
+    "echo pytest | tail -1",
+    "pytest --collect-only | tail -1",
+])
+def test_other_commands_cannot_supply_filtered_test_evidence(command):
+    state = edited_state()
+    observe(state, "exec", {"command": command}, "6 passed in 4.66s\nExit code: 0")
+    assert state.pending
+
+
+@pytest.mark.parametrize("edit_during_run", [False, True])
+def test_background_filtered_tests_wait_for_exit_and_preserve_revision(edit_during_run):
+    state = edited_state()
+    observe(state, "exec", {"command": "pytest -q | tail -1"}, "Process running. session_id: filtered-1")
+    observe(state, "write_stdin", {"session_id": "filtered-1"}, "6 passed in 4.66s\n")
+    assert state.pending
+    if edit_during_run:
+        observe(state, "edit_file", {"path": "src/service.py"}, "Edited again")
+    observe(state, "write_stdin", {"session_id": "filtered-1"}, "Exit code: 0")
+    assert state.pending is edit_during_run
+    assert not state.pending_tests
+    assert not state.pending_filtered_outputs
+
+
+@pytest.mark.parametrize("passing", [True, False])
+def test_real_pytest_tail_pipeline_observes_success_and_masked_failure(tmp_path, passing):
+    async def run():
+        audit = tmp_path / "supabase" / "audit"
+        audit.mkdir(parents=True)
+        (audit / "test_clean_dump.py").write_text(
+            "import pytest\n@pytest.mark.parametrize('item', range(6))\n"
+            f"def test_clean_dump(item):\n    assert item < {6 if passing else 5}\n"
+        )
+        command = f"cd supabase/audit && {shlex.quote(sys.executable)} -m pytest test_clean_dump.py 2>&1 | tail -1"
+        result = await ExecTool(working_dir=str(tmp_path)).execute(command=command)
+        assert "Exit code: 0" in str(result), "The output filter masks the test runner's exit status"
+        assert ("6 passed" if passing else "1 failed, 5 passed") in str(result)
+        state = edited_state()
+        observe(state, "exec", {"command": command}, result)
+        assert state.pending is not passing
+        assert state.failed is not passing
+    asyncio.run(run())
 
 
 def test_edit_after_green_tests_invalidates_the_evidence():
@@ -355,8 +472,9 @@ def test_real_repair_cycles_have_no_total_verification_retry_cap(tmp_path):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("rejected_closures", [1, 3])
-def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_path, rejected_closures):
+@pytest.mark.parametrize("rejected_closures", [1, 3, 5])
+@pytest.mark.parametrize("test_executor", ["test_run", "exec_pipe"])
+def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_path, rejected_closures, test_executor):
     async def run():
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = .\n")
         store = ProjectBoardStore(tmp_path)
@@ -366,13 +484,17 @@ def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_p
             tool_call("write_file", path="pricing.py", content=_PRICING),
             *(tool_call("board", **closing) for _ in range(rejected_closures)),
             tool_call("write_file", path="test_pricing.py", content=_PRICING_TESTS),
-            tool_call("test_run", action="run", runner="pytest", target="test_pricing.py"),
+            (tool_call("test_run", action="run", runner="pytest", target="test_pricing.py")
+             if test_executor == "test_run" else tool_call(
+                 "exec", command=f"{shlex.quote(sys.executable)} -m pytest test_pricing.py 2>&1 | tail -1",
+             )),
             tool_call("board", **closing),
             LLMResponse(content="Done: discounts tested."),
         ])
         tools = registry(tmp_path)
         tools.register(BoardTool(workspace=tmp_path))
         tools.register(RunTestsTool(workspace=tmp_path))
+        tools.register(ExecTool(working_dir=str(tmp_path)))
         result = await AgentRunner().run(AgentRunSpec(
             initial_messages=[{"role": "user", "content": "Fix the discount task."}],
             tools=tools, runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
@@ -381,8 +503,35 @@ def test_board_step_without_validation_metadata_still_needs_executed_tests(tmp_p
         ))
         assert result.stop_reason == "completed"
         assert store.get_task(task["id"])["status"] == "done"
-        assert [event["status"] for event in result.tool_events if event["name"] == "board"] == ["error"] * rejected_closures + ["ok"]
+        board_events = [event for event in result.tool_events if event["name"] == "board"]
+        assert [event["status"] for event in board_events] == ["error"] * rejected_closures + ["ok"]
+        assert all(event["error_kind"] == "validation_required" for event in board_events[:-1])
         assert provider.calls == 5 + rejected_closures
+    asyncio.run(run())
+
+
+def test_repeated_board_closures_without_validation_stop_without_closing_the_task(tmp_path):
+    async def run():
+        store = ProjectBoardStore(tmp_path)
+        task = store.create_task(title="Fix discounts", status="in_progress", actor="agent", actor_type="agent")
+        provider = ScriptedProvider([
+            tool_call("write_file", path="pricing.py", content=_PRICING),
+            *(tool_call("board", action="move", task_id=task["id"], status="done") for _ in range(20)),
+        ])
+        tools = registry(tmp_path)
+        tools.register(BoardTool(workspace=tmp_path))
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Fix the discount task."}],
+            tools=tools, runtime=LLMRuntime.capture(provider, "test-quality", context_window_tokens=128_000),
+            workspace=tmp_path, max_iterations=2, continue_on_max_iterations=True,
+            validate_code_changes=True, max_tool_result_chars=4_000,
+        ))
+        assert result.stop_reason == "validation_failed"
+        assert store.get_task(task["id"])["status"] == "in_progress"
+        assert provider.calls < 21
+        assert "No passing test result" in result.final_content
+        assert all(event.get("error_kind") == "validation_required"
+                   for event in result.tool_events if event["name"] == "board")
     asyncio.run(run())
 
 

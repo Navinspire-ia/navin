@@ -184,6 +184,25 @@ class AnswererBindingTest(_BrokerTest):
 
 
 class RememberTest(_BrokerTest):
+    async def test_policy_change_clears_previously_remembered_consent(self) -> None:
+        broker = self._broker()
+        await self._answer(broker, _request(scope="exec:recursiveDelete"), allowed=True, remember=True)
+        self.published.clear()
+        broker.apply_config(ApprovalConfig(enabled=False))
+        broker.apply_config(ApprovalConfig(enabled=True))
+        decision = await self._answer(broker, _request(scope="exec:recursiveDelete"), allowed=False)
+        self.assertFalse(decision.allowed)
+        self.assertTrue(self.published)
+
+    async def test_unchanged_policy_preserves_remembered_consent(self) -> None:
+        broker = self._broker()
+        await self._answer(broker, _request(scope="exec:recursiveDelete"), allowed=True, remember=True)
+        self.published.clear()
+        broker.apply_config(ApprovalConfig(enabled=True))
+        decision = await broker.ask(_request(scope="exec:recursiveDelete"))
+        self.assertTrue(decision.remembered)
+        self.assertFalse(self.published)
+
     async def test_always_allow_covers_the_same_scope_again(self) -> None:
         broker = self._broker()
         first = await self._answer(

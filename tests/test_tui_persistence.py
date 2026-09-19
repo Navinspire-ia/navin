@@ -74,7 +74,7 @@ def test_closing_cli_flushes_conversation_history(tmp_path):
         with patch("navin.cli.commands._close_agent_subprocesses", new=AsyncMock()):
             await runtime.close()
             await runtime.close()
-        sessions.flush_all.assert_called_once()
+        sessions.flush_saved.assert_called_once()
     asyncio.run(run())
 
 

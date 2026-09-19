@@ -15,8 +15,10 @@ import pytest
 from navin.agent.loop import AgentLoop
 from navin.agent.runner import AgentLoopGuard, AgentRunner, AgentRunSpec
 from navin.agent.subagent import SubagentManager
+from navin.agent.tools.board import BoardTool
 from navin.agent.tools.filesystem import ReadFileTool, WriteFileTool
 from navin.agent.tools.registry import ToolRegistry
+from navin.board.ledger import MissionLedgerStore
 from navin.bus.events import InboundMessage
 from navin.bus.queue import MessageBus
 from navin.config.loader import get_config_path, set_config_path
@@ -147,6 +149,65 @@ def test_real_loop_guard_survives_single_call_slices(tmp_path, name, arguments, 
             assert provider.calls == 3
         else:
             assert "blocked tool calls" in result.final_content
+    asyncio.run(run())
+
+
+def test_unchanged_ledger_loop_stops_across_continuation_slices(tmp_path):
+    async def run():
+        board = BoardTool(workspace=tmp_path)
+        await board.execute(action="ledger_init", goal="Finish the cleanup")
+        tools = registry(tmp_path)
+        tools.register(board)
+        provider = ScriptedProvider([
+            tool_call("board", action="ledger_update", status="done") for _ in range(67)
+        ])
+        guard = AgentLoopGuard()
+        messages = [{"role": "user", "content": "Finish the cleanup."}]
+        events = []
+        for _ in range(12):
+            result = await AgentRunner().run(AgentRunSpec(
+                initial_messages=messages, tools=tools,
+                runtime=LLMRuntime.capture(provider, "test-long-task", context_window_tokens=128_000),
+                workspace=tmp_path, max_iterations=1, max_tool_result_chars=4_000,
+                finalize_on_max_iterations=False, loop_guard=guard,
+            ))
+            messages = result.messages
+            events.extend(result.tool_events)
+            if result.stop_reason != "max_iterations":
+                break
+        assert result.stop_reason == "no_progress"
+        assert provider.calls == 10  # Nine tool batches, then a text-only finalization.
+        assert len(events) == 9
+        assert sum(event.get("progress") == "none" for event in events) == 8
+        assert guard.no_progress_nudge_count == 1
+        assert "unfinished" in result.final_content
+        assert MissionLedgerStore(tmp_path).load()["version"] == 2
+    asyncio.run(run())
+
+
+def test_ledger_nudge_allows_real_work_to_resume(tmp_path):
+    async def run():
+        board = BoardTool(workspace=tmp_path)
+        await board.execute(action="ledger_init", goal="Audit files")
+        await board.execute(action="ledger_update", facts=["Two files checked"])
+        tools = registry(tmp_path)
+        tools.register(board)
+        provider = ScriptedProvider([
+            *(tool_call("board", action="ledger_update", facts=["Two files checked"]) for _ in range(5)),
+            tool_call("write_file", path="audit.txt", content="Actual audit result\n"),
+            LLMResponse(content="Audit result saved."),
+        ])
+        guard = AgentLoopGuard()
+        result = await AgentRunner().run(AgentRunSpec(
+            initial_messages=[{"role": "user", "content": "Audit the files."}],
+            tools=tools, workspace=tmp_path, max_iterations=12, max_tool_result_chars=4_000,
+            runtime=LLMRuntime.capture(provider, "test-long-task", context_window_tokens=128_000),
+            loop_guard=guard,
+        ))
+        assert result.stop_reason == "completed"
+        assert guard.no_progress_nudge_count == 1
+        assert guard.no_progress_streak == 0
+        assert (tmp_path / "audit.txt").read_text() == "Actual audit result\n"
     asyncio.run(run())
 
 

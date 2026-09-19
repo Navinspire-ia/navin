@@ -195,6 +195,14 @@ _TUI_SLASH: tuple[dict[str, Any], ...] = (
         "title": "Background terminals",
         "description": "List live exec sessions started in the background",
     },
+    *(
+        {
+            "command": f"/{section}",
+            "title": f"{section.title()} settings",
+            "description": f"Open {section} configuration",
+        }
+        for section in sorted(_SETTINGS_SECTIONS)
+    ),
 )
 
 
@@ -449,7 +457,7 @@ class NavinApp(App[None]):
         self.config_path = config_path
         self.prefs = prefs or TuiPrefs.load()
         self.runtime = TuiRuntime(config, session_id=session_id, on_event=self._on_runtime_event)
-        self.slash_rows: list[dict[str, Any]] = []
+        self.slash_rows: list[dict[str, Any]] = [dict(row) for row in _TUI_SLASH]
         self._current: AssistantMessage | None = None
         self._last_speaker: str | None = None
         self._render_token = 0
@@ -463,6 +471,8 @@ class NavinApp(App[None]):
         self._history_index: int | None = None
         self._history_draft = ""
         self._engine_ready = False
+        self._quitting = False
+        self._runtime_close_task: asyncio.Task | None = None
         self._update_info: dict[str, Any] = {}
         self._engine_error: str | None = None
         self._spin = 0
@@ -538,6 +548,8 @@ class NavinApp(App[None]):
         self.run_worker(self._boot(), exclusive=True, name="boot")
 
     def _tick_spinner(self) -> None:
+        if not self.screen_stack:
+            return
         visible = isinstance(self.screen, NavinScreen)
         if visible and self.runtime.status.turn_active:
             self._spin += 1
@@ -810,11 +822,14 @@ class NavinApp(App[None]):
 
     async def on_unmount(self) -> None:
         self._restore_terminal_background()
+        # Also covers driver shutdown paths which do not call action_quit.
+        if self._runtime_close_task is None:
+            self._runtime_close_task = asyncio.create_task(self.runtime.close())
         await self._flush_unsent_work()
         self.prefs.last_session = self.runtime.session_key
         await asyncio.to_thread(self.prefs.save)
         with contextlib.suppress(Exception):
-            await self.runtime.close()
+            await self._runtime_close_task
 
     # -- helpers ----------------------------------------------------------
 
@@ -1083,18 +1098,21 @@ class NavinApp(App[None]):
         transcript.has_older = cursor is not None
         transcript.loading_history = True
         transcript.auto_follow = False
+        was_visible = transcript.styles.visibility
+        transcript.styles.visibility = "hidden"
         try:
-            # Keep intermediate mounts off-screen. There is one jump to the
-            # newest reply after layout, never a replay through every message.
-            with self.batch_update():
-                await self._paint_history_rows(token, rows)
-                if token == self._render_token:
-                    # Resolve the new heights while repaints are suspended,
-                    # so the first visible frame is already at the bottom.
+            # Hide intermediate transcript mounts, not the whole application.
+            # An app-wide batch across awaits also suppresses the composer,
+            # navigation and stop feedback while a large page is restored.
+            await self._paint_history_rows(token, rows)
+            if token == self._render_token:
+                with self.batch_update():
+                    transcript.styles.visibility = was_visible
                     transcript.screen._refresh_layout()
                     transcript.scroll_end(animate=False, immediate=True)
                     transcript.screen.refresh(layout=True)
         finally:
+            transcript.styles.visibility = was_visible
             if token == self._render_token:
                 transcript.loading_history = False
                 transcript.auto_follow = True
@@ -1117,25 +1135,29 @@ class NavinApp(App[None]):
             transcript = self.transcript
             anchor = next(iter(transcript.children), None)
             old_y = anchor.virtual_region.y if anchor is not None else 0
+            was_visible = transcript.styles.visibility
             try:
                 rows, cursor = await asyncio.to_thread(
                     visible_chat_page, self._history_snapshot, before=self._history_cursor,
                 )
                 if token != self._render_token:
                     return
+                transcript.styles.visibility = "hidden"
+                await self._paint_history_rows(token, rows, before=anchor, final_rule=False)
+                if token != self._render_token:
+                    return
                 with self.batch_update():
-                    await self._paint_history_rows(token, rows, before=anchor, final_rule=False)
-                    if token != self._render_token:
-                        return
                     self._history_cursor = cursor
                     transcript.has_older = cursor is not None
                     scroll_y = transcript.scroll_y
+                    transcript.styles.visibility = was_visible
                     transcript.screen._refresh_layout()
                     if anchor is not None and anchor.is_attached:
                         transcript.scroll_to(y=scroll_y + anchor.virtual_region.y - old_y, animate=False, immediate=True)
                     transcript.auto_follow = False
                     transcript.screen.refresh(layout=True)
             finally:
+                transcript.styles.visibility = was_visible
                 if token == self._render_token:
                     transcript.loading_history = False
 
@@ -1228,7 +1250,8 @@ class NavinApp(App[None]):
     async def _submitted(self, event: Composer.Submitted) -> None:
         menu = self.query_one(SlashMenu)
         typed = event.text.strip().lower()
-        if menu.visible_menu and menu.highlighted is not None:
+        exact_command = any(str(row["command"]).lower() == typed for row in self.slash_rows)
+        if menu.visible_menu and menu.highlighted is not None and not exact_command:
             option = menu.get_option_at_index(menu.highlighted)
             row = next((r for r in self.slash_rows if r["command"] == option.id), None)
             if row is not None and typed != str(option.id).lower():
@@ -1251,8 +1274,8 @@ class NavinApp(App[None]):
         await self.submit_text(text, send_now=event.send_now)
 
     async def submit_text(self, text: str, *, send_now: bool = False) -> None:
-        if not self._engine_ready:
-            await self._note("[$warning]engine is still starting…[/]", "warning")
+        text = text.strip()
+        if not text:
             return
         self.query_one(SlashMenu).hide()
         self.composer.clear_text()
@@ -1267,6 +1290,10 @@ class NavinApp(App[None]):
             await self.action_show_help()
             return
         if text.startswith("/") and await self._run_tui_slash(text):
+            return
+        if not self._engine_ready:
+            self.composer.set_text(text)
+            await self._note("[$warning]engine is still starting…[/]", "warning")
             return
         if text.lower() in {"stop", "/stop"} and self.runtime.turn_active:
             await self._request_stop("/stop")
@@ -1289,9 +1316,11 @@ class NavinApp(App[None]):
         user = UserMessage(text, show_head=self._last_speaker != "user")
         self._last_speaker = "user"
         await self.transcript.add(user)
-        if followup and self._current is not None:
-            self.transcript.move_child(self._current, after=user)
-        elif not followup:
+        # A mid-turn follow-up lands at the very bottom of the transcript,
+        # after the running turn's task cards. The running bubble keeps
+        # streaming above it; moving the bubble below the message would push
+        # the message back up, right after the previous exchange.
+        if not followup:
             self._current = None
         try:
             await self.runtime.send(inbound, followup=followup)
@@ -1309,14 +1338,24 @@ class NavinApp(App[None]):
 
     async def _run_tui_slash(self, text: str) -> bool:
         """Slash commands handled by the TUI itself (screens), not by the engine."""
-        head, _, arg = text.partition(" ")
-        head = head.lower()
+        parts = text.split(maxsplit=1)
+        head = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
         raw_arg = arg.strip()
         arg = raw_arg.lower()
+        if head in {"/quit", "/exit"}:
+            await self.action_quit()
+            return True
+        if head == "/permission" and self._engine_ready:
+            await self.runtime.send_command(text)
+            return True
         if head == "/settings":
             await self.action_open_settings(arg)
             return True
-        if head[1:] in _SETTINGS_SECTIONS:  # /providers, /mcp, ... = /settings <section>
+        if head == "/model" and not arg:
+            await self.action_open_settings("models")
+            return True
+        if head[1:] in _SETTINGS_SECTIONS and not arg:
             await self.action_open_settings(head[1:])
             return True
         if head == "/account":
@@ -1769,12 +1808,13 @@ class NavinApp(App[None]):
                 return
             self._stop_pending = True
             self._queue_paused.add(self.runtime.session_key)
-            await self._refresh_queue()
+            self._save_unsent_work()
             try:
                 await self.runtime.stop_turn()
             except Exception:
                 self._stop_pending = False
                 raise
+            self.run_worker(self._refresh_queue(), group="stop-queue", exclusive=True)
             self._refresh_working_line()
             await self._note(f"[$warning]Stop requested ({escape(source)})[/]", "warning")
             return
@@ -2782,6 +2822,14 @@ class NavinApp(App[None]):
         )
 
     async def action_quit(self) -> None:
+        if self._quitting:
+            return
+        self._quitting = True
+        # Capture the composer while it is still mounted and pause the queue
+        # before Textual disables input and starts tearing down the transcript.
+        self._queue_paused.update(self._queued_prompts)
+        self._save_unsent_work()
+        self._runtime_close_task = asyncio.create_task(self.runtime.close())
         self.exit()
 
     # Textual system commands: keep the built-ins (theme, keys...) too.
@@ -2803,6 +2851,7 @@ def run_tui(
     session_id: str | None = None,
     config_path: Path | None = None,
     project_root: Path | None = None,
+    cli_executable: Path | None = None,
 ) -> None:
     prefs = TuiPrefs.load()
     if not session_id:
@@ -2814,9 +2863,31 @@ def run_tui(
     import signal
 
     # Ctrl+C copies. Ctrl+Z must not background the process (it looks like a crash).
-    with contextlib.suppress(Exception):
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-    with contextlib.suppress(Exception):
-        signal.signal(signal.SIGTSTP, signal.SIG_IGN)
+    previous_signals = {}
+    for name in ("SIGINT", "SIGTSTP"):
+        signum = getattr(signal, name, None)
+        if signum is not None:
+            with contextlib.suppress(ValueError, OSError):
+                previous_signals[signum] = signal.signal(signum, signal.SIG_IGN)
     app = NavinApp(config, session_id=session_id, prefs=prefs, config_path=config_path)
-    app.run()
+    try:
+        app.run()
+    finally:
+        for signum, handler in previous_signals.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signum, handler)
+    from navin.tui.exit_summary import UsageTotals, print_exit_summary
+
+    runtime = app.runtime
+    title = ""
+    sessions = getattr(runtime.agent_loop, "sessions", None)
+    if sessions is not None:
+        # No disk access on the way out: use the session already in memory.
+        session = sessions._cache.get(runtime.session_key)
+        if session is not None:
+            title = str(session.metadata.get("title") or session.metadata.get("webui_title") or "")
+    print_exit_summary(
+        session_key=runtime.session_key, workspace=Path(runtime.config.workspace_path),
+        elapsed=runtime.worked_seconds, usage=runtime.usage.sessions.get(runtime.session_key, UsageTotals()),
+        title=title, config_path=config_path, warnings=runtime.shutdown_warnings, executable=cli_executable,
+    )

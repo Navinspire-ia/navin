@@ -30,6 +30,7 @@ import { cliAppInitials, mcpPresetInitials } from "@/components/CliAppMentionTex
 import { FileReferenceChip } from "@/components/FileReferenceChip";
 import { ComputerSetupNotice } from "@/components/settings/ComputerSetupNotice";
 import { ActivityEvidencePreview } from "@/components/thread/activity/ActivityEvidencePreview";
+import { ACTIVITY_DETAIL_PAGE_SIZE, ActivityPagination } from "@/components/thread/activity/ActivityPagination";
 import { DiffPair } from "@/components/thread/activity/DiffPair";
 import { SandboxBadge, ShellRunCard, type ShellRunSummary } from "@/components/thread/activity/ShellRunCard";
 import {
@@ -163,10 +164,15 @@ export function ActivityJournal({
 }: ActivityJournalProps) {
   const { t } = useTranslation();
   const [showAll, setShowAll] = useState(false);
+  const [requestedPage, setPage] = useState<number | null>(null);
   if (entries.length === 0) return null;
+  const lastPage = Math.ceil(entries.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1;
+  const page = Math.min(requestedPage ?? (streaming ? lastPage : 0), lastPage);
   const limit = Math.max(1, previewMax);
   const hidden = showAll ? 0 : Math.max(0, entries.length - limit);
-  const visible = hidden > 0
+  const visible = showAll
+    ? entries.slice(page * ACTIVITY_DETAIL_PAGE_SIZE, (page + 1) * ACTIVITY_DETAIL_PAGE_SIZE)
+    : hidden > 0
     ? streaming
       ? entries.slice(entries.length - limit)
       : entries.slice(0, limit)
@@ -175,7 +181,7 @@ export function ActivityJournal({
   const toggle = canToggle ? (
     <button
       type="button"
-      onClick={() => setShowAll((current) => !current)}
+      onClick={() => { setShowAll((current) => !current); setPage(null); }}
       aria-expanded={showAll}
       data-testid="activity-journal-open"
       className={cn(
@@ -214,6 +220,7 @@ export function ActivityJournal({
       data-testid="activity-task-log"
     >
       {streaming && hidden > 0 ? toggle : null}
+      {showAll ? <ActivityPagination page={page} total={entries.length} onPageChange={setPage} /> : null}
       {visible.map((entry) => (
         <JournalRow
           key={entry.id}

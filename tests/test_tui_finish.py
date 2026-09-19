@@ -10,7 +10,15 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, Static
+from textual.widgets._markdown import (
+    MarkdownFence,
+    MarkdownH2,
+    MarkdownH3,
+    MarkdownParagraph,
+    MarkdownTable,
+)
 
+from navin.agent.code_validation import CodeValidationState
 from navin.tui.theme import NAVIN_THEMES
 from navin.tui.widgets import AssistantMessage, Composer, ComposerMeta, ComposerShell
 
@@ -39,6 +47,56 @@ class FinishHost(App):
     @on(Composer.Submitted)
     def submit(self, event):
         self.submitted.append(event.text)
+
+
+@pytest.mark.parametrize("theme,width", [("navin", 100), ("navin-light", 48)])
+@pytest.mark.parametrize("saved_legacy_message", [False, True])
+def test_validation_finish_is_structured_colored_and_copyable(theme, width, saved_legacy_message, monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    async def run():
+        state = CodeValidationState(revision=1, needs_tests=True, paths={
+            "backend/tests/test_support_agent_disabled.py",
+            "backend/gemini_live/support_ws_routes.py",
+            "frontend/src/app/admin/tours/agent-runs/[runId]/page.tsx",
+        })
+        message = state.completion_message()
+        if saved_legacy_message:
+            message = (
+                "The changes are saved, but the task is not validated. "
+                "The agent repeatedly tried to finish without resolving these checks.\n\n"
+                + state.missing()
+            )
+        app = FinishHost(theme)
+        async with app.run_test(size=(width, 42)) as pilot:
+            await app.block.set_text(message)
+            await app.block.finish(latency_ms=10, model=None, preset=None)
+            await pilot.pause()
+            heading = app.block.query_one(MarkdownH2)
+            table = app.block.query_one(MarkdownTable)
+            command = app.block.query_one(MarkdownFence)
+            assert app.block.has_class("-validation-pending")
+            assert heading.styles.color != app.block.query_one(MarkdownParagraph).styles.color
+            assert len(app.block.query(MarkdownH3)) == 3
+            assert table.region.y > heading.region.y
+            assert command.region.y > table.region.bottom
+            assert table.region.right <= app.block.region.right
+            assert command.query_one("#code-content").region.right <= command.region.right
+            if width < 60:
+                assert command.query_one("#code-content").content_size.height > 1
+            assert [cell.content.plain for cell in table.query(".header, .cell")] == [
+                "Item", "Status", "Changes", "Saved", "Tests", "No current result",
+            ]
+            source = app.block.query_one(Markdown).source
+            assert "```bash\npython -m pytest backend/tests/test_support_agent_disabled.py\n```" in source
+            assert "- `frontend/src/app/admin/tours/agent-runs/[runId]/page.tsx`" in source
+            assert app.block.copy_text() == message
+            composer = app.query_one(Composer)
+            composer.focus()
+            await pilot.press(*"Reprendre")
+            assert composer.text == "Reprendre"
+            await app.block.set_text("Validation completed.")
+            assert not app.block.has_class("-validation-pending")
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("theme,width", [("navin", 92), ("navin-light", 48)])

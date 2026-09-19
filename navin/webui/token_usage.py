@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -498,7 +499,8 @@ class TokenUsageHook(AgentHook):
                 model = model.strip() or None
             else:
                 model = None
-            record_token_usage(
+            await asyncio.to_thread(
+                record_token_usage,
                 usage,
                 source=_source_from_session_key(context.session_key),
                 model=model,

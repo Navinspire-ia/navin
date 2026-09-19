@@ -595,12 +595,23 @@ def file_operation_label(operation: str) -> str:
     return FILE_OPERATION_LABELS.get(operation, "Edited")
 
 
+def is_validation_pending(name: str, error: str | None) -> bool:
+    """Recognize current and saved completion prerequisites, never permission errors."""
+    return name in {"board", "update_goal"} and bool(error) and error.lstrip().startswith((
+        "Validation pending: task remains open.",
+        "Validation required before closing this work.",
+    ))
+
+
 def activity_label(
     name: str, arguments: dict | None, *, phase: str = "end",
     added: int = 0, removed: int = 0, operation: str = "", path: str = "",
-    counts_known: bool = True,
+    counts_known: bool = True, error: str | None = None,
 ) -> str:
     """Describe actual activity without treating printed output as added code."""
+    if phase == "error" and is_validation_pending(name, error):
+        target = "Board completion" if name == "board" else "Task completion"
+        return f"Validation pending: {target}"
     args = arguments if isinstance(arguments, dict) else {}
     verb = tool_verb(name)
     pending = phase in {"start", "output"}
@@ -652,7 +663,7 @@ def activity_head_text(text: str, *, dark: bool = True) -> Text:
             family = "explore"
         elif action in {"edit", "edited", "editing", "edits", "add", "added", "create", "created", "creating", "delete", "deleted", "deleting", "move", "moved", "moving", "copy", "copied", "copying"}:
             family = "lavender"
-        elif action in {"run", "ran", "running", "testing", "tests", "completed", "checking", "checked"}:
+        elif action in {"run", "ran", "running", "testing", "tests", "completed", "checking", "checked", "validation"}:
             family = "mustard"
         else:
             family = "tool"
@@ -853,7 +864,8 @@ def preview_rows(
     if error:
         for line in display_tool_error(error).splitlines():
             if line.strip():
-                rows.append((None, "error", line.rstrip()))
+                kind = "ctx" if is_validation_pending(name, error) else "error"
+                rows.append((None, kind, line.rstrip()))
     metadata_count = len(rows)
     command = _command_from_args(args)
     run_is_git = command.strip().startswith("git")

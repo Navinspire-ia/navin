@@ -2300,23 +2300,7 @@ export function ThreadShell({
     return null;
   }, [isStreaming, messages]);
 
-  const [planAnchorMessageCount, setPlanAnchorMessageCount] = useState<number | null>(null);
-  const planAnchorCandidateRef = useRef(0);
-  planAnchorCandidateRef.current = displayMessages.length;
-  const planWasStreamingRef = useRef(isStreaming);
-  useEffect(() => {
-    if (planWasStreamingRef.current === isStreaming) return;
-    planWasStreamingRef.current = isStreaming;
-    // Live: no anchor, so the card trails the thread. Finished: pin it here.
-    setPlanAnchorMessageCount(isStreaming ? null : planAnchorCandidateRef.current);
-  }, [isStreaming]);
-  useEffect(() => {
-    setPlanAnchorMessageCount(null);
-  }, [historyKey]);
-
-  // In the conversation flow (after the last message), not stacked above the
-  // composer: the plan and live execution read as part of the exchange,
-  // Cursor-style, and scroll away with it instead of walling off the input.
+  // Live execution follows the last message and scrolls with the conversation.
   const transcriptTail = (
     <>
       <ParallelSubagentsPanel cards={subagentCards} />
@@ -2324,10 +2308,7 @@ export function ThreadShell({
     </>
   );
 
-  // The plan follows the end of the thread while the run is live, so Stop and
-  // the live activity stay under the reader's eye. The moment the run ends its
-  // anchor freezes and the card belongs to that turn: the next exchange pushes
-  // it up the transcript instead of dragging it along above the composer.
+  // The plan is opened from the header; it never follows the transcript tail.
   const planBlock = (
     <ThreadPlanPanel
       sessionKey={historyKey}
@@ -2601,6 +2582,7 @@ export function ThreadShell({
             minimal={!session && !loading}
             promptNavigatorAction={promptNavigatorAction}
             sessionInfoAction={sessionInfoAction}
+            planAction={planBlock}
             graphAction={
               session ? (
                 <button
@@ -2651,6 +2633,7 @@ export function ThreadShell({
             }
           />
         ) : null}
+        {hideHeader ? <div className="flex shrink-0 justify-end px-3">{planBlock}</div> : null}
         {isViewer ? <ViewerReadOnlyBanner /> : null}
         <FileWorkspaceActionsProvider value={fileWorkspaceActions}>
           <FilePreviewAvailabilityProvider
@@ -2666,8 +2649,6 @@ export function ThreadShell({
               emptyState={emptyState}
               composer={composer}
               transcriptTail={transcriptTail}
-              pinnedBlock={planBlock}
-              pinnedBlockAfterMessageCount={planAnchorMessageCount}
               scrollToBottomSignal={scrollToBottomSignal}
               scrollToLatestUserPromptSignal={scrollToLatestUserPromptSignal}
               conversationKey={historyKey ?? chatId}

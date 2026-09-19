@@ -221,6 +221,7 @@ class ExecPolicyReloadTests(unittest.TestCase):
         fake_config = SimpleNamespace(
             tools=SimpleNamespace(
                 approvals=SimpleNamespace(enabled=False, exec_ask="destructive"),
+                security_profile="autonomous",
                 restrict_to_workspace=False,
                 exec=SimpleNamespace(
                     allow_patterns=[],
@@ -252,6 +253,8 @@ class ExecPolicyReloadTests(unittest.TestCase):
         self.assertTrue(result.get("ok"))
         self.assertFalse(state.restrict_to_workspace)
         self.assertFalse(state.tools_config.restrict_to_workspace)
+        self.assertIs(state.tools_config.exec, fake_config.tools.exec)
+        self.assertEqual(state.tools_config.security_profile, "autonomous")
         self.assertFalse(state.workspace_scopes.default_restrict_to_workspace)
         self.assertFalse(state.subagents.restrict_to_workspace)
         self.assertFalse(file_tool._restrict_to_workspace)
