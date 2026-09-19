@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ComboBox, Customizer, DefaultButton, MessageBar, MessageBarType, Spinner, Stack, Text,
+  Customizer, DefaultButton, MessageBar, MessageBarType, Spinner, Stack, Text,
   createTheme,
 } from "@fluentui/react";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,7 @@ import { fetchProviderModels, previewVoice } from "@/lib/api";
 import { filterMediaModels } from "@/lib/media-models";
 import type { MediaModelKind, ProviderModelInfo } from "@/lib/types";
 import { useClient } from "@/providers/ClientProvider";
+import { SettingsPicker } from "./SettingsPicker";
 import "@/lib/fluent-icons";
 
 export function MediaSettingsSurface({ children }: { children: ReactNode }) {
@@ -28,11 +29,6 @@ export function MediaSettingsSurface({ children }: { children: ReactNode }) {
   }), [dark]);
   return <Customizer settings={{ theme }}>{children}</Customizer>;
 }
-
-// Provider catalogs run to dozens of rows: the list scrolls inside the callout
-// instead of running past the top or bottom of the window.
-const MODEL_LIST_MAX_HEIGHT = 320;
-const modelListCallout = { calloutMaxHeight: MODEL_LIST_MAX_HEIGHT };
 
 export function MediaModelPicker({ kind, provider, configured, model, onModelChange, voice, onVoiceChange }: {
   kind: MediaModelKind;
@@ -91,8 +87,8 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
   const selected = catalog.find((row) => row.id === model);
   const voices = selected?.voices ?? [];
   const options = [
-    ...(model && !selected ? [{ key: model, text: model }] : []),
-    ...catalog.map((row) => ({ key: row.id, text: row.label || row.id })),
+    ...(model && !selected ? [{ value: model, label: model }] : []),
+    ...catalog.map((row) => ({ value: row.id, label: row.label || row.id })),
   ];
   const manual = unavailable && provider !== "navin";
   const modelUnavailable = configured && !loading && model && !selected && !unavailable;
@@ -118,19 +114,16 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
   return (
     <MediaSettingsSurface>
       <Stack tokens={{ childrenGap: 10 }} styles={{ root: { width: 360, maxWidth: "100%" } }}>
-        <ComboBox
+        <SettingsPicker
           ariaLabel={tx(`${kind}Model`)}
-          selectedKey={model || null}
-          text={manual ? model : undefined}
+          value={model}
           options={options}
-          allowFreeform={manual}
-          autoComplete="on"
-          useComboBoxAsMenuWidth
-          calloutProps={modelListCallout}
+          allowCustomValue={manual}
+          searchable
           disabled={!provider || !configured || loading}
           placeholder={tx(loading ? "loadingModels" : "chooseModel")}
-          onChange={(_, option, __, value) => {
-            const next = String(option?.key ?? value ?? "").trim();
+          onChange={(value) => {
+            const next = value.trim();
             if (next) { onModelChange(next); onVoiceChange?.("auto"); }
           }}
         />
@@ -142,13 +135,11 @@ export function MediaModelPicker({ kind, provider, configured, model, onModelCha
           disabled={!configured || loading} onClick={() => setRevision((value) => value + 1)} />
         {kind === "tts" ? (
           <>
-            <ComboBox label={tx("voice")} selectedKey={voices.includes(voice ?? "") ? voice : "auto"}
-              text={!voices.length && voice && voice !== "auto" ? voice : undefined}
-              options={[{ key: "auto", text: `${tx("automaticVoice")}${selected?.default_voice ? ` (${selected.default_voice})` : ""}` },
-                ...voices.map((name) => ({ key: name, text: name }))]}
-              allowFreeform={!voices.length} autoComplete="on" disabled={!model}
-              useComboBoxAsMenuWidth calloutProps={modelListCallout}
-              onChange={(_, option, __, value) => onVoiceChange?.(String(option?.key ?? value ?? "auto"))} />
+            <SettingsPicker label={tx("voice")} ariaLabel={tx("voice")} value={voice || "auto"}
+              options={[{ value: "auto", label: `${tx("automaticVoice")}${selected?.default_voice ? ` (${selected.default_voice})` : ""}` },
+                ...voices.map((name) => ({ value: name, label: name }))]}
+              allowCustomValue={!voices.length} searchable disabled={!model}
+              onChange={(value) => onVoiceChange?.(value)} />
             <Text variant="small">{tx("voiceIndependent")}</Text>
             <Stack horizontal wrap tokens={{ childrenGap: 8 }}>
               <DefaultButton text={tx(previewing ? "previewLoading" : "preview")}

@@ -8,7 +8,7 @@ monthly spend (see ``site/src/lib/plans.ts``). This module mirrors that policy
 locally so the IDE throttles **Navin subscription** (managed-key) turns
 without a gateway restart. BYOK / Free keys are never clamped.
 
-From 50 % monthly usage, only the expensive flagships are paused:
+From 80 % monthly usage, only the expensive flagships are paused:
 
 - Claude Opus 5 and newer
 - Claude Fable 5 and newer
@@ -18,6 +18,9 @@ Everything else (Grok, Gemini, DeepSeek, MiniMax, GLM, vision readers
 that are not those flagships) stays selectable. An allowlist that left
 only Nemotron + Flash created panic and hid useful models while vision
 rows slipped through. At 100 % the plan is empty: Nemotron only.
+
+80 % matches the reduced-mode threshold, which already caps the tier
+at main from there, so the flagship pause and the tier cap agree.
 
 Token caps still follow the mode names (reduced / economy / exhausted).
 """
@@ -58,8 +61,9 @@ _GROK_46 = "x-ai/grok-4.6"
 _DS_FLASH = "deepseek/deepseek-v4.1-flash"
 _NEMOTRON_ULTRA = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
-# Hide these families from 50 % (chat and vision, same rule).
-_FLAGSHIP_CUTOFF_PERCENT = 50
+# Hide these families from 80 % (chat and vision, same rule), aligned with
+# the reduced-mode threshold.
+_FLAGSHIP_CUTOFF_PERCENT = 80
 _OPUS_VERSION = re.compile(r"opus[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _FABLE_VERSION = re.compile(r"fable[-_.\s]*(\d+)(?:[-_.](\d+))?", re.IGNORECASE)
 _GPT_56 = re.compile(r"gpt[-_.]?5[-_.]?6\b", re.IGNORECASE)
@@ -565,8 +569,8 @@ def apply_usage_mode_to_runtime(
     """
     if uses_managed is None:
         try:
-            from navin.optional_live import live_modules_available
             from navin.license_client import uses_managed_key
+            from navin.optional_live import live_modules_available
 
             if not live_modules_available():
                 return runtime

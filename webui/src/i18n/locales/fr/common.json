@@ -3720,6 +3720,11 @@
     "reload": "Recharger"
   },
   "settings": {
+    "picker": {
+      "search": "Rechercher ou saisir une valeur",
+      "noResults": "Aucune option correspondante.",
+      "useValue": "Utiliser {{value}}"
+    },
     "about": {
       "autoCheck": "Vérifier automatiquement",
       "channel": "Canal",

@@ -1967,6 +1967,28 @@ def webui(
 # ============================================================================
 
 
+def _start_gateway_catalog_sync(config: Config) -> threading.Thread | None:
+    """Refresh catalog defaults without delaying the first local connection."""
+    if not config.model_catalog.enabled:
+        return None
+    from navin.config.loader import get_config_path
+
+    config_path = get_config_path()
+
+    def sync() -> None:
+        try:
+            from navin.config.loader import load_config
+            from navin.providers.managed_catalog import sync_managed_catalog
+
+            sync_managed_catalog(load_config(config_path), force=True, min_interval_s=0)
+        except Exception as exc:
+            logger.debug("Background catalog sync failed: {}", exc)
+
+    worker = threading.Thread(target=sync, name="navin-catalog-sync", daemon=True)
+    worker.start()
+    return worker
+
+
 def _run_gateway(
     config: Config,
     *,
@@ -2058,28 +2080,9 @@ def _run_gateway(
     )
     sync_workspace_templates(config.workspace_path)
 
-    # Managed model catalog (opt-in). Never block boot on the network (up to
-    # 5 s): refresh in background unless no model is chosen yet. Later updates
-    # come from Settings / chat picker (forced), or activate / plan change.
-    from navin.providers.managed_catalog import sync_managed_catalog
-
-    if config.model_catalog.enabled:
-        if not config.agents.defaults.model:
-            sync_managed_catalog(config, force=True, min_interval_s=0)
-        else:
-            def _sync_catalog_offline_copy() -> None:
-                try:
-                    from navin.config.loader import load_config as _load
-
-                    sync_managed_catalog(_load(), force=True, min_interval_s=0)
-                except Exception as exc:  # best-effort by design
-                    logger.debug("Background catalog sync failed: {}", exc)
-
-            threading.Thread(
-                target=_sync_catalog_offline_copy,
-                name="navin-catalog-sync",
-                daemon=True,
-            ).start()
+    # First-run setup must also stay available when the catalog is offline.
+    # Provider snapshots reload the saved defaults before the next chat turn.
+    _start_gateway_catalog_sync(config)
 
     bus = MessageBus()
     # Lets subsystems with no bus of their own - the scheduler, the indexer,

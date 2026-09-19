@@ -257,6 +257,32 @@
     height: 0;
   }
 
+  /* Keep a narrow, draggable rail at the transcript edge beside the Code menu. */
+  html.native-host .thread-viewport-scrollbar {
+    scrollbar-width: thin !important;
+    scrollbar-gutter: stable !important;
+    scrollbar-color: var(--scrollbar-thumb) transparent !important;
+  }
+
+  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar {
+    display: block !important;
+    width: 6px !important;
+    height: 6px !important;
+  }
+
+  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+  }
+
+  html.native-host .thread-viewport-scrollbar:hover {
+    scrollbar-color: var(--scrollbar-thumb-hover) transparent !important;
+  }
+
+  html.native-host .thread-viewport-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
   /* Fluent portals sit outside desk containers, including company forms and country menus. */
   html.native-host :is(.ms-Panel-scrollableContent, .ms-Modal-scrollableContent, .ms-Callout-main, .ms-ComboBox-optionsContainerWrapper, .ms-Dropdown-itemsWrapper) {
     scrollbar-width: thin !important;
@@ -310,7 +336,7 @@
    * Desk workbenches (Tenders, Career, Trading, Leads, Marketing, Scraping,
    * Montage, Notes, Meeting, CRM, Code) are long forms and books: a hidden
    * scrollbar reads as "this page does not scroll". Keep a thin one on every
-   * scroll container under the desk host, the chat column stays bare.
+   * scroll container under the desk host. The transcript uses a narrower rail.
    */
   html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-auto"],
   html.native-host :is([data-desk-scroll-host], [data-settings-scroll-host]) [class*="overflow-y-auto"],

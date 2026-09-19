@@ -3722,6 +3722,11 @@
     "reload": "Reload"
   },
   "settings": {
+    "picker": {
+      "search": "Search or enter a value",
+      "noResults": "No matching options.",
+      "useValue": "Use {{value}}"
+    },
     "about": {
       "autoCheck": "Check automatically",
       "channel": "Channel",

@@ -4857,7 +4857,7 @@ function Shell({
                         !chatDocked && "right-0 border-l border-border/55",
                       )
                     : "inset-0",
-                view !== "chat" && !isWorkbenchView(deskView) && "invisible pointer-events-none",
+                view !== "chat" && !isWorkbenchView(view) && "invisible pointer-events-none",
                 isWorkbenchView(deskView) && hideSideChat && "invisible pointer-events-none",
                 // Docked: paints over the center the workbench leaves empty.
                 chatDocked && "z-10 bg-background",

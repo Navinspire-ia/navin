@@ -46,11 +46,11 @@ class UsageModeMathTest(unittest.TestCase):
         fable5 = "anthropic/claude-fable-5"
         gpt56 = "openai/gpt-5.6-sol"
         astra = "openai/gpt-6-astra"
-        self.assertTrue(slug_allowed_for_budget(opus5, 49))
-        self.assertFalse(slug_allowed_for_budget(opus5, 50))
-        self.assertFalse(slug_allowed_for_budget(fable5, 50))
-        self.assertFalse(slug_allowed_for_budget(gpt56, 50))
-        self.assertFalse(slug_allowed_for_budget(astra, 50))
+        self.assertTrue(slug_allowed_for_budget(opus5, 79))
+        self.assertFalse(slug_allowed_for_budget(opus5, 80))
+        self.assertFalse(slug_allowed_for_budget(fable5, 80))
+        self.assertFalse(slug_allowed_for_budget(gpt56, 80))
+        self.assertFalse(slug_allowed_for_budget(astra, 80))
         self.assertTrue(slug_allowed_for_budget(opus48, 90))
         self.assertTrue(slug_allowed_for_budget(grok, 90))
         self.assertTrue(slug_allowed_for_budget(gemini, 95))

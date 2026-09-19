@@ -3,13 +3,14 @@
 
 import { type Dispatch, type SetStateAction } from "react";
 import {
-  DefaultButton, Dropdown, Icon, MessageBar, MessageBarType, PrimaryButton,
+  DefaultButton, Icon, MessageBar, MessageBarType, PrimaryButton,
   SpinButton, Stack, Text, TextField, Toggle,
 } from "@fluentui/react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 
 import { MediaModelPicker, MediaSettingsSurface } from "./MediaModelPicker";
+import { SettingsPicker } from "./SettingsPicker";
 import { liveVoiceSetup } from "@/lib/live-voice-setup";
 import type { SettingsPayload, TranscriptionSettingsUpdate, VoiceSettingsUpdate } from "@/lib/types";
 import "./live-voice-settings.css";
@@ -88,9 +89,10 @@ export function LiveVoiceSettings({
               <section className="live-voice-settings__service" aria-labelledby="live-listening-title">
                 <Text variant="large" as="h3" id="live-listening-title">{tx("listening")}</Text>
                 <Text>{tx("listeningHint")}</Text>
-                <Dropdown label={tx("listeningProvider")} selectedKey={transcription.provider || null}
-                  placeholder={tx("chooseProvider")} options={sttProviders.map((p) => ({ key: p.name, text: p.label }))}
-                  onChange={(_, option) => { if (option) onTranscription((prev) => ({ ...prev, provider: String(option.key), model: "" })); }} />
+                <SettingsPicker label={tx("listeningProvider")} ariaLabel={tx("listeningProvider")}
+                  value={transcription.provider} placeholder={tx("chooseProvider")}
+                  options={sttProviders.map((p) => ({ value: p.name, label: p.label }))}
+                  onChange={(provider) => onTranscription((prev) => ({ ...prev, provider, model: "" }))} />
                 {sttProvider && !sttProvider.configured ? (
                   <MessageBar messageBarType={MessageBarType.info}>
                     {tx("providerNeeded")}
@@ -105,9 +107,10 @@ export function LiveVoiceSettings({
               <section className="live-voice-settings__service" aria-labelledby="live-speaking-title">
                 <Text variant="large" as="h3" id="live-speaking-title">{tx("speaking")}</Text>
                 <Text>{tx("speakingHint")}</Text>
-                <Dropdown label={tx("speakingProvider")} selectedKey={voice.ttsProvider || null}
-                  placeholder={tx("chooseProvider")} options={ttsProviders.map((p) => ({ key: p.name, text: p.label }))}
-                  onChange={(_, option) => { if (option) onVoice((prev) => ({ ...prev, ttsProvider: String(option.key), ttsModel: "", voice: "auto" })); }} />
+                <SettingsPicker label={tx("speakingProvider")} ariaLabel={tx("speakingProvider")}
+                  value={voice.ttsProvider} placeholder={tx("chooseProvider")}
+                  options={ttsProviders.map((p) => ({ value: p.name, label: p.label }))}
+                  onChange={(ttsProvider) => onVoice((prev) => ({ ...prev, ttsProvider, ttsModel: "", voice: "auto" }))} />
                 {ttsProvider && !ttsProvider.configured ? (
                   <MessageBar messageBarType={MessageBarType.info}>
                     {tx("providerNeeded")}
@@ -136,9 +139,9 @@ export function LiveVoiceSettings({
                   onChange={(_, value) => { const next = Number(value); if (next >= 1 && next <= 100) onTranscription((prev) => ({ ...prev, maxUploadMb: next })); }} />
                 <Toggle label={tx("autoSpeak")} checked={voice.autoSpeak}
                   onChange={(_, checked) => onVoice((prev) => ({ ...prev, autoSpeak: Boolean(checked) }))} />
-                <Dropdown label={tx("audioFormat")} selectedKey={voice.responseFormat}
-                  options={[{ key: "mp3", text: "MP3" }, { key: "wav", text: "WAV" }]}
-                  onChange={(_, option) => { if (option) onVoice((prev) => ({ ...prev, responseFormat: String(option.key) })); }} />
+                <SettingsPicker label={tx("audioFormat")} ariaLabel={tx("audioFormat")} value={voice.responseFormat}
+                  options={[{ value: "mp3", label: "MP3" }, { value: "wav", label: "WAV" }]}
+                  onChange={(responseFormat) => onVoice((prev) => ({ ...prev, responseFormat }))} />
                 {canUseNavin ? <DefaultButton text={tx("restoreNavin")} onClick={useNavin} /> : null}
               </Stack>
             </details>

@@ -135,3 +135,40 @@ def test_license_response_arriving_after_model_choice_keeps_that_choice():
     assert final.model_routes["computer"] == "my-computer"
     assert final.model_presets["my-computer"].input_modalities == ["text", "image"]
     assert final.license.plan == "team"
+
+
+def test_catalog_response_arriving_after_zai_setup_keeps_the_selected_model():
+    import httpx
+
+    from navin.providers.managed_catalog import sync_managed_catalog
+
+    config = load_config()
+    config.model_catalog.enabled = True
+    config.license.plan = "pro"
+    save_config(config)
+    background = load_config()
+
+    def response(*args, **kwargs):
+        settings = load_config()
+        settings.providers.zai.api_key = "test-zai-key"
+        settings.providers.zai.access_plan = "coding"
+        settings.model_presets["my-zai"] = ModelPresetConfig(provider="zai", model="glm-4.5")
+        settings.agents.defaults.model_preset = "my-zai"
+        settings.agents.defaults.model_preset_user_pinned = True
+        save_config(settings)
+        return httpx.Response(200, request=httpx.Request("GET", "https://catalog.test"), json={
+            "defaultModel": "managed-model",
+            "models": [{"slug": "managed-model", "name": "Managed model", "tier": "main"}],
+        })
+
+    with patch("navin.providers.managed_catalog.httpx.get", side_effect=response), patch(
+        "navin.optional_live.live_modules_available", return_value=True
+    ):
+        assert sync_managed_catalog(background, force=True)
+
+    final = load_config()
+    assert final.agents.defaults.model_preset == "my-zai"
+    assert final.agents.defaults.model_preset_user_pinned is True
+    assert final.providers.zai.api_key == "test-zai-key"
+    assert final.resolve_preset().provider == "zai"
+    assert any(preset.model == "managed-model" for preset in final.model_presets.values())

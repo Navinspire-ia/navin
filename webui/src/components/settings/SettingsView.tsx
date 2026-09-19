@@ -1,7 +1,6 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ConnectedAccounts } from "./ConnectedAccounts";
 import {
   useCallback,
   useEffect,
@@ -13,7 +12,6 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Dropdown as FluentDropdown } from "@fluentui/react";
 import {
   Activity,
   ArrowUpCircle,
@@ -78,7 +76,8 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { AccountSettings } from "@/components/settings/AccountSettings";
 import { ComputerSettings } from "@/components/settings/ComputerSettings";
 import { LiveVoiceSettings } from "@/components/settings/LiveVoiceSettings";
-import { MediaModelPicker, MediaSettingsSurface } from "@/components/settings/MediaModelPicker";
+import { MediaModelPicker } from "@/components/settings/MediaModelPicker";
+import { SettingsPicker } from "@/components/settings/SettingsPicker";
 import { AutomationEditDialog } from "@/components/settings/AutomationEditDialog";
 import { AppTemplatesSettings } from "@/components/settings/AppTemplatesSettings";
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
@@ -2434,13 +2433,10 @@ export function SettingsView({
         );
       case "account":
         return (
-          <div className="grid min-w-0 gap-8">
           <AccountSettings
             onOpenProviders={() => selectSection("providers")}
             usage={settings.usage}
           />
-          <ConnectedAccounts />
-          </div>
         );
       case "appearance":
         return (
@@ -4296,8 +4292,8 @@ function ImportModelsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] max-w-[620px] flex-col rounded-[28px] border-border/55 bg-card/95 p-0 shadow-[0_28px_90px_rgba(15,23,42,0.20)] backdrop-blur-xl dark:border-white/10">
-        <DialogHeader className="border-b border-border/45 px-5 py-4 text-left">
+      <DialogContent className="flex min-h-0 max-h-[min(85dvh,48rem)] max-w-[620px] flex-col overflow-hidden rounded-[28px] border-border/55 bg-card/95 p-0 shadow-[0_28px_90px_rgba(15,23,42,0.20)] backdrop-blur-xl dark:border-white/10">
+        <DialogHeader className="shrink-0 border-b border-border/45 px-5 py-4 text-left">
           <DialogTitle className="text-[18px] font-semibold tracking-[-0.01em]">
             {tx("settings.models.importTitle", "Import models")}
           </DialogTitle>
@@ -4384,7 +4380,11 @@ function ImportModelsDialog({
                 </span>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto rounded-[16px] border border-border/50 scrollbar-thin scrollbar-track-transparent">
+              <div
+                data-panel-scroll=""
+                data-testid="model-import-scroll"
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-[16px] border border-border/50 scrollbar-thin scrollbar-track-transparent"
+              >
                 {visibleModels.length === 0 ? (
                   <p className="px-3 py-4 text-[12px] text-muted-foreground">
                     {tx("settings.models.noModelResults", "No matching models.")}
@@ -4450,7 +4450,7 @@ function ImportModelsDialog({
           ) : null}
         </div>
 
-        <DialogFooter className="border-t border-border/45 px-5 py-4 sm:space-x-2">
+        <DialogFooter className="shrink-0 border-t border-border/45 px-5 py-4 sm:space-x-2">
           {progress && progress.total > 1 ? (
             <span className="mr-auto text-[11.5px] text-muted-foreground">
               {progress.done}/{progress.total}
@@ -4813,6 +4813,7 @@ function ModelsSettings({
           <ProviderPicker
             providers={providerOptions}
             value={providerValue}
+            ariaLabel={t("settings.rows.provider")}
             emptyLabel={t("settings.byok.noConfiguredProviders")}
             showProviderLogos={showBrandLogos}
             disabled={selectedPresetLocked}
@@ -6025,6 +6026,7 @@ function VideoGenerationSettings({
           >
             <ProviderPicker
               providers={videoGeneration.providers}
+              ariaLabel={tx("settings.rows.videoProvider", "Video provider")}
               value={form.provider}
               emptyLabel={tx("settings.video.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
@@ -6083,6 +6085,7 @@ function VideoGenerationSettings({
           >
             <ProviderPicker
               providers={aspectOptions}
+              ariaLabel={tx("settings.rows.defaultAspectRatio", "Default aspect")}
               value={form.defaultAspectRatio}
               emptyLabel={tx("settings.video.selectAspect", "Select aspect")}
               onChange={(defaultAspectRatio) =>
@@ -6109,6 +6112,7 @@ function VideoGenerationSettings({
           >
             <ProviderPicker
               providers={resolutionOptions}
+              ariaLabel={tx("settings.rows.defaultResolution", "Default resolution")}
               value={form.defaultResolution}
               emptyLabel={tx("settings.video.selectResolution", "Select resolution")}
               onChange={(defaultResolution) =>
@@ -6212,6 +6216,7 @@ function ImageGenerationSettings({
           >
             <ProviderPicker
               providers={settings.image_generation.providers}
+              ariaLabel={tx("settings.rows.imageProvider", "Image provider")}
               value={form.provider}
               emptyLabel={tx("settings.image.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
@@ -6281,6 +6286,7 @@ function ImageGenerationSettings({
           >
             <ProviderPicker
               providers={aspectOptions}
+              ariaLabel={tx("settings.rows.defaultAspectRatio", "Default aspect")}
               value={form.defaultAspectRatio}
               emptyLabel={tx("settings.image.selectAspect", "Select aspect")}
               onChange={(defaultAspectRatio) =>
@@ -6294,6 +6300,7 @@ function ImageGenerationSettings({
           >
             <ProviderPicker
               providers={sizeOptions}
+              ariaLabel={tx("settings.rows.defaultImageSize", "Default size")}
               value={form.defaultImageSize}
               emptyLabel={tx("settings.image.selectSize", "Select size")}
               onChange={(defaultImageSize) =>
@@ -6425,6 +6432,7 @@ function TranscriptionSettings({
           >
             <ProviderPicker
               providers={music.providers}
+              ariaLabel={tx("settings.rows.musicProvider", "Provider")}
               value={musicForm.provider}
               emptyLabel={tx("settings.voice.selectProvider", "Select provider")}
               showProviderLogos={showBrandLogos}
@@ -6594,6 +6602,7 @@ function WebSettings({
           >
             <ProviderPicker
               providers={settings.web_search.providers}
+              ariaLabel={t("settings.byok.webSearch.provider")}
               value={form.provider}
               emptyLabel={t("settings.byok.webSearch.selectProvider")}
               showProviderLogos={showBrandLogos}
@@ -6699,22 +6708,21 @@ function WebSettings({
               "Auto keeps semantic search on for free local providers only. On forces it on (a hosted provider bills per repository).",
             )}
           >
-            <select
-              aria-label={tx("settings.semanticSearch.enabled", "Mode")}
+            <SettingsPicker
+              ariaLabel={tx("settings.semanticSearch.enabled", "Mode")}
               value={semanticForm.enabled === "auto" ? "auto" : semanticForm.enabled ? "on" : "off"}
-              onChange={(event) => {
-                const value = event.target.value;
+              options={[
+                { value: "auto", label: tx("settings.semanticSearch.auto", "Auto (free providers)") },
+                { value: "on", label: tx("settings.semanticSearch.on", "On") },
+                { value: "off", label: tx("settings.semanticSearch.off", "Off") },
+              ]}
+              onChange={(value) => {
                 onChangeSemanticForm((prev) => ({
                   ...prev,
                   enabled: value === "auto" ? "auto" : value === "on",
                 }));
               }}
-              className="h-9 rounded-full border border-input bg-background px-3 text-[13px]"
-            >
-              <option value="auto">{tx("settings.semanticSearch.auto", "Auto (free providers)")}</option>
-              <option value="on">{tx("settings.semanticSearch.on", "On")}</option>
-              <option value="off">{tx("settings.semanticSearch.off", "Off")}</option>
-            </select>
+            />
           </SettingsRow>
           <SettingsRow
             title={tx("settings.semanticSearch.provider", "Embedding provider")}
@@ -10498,34 +10506,29 @@ function ProviderPicker({
   providers,
   value,
   emptyLabel,
-  showProviderLogos = false,
+  ariaLabel = emptyLabel,
+  showProviderLogos,
   disabled = false,
   onChange,
 }: {
   providers: Array<{ name: string; label: string }>;
   value: string;
   emptyLabel: string;
+  ariaLabel?: string;
   showProviderLogos?: boolean;
   disabled?: boolean;
   onChange: (provider: string) => void;
 }) {
-  const options = providers.map((provider) => ({ key: provider.name, text: provider.label }));
-  const renderProvider = (option?: { key: string | number; text: string }) => option ? (
-    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-      {showProviderLogos ? <ProviderPickerIcon provider={String(option.key)} showBrandLogos /> : null}
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{option.text}</span>
-    </span>
-  ) : null;
+  const options = providers.map((provider) => ({
+    value: provider.name,
+    label: provider.label,
+    icon: showProviderLogos === undefined ? undefined : (
+      <ProviderPickerIcon provider={provider.name} showBrandLogos={showProviderLogos} />
+    ),
+  }));
   return (
-    <MediaSettingsSurface>
-      <FluentDropdown ariaLabel={emptyLabel} placeholder={emptyLabel}
-        selectedKey={providers.some((provider) => provider.name === value) ? value : null}
-        options={options} disabled={disabled || !providers.length}
-        styles={{ root: { width: 210, maxWidth: "100%" } }}
-        calloutProps={{ calloutMaxHeight: 288 }}
-        onRenderOption={renderProvider} onRenderTitle={(items) => renderProvider(items?.[0])}
-        onChange={(_, option) => { if (option && option.key !== value) onChange(String(option.key)); }} />
-    </MediaSettingsSurface>
+    <SettingsPicker value={value} options={options} ariaLabel={ariaLabel}
+      placeholder={emptyLabel} disabled={disabled} onChange={onChange} />
   );
 }
 
@@ -11240,8 +11243,8 @@ function SettingsRow({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[62px] flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-      <div className="min-w-0">
+    <div className="flex min-h-[62px] flex-col gap-3 px-4 py-3.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-9 sm:px-5">
+      <div className="min-w-0 sm:flex-[1_1_12rem]">
         <div className="text-[14px] font-medium leading-5 text-foreground">{title}</div>
         {description ? (
           <div className="mt-0.5 max-w-[40rem] whitespace-pre-line text-[12px] leading-5 text-muted-foreground">
@@ -11249,7 +11252,7 @@ function SettingsRow({
           </div>
         ) : null}
       </div>
-      {children ? <div className="min-w-0 sm:ml-6 sm:shrink-0">{children}</div> : null}
+      {children ? <div className="min-w-0 max-w-full sm:shrink-0">{children}</div> : null}
     </div>
   );
 }

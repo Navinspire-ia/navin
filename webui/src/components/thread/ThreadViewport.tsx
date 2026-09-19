@@ -812,7 +812,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
             </div>
           </div>
         )}
-        <div ref={bottomRef} aria-hidden className="h-px" />
+        {/* The bottom anchor must not overflow a transcript that already fits. */}
+        <div ref={bottomRef} aria-hidden className="h-0" />
       </div>
 
       <div

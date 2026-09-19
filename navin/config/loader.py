@@ -194,13 +194,20 @@ def _configured_values(config: Config) -> dict[str, Any]:
     return pruned
 
 
-def save_config(config: Config, config_path: Path | None = None) -> None:
+def save_config(
+    config: Config,
+    config_path: Path | None = None,
+    *,
+    preserve_concurrent: bool = False,
+) -> None:
     """
     Save configuration to file.
 
     Args:
         config: Configuration to save.
         config_path: Optional path to save to. Uses default if not provided.
+        preserve_concurrent: Let newer on-disk edits win conflicts with this
+            caller's changes. Use for background refreshes of derived settings.
     """
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,7 +219,12 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
             # which would try to acquire this same interprocess lock again.
             raw = json.loads(path.read_text(encoding="utf-8"))
             latest = Config.model_validate(_migrate_config(decrypt_config_data(raw, path)))
-            merged = _merge_config_edits(config._loaded_values, config.model_dump(mode="json"), latest.model_dump(mode="json"))
+            edited_values = config.model_dump(mode="json")
+            latest_values = latest.model_dump(mode="json")
+            if preserve_concurrent:
+                merged = _merge_config_edits(config._loaded_values, latest_values, edited_values)
+            else:
+                merged = _merge_config_edits(config._loaded_values, edited_values, latest_values)
             current = Config.model_validate(merged)
         data = _configured_values(current)
         if current.providers.openai_codex.proxy is not None:

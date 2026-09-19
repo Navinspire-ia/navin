@@ -1588,7 +1588,10 @@ def sync_managed_catalog(
                 return False
             from navin.config.loader import save_config
 
-            save_config(config)
+            # The HTTP request can finish after the user saves a provider or
+            # selects a model. Those newer choices take priority over catalog
+            # defaults computed from the configuration read before the request.
+            save_config(config, preserve_concurrent=True)
         except Exception as exc:
             logger.warning("Model catalog could not be applied: {}", exc)
             return False
