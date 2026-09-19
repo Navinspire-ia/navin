@@ -192,6 +192,10 @@ class ApprovalBroker:
 
     def apply_config(self, config: ApprovalConfig) -> None:
         """Hot-apply a new approvals posture from Settings > Security."""
+        if config != self._config:
+            # Re-enabling confirmations must not inherit exemptions granted
+            # under the previous policy.
+            self._remembered.clear()
         self._config = config
 
     def enable_channel(self, channel: str) -> None:

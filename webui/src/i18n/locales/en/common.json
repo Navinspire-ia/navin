@@ -2911,6 +2911,8 @@
     "activityJournalEarlier_one": "{{count}} earlier step",
     "activityJournalEarlier_other": "{{count}} earlier steps",
     "activityJournalShowAll": "Show all · {{count}} more",
+    "activityPreviousPage": "Previous",
+    "activityNextPage": "Next",
     "activityJournalVerbSearching": "Searching",
     "activityJournalVerbSearched": "Searched",
     "activityJournalVerbCalling": "Calling",
@@ -8905,7 +8907,20 @@
           "recent": "Recent"
         },
         "closeHint": "Esc Close",
+        "unknownSettingsSection": "Unknown settings section. Use /settings, /settings models or /settings providers.",
         "commands": {
+          "settings": {
+            "title": "Settings",
+            "description": "Open Navin settings."
+          },
+          "models": {
+            "title": "Models",
+            "description": "Open model configuration."
+          },
+          "permission": {
+            "title": "Permissions",
+            "description": "Show or change confirmations: auto, ask, always."
+          },
           "dream": {
             "description": "Manually trigger memory consolidation.",
             "title": "Run Dream"
@@ -9266,7 +9281,14 @@
       "skip": "Skip",
       "stop": "Stop",
       "view": "View plan",
-      "viewHint": "Full plan in Markdown - steps, acceptance, and context."
+      "viewHint": "Full plan in Markdown - steps, acceptance, and context.",
+      "close": "Close plan",
+      "steps": "Steps",
+      "inProgress": "In progress",
+      "readyToResume": "Ready to continue",
+      "progress": "{{done}} of {{total}} steps completed",
+      "needsProgress": "Progress has stalled. The agent needs to change approach.",
+      "actionFailed": "The plan could not be updated. Please try again."
     },
     "planPaused": "paused",
     "planStall": "stalled x{{count}}",

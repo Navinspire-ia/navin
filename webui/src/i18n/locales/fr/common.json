@@ -2909,6 +2909,8 @@
     "activityJournalEarlier_one": "{{count}} étape précédente",
     "activityJournalEarlier_other": "{{count}} étapes précédentes",
     "activityJournalShowAll": "Tout afficher · {{count}} de plus",
+    "activityPreviousPage": "Précédent",
+    "activityNextPage": "Suivant",
     "activityJournalVerbSearching": "Recherche",
     "activityJournalVerbSearched": "Recherche",
     "activityJournalVerbCalling": "Appel",
@@ -8903,7 +8905,20 @@
           "recent": "Récent"
         },
         "closeHint": "Échap Fermer",
+        "unknownSettingsSection": "Section inconnue. Utilisez /settings, /settings models ou /settings providers.",
         "commands": {
+          "settings": {
+            "title": "Réglages",
+            "description": "Ouvrir les réglages de Navin."
+          },
+          "models": {
+            "title": "Modèles",
+            "description": "Ouvrir la configuration des modèles."
+          },
+          "permission": {
+            "title": "Autorisations",
+            "description": "Afficher ou changer les confirmations : auto, ask, always."
+          },
           "dream": {
             "description": "Déclencher manuellement la consolidation de la mémoire.",
             "title": "Lancer Dream"
@@ -9229,8 +9244,8 @@
     "loadEarlier": "Charger les messages précédents",
     "loadingConversation": "Chargement de la conversation…",
     "plan": {
-      "build": "Build",
-      "cancelled": "Cancelled",
+      "build": "Lancer",
+      "cancelled": "Annulé",
       "complete": "Plan terminé",
       "created": "Plan",
       "hide": "Hide plan",
@@ -9253,20 +9268,27 @@
         "steps": "Plan",
         "validation": "Validation"
       },
-      "now": "Now",
+      "now": "En cours",
       "qualityBuildAnyway": "Lancer quand même",
       "qualityGaps": "Manques dans le plan ({{count}})",
       "qualityHoldHint": "Ce plan a des manques. Corrigez-les, ou utilisez le lien de l'avertissement pour lancer quand même.",
       "qualityMore": "+{{count}} de plus",
       "qualityReady": "Plan prêt",
       "qualityResumeAnyway": "Reprendre quand même",
-      "resume": "Resume",
+      "resume": "Reprendre",
       "skip": "Skip",
-      "stop": "Stop",
-      "view": "View plan",
-      "viewHint": "Full plan in Markdown - steps, acceptance, and context."
+      "stop": "Arrêter",
+      "view": "Ouvrir le plan",
+      "viewHint": "Full plan in Markdown - steps, acceptance, and context.",
+      "close": "Fermer le plan",
+      "steps": "Étapes",
+      "inProgress": "En cours",
+      "readyToResume": "Prêt à continuer",
+      "progress": "{{done}} étapes terminées sur {{total}}",
+      "needsProgress": "La progression est bloquée. L’agent doit changer d’approche.",
+      "actionFailed": "La mise à jour du plan a échoué. Réessayez."
     },
-    "planPaused": "paused",
+    "planPaused": "En pause",
     "planStall": "stalled x{{count}}",
     "presence": {
       "tooltip": "{{count}} online",

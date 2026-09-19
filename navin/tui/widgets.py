@@ -12,14 +12,12 @@ import re
 import time
 from typing import Any
 
-from markdown_it import MarkdownIt
 from rich.markup import escape
 from rich.rule import Rule
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
 from textual.app import ComposeResult
-from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
@@ -28,12 +26,12 @@ from textual.reactive import reactive
 from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
-from textual.widgets._markdown import MarkdownParagraph
 from textual.widgets.option_list import Option
 
 from navin.tui.brand import MARK, tide_text, wave_frame
 from navin.tui.frames import paint_input
-from navin.tui.markdown import install_path_styles
+from navin.tui.markdown import install_path_styles, readable_validation_report
+from navin.tui.markdown_stream import TranscriptMarkdown
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
 from navin.utils.pasted_content import (
@@ -60,6 +58,7 @@ from navin.utils.tool_hints import (
     format_tool_detail,
     format_tool_preview_markup,
     format_turn_summary,
+    is_validation_pending,
     preview_rows,
     redact_command,
     tool_cluster_kind,
@@ -72,6 +71,7 @@ install_path_styles()
 # Coalesce bursts without making input or the engine wait for each paint.
 STREAM_FRAME_SECONDS = 1 / 20
 TOOL_OUTPUT_FRAME_SECONDS = 0.1
+ACTIVITY_PAGE_SIZE = 20
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -328,6 +328,9 @@ def readable_assistant_markdown(text: str) -> str:
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not raw.strip():
         return raw
+    report = readable_validation_report(raw)
+    if report is not None:
+        return report
     if "\n" in raw.strip():
         return raw
     if len(raw) < 220:
@@ -555,6 +558,7 @@ class ToolCall(Vertical, can_focus=True):
     }
     ToolCall:focus > .tool-head { background: $surface; }
     ToolCall.-error > .tool-head { color: $error; }
+    ToolCall.-validation-pending > .tool-head { color: $warning; }
     ToolCall.-cancelled > .tool-head { color: $warning; }
     ToolCall > .tool-output {
         height: auto;
@@ -636,6 +640,7 @@ class ToolCall(Vertical, can_focus=True):
         self._spin = 0
         self._open = False
         self.cluster_kind = ""
+        self._cluster_owner: ToolCluster | None = None
         self.tree_mark = ""
         self._spin_timer: Timer | None = None
         self._output_timer: Timer | None = None
@@ -667,6 +672,8 @@ class ToolCall(Vertical, can_focus=True):
 
     def _refresh_head(self, *, notify_cluster: bool = True, animation_only: bool = False) -> None:
         if not self.is_mounted:
+            if notify_cluster:
+                self._notify_cluster()
             return
         try:
             key = (self._plain_head(), self.app.current_theme.dark)
@@ -681,6 +688,9 @@ class ToolCall(Vertical, can_focus=True):
             self._notify_cluster()
 
     def _notify_cluster(self) -> None:
+        if self._cluster_owner is not None:
+            self._cluster_owner.request_head_refresh()
+            return
         node = self.parent
         while node is not None:
             if isinstance(node, ToolCluster):
@@ -698,9 +708,15 @@ class ToolCall(Vertical, can_focus=True):
         # Three cells wide in every state so the tool names stay aligned.
         if self.phase in {"start", "output"}:
             return wave_frame(self._spin)
+        if self.validation_pending:
+            return " ! "
         if self.phase == "error":
             return " ✗ "
         return " ✓ "
+
+    @property
+    def validation_pending(self) -> bool:
+        return self.phase == "error" and is_validation_pending(self.tool_name, self.error)
 
     def _plain_head(self) -> str:
         if self.cluster_kind == "explore":
@@ -715,6 +731,7 @@ class ToolCall(Vertical, can_focus=True):
                 operation=self.file_operation,
                 path=self.file_path,
                 counts_known=not self.file_binary,
+                error=self.error,
             )
         if self.percent is not None:
             from navin.utils.task_progress import progress_bar
@@ -725,7 +742,9 @@ class ToolCall(Vertical, can_focus=True):
             if self.cluster_kind == "explore" and self.phase in {"error", "cancelled"}:
                 label += "  (failed)" if self.phase == "error" else "  (cancelled)"
             return f"{mark}{label}"
-        if self.phase in {"error", "cancelled"}:
+        if self.validation_pending:
+            mark = "! "
+        elif self.phase in {"error", "cancelled"}:
             mark = "× "
         elif self.phase in {"start", "output"}:
             mark = f"{self._status_glyph().strip()} "
@@ -766,14 +785,16 @@ class ToolCall(Vertical, can_focus=True):
             if self._spin_timer is not None:
                 self._spin_timer.pause()
             self.remove_class("-running")
-            self.remove_class("-ok", "-error", "-cancelled")
-            self.add_class("-ok" if phase == "end" else f"-{phase}")
+            self.remove_class("-ok", "-error", "-cancelled", "-validation-pending")
+            self.add_class("-validation-pending" if self.validation_pending else "-ok" if phase == "end" else f"-{phase}")
             self._reveal_if_preview()
         if phase == "output":
             if progress_changed:
                 self._refresh_head()
-            if self._output_timer is None:
+            if self.is_attached and self._output_timer is None:
                 self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_output)
+            if not self.is_attached:
+                self._notify_cluster()
             return
         if self._output_timer is not None:
             self._output_timer.stop()
@@ -799,6 +820,7 @@ class ToolCall(Vertical, can_focus=True):
     def _paint_output(self) -> None:
         self._output_timer = None
         if not self.is_attached:
+            self._notify_cluster()
             return
         if self._defer_output_paint():
             # Keep all output in memory, but don't parse and style thousands
@@ -1073,6 +1095,15 @@ class ToolCluster(Vertical, can_focus=True):
         background: $background;
     }
     ToolCluster.-collapsed > .cluster-body { display: none; }
+    ToolCluster > Button.cluster-more {
+        height: 1;
+        min-height: 1;
+        min-width: 0;
+        width: auto;
+        border: none;
+        padding: 0 1;
+    }
+    ToolCluster.-collapsed > Button.cluster-more { display: none; }
     """
     BINDINGS = [Binding("enter,space", "toggle", "Expand / collapse", show=False)]
 
@@ -1082,10 +1113,16 @@ class ToolCluster(Vertical, can_focus=True):
         self.tools: list[ToolCall] = []
         self._open = True
         self._painted_head: tuple[str, bool] | None = None
+        self._visible_limit = ACTIVITY_PAGE_SIZE
+        self._head_pending = False
+        self._loading_page = False
 
     def compose(self) -> ComposeResult:
         yield Static(self._head_text(), classes="cluster-head", markup=False)
         yield Vertical(classes="cluster-body")
+        more = Button("Show more activity", classes="cluster-more", compact=True)
+        more.display = False
+        yield more
 
     def on_mount(self) -> None:
         self.watch(self.app, "theme", lambda _: self._refresh_head(), init=False)
@@ -1124,6 +1161,7 @@ class ToolCluster(Vertical, can_focus=True):
         return f"{glyph} {title}{extra}"
 
     def _refresh_head(self) -> None:
+        self._head_pending = False
         if not self.is_mounted:
             return
         try:
@@ -1133,8 +1171,21 @@ class ToolCluster(Vertical, can_focus=True):
             if key != self._painted_head:
                 head.update(activity_head_text(key[0], dark=key[1]))
                 self._painted_head = key
+            more = self.query_one(".cluster-more", Button)
+            remaining = max(0, len(self.tools) - self._visible_limit)
+            more.display = remaining > 0 and self._open
+            if remaining:
+                more.label = f"Show next {min(ACTIVITY_PAGE_SIZE, remaining)} ({remaining} more)"
         except Exception:  # noqa: BLE001
             pass
+
+    def request_head_refresh(self) -> None:
+        # A multi-file event can update hundreds of records in one tick.
+        # Count them once per batch instead of rescanning the whole group
+        # for every unmounted record.
+        if self.is_mounted and not self._head_pending:
+            self._head_pending = True
+            self.call_later(self._refresh_head)
 
     def _retree(self) -> None:
         last = len(self.tools) - 1
@@ -1146,8 +1197,14 @@ class ToolCluster(Vertical, can_focus=True):
 
     async def add_call(self, widget: ToolCall) -> None:
         widget.cluster_kind = self.kind
+        widget._cluster_owner = self
         widget.add_class("-cluster")
         self.tools.append(widget)
+        if len(self.tools) > self._visible_limit:
+            if len(self.tools) == self._visible_limit + 1:
+                self._retree()
+            self.request_head_refresh()
+            return
         body = self.query_one(".cluster-body", Vertical)
         await body.mount(widget)
         self._retree()
@@ -1155,6 +1212,24 @@ class ToolCluster(Vertical, can_focus=True):
             widget._reveal_if_preview()
             widget._refresh_body()
         self._refresh_head()
+
+    @on(Button.Pressed, ".cluster-more")
+    async def _more_activity(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._loading_page:
+            return
+        self._loading_page = True
+        try:
+            start = self._visible_limit
+            self._visible_limit = min(len(self.tools), start + ACTIVITY_PAGE_SIZE)
+            body = self.query_one(".cluster-body", Vertical)
+            for index in range(start, self._visible_limit):
+                widget = self.tools[index]
+                widget.tree_mark = "└ " if index == len(self.tools) - 1 else "├ "
+            await body.mount(*self.tools[start:self._visible_limit])
+            self._refresh_head()
+        finally:
+            self._loading_page = False
 
     def toggle(self) -> None:
         self._open = not self._open
@@ -1353,60 +1428,6 @@ class SubagentCard(Static):
         self.set_class(bool(error), "-error")
 
 
-class TranscriptMarkdown(Markdown):
-    """Markdown children own the content; only paint visible background lines."""
-
-    def render_line(self, y: int) -> Strip:
-        return Strip.blank(self.size.width, self.visual_style.rich_style)
-
-    def append(self, markdown: str) -> AwaitComplete:
-        """Stream paragraphs without Textual's application-wide paint lock.
-
-        Complex Markdown keeps the framework's atomic update path. Plain
-        paragraphs can update in place and mount new siblings while input
-        and modal screens continue painting.
-        """
-        last = self.children[-1] if self.children else None
-        if last is not None and last.source_range is not None:
-            # update() may leave its cursor beyond a completed final block.
-            # Reparse from that block so appending never replaces it with a
-            # different paragraph or loses the start of a multiline block.
-            self._last_parsed_line = last.source_range[0]
-        if last is not None and not isinstance(last, MarkdownParagraph):
-            return super().append(markdown)
-        source = self.source + markdown
-        start_line = self._last_parsed_line
-        fragment = "".join(source.splitlines(keepends=True)[start_line:])
-        parser = MarkdownIt("gfm-like") if self._parser_factory is None else self._parser_factory()
-        tokens = parser.parse(fragment)
-        if not tokens or any(token.type not in {"paragraph_open", "inline", "paragraph_close"} for token in tokens):
-            return super().append(markdown)
-        self._markdown = source
-
-        async def append_paragraphs() -> None:
-            async with self.lock:
-                blocks = list(self._parse_markdown(tokens))
-                for token in reversed(tokens):
-                    if token.map is not None and token.level == 0:
-                        self._last_parsed_line = start_line + token.map[0]
-                        break
-                for block in blocks:
-                    start, end = block.source_range
-                    block.source_range = (start_line + start, start_line + end)
-                if last is not None and blocks:
-                    replacement = blocks.pop(0)
-                    last.source_range = replacement.source_range
-                    if last._content.is_same(replacement._content):
-                        last._copy_context(replacement)
-                    else:
-                        await last._update_from_block(replacement)
-                for offset in range(0, len(blocks), 16):
-                    await self.mount_all(blocks[offset:offset + 16])
-                    await asyncio.sleep(0)
-
-        return AwaitComplete(append_paragraphs())
-
-
 class AssistantMessage(Vertical):
     """An assistant turn: reasoning, activity (tools), streamed Markdown body."""
 
@@ -1487,9 +1508,48 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownH3 { margin: 0 0 1 0; padding: 0; background: transparent; border: none; }
     AssistantMessage > .assistant-body MarkdownParagraph { margin: 0 0 1 0; }
     AssistantMessage > .assistant-body MarkdownBlock { color: $foreground; }
+    AssistantMessage > .assistant-body MarkdownH1,
+    AssistantMessage > .assistant-body MarkdownH2 {
+        color: $primary;
+        text-style: bold;
+    }
+    AssistantMessage > .assistant-body MarkdownH3 {
+        color: $accent;
+        text-style: bold;
+        margin-top: 1;
+    }
+    AssistantMessage > .assistant-body MarkdownTable {
+        margin: 0 0 1 0;
+    }
+    AssistantMessage > .assistant-body MarkdownTable .header {
+        color: $primary;
+        background: $panel;
+        text-style: bold;
+    }
+    AssistantMessage.-validation-pending > .assistant-body MarkdownH2 {
+        color: $warning;
+    }
+    AssistantMessage.-validation-pending > .assistant-finish {
+        color: $warning;
+    }
+    AssistantMessage.-validation-pending > .assistant-body MarkdownTable {
+        width: 56;
+        max-width: 100%;
+    }
+    AssistantMessage.-validation-pending > .assistant-body MarkdownFence {
+        color: $warning;
+    }
+    AssistantMessage.-validation-pending > .assistant-body MarkdownFence > Label {
+        width: 1fr;
+        height: auto;
+        padding: 1;
+        text-wrap: wrap;
+        text-overflow: fold;
+    }
     AssistantMessage > .assistant-body MarkdownBulletList,
     AssistantMessage > .assistant-body MarkdownOrderedList { margin: 0 0 1 0; }
-    AssistantMessage > .assistant-body MarkdownListItem MarkdownParagraph { margin: 0; }
+    AssistantMessage > .assistant-body MarkdownBulletList MarkdownParagraph,
+    AssistantMessage > .assistant-body MarkdownOrderedList MarkdownParagraph { margin: 0; }
     AssistantMessage > .assistant-body MarkdownBlock > .code_inline,
     AssistantMessage > .assistant-body MarkdownBlock:dark > .code_inline,
     AssistantMessage > .assistant-body MarkdownBlock:light > .code_inline {
@@ -1843,6 +1903,7 @@ class AssistantMessage(Vertical):
             if body is None:
                 return
             text = readable_assistant_markdown(self.text) if force else self.text
+            self.set_class(text.startswith("## Validation pending\n"), "-validation-pending")
             if text == self._painted_markdown:
                 return
             if text.startswith(self._painted_markdown):
@@ -1893,7 +1954,9 @@ class AssistantMessage(Vertical):
         self.streamed = True
         self._buffer.append(text)
         if len(self._buffer) == 1 and not self._open:
-            self._refresh_preview()
+            self._open = True
+            self.add_class("-open")
+            self._sync_layers()
         if self._paint_timer is None:
             self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
 
@@ -2024,7 +2087,7 @@ class AssistantMessage(Vertical):
             summary = format_turn_summary(
                 summary_rows
             ) if summary_rows else "No completed operations"
-            failed = sum(tool.phase == "error" for tool in self._tools.values())
+            failed = sum(tool.phase == "error" and not tool.validation_pending for tool in self._tools.values())
             cancelled = sum(tool.phase == "cancelled" for tool in self._tools.values())
             if failed:
                 summary += f" · {failed} failed"
@@ -2984,7 +3047,17 @@ class Transcript(VerticalScroll):
 
     def watch_auto_follow(self, follow: bool) -> None:
         if self.is_attached:
-            self.anchor(follow)
+            if follow:
+                # scroll_y watchers run inside the animator's frame callback.
+                # anchor() stops that same animation; defer it until the frame
+                # has removed its completed entry to avoid Textual's KeyError.
+                self.call_later(self._resume_anchor)
+            else:
+                self.anchor(False)
+
+    def _resume_anchor(self) -> None:
+        if self.is_attached and self.auto_follow:
+            self.anchor()
 
     def request_older(self) -> None:
         if self.has_older and not self.loading_history:

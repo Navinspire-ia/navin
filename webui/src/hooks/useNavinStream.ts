@@ -101,21 +101,6 @@ const STREAM_END_IDLE_DELAY_MS = 1000;
  * without ever sending ``turn_end``). */
 const RECONNECT_STALE_TURN_GRACE_MS = 8000;
 
-/**
- * Typewriter smoothing for streamed text.
- *
- * Network deltas arrive in irregular bursts - one character, then forty, then
- * nothing for 300 ms - and rendering them raw reads as nervous stuttering.
- * Instead of applying whole deltas as they land, each animation frame reveals
- * a bounded slice of the backlog: at least MIN_CHARS (a steady floor of about
- * 240 chars/s at 60 fps), plus a share of whatever is queued so a large burst
- * catches up in a fraction of a second instead of lagging forever. Boundary
- * events (stream_end, tool calls, complete messages) still flush everything
- * instantly, so smoothing never delays real state.
- */
-const STREAM_REVEAL_MIN_CHARS_PER_FRAME = 4;
-const STREAM_REVEAL_CATCHUP_FRACTION = 8;
-
 function turnFieldsFromEvent(
   ev: { turn_id?: string; turn_phase?: UITurnPhase; turn_seq?: number },
   fallbackPhase?: UITurnPhase,
@@ -1038,34 +1023,11 @@ export function useNavinStream(
     if (streamFrameRef.current !== null) return;
     streamFrameRef.current = window.requestAnimationFrame(() => {
       streamFrameRef.current = null;
-      const queue = pendingStreamEventsRef.current;
-      if (queue.length === 0) return;
-
-      // Reveal a bounded slice of the backlog this frame (see constants above).
-      const backlog = queue.reduce((sum, event) => sum + event.text.length, 0);
-      let budget = Math.max(
-        STREAM_REVEAL_MIN_CHARS_PER_FRAME,
-        Math.ceil(backlog / STREAM_REVEAL_CATCHUP_FRACTION),
-      );
-      const consumed: PendingStreamEvent[] = [];
-      while (queue.length > 0 && budget > 0) {
-        const head = queue[0];
-        if (head.text.length <= budget) {
-          consumed.push(head);
-          budget -= head.text.length;
-          queue.shift();
-        } else {
-          consumed.push({ ...head, text: head.text.slice(0, budget) });
-          queue[0] = { ...head, text: head.text.slice(budget) };
-          budget = 0;
-        }
-      }
-      if (consumed.length > 0) {
-        setMessages((prev) => applyPendingStreamEvents(prev, consumed));
-      }
-      if (queue.length > 0) schedulePendingStreamFlush();
+      // Coalesce arrivals once per frame without holding back received text.
+      // MarkdownText separately limits the cost of parsing long responses.
+      flushPendingStreamEvents();
     });
-  }, [applyPendingStreamEvents]);
+  }, [flushPendingStreamEvents]);
 
   // Reset local state when switching chats. Do not reset on every
   // ``initialMessages`` update: a brand-new chat can receive an empty/404

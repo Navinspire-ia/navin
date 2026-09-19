@@ -21,6 +21,7 @@ interface ThreadHeaderProps {
   presenceAction?: ReactNode;
   findAction?: ReactNode;
   graphAction?: ReactNode;
+  planAction?: ReactNode;
 }
 
 export function ThreadHeader({
@@ -35,6 +36,7 @@ export function ThreadHeader({
   presenceAction,
   findAction,
   graphAction,
+  planAction,
 }: ThreadHeaderProps) {
   const { t } = useTranslation();
 
@@ -72,6 +74,7 @@ export function ThreadHeader({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        {planAction}
         {graphAction}
         {findAction}
         {sessionInfoAction}
@@ -84,4 +87,3 @@ export function ThreadHeader({
     </div>
   );
 }
-

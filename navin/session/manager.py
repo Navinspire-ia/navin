@@ -444,6 +444,7 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
+        self._pending_fsync: set[Path] = set()
 
     @staticmethod
     def safe_key(key: str) -> str:
@@ -743,6 +744,35 @@ class SessionManager:
             raise
 
         self._cache[session.key] = session
+
+        if fsync:
+            self._pending_fsync.discard(path)
+        else:
+            self._pending_fsync.add(path)
+
+    def flush_saved(self) -> int:
+        """Make already saved history durable without rewriting cached chats."""
+        flushed = 0
+        directories: set[Path] = set()
+        for path in list(self._pending_fsync):
+            try:
+                with path.open("rb") as handle:
+                    os.fsync(handle.fileno())
+                directories.add(path.parent)
+                self._pending_fsync.discard(path)
+                flushed += 1
+            except FileNotFoundError:
+                self._pending_fsync.discard(path)
+            except OSError:
+                logger.warning("Failed to sync session {}", path, exc_info=True)
+        for directory in directories:
+            with suppress(PermissionError):
+                fd = os.open(str(directory), os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+        return flushed
 
     def flush_all(self) -> int:
         """Re-save every cached session with fsync for durable shutdown.

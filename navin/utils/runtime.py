@@ -112,20 +112,21 @@ VERIFY_FAILED_CONTINUE_PROMPT = (
 )
 
 NO_PROGRESS_CONTINUE_PROMPT = (
-    "Your recent calls only repeated operations already blocked by the tool "
-    "loop guard. Use the existing results and change the arguments, tool or "
-    "approach to continue the task. Do not repeat the blocked calls."
+    "Your recent calls only repeated blocked operations or bookkeeping that "
+    "made no changes. Use the existing results and continue the unfinished "
+    "implementation or validation. Do not repeat unchanged plan updates or "
+    "blocked calls. If all work is complete, report the result in chat."
 )
 
 NO_PROGRESS_FINALIZATION_PROMPT = (
-    "Repeated blocked tool calls produced no new result even after a request "
-    "to change approach. Explain the specific failed operation and remaining "
+    "Repeated blocked tool calls or unchanged bookkeeping produced no new "
+    "result even after a request to change approach. Explain the loop and remaining "
     "work using the tool evidence above. Do not claim completion or blame a "
     "time limit. Name any concrete input needed to resolve the blocker."
 )
 
 NO_PROGRESS_STOP_FALLBACK = (
-    "The same blocked tool calls kept repeating without a new result. "
+    "The same blocked tool calls or unchanged bookkeeping kept repeating without a new result. "
     "The task is unfinished; completed work has been preserved."
 )
 

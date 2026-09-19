@@ -197,6 +197,7 @@ import {
   type PastedContentMap,
 } from "@/lib/pasted-content";
 import { applyDeskChatCommand } from "@/lib/desk-chat-command";
+import { configurationCommand, configurationCommands, configurationHash } from "@/lib/configuration-command";
 import {
   isSideChannelLifecycle,
   slashCommandLifecycle,
@@ -1171,9 +1172,10 @@ function ThreadComposerImpl({
   const hasErrors = images.some((img) => img.status === "error");
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
+  const hasConfigurationCommand = configurationCommand(value) !== null;
   const canSend =
     !disabled
-    && !modelNeedsSetup
+    && (!modelNeedsSetup || hasConfigurationCommand)
     && !encoding
     && !hasErrors
     && hasComposerContent;
@@ -1208,12 +1210,13 @@ function ThreadComposerImpl({
   }, [cursorPosition, disabled, slashMenuDismissed, value]);
 
   const visibleSlashCommands = useMemo(() => {
-    if (!(isStreaming && onStop)) return slashCommands;
-    const stopCommand = slashCommands.find((command) => command.command === "/stop");
-    if (!stopCommand) return slashCommands;
+    const commands = configurationCommands(slashCommands);
+    if (!(isStreaming && onStop)) return commands;
+    const stopCommand = commands.find((command) => command.command === "/stop");
+    if (!stopCommand) return commands;
     return [
       stopCommand,
-      ...slashCommands.filter((command) => command.command !== "/stop"),
+      ...commands.filter((command) => command.command !== "/stop"),
     ];
   }, [isStreaming, onStop, slashCommands]);
 
@@ -1299,6 +1302,11 @@ function ThreadComposerImpl({
         };
       })
       .sort((a, b) => {
+        if (slashQuery !== "") {
+          const aExact = a.command.toLowerCase() === `/${slashQuery}`;
+          const bExact = b.command.toLowerCase() === `/${slashQuery}`;
+          if (aExact !== bExact) return aExact ? -1 : 1;
+        }
         if (isStreaming) {
           if (a.command === "/stop") return -1;
           if (b.command === "/stop") return 1;
@@ -1721,6 +1729,32 @@ function ThreadComposerImpl({
     };
   }, [onTranscribeAudio, voiceRecorder.beginShortcutHold, voiceRecorder.endShortcutHold]);
 
+  const clearComposerText = useCallback(() => {
+    setValue("");
+    setPastes({});
+    clearComposerDraft(pendingQueueKey);
+    setInlineError(null);
+    setSlashMenuDismissed(false);
+    setCliAppMenuDismissed(false);
+    setCursorPosition(0);
+    setPickedFiles([]);
+    resizeTextarea();
+  }, [pendingQueueKey, resizeTextarea]);
+
+  const openConfigurationCommand = useCallback((content: string): boolean => {
+    const command = configurationCommand(content);
+    if (!command) return false;
+    if (command.error) {
+      setInlineError(t("thread.composer.slash.unknownSettingsSection", {
+        defaultValue: "Unknown settings section. Use /settings, /settings models or /settings providers.",
+      }));
+      return true;
+    }
+    clearComposerText();
+    window.location.hash = configurationHash(command.section, sessionKey);
+    return true;
+  }, [clearComposerText, sessionKey, t]);
+
   const chooseSlashCommand = useCallback(
     (command: SlashPaletteCommand) => {
       if (command.command === "/stop" && isStreaming && onStop) {
@@ -1740,6 +1774,8 @@ function ThreadComposerImpl({
       ].slice(0, SLASH_RECENTS_LIMIT);
       setRecentSlashCommands(nextRecents);
       storeSlashRecents(nextRecents);
+
+      if (skillQuery === null && openConfigurationCommand(command.command)) return;
 
       if (skillQuery !== null) {
         const suffix = value.slice(skillQuery.end);
@@ -1762,7 +1798,7 @@ function ThreadComposerImpl({
       setInlineError(null);
       resizeTextarea();
     },
-    [isStreaming, onStop, recentSlashCommands, resizeTextarea, skillQuery, value],
+    [isStreaming, onStop, openConfigurationCommand, recentSlashCommands, resizeTextarea, skillQuery, value],
   );
 
   const chooseMentionCandidate = useCallback(
@@ -1793,18 +1829,6 @@ function ThreadComposerImpl({
     },
     [cliAppMention, resizeTextarea, value],
   );
-
-  const clearComposerText = useCallback(() => {
-    setValue("");
-    setPastes({});
-    clearComposerDraft(pendingQueueKey);
-    setInlineError(null);
-    setSlashMenuDismissed(false);
-    setCliAppMenuDismissed(false);
-    setCursorPosition(0);
-    setPickedFiles([]);
-    resizeTextarea();
-  }, [pendingQueueKey, resizeTextarea]);
 
   /** Build the turn attachments from the current composer state.
    * Returns null when the turn is not sendable yet (inline error is set). */
@@ -2080,13 +2104,14 @@ function ThreadComposerImpl({
   }, [onStop, queuedPrompts.length]);
 
   const submit = useCallback(() => {
+    const live = textareaRef.current?.value ?? value;
+    if (!disabled && openConfigurationCommand(live)) return;
     if (modelNeedsSetup) {
       onModelBadgeClick?.();
       return;
     }
     // WebKitGTK can paint pasted text in the textarea without firing
     // onChange. Read the live DOM so Enter sends what the user sees.
-    const live = textareaRef.current?.value ?? value;
     if (live !== value) setValue(live);
     const trimmed = live.trim();
     const expanded = expandPastedContent(trimmed, pastes).trim();
@@ -2179,6 +2204,7 @@ function ThreadComposerImpl({
     maxTextBytes,
     modelNeedsSetup,
     onModelBadgeClick,
+    openConfigurationCommand,
     onSend,
     onStop,
     readyImages,
@@ -2233,7 +2259,12 @@ function ThreadComposerImpl({
       }
       if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
         e.preventDefault();
-        chooseSlashCommand(filteredSlashCommands[selectedCommandIndex]);
+        const selected = filteredSlashCommands[selectedCommandIndex];
+        if (e.key === "Enter" && selected?.command.toLowerCase() === e.currentTarget.value.trim().toLowerCase()) {
+          submit();
+        } else if (selected) {
+          chooseSlashCommand(selected);
+        }
         return;
       }
       if (e.key === "Escape") {
@@ -2363,7 +2394,7 @@ function ThreadComposerImpl({
     hasStopHandler: !!onStop,
     hasComposerContent,
     canQueueGuidance,
-    modelNeedsSetup,
+    modelNeedsSetup: modelNeedsSetup && !hasConfigurationCommand,
   });
   const showStopButton = primaryAction === "stop";
   const queueButtonLabel = t("thread.composer.queued.add", {

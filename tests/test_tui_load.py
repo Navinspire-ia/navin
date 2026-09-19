@@ -199,7 +199,9 @@ def test_live_output_of_same_size_repaints_without_reflowing_the_transcript(tmp_
             await app.transcript.mount(row)
             row.apply(phase="output", output="\n".join(f"old_{i:03}" for i in range(80)))
             row.toggle()
-            await pilot.pause()
+            # Output is coalesced on a 100 ms timer. Let the initial frame
+            # and its scrollbar layout settle before measuring a replacement.
+            await pilot.pause(0.15)
             body = row.query_one(".tool-body", Static)
             with patch.object(body, "update", wraps=body.update) as update:
                 row.apply(phase="output", output="\n".join(f"new_{i:03}" for i in range(80)), output_mode="snapshot")
@@ -355,6 +357,30 @@ def test_live_follow_preserves_manual_scroll_and_resumes_at_the_bottom(tmp_path)
             await block.delta("\n\nNewest output.")
             await pilot.pause(0.15)
             assert app.transcript.is_vertical_scroll_end
+    asyncio.run(run())
+
+
+def test_animated_scroll_to_bottom_does_not_remove_its_own_animation(tmp_path):
+    """Reproduce the scroll_y KeyError reported at the last animation frame."""
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.transcript.add(Static("A received line\n" * 100))
+            await pilot.pause()
+            app.transcript.nudge(-20)
+            await pilot.pause()
+            assert not app.transcript.auto_follow
+            for _ in range(3):
+                app.transcript.scroll_end(animate=True, duration=0.1, immediate=True)
+                animator = app.animator
+                key = (id(app.transcript), "scroll_y")
+                assert key in animator._animations
+                with patch.object(animator, "_get_time", return_value=animator._get_time() + 1):
+                    animator()  # Previously raised KeyError here.
+                await pilot.pause()
+                assert app.transcript.auto_follow and app.transcript.is_vertical_scroll_end
+                app.transcript.nudge(-20)
+                await pilot.pause()
     asyncio.run(run())
 
 

@@ -141,15 +141,19 @@ class ToolResult(str):
     is_error: bool
     recovery_hint: str | None
     verification: VerificationEvidence | None
+    # None leaves progress unspecified; False identifies a known no-op.
+    made_progress: bool | None
 
     def __new__(
         cls, content: str, *, is_error: bool = False,
         recovery_hint: str | None = None, verification: VerificationEvidence | None = None,
+        made_progress: bool | None = None,
     ) -> ToolResult:
         obj = str.__new__(cls, content)
         obj.is_error = is_error
         obj.recovery_hint = recovery_hint
         obj.verification = verification
+        obj.made_progress = made_progress
         return obj
 
     @classmethod

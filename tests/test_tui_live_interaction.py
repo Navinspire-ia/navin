@@ -109,7 +109,7 @@ def test_session_opens_at_latest_page_and_scroll_loads_older_without_losing_plac
             original_display = app._display
 
             def record_display(screen, renderable):
-                if not app._batch_count and app.transcript.children:
+                if not app._batch_count and app.transcript.visible and app.transcript.children:
                     frames.append((len(app.transcript.children), app.transcript.is_vertical_scroll_end))
                 return original_display(screen, renderable)
 

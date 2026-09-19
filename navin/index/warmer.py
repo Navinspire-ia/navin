@@ -17,7 +17,6 @@ serve a stale snapshot right after an edit.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from pathlib import Path
 
@@ -31,8 +30,8 @@ def schedule_warm(root: Path | str | None) -> bool:
     """Build/refresh the code index for ``root`` off the turn path.
 
     Idempotent per root: a warm already in flight is not duplicated. Runs in
-    the asyncio default executor when a loop is running, in a daemon thread
-    otherwise. Returns whether a warm was scheduled.
+    a daemon thread so speculative indexing never holds interpreter shutdown.
+    Returns whether a warm was scheduled.
     """
     if root is None:
         return False
@@ -68,12 +67,7 @@ def schedule_warm(root: Path | str | None) -> bool:
             with _warming_lock:
                 _warming.discard(key)
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        threading.Thread(target=_work, daemon=True, name="index-warmer").start()
-        return True
-    loop.run_in_executor(None, _work)
+    threading.Thread(target=_work, daemon=True, name="index-warmer").start()
     return True
 
 

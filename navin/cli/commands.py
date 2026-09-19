@@ -2966,19 +2966,25 @@ async def _close_agent_subprocesses() -> None:
     traceback under the agent's last message. A new tool that owns a subprocess
     belongs here.
     """
-    from navin.agent.tools.browser import shutdown_browser_sessions
-    from navin.agent.tools.computer import shutdown_computer_sessions
-    from navin.agent.tools.exec_session import DEFAULT_EXEC_SESSION_MANAGER
-
-    for closer in (
-        DEFAULT_EXEC_SESSION_MANAGER.shutdown,
-        shutdown_browser_sessions,
-        shutdown_computer_sessions,
-    ):
+    async def close(closer):
         try:
             await closer()
         except Exception as exc:  # noqa: BLE001 - shutdown must not mask the turn's result
             logger.debug("Shutdown cleanup failed: {}", exc)
+
+    closers = []
+    # Do not import browser/computer stacks just to exit an unused CLI.
+    for module_name, function in (
+        ("navin.agent.tools.browser", "shutdown_browser_sessions"),
+        ("navin.agent.tools.computer", "shutdown_computer_sessions"),
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            closers.append(getattr(module, function))
+    module = sys.modules.get("navin.agent.tools.exec_session")
+    if module is not None:
+        closers.append(module.DEFAULT_EXEC_SESSION_MANAGER.shutdown)
+    await asyncio.gather(*(close(closer) for closer in closers))
 
 
 @app.command()
@@ -3302,6 +3308,7 @@ def tui(
         console.print(f"[red]Not a folder: {project}[/red]")
         raise typer.Exit(1)
     project = project.resolve()
+    cli_executable = Path(sys.argv[0]).resolve() if Path(sys.argv[0]).name in {"navin-cli", "navin-cli.exe"} else None
     # navin-cli is a project tool: the agent, Graph and Evolve all work in the
     # folder it was started from (or the one given), like `navin-cli .`.
     os.chdir(project)
@@ -3319,7 +3326,7 @@ def tui(
 
     from navin.tui import run_tui
 
-    run_tui(config=loaded, session_id=session_id, config_path=config_path, project_root=project)
+    run_tui(config=loaded, session_id=session_id, config_path=config_path, project_root=project, cli_executable=cli_executable)
 
 
 def run_cli() -> None:

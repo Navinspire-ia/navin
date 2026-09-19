@@ -328,14 +328,16 @@ def board_update_payload(
         ledger = ledger_store.load()
         if not ledger:
             raise BoardError("no mission ledger", status=404)
+        previous_version = ledger["version"]
         ledger = ledger_store.apply_manual_edit(ledger, fields, actor="human")
-        ledger_store.save(ledger)
-        store.log_activity(
-            kind="mission_updated",
-            actor=actor,
-            actor_type="human",
-            detail=", ".join(sorted(fields.keys())) or "edit",
-        )
+        if ledger["version"] != previous_version:
+            ledger_store.save(ledger)
+            store.log_activity(
+                kind="mission_updated",
+                actor=actor,
+                actor_type="human",
+                detail=", ".join(sorted(fields.keys())) or "edit",
+            )
     elif action == "sync_github":
         # Import open forge issues as board tasks (idempotent by issue URL), so
         # a human can pull the repo's issues without going through the agent.

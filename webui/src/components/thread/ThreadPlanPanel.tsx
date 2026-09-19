@@ -1,10 +1,17 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, CircleDot, Hammer, Loader2, Pause, Play, Square, X } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Check, CircleDot, Loader2, X } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
+
+import {
+  Callout, DefaultButton, DirectionalHint, IconButton, MessageBar, MessageBarType,
+  PrimaryButton, ProgressIndicator, type IButtonStyles,
+} from "@fluentui/react";
+import "@/lib/fluent-icons";
+import { ACTIVITY_DETAIL_PAGE_SIZE, ActivityPagination } from "./activity/ActivityPagination";
 
 import { preloadMarkdownText } from "@/components/MarkdownText";
 import {
@@ -79,14 +86,14 @@ export function planItemTone(
 }
 
 const PLAN_ROW_TONE_CLASS: Record<PlanItemTone, string> = {
-  done: "text-emerald-700/75 line-through dark:text-emerald-400/70",
-  active: "text-[hsl(var(--composer-plan-fg))] dark:text-[hsl(var(--composer-plan))]",
-  planned: "text-[hsl(var(--composer-ask-fg))] dark:text-[hsl(var(--composer-ask))]/80",
-  review: "text-[hsl(var(--composer-review-fg))] dark:text-[hsl(var(--composer-review))]",
-  fix: "text-[hsl(var(--composer-security-fg))] dark:text-[hsl(var(--composer-security))]",
+  done: "text-muted-foreground",
+  active: "font-medium text-foreground",
+  planned: "text-foreground/85",
+  review: "text-foreground",
+  fix: "text-foreground",
   blocked: "text-amber-700 dark:text-amber-400/90",
-  cancelled: "text-muted-foreground/55 line-through",
-  pending: "text-foreground/72",
+  cancelled: "text-muted-foreground",
+  pending: "text-foreground/85",
 };
 
 const PLAN_ROW_SURFACE_CLASS: Record<PlanItemTone, string> = {
@@ -112,494 +119,244 @@ export function missionControlState(
   return { canPause: true, canResume: false };
 }
 
-/**
- * Small flat Plan card in the chat transcript (Cursor-style checklist).
- * No heavy shadow / 3D chrome - just a bordered surface with steps.
- */
+const COMMAND_STYLES: IButtonStyles = {
+  root: { minWidth: 0, height: 40, padding: "0 12px", border: "none", borderRadius: 8,
+    background: "transparent", color: "hsl(var(--foreground))", fontSize: 12 },
+  rootHovered: { background: "hsl(var(--muted))", color: "hsl(var(--foreground))" },
+  rootPressed: { background: "hsl(var(--muted))", color: "hsl(var(--foreground))" },
+  rootDisabled: { background: "transparent", color: "hsl(var(--muted-foreground))", opacity: 0.5 },
+  icon: { fontSize: 14 },
+};
+const PRIMARY_STYLES: IButtonStyles = {
+  root: { height: 40, minWidth: 80, borderRadius: 8, border: "none",
+    background: "hsl(var(--foreground))", color: "hsl(var(--background))", fontSize: 12 },
+  rootHovered: { background: "hsl(var(--foreground))", color: "hsl(var(--background))", opacity: 0.9 },
+  rootPressed: { background: "hsl(var(--foreground))", color: "hsl(var(--background))" },
+  rootDisabled: { background: "hsl(var(--muted))", color: "hsl(var(--muted-foreground))" },
+};
+
+/** On-demand plan in the conversation header. Never follows the composer. */
 export function ThreadPlanPanel({
-  sessionKey,
-  activity = null,
-  isStreaming = false,
-  onBuild,
-  onStop,
+  sessionKey, activity = null, isStreaming = false, onBuild, onStop,
 }: {
   sessionKey: string | null;
-  /** Latest live tool action (e.g. "exec kubectl get pods"), shown under the
-   * current item so the plan says what is really happening, not just a title. */
   activity?: string | null;
   isStreaming?: boolean;
-  /** Kick off Build mode (``/forge``) for the current plan. */
   onBuild?: (plan: SessionPlan) => void;
-  /** Cancel the active turn (and park plan steps server-side). */
   onStop?: () => void;
 }) {
   const { client, token } = useClient();
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
-  const tx = useCallback(
-    (key: string, fallback: string) => t(key, { defaultValue: fallback }),
-    [t],
-  );
-
+  const tx = useCallback((key: string, fallback: string) => t(key, { defaultValue: fallback }), [t]);
   const [plan, setPlan] = useState<SessionPlan | null>(null);
-  const [expanded, setExpanded] = useState(true);
-  // A finished plan is a record, so it stays in the transcript where it was
-  // built - anchored to its turn, scrolling away with it. Nothing expires it
-  // on a timer; the close button is how it goes.
-  const [hidden, setHidden] = useState(false);
-  // The gap warning used to be decoration: it named what the plan was missing
-  // while Build stayed one click away. Acknowledging is now the only way past
-  // it, and it unlocks this exact revision - a replan has to be judged again.
+  const [expanded, setExpanded] = useState(false);
+  const [requestedPage, setPage] = useState(0);
   const [gapsAcknowledged, setGapsAcknowledged] = useState(false);
   const [missionBusy, setMissionBusy] = useState(false);
-
-  const listOpen = expanded;
+  const [actionError, setActionError] = useState(false);
+  const target = useRef<HTMLDivElement>(null);
+  const requestId = useRef(0);
+  const panelId = useId();
+  const headingId = `${panelId}-title`;
+  const gapsCardId = `${panelId}-gaps`;
 
   const load = useCallback(async () => {
     if (!token || !sessionKey) return;
+    const request = ++requestId.current;
     try {
       const board = await fetchBoard(token, sessionKey);
-      setPlan(board.session_plan ?? null);
+      if (request === requestId.current) setPlan(board.session_plan ?? null);
     } catch {
-      // A plan that cannot be read is not worth an error in the chat; the
-      // board tab reports board failures already.
+      // Keep the last known plan when a background refresh fails.
     }
   }, [token, sessionKey]);
 
   useEffect(() => {
     setPlan(null);
-    setHidden(false);
+    setExpanded(false);
+    setPage(0);
+    setActionError(false);
     void load();
+    return () => { requestId.current += 1; };
   }, [load]);
 
   useEffect(() => {
     const unsubscribe = client.onBoardUpdate(() => void load());
     const interval = window.setInterval(() => void load(), POLL_MS);
-    return () => {
-      unsubscribe();
-      window.clearInterval(interval);
-    };
+    return () => { unsubscribe(); window.clearInterval(interval); };
   }, [client, load]);
 
-  // A finished plan collapses to its one-line summary: still there as a record
-  // of the turn, without a wall of ticked rows in the middle of the thread.
-  const planComplete = Boolean(plan?.complete);
-  useEffect(() => {
-    if (planComplete) setExpanded(false);
-  }, [planComplete]);
-
   const qualitySignature = plan?.quality
-    ? [
-        plan.version ?? 0,
-        plan.quality.status,
-        plan.quality.gaps.map((gap) => `${gap.kind}/${gap.task_id ?? ""}`).join(","),
-      ].join("|")
-    : "";
-  useEffect(() => {
-    setGapsAcknowledged(false);
-  }, [qualitySignature]);
-
-  // Keep the checklist visible while the agent works so status colors (done /
-  // current / pending) stay readable. Collapse only when the plan is complete.
-  const wasStreamingRef = useRef(isStreaming);
-  useEffect(() => {
-    if (wasStreamingRef.current === isStreaming) return;
-    wasStreamingRef.current = isStreaming;
-    if (!isStreaming && plan && !plan.complete) {
-      setExpanded(true);
-    }
-  }, [isStreaming, plan]);
+    ? `${plan.version ?? 0}|${JSON.stringify(plan.quality)}` : "";
+  useEffect(() => { setGapsAcknowledged(false); }, [qualitySignature]);
 
   const currentItem = useMemo(() => {
     if (!plan || plan.complete) return null;
     return plan.items.find((item) => item.id === plan.current_id && !item.cancelled) ?? null;
   }, [plan]);
 
-  const focusTitle =
-    currentItem?.title ||
-    plan?.goal ||
-    plan?.title ||
-    tx("thread.plan.created", "Plan");
+  const applyMissionAction = useCallback(async (action: "pause_mission" | "resume_mission") => {
+    if (!token || !sessionKey || missionBusy) return;
+    setMissionBusy(true);
+    setActionError(false);
+    try {
+      await updateBoard(token, sessionKey, action === "pause_mission"
+        ? { action, reason: "human" } : { action });
+      await load();
+    } catch {
+      setActionError(true);
+    } finally {
+      setMissionBusy(false);
+    }
+  }, [load, missionBusy, sessionKey, token]);
 
-  const applyMissionAction = useCallback(
-    async (action: "pause_mission" | "resume_mission") => {
-      if (!token || !sessionKey || missionBusy) return;
-      setMissionBusy(true);
-      try {
-        await updateBoard(
-          token,
-          sessionKey,
-          action === "pause_mission"
-            ? { action: "pause_mission", reason: "human" }
-            : { action: "resume_mission" },
-        );
-        await load();
-      } catch {
-        // The board tab already surfaces API failures; keep the chat card quiet.
-      } finally {
-        setMissionBusy(false);
-      }
-    },
-    [load, missionBusy, sessionKey, token],
-  );
-
-  // No session plan means this chat never touched the board. Do not fall
-  // back to the project-wide task list: that board lives in
-  // `.navin/board/` and is shared by every chat of the project, so a new
-  // or other thread would inherit someone else's 12/33 TASKS card.
-  if (!plan || plan.items.length === 0) {
-    return null;
-  }
+  if (!plan || plan.items.length === 0) return null;
   const hasRemaining = plan.items.some((item) => !item.done);
-  const started = plan.items.some(
-    (item) => item.done || item.active || item.cancelled,
-  );
-  // Build is the idle-state call to action: any plan with steps left can be
-  // (re)launched, including one interrupted by /stop or a restart. Stop only
-  // makes sense while a run is actually live - a leftover "active" step from
-  // a dead run must not keep a Stop button (and a spinner) on screen forever.
+  const started = plan.items.some((item) => item.done || item.active || item.cancelled);
   const canBuild = Boolean(onBuild) && !isStreaming && !plan.complete && hasRemaining;
   const canStop = Boolean(onStop) && isStreaming;
-  const { canPause: canPauseMission, canResume: canResumeMission } = missionControlState(
-    plan,
-    isStreaming,
-  );
-  // Build is held, not hidden: the gaps are recoverable (add the missing
-  // acceptance criteria and the judge clears them), and the user can always
-  // override from the warning itself. Hiding the button would strand a plan
-  // the judge scores wrongly.
+  const { canPause, canResume } = missionControlState(plan, isStreaming);
   const buildHeldByGaps = buildHeldByPlanGaps(plan.quality, canBuild, gapsAcknowledged);
-  const buildHeldTitle = tx(
-    "thread.plan.qualityHoldHint",
-    "This plan has gaps. Review them, or use the link in the warning below to start anyway.",
-  );
-  const buildLabel = started
-    ? tx("thread.plan.resume", "Resume")
-    : tx("thread.plan.build", "Build");
-  const gapsCardId = "thread-plan-gaps";
-  const showCard = !hidden;
+  const buildHeldTitle = tx("thread.plan.qualityHoldHint", "Review the missing requirements before starting.");
+  const buildLabel = started ? tx("thread.plan.resume", "Resume") : tx("thread.plan.build", "Build");
+  const page = Math.min(requestedPage, Math.ceil(plan.items.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1);
+  const visibleItems = plan.items.slice(page * ACTIVITY_DETAIL_PAGE_SIZE, (page + 1) * ACTIVITY_DETAIL_PAGE_SIZE);
+  const title = plan.goal || plan.title || tx("thread.plan.created", "Plan");
+  const status = plan.complete ? tx("thread.plan.complete", "Plan complete")
+    : plan.ledger_status === "paused" ? tx("thread.planPaused", "Paused")
+    : isStreaming ? tx("thread.plan.inProgress", "In progress")
+    : tx("thread.plan.readyToResume", "Ready to continue");
 
   return (
-      <AnimatePresence initial={false}>
-        {showCard ? (
-        <motion.div
-          key="plan-card"
-          data-testid="thread-plan-panel"
-          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          // Out through the top: the card is leaving the conversation, so it
-          // pulls up and away rather than sinking back onto the composer.
-          exit={
-            reduceMotion
-              ? { opacity: 0 }
-              : { opacity: 0, y: -14, height: 0, marginTop: 0 }
-          }
-          transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-          className="mt-2 w-full min-w-0"
+    <div ref={target} className="host-no-drag shrink-0" data-testid="thread-plan-panel">
+      <DefaultButton
+        data-testid="thread-plan-toggle"
+        text={`${tx("thread.plan.created", "Plan")} ${plan.done_count}/${plan.total_count}`}
+        iconProps={{ iconName: plan.complete ? "CheckMark" : "BulletedList" }}
+        title={title}
+        aria-expanded={expanded}
+        aria-controls={expanded ? panelId : undefined}
+        aria-haspopup="dialog"
+        onClick={() => setExpanded((open) => !open)}
+        styles={COMMAND_STYLES}
+        className="tabular-nums"
+      />
+      {expanded ? (
+        <Callout
+          target={target.current}
+          role="dialog"
+          ariaLabelledBy={headingId}
+          directionalHint={DirectionalHint.bottomRightEdge}
+          gapSpace={8}
+          isBeakVisible={false}
+          setInitialFocus
+          onDismiss={() => setExpanded(false)}
+          styles={{
+            root: { width: "min(400px, calc(100vw - 24px))", borderRadius: 12,
+              // Animate the contents only; keep the surface opaque from the first frame.
+              selectors: { "&&": { animation: "none" } },
+              boxShadow: "0 12px 36px rgba(0,0,0,0.18), 0 0 0 1px hsl(var(--border))" },
+            calloutMain: { borderRadius: 12, background: "hsl(var(--background))", color: "hsl(var(--foreground))" },
+          }}
         >
-          <div
-            className={cn(
-              "overflow-hidden rounded-xl border border-border/55",
-              "bg-muted/35 dark:bg-muted/25",
-            )}
+          <motion.section
+            id={panelId}
+            data-testid="thread-plan-details"
+            initial={reduceMotion ? false : { opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+            className="max-h-[calc(100dvh-100px)] overflow-y-auto p-4"
           >
-            <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
-              <button
-                type="button"
-                onClick={() => setExpanded((open) => !open)}
-                aria-expanded={listOpen}
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-              >
-                <ChevronDown
-                  aria-hidden
-                  className={cn(
-                    "h-3 w-3 shrink-0 text-muted-foreground/55 transition-transform duration-200",
-                    !listOpen && "-rotate-90",
-                  )}
+            <div className="flex items-center justify-between gap-3">
+              <h2 id={headingId} className="text-sm font-semibold">{tx("thread.plan.created", "Plan")}</h2>
+              <IconButton
+                data-testid="thread-plan-hide"
+                iconProps={{ iconName: "Cancel" }}
+                ariaLabel={tx("thread.plan.close", "Close plan")}
+                onClick={() => setExpanded(false)}
+                styles={COMMAND_STYLES}
+              />
+            </div>
+            <p className="mt-1 text-sm font-medium leading-relaxed [text-wrap:pretty]">{title}</p>
+            <div className="mb-2 mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{status}</span>
+              <span className="tabular-nums">{plan.done_count} / {plan.total_count}</span>
+            </div>
+            <ProgressIndicator
+              ariaLabel={t("thread.plan.progress", { defaultValue: "{{done}} of {{total}} steps completed", done: plan.done_count, total: plan.total_count })}
+              percentComplete={plan.total_count ? Math.min(1, plan.done_count / plan.total_count) : 0}
+              barHeight={3}
+              styles={{ itemProgress: { padding: 0 }, progressTrack: { background: "hsl(var(--muted))" }, progressBar: { background: "hsl(var(--foreground))" } }}
+            />
+            {currentItem ? <p className="mt-3 text-xs text-muted-foreground">{tx("thread.plan.now", "Now")}: <span className="text-foreground">{currentItem.title}</span></p> : null}
+            <ActivityPagination page={page} total={plan.items.length} onPageChange={setPage} />
+            <ul className="my-3 max-h-80 space-y-1 overflow-y-auto" aria-label={tx("thread.plan.steps", "Steps")}>
+              {visibleItems.map((item) => (
+                <PlanRow key={item.id} item={item}
+                  current={item.id === plan.current_id && !plan.complete && !item.cancelled}
+                  running={isStreaming && !reduceMotion}
+                  activity={item.id === plan.current_id && isStreaming ? activity : null}
+                  cancelledLabel={tx("thread.plan.cancelled", "Cancelled")}
                 />
-                <span className="min-w-0 flex-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
-                  {plan.complete
-                    ? tx("thread.plan.complete", "Plan complete")
-                    : tx("thread.plan.created", "Plan")}
-                  {plan.version != null ? (
-                    <span className="ml-1.5 font-medium normal-case tracking-normal text-muted-foreground/60">
-                      v{plan.version}
-                      {plan.ledger_status ? ` · ${plan.ledger_status}` : ""}
-                    </span>
+              ))}
+            </ul>
+            {plan.loop_detected || (plan.stall_count ?? 0) > 0 ? (
+              <MessageBar messageBarType={MessageBarType.warning}>
+                {tx("thread.plan.needsProgress", "Progress has stalled. The agent needs to change approach.")}
+              </MessageBar>
+            ) : null}
+            {planQualityVerdict(plan.quality, canBuild) === "gaps" && plan.quality ? (
+              <div id={gapsCardId} data-testid="thread-plan-quality-gaps" className="mb-3">
+                <MessageBar messageBarType={MessageBarType.warning} isMultiline>
+                  {plan.quality.gaps.slice(0, 3).map((gap, index) => <p key={index}>{gap.message}</p>)}
+                  {buildHeldByGaps ? (
+                    <DefaultButton data-testid="thread-plan-build-anyway"
+                      onClick={() => { setGapsAcknowledged(true); onBuild?.(plan); setExpanded(false); }}
+                      className="mt-2"
+                      text={started ? tx("thread.plan.qualityResumeAnyway", "Resume anyway") : tx("thread.plan.qualityBuildAnyway", "Build anyway")}
+                      styles={COMMAND_STYLES}
+                    />
                   ) : null}
-                </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
-                  {plan.done_count}/{plan.total_count}
-                </span>
-              </button>
-              <div className="flex shrink-0 items-center gap-0.5">
-                <button
-                  type="button"
-                  data-testid="thread-plan-view"
-                  onClick={() => {
-                    preloadMarkdownText();
-                    requestOpenSessionPlan();
-                  }}
-                  className={cn(
-                    "rounded-md px-2 py-1 text-[11.5px] font-medium text-muted-foreground/90",
-                    "transition-colors hover:bg-background/50 hover:text-foreground",
-                  )}
-                >
-                  {tx("thread.plan.view", "View plan")}
-                </button>
-                <button
-                  type="button"
-                  data-testid="thread-plan-hide"
-                  onClick={() => setHidden(true)}
-                  title={tx("thread.plan.hide", "Hide plan")}
-                  aria-label={tx("thread.plan.hide", "Hide plan")}
-                  className={cn(
-                    "grid h-6 w-6 shrink-0 place-items-center rounded-md",
-                    "text-muted-foreground/70",
-                    "transition-colors hover:bg-background/50 hover:text-foreground",
-                  )}
-                >
-                  <X className="h-3 w-3" aria-hidden />
-                </button>
-                {canPauseMission ? (
-                  <button
-                    type="button"
-                    data-testid="thread-plan-pause-mission"
+                </MessageBar>
+              </div>
+            ) : null}
+            {actionError ? <MessageBar messageBarType={MessageBarType.error}>{tx("thread.plan.actionFailed", "The plan could not be updated. Please try again.")}</MessageBar> : null}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+              <DefaultButton data-testid="thread-plan-view"
+                onClick={() => { preloadMarkdownText(); requestOpenSessionPlan(); setExpanded(false); }}
+                className="shrink-0"
+                text={tx("thread.plan.view", "View plan")}
+                styles={COMMAND_STYLES}
+              />
+              <div className="flex items-center gap-1">
+                {canPause || canResume ? (
+                  <IconButton
+                    data-testid={canResume ? "thread-plan-resume-mission" : "thread-plan-pause-mission"}
+                    iconProps={{ iconName: canResume ? "Play" : "Pause" }}
+                    ariaLabel={canResume ? tx("thread.plan.resumeMission", "Resume mission") : tx("thread.plan.pauseMission", "Pause mission")}
+                    title={canResume ? tx("thread.plan.resumeMission", "Resume mission") : tx("thread.plan.pauseMission", "Pause mission")}
                     disabled={missionBusy}
-                    onClick={() => void applyMissionAction("pause_mission")}
-                    title={tx("thread.plan.pauseMission", "Pause mission")}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-md px-2 py-1",
-                      "text-[11.5px] font-medium text-muted-foreground/90",
-                      "transition-colors hover:bg-background/50 hover:text-foreground",
-                      "disabled:cursor-not-allowed disabled:opacity-45",
-                    )}
-                  >
-                    <Pause className="h-2.5 w-2.5 fill-current" aria-hidden />
-                    {tx("thread.plan.pauseMission", "Pause")}
-                  </button>
-                ) : null}
-                {canResumeMission ? (
-                  <button
-                    type="button"
-                    data-testid="thread-plan-resume-mission"
-                    disabled={missionBusy}
-                    onClick={() => void applyMissionAction("resume_mission")}
-                    title={tx("thread.plan.resumeMission", "Resume mission")}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-md px-2 py-1",
-                      "text-[11.5px] font-medium text-muted-foreground/90",
-                      "transition-colors hover:bg-background/50 hover:text-foreground",
-                      "disabled:cursor-not-allowed disabled:opacity-45",
-                    )}
-                  >
-                    <Play className="h-2.5 w-2.5 fill-current" aria-hidden />
-                    {tx("thread.plan.resumeMission", "Resume mission")}
-                  </button>
-                ) : null}
-                {canStop ? (
-                  <button
-                    type="button"
-                    data-testid="thread-plan-stop"
-                    onClick={() => onStop?.()}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-md px-2 py-1",
-                      "text-[11.5px] font-medium text-muted-foreground/90",
-                      "transition-colors hover:bg-background/50 hover:text-foreground",
-                    )}
-                  >
-                    <Square className="h-2.5 w-2.5 fill-current" aria-hidden />
-                    {tx("thread.plan.stop", "Stop")}
-                  </button>
-                ) : null}
-                {canBuild ? (
-                  <>
-                    <button
-                      type="button"
-                      data-testid="thread-plan-skip"
-                      onClick={() => setExpanded(false)}
-                      className={cn(
-                        "rounded-md px-2 py-1 text-[11.5px] font-medium text-muted-foreground/90",
-                        "transition-colors hover:bg-background/50 hover:text-foreground",
-                      )}
-                    >
-                      {tx("thread.plan.skip", "Skip")}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="thread-plan-build"
-                      onClick={() => onBuild?.(plan)}
-                      disabled={buildHeldByGaps}
-                      title={buildHeldByGaps ? buildHeldTitle : undefined}
-                      aria-describedby={buildHeldByGaps ? gapsCardId : undefined}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-md px-2 py-1",
-                        "bg-foreground text-[11.5px] font-semibold text-background",
-                        "transition-transform active:scale-[0.96] hover:bg-foreground/90",
-                        "disabled:cursor-not-allowed disabled:opacity-45",
-                        "disabled:hover:bg-foreground disabled:active:scale-100",
-                      )}
-                    >
-                      <Hammer className="h-3 w-3" aria-hidden />
-                      {buildLabel}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="px-3 pb-2 pt-0.5">
-              <p className="truncate text-[13px] font-semibold leading-snug text-foreground/92">
-                {focusTitle}
-              </p>
-            </div>
-
-            {plan.stall_count != null && plan.stall_count > 0 ? (
-              <div className="px-3 pb-1">
-                <span className="inline-flex rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
-                  {t("thread.planStall", {
-                    defaultValue: "stalled x{{count}}",
-                    count: plan.stall_count,
-                  })}
-                </span>
-              </div>
-            ) : null}
-            {plan.loop_detected ? (
-              <div className="px-3 pb-1">
-                <span className="inline-flex rounded bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-400">
-                  {tx("thread.plan.loop", "loop detected")}
-                </span>
-              </div>
-            ) : null}
-            {(plan.token_budget ?? 0) > 0 ? (
-              <div className="px-3 pb-1">
-                <span className="inline-flex rounded bg-background/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {t("thread.plan.budget", {
-                    defaultValue: "budget {{used}}/{{max}} tokens",
-                    used: plan.tokens_used ?? 0,
-                    max: plan.token_budget,
-                  })}
-                </span>
-              </div>
-            ) : null}
-            {plan.pause_reason ? (
-              <div className="px-3 pb-1">
-                <span className="inline-flex rounded bg-background/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  {t("thread.planPaused", { defaultValue: "paused" })}
-                  {plan.pause_reason !== "manual" ? ` · ${plan.pause_reason}` : ""}
-                </span>
-              </div>
-            ) : null}
-            {/* P2-7: pre-Build quality judge. Shown while Build is clickable so
-                a plan with no acceptance criteria warns before the handoff. */}
-            {planQualityVerdict(plan.quality, canBuild) !== "hidden" && plan.quality ? (
-              planQualityVerdict(plan.quality, canBuild) === "ready" ? (
-                <div className="px-3 pb-1">
-                  <span
-                    data-testid="thread-plan-quality-ready"
-                    className="inline-flex rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
-                  >
-                    {tx("thread.plan.qualityReady", "Plan ready")}
-                  </span>
-                </div>
-              ) : (
-                <div className="px-3 pb-1.5">
-                  <div
-                    id={gapsCardId}
-                    data-testid="thread-plan-quality-gaps"
-                    className="inline-flex max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1"
-                  >
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                      {t("thread.plan.qualityGaps", {
-                        defaultValue: "Plan gaps ({{count}})",
-                        count: plan.quality.gaps.length,
-                      })}
-                    </span>
-                    {plan.quality.gaps.slice(0, 3).map((gap, index) => (
-                      <span
-                        key={`${gap.kind}-${gap.task_id ?? index}`}
-                        className="min-w-0 text-[10.5px] leading-snug text-amber-800/90 dark:text-amber-300/90"
-                      >
-                        {gap.message}
-                      </span>
-                    ))}
-                    {plan.quality.gaps.length > 3 ? (
-                      <span className="text-[10.5px] text-amber-800/70 dark:text-amber-300/70">
-                        {t("thread.plan.qualityMore", {
-                          defaultValue: "+{{count}} more",
-                          count: plan.quality.gaps.length - 3,
-                        })}
-                      </span>
-                    ) : null}
-                    {buildHeldByGaps ? (
-                      <button
-                        type="button"
-                        data-testid="thread-plan-build-anyway"
-                        onClick={() => {
-                          setGapsAcknowledged(true);
-                          onBuild?.(plan);
-                        }}
-                        className={cn(
-                          "rounded px-0.5 text-[10.5px] font-semibold",
-                          "text-amber-800 underline underline-offset-2 dark:text-amber-300",
-                          "transition-colors hover:bg-amber-500/20",
-                        )}
-                      >
-                        {started
-                          ? tx("thread.plan.qualityResumeAnyway", "Resume anyway")
-                          : tx("thread.plan.qualityBuildAnyway", "Build anyway")}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              )
-            ) : null}
-            {isStreaming && activity ? (
-              <div className="flex min-w-0 items-center gap-1.5 px-3 pb-1.5 text-[11px] text-muted-foreground/80">
-                <span
-                  className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sky-500/80"
-                  aria-hidden
-                />
-                <span className="shrink-0 font-medium text-muted-foreground/90">
-                  {tx("thread.plan.now", "Now")}
-                </span>
-                <span className="min-w-0 truncate font-mono">{activity}</span>
-              </div>
-            ) : null}
-
-            {listOpen ? (
-              <ul className="max-h-56 space-y-0 overflow-y-auto border-t border-border/40 px-2.5 py-1.5 scrollbar-thin scrollbar-track-transparent">
-                {plan.last_change?.reason ? (
-                  <li className="px-0.5 pb-1 text-[10.5px] text-muted-foreground/65">
-                    {tx("thread.plan.lastChange", "Last change")}: v
-                    {plan.last_change.version ?? plan.version} -{" "}
-                    {plan.last_change.reason}
-                  </li>
-                ) : null}
-                {plan.items.map((item) => (
-                  <PlanRow
-                    key={item.id}
-                    item={item}
-                    current={
-                      item.id === plan.current_id &&
-                      !plan.complete &&
-                      !item.cancelled
-                    }
-                    running={isStreaming}
-                    activity={
-                      item.id === plan.current_id && !plan.complete
-                        ? activity
-                        : null
-                    }
-                    cancelledLabel={tx("thread.plan.cancelled", "Cancelled")}
+                    onClick={() => void applyMissionAction(canResume ? "resume_mission" : "pause_mission")}
+                    styles={COMMAND_STYLES}
                   />
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </motion.div>
-        ) : null}
-      </AnimatePresence>
+                ) : null}
+                {canStop ? <PrimaryButton data-testid="thread-plan-stop" text={tx("thread.plan.stop", "Stop")} onClick={onStop} styles={PRIMARY_STYLES} /> : null}
+                {canBuild ? (
+                  <PrimaryButton data-testid="thread-plan-build" text={buildLabel}
+                    onClick={() => { onBuild?.(plan); setExpanded(false); }}
+                    disabled={buildHeldByGaps}
+                    title={buildHeldByGaps ? buildHeldTitle : undefined}
+                    aria-describedby={buildHeldByGaps ? gapsCardId : undefined}
+                    styles={PRIMARY_STYLES}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </motion.section>
+        </Callout>
+      ) : null}
+    </div>
   );
 }
 
@@ -624,7 +381,7 @@ function PlanRow({
       data-testid="thread-plan-row"
       data-tone={tone}
       className={cn(
-        "flex min-w-0 items-start gap-2 rounded-md px-1.5 py-1 text-[12px] leading-[1.45]",
+        "flex min-w-0 items-start gap-2 rounded-lg px-2 py-2 text-[13px] leading-normal",
         PLAN_ROW_SURFACE_CLASS[tone],
       )}
     >
@@ -643,7 +400,7 @@ function PlanRow({
         {current && activity && !cancelled ? (
           <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[hsl(var(--composer-plan-fg))] dark:text-[hsl(var(--composer-plan))]/80">
             <span
-              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[hsl(var(--composer-plan))]"
+              className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[hsl(var(--composer-plan))] motion-reduce:animate-none"
               aria-hidden
             />
             <span className="min-w-0 truncate font-mono">{activity}</span>

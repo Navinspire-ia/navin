@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -47,6 +48,12 @@ def _usage_from_response_obj(response: Any) -> dict[str, int]:
     reasoning_tokens = _reasoning_tokens(usage_raw.get("output_tokens_details"))
     if reasoning_tokens:
         usage["reasoning_tokens"] = reasoning_tokens
+    input_details = usage_raw.get("input_tokens_details")
+    if input_details is not None:
+        cached = input_details.get("cached_tokens") if isinstance(input_details, dict) else getattr(input_details, "cached_tokens", None)
+        if cached is not None:
+            with suppress(TypeError, ValueError):
+                usage["cached_tokens"] = max(0, int(cached))
     return usage
 
 
@@ -444,16 +451,7 @@ async def consume_sdk_stream(
             if resp:
                 usage_obj = getattr(resp, "usage", None)
                 if usage_obj:
-                    usage = {
-                        "prompt_tokens": int(getattr(usage_obj, "input_tokens", 0) or 0),
-                        "completion_tokens": int(getattr(usage_obj, "output_tokens", 0) or 0),
-                        "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0),
-                    }
-                    reasoning_tokens = _reasoning_tokens(
-                        getattr(usage_obj, "output_tokens_details", None)
-                    )
-                    if reasoning_tokens:
-                        usage["reasoning_tokens"] = reasoning_tokens
+                    usage = _usage_from_response_obj(resp)
                 for out_item in getattr(resp, "output", None) or []:
                     if getattr(out_item, "type", None) == "reasoning":
                         for s in getattr(out_item, "summary", None) or []:

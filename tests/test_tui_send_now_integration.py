@@ -26,17 +26,18 @@ from navin.tui.widgets import PromptQueue, QueuedPromptRow, UserMessage
 
 
 class ScriptedProvider(LLMProvider):
-    def __init__(self, responses, gate=None):
+    def __init__(self, responses, gate=None, gate_after=0):
         super().__init__()
         self.responses = deque(responses)
         self.calls: list[list[dict]] = []
         self.gate = gate
+        self.gate_after = gate_after
 
     def get_default_model(self):
         return "test-send-now-tui"
 
     async def chat(self, **kwargs):
-        if self.gate is not None and len(self.calls) == 0:
+        if self.gate is not None and len(self.calls) == self.gate_after:
             await self.gate.wait()
         self.calls.append(list(kwargs.get("messages") or []))
         return self.responses.popleft()
@@ -151,6 +152,117 @@ def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
                     second_call = provider.calls[1]
                     user_texts = [
                         str(m.get("content")) for m in second_call
+                        if m.get("role") == "user"
+                    ]
+                    assert any("urgent follow-up" in t for t in user_texts), user_texts
+
+                    # The turn ends; the transcript keeps both user messages.
+                    await pilot.pause()
+                    texts = [r.raw_text for r in app.query(UserMessage)]
+                    assert texts == ["first prompt", "urgent follow-up"], texts
+                    assert not app.query_one(PromptQueue).display
+            finally:
+                if app.runtime.agent_loop is not None:
+                    app.runtime.agent_loop.stop()
+                if app.runtime._loop_task is not None:
+                    app.runtime._loop_task.cancel()
+                if app.runtime._consumer_task is not None:
+                    app.runtime._consumer_task.cancel()
+                await asyncio.gather(
+                    app.runtime._loop_task or asyncio.sleep(0),
+                    app.runtime._consumer_task or asyncio.sleep(0),
+                    return_exceptions=True,
+                )
+                await app.runtime.close()
+        set_config_path(old_config_path)
+    asyncio.run(run())
+
+
+def test_send_now_lands_at_the_bottom_after_the_running_tasks(tmp_path):
+    """The echoed follow-up must sit at the very bottom of the transcript.
+
+    Regression: "Send now" used to move the whole in-flight assistant bubble
+    below the echoed message, so the prompt showed up right after the first
+    message instead of after the agent's running task cards.
+    """
+
+    async def run():
+        (tmp_path / "a.json").write_text("{}\n")
+        provider = ScriptedProvider(
+            [
+                tool_call("read_file", path="a.json"),
+                tool_call("read_file", path="a.json"),
+                LLMResponse(content="Both prompts handled."),
+            ],
+            gate=asyncio.Event(),
+            gate_after=1,
+        )
+        config = make_config(tmp_path)
+        old_config_path = get_config_path()
+        set_config_path(tmp_path / "config.json")
+        prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
+        prefs.save = lambda: None
+        app = NavinApp(config, prefs=prefs)
+
+        def fake_snapshot(*args, **kwargs):
+            return ProviderSnapshot(provider, "test-send-now-tui", 128_000, ("test-send-now-tui",))
+
+        with (
+            patch(
+                "navin.providers.factory.build_provider_snapshot_allowing_unconfigured",
+                fake_snapshot,
+            ),
+            patch(
+                "navin.providers.factory.load_provider_snapshot_allowing_unconfigured",
+                fake_snapshot,
+            ),
+            patch("navin.agent.skills._home_skill_dirs", return_value=[]),
+            patch("navin.agent.loop.AgentLoop._connect_mcp", new_callable=AsyncMock),
+            patch("navin.optional_live.live_modules_available", return_value=False),
+            patch("navin.tui.app.live_modules_available", return_value=False),
+            patch("navin.cron.service.CronService"),
+            patch("navin.cron.spend.CronSpendHook", NoopHook),
+            patch("navin.webui.token_usage.TokenUsageHook", NoopHook),
+        ):
+            try:
+                async with app.run_test(size=(100, 32)) as pilot:
+                    app._engine_ready = True
+                    await app._render_history()
+
+                    # Turn 1 starts and runs a tool, so the agent bubble and
+                    # its task card are visible; the second model call is held
+                    # on the gate so the turn stays active.
+                    await app.submit_text("first prompt")
+                    for _ in range(300):
+                        if app._current is not None:
+                            break
+                        await asyncio.sleep(0.01)
+                    assert app._current is not None, "the agent bubble never appeared"
+
+                    # Queue a prompt while the bubble runs, then Send now.
+                    await app.submit_text("urgent follow-up")
+                    await pilot.pause()
+                    assert len(app.query(QueuedPromptRow)) == 1
+                    row = app.query(QueuedPromptRow).first()
+                    await pilot.click(row.query_one(".queue-send"))
+                    await pilot.pause()
+
+                    # The echo must land BELOW the in-flight agent bubble,
+                    # i.e. after the agent's running task cards.
+                    echo = list(app.query(UserMessage))[-1]
+                    order = list(app.transcript.children)
+                    assert order.index(app._current) < order.index(echo), order
+
+                    # Release the engine; the follow-up must reach the model.
+                    provider.gate.set()
+                    for _ in range(300):
+                        if len(provider.calls) >= 3:
+                            break
+                        await asyncio.sleep(0.01)
+                    assert len(provider.calls) >= 3, "the follow-up never reached the model"
+                    third_call = provider.calls[2]
+                    user_texts = [
+                        str(m.get("content")) for m in third_call
                         if m.get("role") == "user"
                     ]
                     assert any("urgent follow-up" in t for t in user_texts), user_texts

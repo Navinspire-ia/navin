@@ -25,6 +25,7 @@ import type { FileEditDisplayMode } from "@/lib/local-preferences";
 import type { UIFileDiff, UIFileEdit } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+import { ACTIVITY_DETAIL_PAGE_SIZE, ActivityPagination } from "./ActivityPagination";
 import { ActivityStep } from "./ActivityStep";
 import { DiffPair } from "./DiffPair";
 import { DiffSyntaxHighlight } from "./DiffSyntaxHighlight";
@@ -72,30 +73,36 @@ export function FileEditGroup({
   onOpenFilePreview?: (path: string) => void;
   density?: "default" | "diff-only";
 }) {
+  const [requestedPage, setPage] = useState(0);
   if (edits.length === 0) return null;
+  const page = Math.min(requestedPage, Math.ceil(edits.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1);
+  const start = page * ACTIVITY_DETAIL_PAGE_SIZE;
   return (
-    <ul className="space-y-1">
-      {edits.map((edit) => {
-        if (density === "diff-only" && canRenderDiff(edit, displayMode)) {
+    <div>
+      <ActivityPagination page={page} total={edits.length} onPageChange={setPage} />
+      <ul className="space-y-1">
+        {edits.slice(start, start + ACTIVITY_DETAIL_PAGE_SIZE).map((edit) => {
+          if (density === "diff-only" && canRenderDiff(edit, displayMode)) {
+            return (
+              <FileEditDiffOnly
+                key={edit.key}
+                edit={edit}
+                displayMode={displayMode}
+                onOpenFilePreview={onOpenFilePreview}
+              />
+            );
+          }
           return (
-            <FileEditDiffOnly
+            <FileEditRow
               key={edit.key}
               edit={edit}
               displayMode={displayMode}
               onOpenFilePreview={onOpenFilePreview}
             />
           );
-        }
-        return (
-          <FileEditRow
-            key={edit.key}
-            edit={edit}
-            displayMode={displayMode}
-            onOpenFilePreview={onOpenFilePreview}
-          />
-        );
-      })}
-    </ul>
+        })}
+      </ul>
+    </div>
   );
 }
 

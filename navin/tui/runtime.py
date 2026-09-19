@@ -343,6 +343,11 @@ class TuiRuntime:
         self._streamed_this_turn = False
         self._closed = False
         self._license_sync: Any = None
+        from navin.tui.exit_summary import CliUsageHook
+
+        self.usage = CliUsageHook()
+        self.worked_seconds = 0.0
+        self.shutdown_warnings: list[str] = []
 
     # -- properties -------------------------------------------------------
 
@@ -413,6 +418,7 @@ class TuiRuntime:
             image_generation_provider_configs=image_gen_provider_configs(config),
             hook_factories=list(DEFAULT_HOOK_FACTORIES),
             hooks=[
+                self.usage,
                 TokenUsageHook(timezone_name=config.agents.defaults.timezone),
                 CronSpendHook(cron),
                 *self._managed_usage_hooks(config),
@@ -421,7 +427,7 @@ class TuiRuntime:
             provider_snapshot_loader=load_provider_snapshot_allowing_unconfigured,
         )
         self._enable_interaction()
-        self._refresh_status()
+        await asyncio.to_thread(self._refresh_status)
         self._subscribe_runtime_events()
         from navin.optional_live import live_modules_available
 
@@ -475,6 +481,8 @@ class TuiRuntime:
         if self._closed:
             return
         self._closed = True
+        self.worked_seconds += self.turn_elapsed_s
+        self._turn_started_at = None
         if self._license_sync is not None:
             with contextlib.suppress(Exception):
                 from navin.license_sync import stop_license_sync
@@ -484,29 +492,47 @@ class TuiRuntime:
         if self._unsubscribe_runtime:
             with contextlib.suppress(Exception):
                 self._unsubscribe_runtime()
-        if self.agent_loop is not None:
+        loop = self.agent_loop
+        if loop is not None:
             with contextlib.suppress(Exception):
-                self.agent_loop.stop()
-        if self._consumer_task:
-            self._consumer_task.cancel()
-        tasks = [t for t in (self._loop_task, self._consumer_task) if t]
-        if tasks:
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=8)
-        if self.agent_loop is not None:
-            with contextlib.suppress(Exception):
-                await self.agent_loop.close_mcp()
-            sessions = getattr(self.agent_loop, "sessions", None)
-            if sessions is not None:
-                await asyncio.to_thread(sessions.flush_all)
-        with contextlib.suppress(Exception):
-            from navin.cli.commands import _close_agent_subprocesses
+                loop.stop()
+        tasks = [t for t in (self._loop_task, self._consumer_task) if t and not t.done()]
+        for active in getattr(loop, "_active_tasks", {}).values():
+            tasks.extend(t for t in active if not t.done())
+        subagents = getattr(loop, "subagents", None)
+        # A freed slot must not launch a queued child while we are quitting.
+        getattr(subagents, "_queued", {}).clear()
+        tasks.extend(t for t in getattr(subagents, "_running_tasks", {}).values() if not t.done())
+        # Stop dispatch and active work together, before waiting on cleanup.
+        # The agent's cancellation handler persists its latest checkpoint.
+        for task in tasks:
+            task.cancel()
+        from navin.tui.shutdown import drain
 
-            await _close_agent_subprocesses()
+        # AgentLoop.run owns MCP cleanup in its finally block. Calling it again
+        # here can wait twice and enter an AnyIO scope from the wrong task.
+        if loop is not None and self._loop_task is None:
+            tasks.append(asyncio.create_task(loop.close_mcp(), name="cli-mcp-close"))
+        from navin.cli.commands import _close_agent_subprocesses
+
+        tasks.append(asyncio.create_task(_close_agent_subprocesses(), name="cli-subprocess-close"))
+        if not await drain(tasks, timeout=2.0):
+            self.shutdown_warnings.append("Background cleanup exceeded 2 seconds; cancellation requested.")
+        if loop is not None:
+            sessions = getattr(loop, "sessions", None)
+            if sessions is not None:
+                # Turns already save atomically. Sync the files actually
+                # written, without serializing every history opened in memory.
+                try:
+                    await asyncio.to_thread(sessions.flush_saved)
+                except OSError as exc:
+                    self.shutdown_warnings.append(f"Could not sync saved history to disk: {exc}")
 
     # -- outbound ---------------------------------------------------------
 
     async def _emit(self, event: UiEvent) -> None:
+        if self._closed:
+            return
         try:
             result = self._on_event(event)
             if asyncio.iscoroutine(result):
@@ -739,6 +765,7 @@ class TuiRuntime:
         if latency is None and self._turn_started_at is not None:
             latency = int((time.monotonic() - self._turn_started_at) * 1000)
         self.status.turn_active = False
+        self.worked_seconds += self.turn_elapsed_s
         self.status.last_latency_ms = latency
         self.status.turns += 1
         self._turn_started_at = None
