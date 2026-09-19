@@ -71,7 +71,6 @@ from prompt_toolkit.key_binding import KeyBindings  # noqa: E402
 from prompt_toolkit.keys import Keys  # noqa: E402
 from prompt_toolkit.patch_stdout import patch_stdout  # noqa: E402
 from rich.console import Console  # noqa: E402
-from rich.markdown import Markdown  # noqa: E402
 from rich.markup import escape  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich.text import Text  # noqa: E402
@@ -486,7 +485,9 @@ def _response_renderable(content: str, render_markdown: bool, metadata: dict | N
         return Text(content)
     if (metadata or {}).get("render_as") == "text":
         return Text(content)
-    return Markdown(content)
+    from navin.cli.markdown import ResponseMarkdown
+
+    return ResponseMarkdown(content)
 
 
 async def _print_interactive_line(text: str) -> None:

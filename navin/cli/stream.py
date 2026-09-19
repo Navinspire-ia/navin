@@ -17,8 +17,9 @@ from contextlib import contextmanager, nullcontext
 
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.text import Text
+
+from navin.cli.markdown import ResponseMarkdown
 
 
 def _clear_current_line(console: Console) -> None:
@@ -119,7 +120,7 @@ class StreamRenderer:
     def _renderable(self):
         """Create a renderable from the current buffer."""
         if self._md and self._buf:
-            return Markdown(self._buf)
+            return ResponseMarkdown(self._buf)
         return Text(self._buf or "")
 
     def _render_str(self) -> str:

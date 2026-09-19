@@ -121,3 +121,49 @@ def test_reopen_large_saved_operation_retains_every_file_and_failure(tmp_path):
             assert app.transcript.visible
             await app._flush_unsent_work()
     asyncio.run(run())
+
+
+def test_long_command_turn_keeps_recent_and_running_activity_with_usable_history(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await app.submit_text("Run the checks")
+            await app.runtime.bus.consume_inbound()
+            block = await app._ensure_assistant()
+            await block.tool_event("watch", "exec", "start", {"command": "watch checks"}, None, None, None)
+            for index in range(55):
+                await block.tool_event(
+                    str(index), "exec", "end", {"command": f"check step_{index}"},
+                    f"result_{index:03d}\nExit code: 0", None, None,
+                )
+            app.composer.set_text("brouillon")
+            await pilot.pause()
+            rows = list(block.query(ToolCall))
+            assert len(rows) == 56
+            assert sum(row.display for row in rows) == ACTIVITY_PAGE_SIZE + 1
+            assert rows[0].display and rows[0].phase == "start"
+            assert not rows[1].display and "result_000" in rows[1].copy_text()
+            earlier = block.query_one(".assistant-history", Button)
+            earlier.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click(earlier)
+            assert sum(row.display for row in rows) == 2 * ACTIVITY_PAGE_SIZE + 1
+            assert rows[20].display and "result_019" in rows[20].copy_text()
+            # Looking back does not make the agent stop or move the old boundary.
+            await block.tool_event("last", "exec", "end", {"command": "final check"}, "TSC_OK", None, None)
+            assert rows[20].display and app.runtime.turn_active
+            assert app.composer.text == "brouillon"
+            recent = block.query_one(".assistant-recent", Button)
+            recent.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click(recent)
+            assert sum(row.display for row in block.query(ToolCall)) == ACTIVITY_PAGE_SIZE + 1
+            await block.tool_event("watch", "exec", "end", {}, "Exit code: 0", None, None)
+            assert not rows[0].display
+            assert sum(row.display for row in block.query(ToolCall)) == ACTIVITY_PAGE_SIZE
+            assert "result_000" in block.copy_text() and "TSC_OK" in block.copy_text()
+            app.composer.focus()
+            await pilot.press("x")
+            assert app.composer.text == "brouillonx"
+            await app._flush_unsent_work()
+    asyncio.run(run())

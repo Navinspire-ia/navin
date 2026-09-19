@@ -12,6 +12,7 @@ import re
 import time
 from typing import Any
 
+from rich.cells import cell_len
 from rich.markup import escape
 from rich.rule import Rule
 from rich.text import Text
@@ -34,6 +35,13 @@ from navin.tui.markdown import install_path_styles, readable_validation_report
 from navin.tui.markdown_stream import TranscriptMarkdown
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
+from navin.utils.command_output import (
+    COMMAND_PREVIEW_LINES,
+    GIT_PREVIEW_LINES,
+    command_exit_code,
+    compact_command_rows,
+    is_git_command,
+)
 from navin.utils.pasted_content import (
     allocate_paste_token,
     collapse_text_for_composer,
@@ -647,6 +655,9 @@ class ToolCall(Vertical, can_focus=True):
         self._painted_head: tuple[str, bool] | None = None
         self._body_size: tuple[int, int] | None = None
         self._preview_overflow = False
+        self._command_summary_cache: dict = {}
+        self._body_revision = 0
+        self._painted_body_key: tuple | None = None
         if tool_verb(name) in {"edit", "create"}:
             self._open = True
         self.add_class("-running")
@@ -768,6 +779,7 @@ class ToolCall(Vertical, can_focus=True):
         if percent is not None:
             self.percent = percent
         if output:
+            self._body_revision += 1
             if output_mode == "snapshot":
                 self._output_buffer = ""
                 self._pending_output.clear()
@@ -779,6 +791,13 @@ class ToolCall(Vertical, can_focus=True):
         if phase == "output":
             self.phase = "output"
         elif phase in {"end", "error", "cancelled"}:
+            self._body_revision += 1
+            if tool_verb(self.tool_name) == "run" or self.tool_name == "test_run":
+                code = command_exit_code(result)
+                if code is not None and phase == "end":
+                    self.percent = 100
+                    if code != 0:
+                        phase = "error"
             self.phase = phase
             self.result = result
             self.error = error
@@ -836,7 +855,7 @@ class ToolCall(Vertical, can_focus=True):
     def _defer_output_paint(self) -> bool:
         return (
             self.phase == "output" and self._preview_overflow
-            and self._body_size is not None and self._body_size[1] >= PREVIEW_OPEN_LINES
+            and self._body_size is not None and self._body_size[1] >= COMMAND_PREVIEW_LINES
             and (self.screen is not self.app.screen or not self.screen.can_view_partial(self))
         )
 
@@ -846,6 +865,7 @@ class ToolCall(Vertical, can_focus=True):
             self.call_ids.append(call_id)
             self.edit_count = len(self.call_ids)
         self.call_id = call_id or self.call_id
+        self._body_revision += 1
         if isinstance(arguments, dict) and arguments:
             merged = dict(self.arguments) if isinstance(self.arguments, dict) else {}
             merged.update(arguments)
@@ -886,6 +906,8 @@ class ToolCall(Vertical, can_focus=True):
     def _refresh_body(self) -> None:
         if not self.is_mounted:
             return
+        if not self.display or (self._cluster_owner is not None and not self._cluster_owner.display):
+            return
         if self.screen is not self.app.screen or self._defer_output_paint():
             # Resize and theme messages may have been queued before a modal
             # opened or output scrolled away. Defer hidden output there too.
@@ -898,19 +920,37 @@ class ToolCall(Vertical, can_focus=True):
         except Exception:  # noqa: BLE001
             return
         if not self._open:
+            self._painted_body_key = None
             body.display = False
             self.query_one(".tool-command", Static).display = False
             viewport.display = False
             self.query_one(".tool-more", Button).display = False
             return
         width = max(0, int(viewport.scrollable_content_region.width or 0))
+        body_key = (
+            self._body_revision, width, self.app.current_theme.dark, self._show_full,
+            self.file_path, self.file_operation, self.file_binary, self.file_truncated,
+            self.added, self.removed,
+        )
+        if body_key == self._painted_body_key:
+            return
         rows = preview_rows(
             self.tool_name, self.arguments, result=self.result, error=self.error,
             output_lines=self.output_lines, diff_text=self.diff_text,
             include_run_output=True,
         )
-        self._preview_overflow = len(rows) > PREVIEW_OPEN_LINES
-        limit = MAX_TRANSCRIPT_LINES if self._show_full else PREVIEW_OPEN_LINES
+        command_output = tool_verb(self.tool_name) == "run" or self.tool_name in {"test_run", "git"}
+        git_output = command_output and is_git_command(self.tool_name, self.arguments)
+        compact = command_output and not git_output and not self.diff_text and not any(
+            row[1] in {"add", "del"} for row in rows
+        )
+        preview_limit = GIT_PREVIEW_LINES if git_output else PREVIEW_OPEN_LINES
+        summary = compact_command_rows(rows, cache=self._command_summary_cache) if compact else rows[:preview_limit]
+        self._preview_overflow = (
+            [row[2] for row in summary] != [row[2] for row in rows]
+            or (compact and any(cell_len(row[2]) > max(1, width - 8) for row in summary))
+        )
+        limit = MAX_TRANSCRIPT_LINES if self._show_full else len(summary) or 1
         text = format_tool_preview_markup(
             self.tool_name,
             {**self.arguments, **({"path": self.file_path} if self.file_path else {})},
@@ -922,7 +962,8 @@ class ToolCall(Vertical, can_focus=True):
             width=width,
             dark=self.app.current_theme.dark,
             include_run_output=True,
-            rows=rows,
+            rows=rows if self._show_full else summary,
+            compact=compact and not self._show_full,
         )
         note = ""
         if self.file_truncated:
@@ -958,14 +999,18 @@ class ToolCall(Vertical, can_focus=True):
         command.display = self._open and self._show_full and bool(details)
         viewport.display = body.display or command.display
         more = self.query_one(".tool-more", Button)
-        more.display = self._open and (len(rows) > PREVIEW_OPEN_LINES or bool(details))
+        more.display = self._open and (self._preview_overflow or bool(details))
         label = "Show less" if self._show_full else (
-            f"Show all (+{len(rows) - PREVIEW_OPEN_LINES} lines)" if len(rows) > PREVIEW_OPEN_LINES
+            f"Full output ({len(rows)} lines)" if compact and self._preview_overflow
+            else f"Show all (+{len(rows) - preview_limit} lines)" if len(rows) > preview_limit
             else "Show command"
         )
         if more.label.plain != label:
             more.label = label
         more.tooltip = "F expands the full output. Enter folds this activity."
+        self._painted_body_key = body_key
+        if self.phase in {"end", "error", "cancelled"}:
+            self._command_summary_cache.clear()
 
     def on_resize(self) -> None:
         if self._open:
@@ -987,10 +1032,13 @@ class ToolCall(Vertical, can_focus=True):
         if not blob:
             return
         self.diff_text = blob
+        self._body_revision += 1
         self._reveal_if_preview()
         self._refresh_body()
 
     def _has_preview(self) -> bool:
+        if self._open and self._body_size and self._body_size[1]:
+            return True
         return self.file_recorded or bool(self._command_details()) or bool(
             format_tool_detail(
                 self.tool_name,
@@ -1476,7 +1524,7 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-foot {
         margin: 0 0 1 0;
         padding: 0;
-        color: #9A9A9A;
+        color: $text-muted;
         display: none;
         background: $background;
         text-style: none;
@@ -1489,10 +1537,31 @@ class AssistantMessage(Vertical):
         margin: 1 0;
     }
     AssistantMessage > .assistant-foot.-visible { display: block; }
+    AssistantMessage > .assistant-history-controls {
+        display: none;
+        height: 1;
+        margin: 1 0;
+    }
+    AssistantMessage > .assistant-history-controls Button {
+        height: 1;
+        min-height: 1;
+        min-width: 0;
+        width: auto;
+        padding: 0 1;
+        margin: 0 1 0 0;
+        border: none;
+        color: $text-muted;
+        background: $background;
+    }
+    AssistantMessage > .assistant-history-controls Button:hover,
+    AssistantMessage > .assistant-history-controls Button:focus {
+        color: $foreground;
+        background: $panel;
+    }
     AssistantMessage > .assistant-finish {
         height: 1;
         margin: 1 0;
-        color: $text-muted;
+        color: $primary;
         display: none;
     }
     AssistantMessage > .assistant-finish.-visible { display: block; }
@@ -1508,6 +1577,13 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownH3 { margin: 0 0 1 0; padding: 0; background: transparent; border: none; }
     AssistantMessage > .assistant-body MarkdownParagraph { margin: 0 0 1 0; }
     AssistantMessage > .assistant-body MarkdownBlock { color: $foreground; }
+    AssistantMessage > .assistant-body MarkdownBlock > .strong {
+        color: $primary;
+        text-style: bold;
+    }
+    AssistantMessage > .assistant-body MarkdownBullet {
+        color: $accent;
+    }
     AssistantMessage > .assistant-body MarkdownH1,
     AssistantMessage > .assistant-body MarkdownH2 {
         color: $primary;
@@ -1592,6 +1668,10 @@ class AssistantMessage(Vertical):
         self._subagents: dict[str, SubagentCard] = {}
         self._progress_line: ProgressLine | None = None
         self._reasoning: ReasoningBlock | None = None
+        self._activity_blocks: list[Vertical] = []
+        self._activity_start = 0
+        self._activity_expanded = False
+        self._pinned_activity: set[Vertical] = set()
         self.streamed = False
         self.finished = False
         self._open = False
@@ -1603,13 +1683,85 @@ class AssistantMessage(Vertical):
             head = f"{self.bot_icon} {head}"
         if self._show_head:
             yield Static(head, classes="assistant-head", markup=False)
+        with Horizontal(classes="assistant-history-controls"):
+            yield Button("Earlier activity", classes="assistant-history", compact=True)
+            yield Button("Recent only", classes="assistant-recent", compact=True)
         yield Static("", classes="assistant-preview", markup=True)
-        yield Static(Rule("finish", characters="─", align="left", style=""), classes="assistant-finish")
+        yield Static(Rule("✦ Response", characters="─", align="left", style=""), classes="assistant-finish")
         yield TranscriptMarkdown("", classes="assistant-body")
         yield Static("", classes="assistant-foot", markup=True)
 
     def on_mount(self) -> None:
         self._composed.set()
+
+    @staticmethod
+    def _activity_running(block: Vertical) -> bool:
+        if isinstance(block, ToolCall):
+            return block.phase in {"start", "output"}
+        if isinstance(block, ToolCluster):
+            return any(tool.phase in {"start", "output"} for tool in block.tools)
+        return isinstance(block, ReasoningBlock) and not block._done
+
+    def _register_activity(self, block: Vertical) -> None:
+        self._activity_blocks.append(block)
+        if not self._activity_expanded:
+            start = max(0, len(self._activity_blocks) - ACTIVITY_PAGE_SIZE)
+            for older in self._activity_blocks[self._activity_start:start]:
+                if self._activity_running(older):
+                    self._pinned_activity.add(older)
+                else:
+                    older.display = False
+            self._activity_start = start
+        self._release_finished_activity()
+        self._refresh_history_controls()
+
+    def _release_finished_activity(self) -> None:
+        for block in tuple(self._pinned_activity):
+            if not self._activity_running(block):
+                block.display = False
+                self._pinned_activity.discard(block)
+
+    def _refresh_history_controls(self) -> None:
+        controls = self.query_one(".assistant-history-controls", Horizontal)
+        controls.display = bool(self._activity_start or self._activity_expanded)
+        earlier = controls.query_one(".assistant-history", Button)
+        earlier.display = self._activity_start > 0
+        earlier.label = f"Earlier activity ({self._activity_start})"
+        controls.query_one(".assistant-recent", Button).display = self._activity_expanded
+
+    @on(Button.Pressed, ".assistant-history")
+    def _show_earlier_activity(self, event: Button.Pressed) -> None:
+        event.stop()
+        start = max(0, self._activity_start - ACTIVITY_PAGE_SIZE)
+        revealed = self._activity_blocks[start:self._activity_start]
+        self._activity_expanded = True
+        self._activity_start = start
+        for block in revealed:
+            self._pinned_activity.discard(block)
+            block.display = True
+            for tool in ([block] if isinstance(block, ToolCall) else block.query(ToolCall)):
+                tool._refresh_body()
+        self._refresh_history_controls()
+        if isinstance(self.parent, Transcript):
+            self.parent.auto_follow = False
+        if revealed:
+            self.call_after_refresh(revealed[0].scroll_visible, animate=False, top=True)
+
+    @on(Button.Pressed, ".assistant-recent")
+    def _show_recent_activity(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._activity_expanded = False
+        start = max(0, len(self._activity_blocks) - ACTIVITY_PAGE_SIZE)
+        for older in self._activity_blocks[:start]:
+            if self._activity_running(older):
+                self._pinned_activity.add(older)
+            else:
+                older.display = False
+        self._activity_start = start
+        self._refresh_history_controls()
+        if isinstance(self.parent, Transcript):
+            self.parent.auto_follow = True
+            self.parent.follow()
 
     async def _ready_body(self) -> Markdown | None:
         await self._composed.wait()
@@ -1648,11 +1800,13 @@ class AssistantMessage(Vertical):
         if end:
             if self._reasoning is not None:
                 self._reasoning.finish()
+                self._release_finished_activity()
             return
         if self._reasoning is None or self._reasoning._done:
             block = ReasoningBlock()
             self._reasoning = block
             await self.mount(block, before=preview)
+            self._register_activity(block)
             block.append(text)
             return
         self._reasoning.append(text)
@@ -1703,6 +1857,7 @@ class AssistantMessage(Vertical):
             else:
                 self._cluster = None
                 await self.mount(widget, before=preview)
+                self._register_activity(widget)
             widgets = [widget]
         for widget in widgets:
             if phase == "start":
@@ -1717,6 +1872,7 @@ class AssistantMessage(Vertical):
                 widget._refresh_body()
                 continue
             widget.apply(phase=phase, result=result, error=error, output=output, percent=percent, output_mode=output_mode)
+        self._release_finished_activity()
 
     async def _ensure_cluster(self, kind: str) -> ToolCluster | None:
         current = self._cluster
@@ -1728,6 +1884,7 @@ class AssistantMessage(Vertical):
         cluster = ToolCluster(kind)
         self._cluster = cluster
         await self.mount(cluster, before=preview)
+        self._register_activity(cluster)
         return cluster
 
     async def note_file_edit(
@@ -1770,6 +1927,7 @@ class AssistantMessage(Vertical):
         match.set_diff(added if phase == "end" else 0, removed if phase == "end" else 0)
         match.diff_text = diff.strip("\n") if phase == "end" else ""
         match.apply(phase=phase, error=error)
+        self._release_finished_activity()
 
     async def progress(self, text: str) -> None:
         if not self.is_attached:
@@ -2064,6 +2222,7 @@ class AssistantMessage(Vertical):
                 tool._refresh_body()
                 continue
             tool.collapse()
+        self._release_finished_activity()
         foot = self._query_static(".assistant-foot")
         if foot is None:
             return

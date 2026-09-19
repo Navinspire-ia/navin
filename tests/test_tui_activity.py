@@ -132,8 +132,9 @@ def test_full_output_button_keyboard_and_selection_work(theme, width):
             assert command in row._head_text()
             assert row.added == row.removed == 0
             more = row.query_one(".tool-more", Button)
-            assert more.display and "+63 lines" in str(more.label)
-            assert "case_094" not in str(row.query_one(".tool-body", Static).content)
+            assert more.display and "Full output (95 lines)" in str(more.label)
+            assert "case_000" not in str(row.query_one(".tool-body", Static).content)
+            assert "case_094" in str(row.query_one(".tool-body", Static).content)
             more.scroll_visible(animate=False)
             await pilot.pause()
             await pilot.click(more)
@@ -165,7 +166,7 @@ def test_full_output_button_keyboard_and_selection_work(theme, width):
             assert not body.display
             await pilot.press("enter", "f")
             assert body.display
-            assert "case_094" not in str(body.content)
+            assert "case_000" not in str(body.content)
             await pilot.press("f")
             assert "case_094" in str(body.content)
             await block.finish(latency_ms=1, model="test", preset=None)

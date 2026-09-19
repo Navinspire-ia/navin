@@ -371,6 +371,15 @@ class NavinApp(App[None]):
     TITLE = "navin-cli"
     ALLOW_SELECT = True
     COMMANDS = {NavinActions, SlashCommands}
+
+    def get_driver_class(self):
+        driver = super().get_driver_class()
+        if driver.__module__ == "textual.drivers.linux_driver":
+            from navin.tui.driver import NavinLinuxDriver
+
+            return NavinLinuxDriver
+        return driver
+
     CSS = """
     Screen { layout: vertical; background: $background; }
     #main { height: 1fr; }

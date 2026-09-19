@@ -14,6 +14,7 @@ from typing import Any
 from rich.cells import cell_len, chop_cells
 from rich.text import Text
 
+from navin.utils.command_output import is_git_command, output_kind
 from navin.utils.path import abbreviate_path
 
 # Registry: tool_name -> (key_args, template, is_path, is_command)
@@ -677,6 +678,9 @@ def activity_head_text(text: str, *, dark: bool = True) -> Text:
     for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
         color = palette["green"] if match[0].startswith("+") else palette["coral"]
         rendered.stylize(color, match.start(), match.end())
+    for match in re.finditer(r"\[[━·]+\]\s+\d+(?:\.\d+)?%", text):
+        family = "coral" if "Failed:" in text else "green" if match[0].endswith(" 100%") else "blue"
+        rendered.stylize(palette[family], match.start(), match.end())
     return rendered
 
 
@@ -868,7 +872,7 @@ def preview_rows(
                 rows.append((None, kind, line.rstrip()))
     metadata_count = len(rows)
     command = _command_from_args(args)
-    run_is_git = command.strip().startswith("git")
+    run_is_git = is_git_command(name, args)
     text = _result_text(result, output_lines)
     if error:
         # A failure may also contain useful stdout. Remove only a duplicate
@@ -889,6 +893,8 @@ def preview_rows(
         pass
     elif text:
         for index, line in enumerate(text.splitlines(), start=1):
+            if verb == "run" or name in {"test_run", "git"}:
+                line = Text.from_ansi(line).plain if "\x1b" in line else line
             rows.append((index, "ctx", line))
     elif body and not error:
         for index, line in enumerate(body.splitlines(), start=1):
@@ -1021,12 +1027,19 @@ def format_preview_markup_line(
     width: int = 0,
     dark: bool = True,
     filename: str = "",
+    compact: bool = False,
 ) -> str:
     """One flat diff: tinted changes, quiet numbers and readable syntax."""
     prefix = format_preview_line(number, kind, "")
+    if kind in {"success", "warning", "failure", "info"} and not text.lstrip().startswith(tuple("ℹ✓✔✗×✖⚠")):
+        prefix += {"success": "✓ ", "warning": "! ", "failure": "✗ ", "info": "ℹ "}[kind]
     code = text.expandtabs(4)
     target = max(1, int(width or PREVIEW_MIN_WIDTH))
     gutter = cell_len(prefix)
+    if compact:
+        clipped = Text(code)
+        clipped.truncate(max(1, target - gutter), overflow="ellipsis")
+        code = clipped.plain
     if 0 < gutter < target:
         # Keep the source number on the first visual line and repeat the
         # change marker on continuations. Copying still uses the source line.
@@ -1041,6 +1054,10 @@ def format_preview_markup_line(
         "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F5F5"),
         "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F5F5"),
         "error": (activity_palette(dark)["coral"], PREVIEW_CTX_BG if dark else "#F5F5F5"),
+        **{
+            kind: (activity_palette(dark)[accent], PREVIEW_CTX_BG if dark else "#F5F5F5")
+            for kind, accent in {"success": "green", "warning": "mustard", "failure": "coral", "info": "blue"}.items()
+        },
     }
     ink, background = palette.get(kind, palette["ctx"])
     accents = activity_palette(dark)
@@ -1050,7 +1067,7 @@ def format_preview_markup_line(
     for line in lines:
         row = Text(line, style=f"{ink} on {background}")
         if number is not None and 0 < gutter < target:
-            row.stylize(accents["muted"], 0, gutter - 1)
+            row.stylize(accents["muted"], 0, len(f"{number:>4}"))
             if kind in {"add", "del"}:
                 row.stylize(accents["green" if kind == "add" else "coral"], gutter - 1, gutter)
             length = len(line) - gutter
@@ -1075,6 +1092,7 @@ def format_tool_preview_markup(
     dark: bool = True,
     include_run_output: bool = False,
     rows: list[tuple[int | None, str, str]] | None = None,
+    compact: bool = False,
 ) -> str:
     """Numbered preview for the TUI body: data, metadata, add/del backgrounds."""
     if rows is None:
@@ -1091,8 +1109,11 @@ def format_tool_preview_markup(
     else:
         rows = rows[:max(1, int(limit))]
     filename = _first_path(arguments or {}) if diff_text or any(row[1] in {"add", "del"} for row in rows) else ""
+    if tool_verb(name) == "run" or name in {"test_run", "git"}:
+        rows = [(number, output_kind(text) if kind == "ctx" else kind, text) for number, kind, text in rows]
     return "\n".join(
-        format_preview_markup_line(*row, width=width, dark=dark, filename=filename) for row in rows
+        format_preview_markup_line(*row, width=width, dark=dark, filename=filename, compact=compact)
+        for row in rows
     )
 
 
@@ -1137,9 +1158,7 @@ def _human_result(result: Any, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
         return clip_transcript(text, max_chars=limit)
     if isinstance(result, dict):
         bits: list[str] = []
-        code = result.get("returncode")
-        if isinstance(code, int):
-            bits.append("ok" if code == 0 else f"exit {code}")
+        code = result.get("exit_code", result.get("returncode"))
         if result.get("ok") is True and "ok" not in bits:
             bits.append("ok")
         for key in (
@@ -1160,6 +1179,8 @@ def _human_result(result: Any, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
                 chunk = _human_result(val, limit=max(80, limit // 2))
                 if chunk:
                     bits.append(chunk)
+        if isinstance(code, int) and not isinstance(code, bool):
+            bits.append(f"Exit code: {code}")
         added = result.get("added")
         removed = result.get("removed")
         if isinstance(added, int) or isinstance(removed, int):

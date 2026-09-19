@@ -208,7 +208,7 @@ def test_live_output_of_same_size_repaints_without_reflowing_the_transcript(tmp_
                 row._refresh_body()
                 assert update.call_count == 1
                 assert update.call_args.kwargs["layout"] is False
-            assert "new_000" in str(body.content)
+            assert "new_074" in str(body.content)
             assert "new_079" in row.copy_text()
             row.apply(phase="end")
     asyncio.run(run())
@@ -232,8 +232,8 @@ def test_hidden_live_output_keeps_latest_data_and_repaints_when_navigation_close
                 assert "latest_079" in row.copy_text()
             app.pop_screen()
             await pilot.pause(0.2)
-            assert "latest_000" in str(body.content)
-            assert "old_000" not in str(body.content)
+            assert "latest_074" in str(body.content)
+            assert "old_074" not in str(body.content)
             row.apply(phase="end")
     asyncio.run(run())
 
@@ -434,7 +434,7 @@ def test_resize_defers_hidden_log_formatting_until_it_scrolls_into_view(tmp_path
                 preview.assert_not_called()
             app.transcript.nudge(-1000)
             await pilot.pause(0.2)
-            assert "latest_000" in str(row.query_one(".tool-body", Static).content)
+            assert "latest_074" in str(row.query_one(".tool-body", Static).content)
             row.apply(phase="end")
     asyncio.run(run())
 

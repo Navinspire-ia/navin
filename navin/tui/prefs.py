@@ -27,7 +27,7 @@ class TuiPrefs:
     theme_explicit: bool = False  # True once the user picked a theme themselves
     mode: str = DEFAULT_MODE
     mode_explicit: bool = False  # True once the user switched modes themselves
-    sidebar: bool = True
+    sidebar: bool = False
     sidebar_explicit: bool = False  # True once the user hid or showed the panel
     show_reasoning: bool = True
     show_tools: bool = True
@@ -68,8 +68,8 @@ class TuiPrefs:
             # Earlier builds saved "chat" without the user choosing it.
             prefs.mode = DEFAULT_MODE
         if not prefs.sidebar_explicit:
-            # Earlier builds saved a closed panel while iterating the dock.
-            prefs.sidebar = True
+            # Use the whole terminal unless the user explicitly opens the panel.
+            prefs.sidebar = False
         return prefs
 
     def save(self) -> None:
