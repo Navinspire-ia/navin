@@ -70,16 +70,21 @@ def percentiles(samples: list[float]) -> dict:
     }
 
 
-async def measure(root: Path, keys: int) -> dict:
+async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 120) -> dict:
     set_config_path(root / "config.json")
     prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
     app = LoadApp(SimpleNamespace(workspace_path=root), prefs=prefs)
     app.theme = "navin"
-    async with app.run_test(size=(120, 42)) as pilot:
+    async with app.run_test(size=(width, 42)) as pilot:
         await app.submit_text("Continue working while I type and navigate.")
         await app.runtime.bus.consume_inbound()
         block = await app._ensure_assistant()
         await block.reveal()
+        for index in range(history_tools):
+            await block.tool_event(
+                f"history-{index}", "exec", "end", {"command": f"check step_{index}"},
+                "6 passed\nExit code: 0", None, None,
+            )
         rows = []
         seed = "".join(f"case_{i:04d} passed: full output retained\n" for i in range(5000))
         for index in range(6):
@@ -196,10 +201,14 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--keys", type=int, choices=range(10, 81), default=50, metavar="10..80")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--history-tools", type=int, default=0, help="Completed commands before the measured stream")
+    parser.add_argument("--width", type=int, default=120, help="Terminal columns")
     parser.add_argument("--check", action="store_true", help="Fail if input (including scheduling delay) p95 exceeds 50 ms or navigation p95 exceeds 100 ms")
     args = parser.parse_args()
     if args.repeat < 1:
         parser.error("--repeat must be positive")
+    if args.history_tools < 0 or args.width < 40:
+        parser.error("--history-tools must be nonnegative and --width must be at least 40")
     original_config = get_config_path()
     runs = []
     try:
@@ -208,7 +217,7 @@ def main() -> int:
             # headless app's cyclic render caches outside the measured load.
             gc.collect()
             with tempfile.TemporaryDirectory(prefix="navin-tui-bench-") as directory:
-                runs.append(asyncio.run(measure(Path(directory), args.keys)))
+                runs.append(asyncio.run(measure(Path(directory), args.keys, args.history_tools, args.width)))
     finally:
         set_config_path(original_config)
     metrics = {name: percentiles([sample for run in runs for sample in run["samples"][name]])
@@ -221,7 +230,8 @@ def main() -> int:
         "scope": "Headless UI dispatch to rendered frame; hardware and engine/network latency excluded",
         "platform": platform.platform(), "python": platform.python_version(), "textual": version("textual"),
         "load": {"tools": 6, "retained_lines_per_tool": 5000, "output_interval_ms": 30,
-                 "session_menu_items": 250, "terminal": [120, 42], "keys_per_run": args.keys,
+                 "history_tools": args.history_tools,
+                 "session_menu_items": 250, "terminal": [args.width, 42], "keys_per_run": args.keys,
                  "runs": len(runs)},
         "metrics": metrics,
         "stream_characters_per_run": [run["stream_characters"] for run in runs],

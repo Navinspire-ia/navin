@@ -10,6 +10,12 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
+from navin.utils.command_output import (
+    GIT_PREVIEW_LINES,
+    command_exit_code,
+    compact_command_rows,
+    is_git_command,
+)
 from navin.utils.file_edit_events import file_edit_details
 from navin.utils.task_progress import parse_progress_from_output, progress_bar
 from navin.utils.tool_hints import (
@@ -18,6 +24,7 @@ from navin.utils.tool_hints import (
     activity_label,
     file_operation_label,
     format_tool_preview_markup,
+    preview_rows,
     tool_cluster_kind,
     tool_verb,
 )
@@ -62,6 +69,9 @@ class ActivityPrinter:
     def _head(self, label: str) -> None:
         self.console.print(activity_head_text(label), highlight=False)
 
+    def _compact_run(self, name: str) -> bool:
+        return self.console.is_terminal and (tool_verb(name) == "run" or name == "test_run")
+
     def _tool(self, event: dict[str, Any]) -> None:
         key = str(event.get("call_id") or "")
         state = self._calls.setdefault(key, {"output": "", "done": False, "printed": False})
@@ -93,14 +103,14 @@ class ActivityPrinter:
                                 break
                 else:
                     state["output"] += chunk
-                if state["printed"]:
+                if state["printed"] and not self._compact_run(state["name"]):
                     self.console.print(Text.from_ansi(chunk), end="", highlight=False)
             percent = event.get("percent")
             if not isinstance(percent, (int, float)):
                 percent = parse_progress_from_output(state["output"][-4000:]).get("percent")
             bar = progress_bar(percent)
             if bar and bar != state.get("bar"):
-                if state["output"] and not state["output"].endswith("\n"):
+                if not self._compact_run(state["name"]) and state["output"] and not state["output"].endswith("\n"):
                     self.console.print()
                 self._head("  └ Running " + bar)
                 state["bar"] = bar
@@ -114,6 +124,15 @@ class ActivityPrinter:
         label = activity_label(name, args, phase=phase)
         result = event.get("result")
         error = event.get("error")
+        if self._compact_run(name):
+            code = command_exit_code(result)
+            if code is not None and phase == "end":
+                phase = "error" if code else phase
+                label = activity_label(name, args, phase=phase) + "  " + progress_bar(100)
+            self.break_group()
+            self._head(f"{'×' if phase in {'error', 'cancelled'} else '•'} {label}")
+            self._body(name, args, result=result, error=error, output_lines=state["output"].splitlines())
+            return
         if state["printed"]:
             if state["output"] and not state["output"].endswith("\n"):
                 self.console.print()
@@ -177,9 +196,20 @@ class ActivityPrinter:
                 self.console.print(Text("  No text preview.", style="dim"))
 
     def _body(self, name: str, arguments: dict, **kwargs: Any) -> None:
+        compact = self._compact_run(name)
+        command = compact or (self.console.is_terminal and name == "git")
+        omitted = 0
+        if command:
+            rows = preview_rows(name, arguments, include_run_output=True, **kwargs)
+            compact = compact and not is_git_command(name, arguments) and not any(row[1] in {"add", "del"} for row in rows)
+            summary = compact_command_rows(rows) if compact else rows[:GIT_PREVIEW_LINES]
+            omitted = len(rows) - len(summary)
+            kwargs["rows"] = summary
         body = format_tool_preview_markup(
             name, arguments, limit=MAX_TRANSCRIPT_LINES,
-            width=max(1, self.console.width - 2), **kwargs,
+            width=max(1, self.console.width - 2), compact=compact, **kwargs,
         )
         if body:
             self.console.print(Text.from_markup(body), highlight=False)
+        if omitted:
+            self.console.print(Text(f"  … {omitted} lines omitted from preview", style="dim"))
