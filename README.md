@@ -8,7 +8,7 @@
 
 Run it in your terminal, your browser or the desktop app. Choose your models. Keep control.
 
-[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · [한국어](./README.ko.md) · [Svenska](./README.sv.md)
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Local first](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
@@ -57,8 +57,9 @@ Prefer a window? [Download Navin Desktop for Windows, macOS or Linux](https://na
 
 The software is free to use under its open source license. External model APIs and connected services may charge for usage. [Installation and troubleshooting](./docs/Installation.md).
 
-<details>
-<summary><strong>Build from source</strong></summary>
+### Build from source (gateway + WebUI)
+
+To run or change Navin on your machine:
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -67,15 +68,13 @@ make install
 make start
 ```
 
-The development WebUI opens at [localhost:5173](http://localhost:5173). To run the CLI from the checkout:
+`make install` sets up missing system packages where supported, the Python backend and the WebUI. `make start` launches the gateway and the WebUI at [localhost:5173](http://localhost:5173).
 
-```bash
-.venv/bin/navin-cli
-```
+If you skip system setup (`NAVIN_SKIP_SYSTEM=1` or `sh scripts/install.sh --no-system`), install **Python 3.11+, Git, Make, Node.js 18+ and npm** first.
 
-Windows: `.venv\Scripts\navin-cli`. Prerequisites and production builds: [installation guide](./docs/Installation.md).
+On Linux/macOS, the native sandbox also needs **rustup** (`make native`).
 
-</details>
+CLI from the checkout: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`). [Full installation guide](./docs/Installation.md).
 
 ## One workspace, many kinds of work
 

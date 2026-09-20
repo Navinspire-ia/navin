@@ -8,7 +8,7 @@
 
 Im Terminal, Browser oder in der Desktop-App. Wähle deine Modelle. Behalte die Kontrolle.
 
-[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · [한국어](./README.ko.md) · [Svenska](./README.sv.md)
 
 [![Lizenz AGPL-3.0](https://img.shields.io/badge/Lizenz-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Lokale Ausführung](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
@@ -57,8 +57,9 @@ Lieber mit Fenster? [Navin Desktop für Windows, macOS oder Linux herunterladen]
 
 Die Software ist unter ihrer Open-Source-Lizenz kostenlos nutzbar. Modell-APIs und externe Dienste können Nutzungsgebühren erheben. [Installation und Fehlerbehebung](./docs/Installation.md).
 
-<details>
-<summary><strong>Aus dem Quellcode installieren</strong></summary>
+### Aus dem Quellcode (gateway + WebUI)
+
+So führst du Navin lokal aus oder passt es an:
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -67,9 +68,13 @@ make install
 make start
 ```
 
-Die Entwicklungs-WebUI läuft unter [localhost:5173](http://localhost:5173). CLI aus dem Repository: `.venv/bin/navin-cli`; unter Windows: `.venv\Scripts\navin-cli`. Voraussetzungen und Produktionsbuilds: [Installationsanleitung](./docs/Installation.md).
+`make install` installiert fehlende Systempakete, soweit unterstützt, sowie das Python-Backend und die WebUI. `make start` startet das Gateway und die WebUI unter [localhost:5173](http://localhost:5173).
 
-</details>
+Wenn du die Systeminstallation überspringst (`NAVIN_SKIP_SYSTEM=1` oder `sh scripts/install.sh --no-system`), installiere zuerst **Python 3.11+, Git, Make, Node.js 18+ und npm**.
+
+Unter Linux/macOS benötigt die native Sandbox zusätzlich **rustup** (`make native`).
+
+CLI aus dem Repository: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`). [Vollständige Installationsanleitung](./docs/Installation.md).
 
 ## Ein Arbeitsbereich für viele Aufgaben
 

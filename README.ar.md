@@ -11,7 +11,7 @@
 
 <div dir="ltr">
 
-[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · [한국어](./README.ko.md) · [Svenska](./README.sv.md)
 
 [![AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Local first](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
@@ -74,8 +74,9 @@ navin-cli
 
 البرنامج مجاني بموجب رخصته مفتوحة المصدر. قد تفرض واجهات النماذج والخدمات الخارجية رسوم استخدام. [التثبيت وحل المشكلات](./docs/Installation.md).
 
-<details>
-<summary><strong>التثبيت من الشيفرة المصدرية</strong></summary>
+### التثبيت من المصدر (gateway + WebUI)
+
+لتشغيل Navin أو تعديله على جهازك:
 
 <div dir="ltr" align="left">
 
@@ -88,9 +89,13 @@ make start
 
 </div>
 
-واجهة التطوير: [localhost:5173](http://localhost:5173). لتشغيل الطرفية من المستودع استخدم `.venv/bin/navin-cli`، أو `.venv\Scripts\navin-cli` على Windows. المتطلبات والبناء للإنتاج في [دليل التثبيت](./docs/Installation.md).
+يثبّت `make install` حزم النظام الناقصة حيثما أمكن، ثم خلفية Python وواجهة WebUI. يشغّل `make start` البوابة وواجهة WebUI على [localhost:5173](http://localhost:5173).
 
-</details>
+إذا تجاوزت تثبيت حزم النظام (`NAVIN_SKIP_SYSTEM=1` أو `sh scripts/install.sh --no-system`)، ثبّت أولًا **Python 3.11+ وGit وMake وNode.js 18+ وnpm**.
+
+على Linux/macOS، تحتاج بيئة العزل الأصلية أيضًا إلى **rustup** (`make native`).
+
+لتشغيل CLI من المستودع: `.venv/bin/navin-cli`، أو `.venv\Scripts\navin-cli` على Windows. [دليل التثبيت الكامل](./docs/Installation.md).
 
 ## مساحة واحدة لأعمال متعددة
 

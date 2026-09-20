@@ -8,7 +8,7 @@
 
 En tu terminal, navegador o aplicación de escritorio. Elige tus modelos. Mantén el control.
 
-[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · [한국어](./README.ko.md) · [Svenska](./README.sv.md)
 
 [![Licencia AGPL-3.0](https://img.shields.io/badge/licencia-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Ejecución local](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
@@ -57,8 +57,9 @@ navin-cli
 
 El software es gratuito bajo su licencia de código abierto. Las API de modelos y los servicios externos pueden cobrar por su uso. [Instalación y ayuda](./docs/Installation.md).
 
-<details>
-<summary><strong>Instalar desde el código fuente</strong></summary>
+### Desde el código fuente (gateway + WebUI)
+
+Para ejecutar o modificar Navin en tu equipo:
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -67,9 +68,13 @@ make install
 make start
 ```
 
-WebUI de desarrollo: [localhost:5173](http://localhost:5173). CLI desde el repositorio: `.venv/bin/navin-cli`; en Windows: `.venv\Scripts\navin-cli`. Requisitos y compilación para producción: [guía de instalación](./docs/Installation.md).
+`make install` instala los paquetes del sistema que faltan cuando es posible, el backend Python y la WebUI. `make start` inicia el gateway y la WebUI en [localhost:5173](http://localhost:5173).
 
-</details>
+Si omites la instalación del sistema (`NAVIN_SKIP_SYSTEM=1` o `sh scripts/install.sh --no-system`), instala primero **Python 3.11+, Git, Make, Node.js 18+ y npm**.
+
+En Linux/macOS, el entorno aislado nativo también necesita **rustup** (`make native`).
+
+CLI desde el repositorio: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`). [Guía completa de instalación](./docs/Installation.md).
 
 ## Un espacio para muchos tipos de trabajo
 

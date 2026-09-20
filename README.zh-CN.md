@@ -8,7 +8,7 @@
 
 在终端、浏览器或桌面应用中运行。自由选择模型，始终掌握控制权。
 
-[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md) · [한국어](./README.ko.md) · [Svenska](./README.sv.md)
 
 [![AGPL-3.0 许可证](https://img.shields.io/badge/license-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![本地优先](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
@@ -57,8 +57,9 @@ navin-cli
 
 软件可在开源许可证条款下免费使用。外部模型 API 和其他服务可能收取使用费用。[安装与故障排查](./docs/Installation.md)。
 
-<details>
-<summary><strong>从源码安装</strong></summary>
+### 从源码安装 (gateway + WebUI)
+
+在自己的设备上运行或修改 Navin：
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -67,9 +68,13 @@ make install
 make start
 ```
 
-开发版 WebUI 位于 [localhost:5173](http://localhost:5173)。在仓库中运行 CLI：`.venv/bin/navin-cli`；Windows 使用 `.venv\Scripts\navin-cli`。环境要求与生产构建方法见[安装指南](./docs/Installation.md)。
+`make install` 会在支持的环境中安装缺少的系统软件包、Python 后端和 WebUI。`make start` 启动网关和 WebUI，访问地址为 [localhost:5173](http://localhost:5173)。
 
-</details>
+如果跳过系统安装（`NAVIN_SKIP_SYSTEM=1` 或 `sh scripts/install.sh --no-system`），请先安装 **Python 3.11+、Git、Make、Node.js 18+ 和 npm**。
+
+Linux/macOS 上的原生沙箱还需要 **rustup**（`make native`）。
+
+在仓库中启动 CLI：`.venv/bin/navin-cli`；Windows 使用 `.venv\Scripts\navin-cli`。[完整安装指南](./docs/Installation.md)。
 
 ## 一个工作空间，多种工作方式
 
