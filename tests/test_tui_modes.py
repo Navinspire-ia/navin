@@ -107,7 +107,7 @@ class DisplayUserTextTests(unittest.TestCase):
 
 
 class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
-    async def test_turns_show_names_without_cards(self) -> None:
+    async def test_turns_show_content_without_speaker_labels(self) -> None:
         from textual.app import App, ComposeResult
         from textual.widgets import Static
 
@@ -122,9 +122,9 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(80, 20)) as _pilot:
             user = app.query_one(UserMessage)
             bot = app.query_one(AssistantMessage)
-            self.assertEqual(user.query_one(".user-head", Static).content, "you")
+            self.assertEqual(len(user.query(".user-head")), 0)
             self.assertIn("salut bro", user.query_one(".user-body", Static).content)
-            self.assertEqual(bot.query_one(".assistant-head", Static).content, "navin")
+            self.assertFalse(bot.query(".assistant-head"))
 
         hidden = UserMessage("encore", show_head=False)
         class Host1b(App):
@@ -142,10 +142,7 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
 
         app2 = Host2()
         async with app2.run_test(size=(80, 10)) as _pilot:
-            self.assertEqual(
-                app2.query_one(AssistantMessage).query_one(".assistant-head", Static).content,
-                "glm-5.3-flash",
-            )
+            self.assertFalse(app2.query_one(AssistantMessage).query(".assistant-head"))
 
     async def test_long_user_paste_stays_a_chip(self) -> None:
         from textual.app import App, ComposeResult
@@ -171,7 +168,7 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
             await pilot.click(user)
             self.assertTrue(user.has_class("-expanded"))
 
-    async def test_thinking_stays_folded_until_done(self) -> None:
+    async def test_response_streams_open_and_finishes_without_a_preview_duplicate(self) -> None:
         from textual.app import App, ComposeResult
         from textual.widgets import Static
 
@@ -190,10 +187,10 @@ class TranscriptStreamTests(unittest.IsolatedAsyncioTestCase):
         long = "Le script n'ecrit plus dans COPY. " + ("Verification ensuite. " * 40)
         async with app.run_test(size=(80, 16)) as _pilot:
             await block.delta(long)
-            preview = str(block.query_one(".assistant-preview", Static).content)
-            self.assertIn("Le script", preview)
-            self.assertIn("clic", preview)
-            self.assertFalse(block._open)
+            await block._flush_stream()
+            self.assertEqual(block._painted_markdown, long)
+            self.assertTrue(block._open)
+            self.assertFalse(block.query_one(".assistant-preview", Static).display)
             self.assertFalse(block.finished)
 
             await block.finish(latency_ms=12, model="glm", preset=None)

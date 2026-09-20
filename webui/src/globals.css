@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Keep review decisions beside Plan even when Code narrows the chat column. */
+.pending-review-header { container-type: inline-size; }
+.pending-review-toolbar > button,
+.pending-review-toolbar > a { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+.pending-review-toolbar > button:first-child { justify-content: flex-start; }
+.pending-review-toolbar .pending-review-icon { display: none; }
+@container (max-width: 460px) {
+  .pending-review-toolbar .pending-review-label { display: none; }
+  .pending-review-toolbar .pending-review-icon { display: block; }
+  .pending-review-toolbar > button:not(:first-child),
+  .pending-review-toolbar > a { min-width: 40px; padding-inline: 8px; }
+}
+
 /* Design tokens - monochrome (black / white / gray only). */
 @layer base {
   :root {
@@ -59,7 +72,7 @@
     /* Activity journal tones - one hue per operation family, shared by the
        journal rows, the header digest and the live "now" line. Light values
        keep at least 4.5:1 on white. */
-    --tone-explore: 85 75% 28%;
+    --tone-explore: 214 76% 44%;
     --tone-read: 201 90% 32%;
     --tone-edit: 163 88% 25%;
     --tone-shell: 20 88% 38%;
@@ -121,7 +134,7 @@
     --composer-mode: 213 94% 68%;
     --composer-mode-fg: 213 96% 78%;
     --composer-mode-soft: 217 40% 16%;
-    --tone-explore: 84 72% 56%;
+    --tone-explore: 213 90% 70%;
     --tone-read: 199 85% 62%;
     --tone-edit: 160 62% 54%;
     --tone-shell: 27 92% 62%;

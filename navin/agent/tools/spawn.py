@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from navin.agent.tools.base import Tool, ToolResult, tool_parameters
@@ -146,7 +147,9 @@ class SpawnTool(Tool):
         session_key = request_ctx.session_key or f"{origin_channel}:{origin_chat_id}"
 
         if action == "results":
-            return self._render_outcomes(session_key)
+            # Reading history can wait for a durable write by another
+            # subagent. Keep that disk/lock wait away from terminal input.
+            return await asyncio.to_thread(self._render_outcomes, session_key)
         if not task or not task.strip():
             return ToolResult.error("Error: spawn needs a task to start a subagent")
 

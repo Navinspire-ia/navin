@@ -57,8 +57,8 @@ export const JOURNAL_TARGET_CLASS = "text-foreground/92 font-medium [text-wrap:p
 export const JOURNAL_META_CLASS = "text-foreground/58";
 
 /**
- * One hue per operation family, shared with the header digest so green always
- * means exploration and blue always means reading. Values live in globals.css
+ * Shared with the header digest: blue for search/exploration and sky for
+ * reading. Values live in globals.css
  * (`--tone-*`) so light and dark keep 4.5:1 contrast.
  */
 export const JOURNAL_TONE_CLASS: Record<ActivityJournalTone, string> = {
@@ -420,7 +420,7 @@ function JournalRow({
   mcpPreset?: McpPresetInfo;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(entry.kind === "explore");
   const reduceMotion = useReducedMotion();
   const tone = journalToneForEntry(entry);
   const toneClass = JOURNAL_TONE_CLASS[tone] || JOURNAL_TONE_CLASS.tool;
@@ -528,8 +528,9 @@ function JournalRow({
             }
             transition={DETAIL_MOTION}
             className={cn(
-              "mb-1 ml-[1.125rem] border-l-2 pl-2.5",
-              JOURNAL_TONE_BORDER[tone] || JOURNAL_TONE_BORDER.tool,
+              "mb-1 ml-[1.125rem] pl-2.5",
+              entry.kind !== "shell" && "border-l",
+              entry.kind === "explore" ? "border-border/50" : JOURNAL_TONE_BORDER[tone] || JOURNAL_TONE_BORDER.tool,
             )}
             data-testid="activity-journal-detail"
           >
@@ -946,6 +947,47 @@ function JournalLine({
   );
 }
 
+function ExploreOperations({ entry, streaming, onOpenFilePreview }: {
+  entry: ActivityJournalEntry;
+  streaming: boolean;
+  onOpenFilePreview?: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [requestedPage, setPage] = useState(0);
+  const operations = entry.operations ?? [];
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil(operations.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1));
+  const start = page * ACTIVITY_DETAIL_PAGE_SIZE;
+  return (
+    <div className="py-0.5">
+      <ul className="space-y-1 text-[12px] leading-5">
+        {operations.slice(start, start + ACTIVITY_DETAIL_PAGE_SIZE).map((operation, index) => {
+          const reading = operation.kind === "read";
+          return (
+            <li key={start + index} className="flex min-w-0 items-baseline gap-2" data-testid="activity-explore-operation" data-status={operation.status}>
+              <span className={cn("shrink-0 font-medium", JOURNAL_TONE_CLASS[reading ? "read" : "search"])}>
+                {reading
+                  ? t("message.activityJournalVerbRead", { defaultValue: "Read" })
+                  : t("message.activityJournalOperationSearch", { defaultValue: "Search" })}
+              </span>
+              <span className="min-w-0 flex-1 break-words text-foreground/85">
+                {reading
+                  ? <PathLine path={operation.path} onOpenFilePreview={onOpenFilePreview} />
+                  : operation.query || operation.tool}
+              </span>
+              {operation.status === "error" ? (
+                <span className={JOURNAL_TONE_CLASS.error}>{t("message.activityJournalVerbFailed", { defaultValue: "Failed" })}</span>
+              ) : streaming && operation.status === "running" ? (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-label={t("message.shellRunRunning", { defaultValue: "Running" })} />
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <ActivityPagination page={page} total={operations.length} onPageChange={setPage} />
+    </div>
+  );
+}
+
 function JournalDetails({
   entry,
   streaming,
@@ -958,6 +1000,10 @@ function JournalDetails({
   mcpPreset?: McpPresetInfo;
 }) {
   const { t } = useTranslation();
+
+  if (entry.kind === "explore" && entry.operations?.length) {
+    return <ExploreOperations entry={entry} streaming={streaming} onOpenFilePreview={onOpenFilePreview} />;
+  }
 
   if (entry.kind === "shell") {
     const run: ShellRunSummary = entry.shellRun ?? {

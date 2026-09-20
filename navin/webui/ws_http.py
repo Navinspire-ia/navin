@@ -5468,12 +5468,7 @@ class GatewayHTTPHandler:
             return _http_error(401, "Unauthorized")
         from navin.webui.runtime_health import runtime_health_payload
 
-        workspace = None
-        try:
-            workspace = str(getattr(self.config, "workspace", "") or "") or None
-        except Exception:
-            workspace = None
-        return _http_json_response(runtime_health_payload(workspace=workspace))
+        return _http_json_response(runtime_health_payload(workspace=str(self.skills_workspace_path)))
 
     def _montage_workspace_root(self, request: WsRequest) -> str | None:
         """Resolve the project root for Montage status/assets (session or path)."""

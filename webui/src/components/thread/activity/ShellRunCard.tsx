@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { TaskProgressBar, formatEta } from "@/components/thread/activity/TaskProgressBar";
+import { formatEta } from "@/components/thread/activity/TaskProgressBar";
 import { cn } from "@/lib/utils";
 
 export type ShellRunStatus = "running" | "done" | "error";
@@ -115,7 +115,7 @@ function commandPreview(command: string): { first: string; extraLines: number } 
 
 /**
  * Cursor-style terminal card for one shell command: header with the command,
- * live elapsed time + progress bar while running, then the captured output.
+ * live elapsed time while running, then the captured output.
  */
 export function ShellRunCard({
   run,
@@ -159,7 +159,6 @@ export function ShellRunCard({
 
   const { first, extraLines } = useMemo(() => commandPreview(run.command), [run.command]);
   const hasBody = output.length > 0 || running;
-  const showBar = running;
   const etaLabel = formatEta(run.etaSeconds);
 
   return (
@@ -222,17 +221,6 @@ export function ShellRunCard({
           ) : null}
         </span>
       </button>
-      {showBar ? (
-        <div className="border-t border-border/40 px-2.5 py-1.5">
-          <TaskProgressBar
-            percent={run.percent}
-            indeterminate={run.indeterminate ?? run.percent == null}
-            etaSeconds={run.etaSeconds}
-            label={run.label}
-            compact
-          />
-        </div>
-      ) : null}
       {hasBody ? (
         <div className="border-t border-border/50 bg-[#101318]">
           {output ? (

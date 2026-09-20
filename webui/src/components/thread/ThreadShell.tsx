@@ -42,7 +42,6 @@ import {
   upsertSubagentCard,
   type ParallelSubagentCard,
 } from "@/components/thread/ParallelSubagentsPanel";
-import { TaskProgressStrip } from "@/components/thread/TaskProgressStrip";
 import { ThreadPlanPanel } from "@/components/thread/ThreadPlanPanel";
 import { ConversationFindBar } from "@/components/ConversationFindBar";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
@@ -815,7 +814,6 @@ export function ThreadShell({
     isStreaming,
     runStartedAt,
     goalState,
-    activeTaskProgress,
     activityText,
     send,
     transcribeAudio,
@@ -2304,7 +2302,6 @@ export function ThreadShell({
   const transcriptTail = (
     <>
       <ParallelSubagentsPanel cards={subagentCards} />
-      <TaskProgressStrip progress={isStreaming ? activeTaskProgress : null} />
     </>
   );
 
@@ -2335,6 +2332,28 @@ export function ThreadShell({
     },
   );
 
+  const reviewAction = !isViewer && session && chatId ? (
+    <PendingReviewPanel
+      key={historyKey}
+      changes={pendingReview.changes}
+      busy={pendingReview.busy}
+      error={pendingReview.error}
+      onAction={pendingReview.apply}
+      onOpenFile={(path) => {
+        if (onOpenFileInEditor && codeWorkbenchVisible) {
+          setFilePreviewPath(null);
+          setFilePreviewClosing(false);
+          onOpenFileInEditor(path, { mode: "diff" });
+          return;
+        }
+        handleOpenFilePreview(path);
+      }}
+      header
+      prove={proveChange}
+      proveHref={proveHref}
+    />
+  ) : null;
+
   // Without the thread header (workbench layouts) the session loops control
   // sits in the composer, right after attach and document template, sized like
   // those 28px tool buttons.
@@ -2359,8 +2378,6 @@ export function ThreadShell({
           onDismiss={dismissStreamError}
         />
       ) : null}
-      {/* Agent edits waiting for a decision, right where the user answers:
-          one collapsed row by default, the file list on demand. */}
       {/* Oldest first, and one at a time: each card holds a suspended tool call,
           and answering the wrong one of a stack is worse than answering slowly. */}
       {!isViewer && pendingApprovals.length > 0 ? (
@@ -2395,26 +2412,6 @@ export function ThreadShell({
         >
           {!isViewer ? <LiveVoiceBar control={liveVoice} onOpenSettings={onOpenVoiceSettings}
             voiceLabel={settings?.voice ? `${settings.voice.tts_model} · ${settings.voice.voice}` : undefined} /> : null}
-          {!isViewer ? (
-            <PendingReviewPanel
-              changes={pendingReview.changes}
-              busy={pendingReview.busy}
-              error={pendingReview.error}
-              onAction={pendingReview.apply}
-              onOpenFile={(path) => {
-                if (onOpenFileInEditor && codeWorkbenchVisible) {
-                  setFilePreviewPath(null);
-                  setFilePreviewClosing(false);
-                  onOpenFileInEditor(path, { mode: "diff" });
-                  return;
-                }
-                handleOpenFilePreview(path);
-              }}
-              tucked
-              prove={proveChange}
-              proveHref={proveHref}
-            />
-          ) : null}
           <div className="relative z-10">
         <ThreadComposer
           key={chatId}
@@ -2583,6 +2580,7 @@ export function ThreadShell({
             promptNavigatorAction={promptNavigatorAction}
             sessionInfoAction={sessionInfoAction}
             planAction={planBlock}
+            reviewAction={reviewAction}
             graphAction={
               session ? (
                 <button
@@ -2633,7 +2631,12 @@ export function ThreadShell({
             }
           />
         ) : null}
-        {hideHeader ? <div className="flex shrink-0 justify-end px-3">{planBlock}</div> : null}
+        {hideHeader ? (
+          <div data-testid="thread-review-header" className="flex min-w-0 shrink-0 items-center justify-end gap-1 px-3">
+            {planBlock}
+            {reviewAction}
+          </div>
+        ) : null}
         {isViewer ? <ViewerReadOnlyBanner /> : null}
         <FileWorkspaceActionsProvider value={fileWorkspaceActions}>
           <FilePreviewAvailabilityProvider

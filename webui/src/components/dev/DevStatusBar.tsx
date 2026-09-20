@@ -3,7 +3,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { TFunction } from "i18next";
 import {
   AlertTriangle,
   Bot,
@@ -28,6 +27,7 @@ import type {
   GitStatusPayload,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { runtimeResourceSummary } from "@/lib/runtime-health";
 
 import { ContextUsagePopover } from "./ContextUsagePopover";
 import { formatTokenCount } from "./devWorkbenchUtils";
@@ -64,54 +64,20 @@ export function GatewayPaceChip() {
   );
 }
 
-function runtimeHealthBarLabel(health: RuntimeHealth, t: TFunction): string {
-  if (!health.pressure) {
-    return t("dev.status.runtimeOk", { defaultValue: "Host ok" });
-  }
-  const mem = Math.round((health.memory?.usedRatio ?? 0) * 100);
-  const disk = Math.round((health.disk?.usedRatio ?? 0) * 100);
-  const reasons = health.reasons ?? [];
-  if (reasons.includes("memory") && reasons.includes("disk")) {
-    return t("dev.status.runtimePressureBoth", {
-      defaultValue: "RAM {{mem}}% · disk {{disk}}%",
-      mem,
-      disk,
-    });
-  }
-  if (reasons.includes("memory")) {
-    return t("dev.status.runtimePressureMemory", {
-      defaultValue: "RAM {{pct}}%",
-      pct: mem,
-    });
-  }
-  if (reasons.includes("disk")) {
-    return t("dev.status.runtimePressureDisk", {
-      defaultValue: "Disk {{pct}}%",
-      pct: disk,
-    });
-  }
-  return (
-    health.label
-    || t("dev.status.runtimePressure", {
-      defaultValue: "Host {{level}}",
-      level: health.level,
-    })
-  );
-}
-
 export function runtimeHealthTooltip(
   runtimeHealth: RuntimeHealth,
   t: (key: string, opts?: Record<string, unknown>) => string,
 ): string {
   return [
-    runtimeHealth.message ||
-      t("dev.status.runtimeHealthTooltip", {
-        defaultValue:
-          "Runtime {{level}} - RAM {{mem}}% used, disk {{disk}}% used",
-        level: runtimeHealth.level,
-        mem: Math.round((runtimeHealth.memory?.usedRatio ?? 0) * 100),
-        disk: Math.round((runtimeHealth.disk?.usedRatio ?? 0) * 100),
-      }),
+    t("runtime.scope", { defaultValue: "Machine totals across all applications." }),
+    runtimeResourceSummary(runtimeHealth, t),
+    runtimeHealth.memory?.availableGb != null ? t("runtime.memoryAvailable", {
+      defaultValue: "{{gb}} GB RAM available", gb: runtimeHealth.memory.availableGb.toFixed(1),
+    }) : null,
+    runtimeHealth.disk?.freeGb != null ? t("runtime.diskFree", {
+      defaultValue: "{{gb}} GB disk space free", gb: runtimeHealth.disk.freeGb.toFixed(1),
+    }) : null,
+    runtimeHealth.disk?.path,
     // A desktop shell attaches to any listening gateway: naming the
     // engine build makes a stale sidecar visible instead of looking
     // like random chat/session bugs.
@@ -257,9 +223,10 @@ export function DevStatusBar({
               "font-medium text-amber-700 dark:text-amber-400",
           )}
           title={runtimeHealthTooltip(runtimeHealth, t)}
+          data-testid="runtime-resources"
         >
           <Gauge className="h-3 w-3" aria-hidden />
-          {runtimeHealthBarLabel(runtimeHealth, t)}
+          <span className="tabular-nums">{runtimeResourceSummary(runtimeHealth, t)}</span>
         </span>
       ) : null}
       {git?.is_repo ? (

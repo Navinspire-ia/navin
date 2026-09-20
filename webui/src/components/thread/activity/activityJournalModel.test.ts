@@ -52,24 +52,34 @@ describe("buildJournalTimeline", () => {
       read("webui/src/c.ts"),
       tool("board", '{"action":"create","title":"Open Preview"}'),
     ], { streaming: false });
-    expect(entries.map((entry) => entry.kind)).toEqual(["explore", "shell", "edit", "read", "tool"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["explore", "shell", "edit", "explore", "tool"]);
     const explore = entries[0];
     expect(explore.files).toBe(2);
     expect(explore.searches).toBe(1);
     expect(explore.filesList).toEqual(["webui/src/a.ts", "webui/src/b.ts"]);
     expect(explore.queriesList).toEqual(["navin"]);
+    expect(explore.operations).toEqual([read("webui/src/a.ts"), search("navin"), read("webui/src/b.ts")]);
     expect(entries[2].added).toBe(3);
-    expect(entries[3].file).toBe("c.ts");
-    expect(entries[3].path).toBe("webui/src/c.ts");
+    expect(entries[3].operations).toEqual([read("webui/src/c.ts")]);
     expect(entries[4].tone).toBe("task");
     expect(entries[4].target).toBe("Open Preview");
   });
 
-  it("shows a lone read or search as its own row", () => {
+  it("keeps lone reads and searches under Explored with their operation", () => {
     const entries = buildJournalTimeline([read("a.ts"), shell("ls"), search("x")], { streaming: false });
-    expect(entries.map((entry) => entry.kind)).toEqual(["read", "shell", "search"]);
-    expect(entries[0].file).toBe("a.ts");
-    expect(entries[2].query).toBe("x");
+    expect(entries.map((entry) => entry.kind)).toEqual(["explore", "shell", "explore"]);
+    expect(entries[0].operations).toEqual([read("a.ts")]);
+    expect(entries[2].operations).toEqual([search("x")]);
+  });
+
+  it("keeps failed and repeated operations visible in a mixed exploration", () => {
+    const failed = { ...search("needle"), status: "error" as const };
+    const steps = [read("a.ts"), failed, read("a.ts")];
+    const [entry] = buildJournalTimeline(steps, { streaming: false });
+    expect(entry.operations).toEqual(steps);
+    expect(entry.status).toBe("error");
+    expect(entry.files).toBe(1);
+    expect(entry.searches).toBe(1);
   });
 
   it("folds a failed command re-run until it passes into one recovered row", () => {

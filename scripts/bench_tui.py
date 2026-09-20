@@ -2,9 +2,10 @@
 # Copyright (c) 2026-present Navinspire IA
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Measure CLI input and navigation while six tools and Markdown stream.
+"""Measure CLI input and navigation while tools and Markdown stream.
 
 Run with: python scripts/bench_tui.py --repeat 3 --check --json result.json
+Add --subagents 200 to measure a simultaneous wave of durable results.
 Uses the real Textual app in headless mode and an isolated temporary config.
 It measures UI frames, not terminal hardware, network or model response time.
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import cProfile
 import gc
 import json
 import math
@@ -27,6 +29,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from loguru import logger  # noqa: E402
 from textual import events  # noqa: E402
 
 from navin.bus.queue import MessageBus  # noqa: E402
@@ -70,7 +73,8 @@ def percentiles(samples: list[float]) -> dict:
     }
 
 
-async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 120) -> dict:
+async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 120,
+                  tools: int = 6, subagents: int = 0) -> dict:
     set_config_path(root / "config.json")
     prefs = TuiPrefs(sidebar=False, mode="chat", mode_explicit=True)
     app = LoadApp(SimpleNamespace(workspace_path=root), prefs=prefs)
@@ -87,7 +91,7 @@ async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 12
             )
         rows = []
         seed = "".join(f"case_{i:04d} passed: full output retained\n" for i in range(5000))
-        for index in range(6):
+        for index in range(tools):
             await block.tool_event(str(index), "exec", "start", {"command": f"pytest audit_{index}.py"},
                                    None, None, None)
             row = block._tools[str(index)]
@@ -104,6 +108,25 @@ async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 12
         chunks = []
         active = True
         last_output = ""
+        completions = []
+        manager = None
+        if subagents:
+            from navin.agent.subagent import SubagentManager
+
+            manager = SubagentManager(workspace=root, bus=MessageBus(inbound_maxsize=0),
+                                      max_tool_result_chars=4000)
+
+        async def complete_subagents():
+            # Exercise the real result persistence and parent notification
+            # path, without network requests or paid model invocations.
+            await asyncio.sleep(0.1)
+            if manager is not None:
+                await asyncio.gather(*(manager._announce_result(
+                    str(index), f"Worker {index}", "Check an independent file",
+                    f"Result {index}: verified. " * 40,
+                    {"channel": "cli", "chat_id": "bench", "session_key": "cli:bench"}, "ok",
+                ) for index in range(subagents)))
+                completions.extend(manager.recent_outcomes("cli:bench"))
 
         def observe(screen, frame):
             nonlocal painted_at
@@ -144,6 +167,7 @@ async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 12
 
         producer = asyncio.create_task(output())
         ticker = asyncio.create_task(heartbeat())
+        fan_in = asyncio.create_task(complete_subagents())
         typed = ""
         try:
             for index in range(keys):
@@ -184,7 +208,7 @@ async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 12
                     samples["close"].append((painted_at - started) * 1000)
         finally:
             active = False
-            await asyncio.gather(producer, ticker)
+            await asyncio.gather(producer, ticker, fan_in)
         await block.finish(latency_ms=1, model=None, preset=None)
         assert app.composer.text == typed, "Input was lost or reordered"
         assert block.text == "".join(chunks), "Streamed response was lost or reordered"
@@ -193,43 +217,64 @@ async def measure(root: Path, keys: int, history_tools: int = 0, width: int = 12
             assert last_output in copied, f"Latest tool output was lost: {last_output!r}; buffer tail {row.output_lines[-2:]!r}; copy tail {copied[-200:]!r}"
         await app._flush_unsent_work()
         assert app._session_store.load(app.runtime.session_key)["draft"] == typed, "Draft was not saved"
+        if manager is not None:
+            assert len(completions) == subagents, "Subagent results were lost"
+            assert manager.bus.inbound_size == subagents, "Parent notifications were lost"
         return {"samples": samples, "stream_characters": len(block.text)}
 
 
 def main() -> int:
+    # Match navin-cli's default: engine logs must not write to the terminal
+    # while the app owns it. Verbose logging is a separate workload.
+    logger.disable("navin")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--keys", type=int, choices=range(10, 81), default=50, metavar="10..80")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--profile", type=Path, help="Write cProfile data for a separate diagnostic run")
     parser.add_argument("--history-tools", type=int, default=0, help="Completed commands before the measured stream")
     parser.add_argument("--width", type=int, default=120, help="Terminal columns")
-    parser.add_argument("--check", action="store_true", help="Fail if input (including scheduling delay) p95 exceeds 50 ms or navigation p95 exceeds 100 ms")
+    parser.add_argument("--tools", type=int, default=6, help="Concurrent streaming tool outputs")
+    parser.add_argument("--subagents", type=int, default=0, help="Subagent results completing together")
+    parser.add_argument("--check", action="store_true", help="Require input p95 <= 50 ms, worst input <= 150 ms and navigation p95 <= 100 ms")
     args = parser.parse_args()
     if args.repeat < 1:
         parser.error("--repeat must be positive")
     if args.history_tools < 0 or args.width < 40:
         parser.error("--history-tools must be nonnegative and --width must be at least 40")
+    if args.tools < 1 or args.subagents < 0:
+        parser.error("--tools must be positive and --subagents must be nonnegative")
     original_config = get_config_path()
     runs = []
+    profiler = cProfile.Profile() if args.profile else None
+    if profiler is not None:
+        profiler.enable()
     try:
         for _ in range(args.repeat):
             # Each run represents a fresh CLI. Dispose of the previous
             # headless app's cyclic render caches outside the measured load.
             gc.collect()
             with tempfile.TemporaryDirectory(prefix="navin-tui-bench-") as directory:
-                runs.append(asyncio.run(measure(Path(directory), args.keys, args.history_tools, args.width)))
+                runs.append(asyncio.run(measure(
+                    Path(directory), args.keys, args.history_tools, args.width, args.tools, args.subagents,
+                )))
     finally:
         set_config_path(original_config)
+        if profiler is not None:
+            profiler.disable()
+            profiler.dump_stats(str(args.profile))
     metrics = {name: percentiles([sample for run in runs for sample in run["samples"][name]])
                for name in runs[0]["samples"]}
     passed = (metrics["input"]["p95_ms"] <= 50 and metrics["scheduled_input"]["p95_ms"] <= 50
+              and metrics["scheduled_input"]["max_ms"] <= 150
               and metrics["open"]["p95_ms"] <= 100
               and metrics["close"]["p95_ms"] <= 100)
     report = {
         "passed": passed,
         "scope": "Headless UI dispatch to rendered frame; hardware and engine/network latency excluded",
         "platform": platform.platform(), "python": platform.python_version(), "textual": version("textual"),
-        "load": {"tools": 6, "retained_lines_per_tool": 5000, "output_interval_ms": 30,
+        "load": {"tools": args.tools, "subagent_completions": args.subagents,
+                 "retained_lines_per_tool": 5000, "output_interval_ms": 30,
                  "history_tools": args.history_tools,
                  "session_menu_items": 250, "terminal": [args.width, 42], "keys_per_run": args.keys,
                  "runs": len(runs)},

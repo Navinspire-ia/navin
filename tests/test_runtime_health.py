@@ -7,14 +7,20 @@ from __future__ import annotations
 
 import sys
 import unittest
+from collections import namedtuple
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from navin.webui.runtime_health import runtime_health_payload
+from navin.webui.runtime_health import _CpuSampler, _memory_snapshot, runtime_health_payload
 
 
 class RuntimeHealthPayloadTest(unittest.TestCase):
+    def setUp(self) -> None:
+        cpu = mock.patch("navin.webui.runtime_health._cpu_sampler.snapshot", return_value=(0.2, False))
+        cpu.start()
+        self.addCleanup(cpu.stop)
+
     def test_ok_when_resources_are_fine(self) -> None:
         with TemporaryDirectory() as tmp:
             with mock.patch(
@@ -66,6 +72,54 @@ class RuntimeHealthPayloadTest(unittest.TestCase):
         self.assertIn("reasons", payload)
         self.assertIn("pid", payload)
         self.assertIn(payload["level"], {"ok", "warning", "critical"})
+
+    def test_large_machine_with_available_capacity_does_not_recommend_restart(self) -> None:
+        with mock.patch("navin.webui.runtime_health._memory_snapshot", return_value=(0.9, 8)), \
+             mock.patch("navin.webui.runtime_health._disk_usage", return_value=(0.96, 40)):
+            payload = runtime_health_payload()
+        self.assertFalse(payload["pressure"])
+        self.assertEqual(payload["cpu"]["usedRatio"], 0.2)
+        self.assertEqual(payload["scope"], "machine")
+
+    def test_cpu_alert_does_not_hide_disk_and_memory(self) -> None:
+        with mock.patch("navin.webui.runtime_health._memory_snapshot", return_value=(0.95, 0.4)), \
+             mock.patch("navin.webui.runtime_health._disk_usage", return_value=(0.97, 0.4)), \
+             mock.patch("navin.webui.runtime_health._cpu_sampler.snapshot", return_value=(0.98, True)):
+            payload = runtime_health_payload()
+        self.assertEqual(payload["reasons"], ["memory", "disk", "cpu"])
+        self.assertEqual(payload["level"], "critical")
+        self.assertNotIn("reload", payload["message"])
+
+
+class ResourceSamplingTest(unittest.TestCase):
+    def test_cpu_requires_a_measurement_window_and_sustained_load(self) -> None:
+        counters = namedtuple("Counters", "user system idle")
+        sampler = _CpuSampler()
+        with mock.patch("navin.webui.runtime_health.time.monotonic", side_effect=[0, 10, 10.2, 30, 40]), \
+             mock.patch("navin.webui.runtime_health.psutil.cpu_times", side_effect=[
+                 counters(0, 0, 100), counters(95, 0, 105), counters(285, 0, 115), counters(290, 0, 210),
+             ]) as probe:
+            self.assertEqual(sampler.snapshot(), (None, False))
+            ratio, pressure = sampler.snapshot()
+            self.assertAlmostEqual(ratio, 0.95)
+            self.assertFalse(pressure)
+            self.assertEqual(sampler.snapshot(), (ratio, False))
+            self.assertEqual(probe.call_count, 2)
+            self.assertEqual(sampler.snapshot(), (ratio, True))
+            ratio, pressure = sampler.snapshot()
+            self.assertAlmostEqual(ratio, 0.05)
+            self.assertFalse(pressure)
+
+    def test_cpu_recovers_after_probe_failure_without_a_stale_alert(self) -> None:
+        sampler = _CpuSampler()
+        with mock.patch("navin.webui.runtime_health.psutil.cpu_times", side_effect=OSError("unavailable")):
+            self.assertEqual(sampler.snapshot(), (None, False))
+
+    def test_available_memory_includes_reclaimable_cache(self) -> None:
+        with mock.patch("navin.webui.runtime_health.psutil.virtual_memory", return_value=mock.Mock(
+            total=8 * 1024**3, available=3 * 1024**3, free=0.1 * 1024**3,
+        )):
+            self.assertEqual(_memory_snapshot(), (0.625, 3))
 
 
 class EngineIdentityTest(unittest.TestCase):

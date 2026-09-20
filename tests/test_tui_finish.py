@@ -9,7 +9,7 @@ import pytest
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Markdown, Static
+from textual.widgets import Markdown
 from textual.widgets._markdown import (
     MarkdownFence,
     MarkdownH2,
@@ -100,29 +100,27 @@ def test_validation_finish_is_structured_colored_and_copyable(theme, width, save
 
 
 @pytest.mark.parametrize("theme,width", [("navin", 92), ("navin-light", 48)])
-def test_finish_separates_activity_and_answer_once(theme, width):
+def test_finish_shows_answer_directly_without_a_heading(theme, width):
     async def run():
         app = FinishHost(theme)
         async with app.run_test(size=(width, 28)) as pilot:
             block = app.block
-            separator = block.query_one(".assistant-finish", Static)
-            assert not separator.display
+            assert not block.query(".assistant-head, .assistant-finish")
             await block.tool_event("run", "exec", "end", {"command": "pytest -q"}, "2 passed", None, None)
             await block.delta("Validated. Run `npm install` for `src/app.ts`.")
-            assert not separator.display
+            assert not block.query(".assistant-head, .assistant-finish")
             await block.finish(latency_ms=12, model=None, preset=None)
             await block.finish(latency_ms=12, model=None, preset=None)
             await pilot.pause()
-            assert len(block.query(".assistant-finish")) == 1
-            assert separator.display
-            assert separator.region.bottom <= block.query_one(Markdown).region.y
+            assert not block.query(".assistant-head, .assistant-finish")
+            assert block.query_one(Markdown).display
             assert "finish" not in block.copy_text()
             assert "npm install" in block.copy_text()
             await block.delta(" Another detail.")
-            assert not separator.display
+            assert not block.query(".assistant-head, .assistant-finish")
             await block.finish(latency_ms=12, model=None, preset=None)
             await block.set_text("Updated final answer.")
-            assert separator.display
+            assert not block.query(".assistant-head, .assistant-finish")
             assert block.text == "Updated final answer."
             await pilot.pause()
     asyncio.run(run(), debug=True)
@@ -159,10 +157,9 @@ def test_finish_survives_missing_chrome_while_still_attached():
             await block.tool_event("run", "exec", "end", {"command": "pytest"}, "ok", None, None)
             await block.set_text("Answer before the switch.")
             await pilot.pause()
-            for node in list(block.query(".assistant-foot, .assistant-finish, .assistant-preview")):
+            for node in list(block.query(".assistant-foot, .assistant-preview")):
                 await node.remove()
             await block.finish(latency_ms=5, model=None, preset=None)
-            block.hide_finish()
             await pilot.pause()
     asyncio.run(run(), debug=True)
 

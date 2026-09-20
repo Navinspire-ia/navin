@@ -429,6 +429,11 @@ class PrepareNeverBlocksTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.01)
 
         self.assertEqual(self.runner.finished, 1)
+        # The runner finishing and its durable result reaching the parent are
+        # separate async steps; both must complete before the slot is freed.
+        async with asyncio.timeout(3):
+            while self.manager.get_running_count():
+                await asyncio.sleep(0.01)
         self.assertEqual(self.manager.get_running_count(), 0)
 
 

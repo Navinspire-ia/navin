@@ -14,7 +14,6 @@ from typing import Any
 
 from rich.cells import cell_len
 from rich.markup import escape
-from rich.rule import Rule
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
@@ -393,7 +392,7 @@ class TideRule(Static):
 
 
 class UserMessage(Vertical):
-    """A user turn: left rail and a quiet label, not a framed card."""
+    """The prompt surface identifies user messages without a separate label."""
 
     ALLOW_SELECT = True
 
@@ -401,27 +400,23 @@ class UserMessage(Vertical):
     UserMessage {
         height: auto;
         margin: 1 2 1 2;
-        padding: 0 1;
-        background: $surface;
-    }
-    UserMessage > .user-head {
-        height: 1;
-        color: $text-muted;
-        background: $surface;
+        padding: 1 2;
+        border: none;
+        background: $panel;
     }
     UserMessage > .user-body {
         height: auto;
         min-height: 1;
         color: $foreground;
         padding: 0;
-        background: $surface;
+        background: transparent;
         text-wrap: wrap;
     }
     UserMessage > .user-paste-chip {
         height: 1;
         width: auto;
         color: $text-muted;
-        background: $surface;
+        background: transparent;
         padding: 0 1;
     }
     UserMessage > .user-expand-body {
@@ -453,8 +448,6 @@ class UserMessage(Vertical):
             yield Static("".join(lines[index : index + step]), classes=classes, markup=False)
 
     def compose(self) -> ComposeResult:
-        if self._show_head:
-            yield Static("you", classes="user-head")
         prefix, rest = split_long_user_text(self.raw_text)
         if rest is None:
             yield from self._body_chunks(self.raw_text)
@@ -811,7 +804,7 @@ class ToolCall(Vertical, can_focus=True):
             if progress_changed:
                 self._refresh_head()
             if self.is_attached and self._output_timer is None:
-                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_output)
+                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
             if not self.is_attached:
                 self._notify_cluster()
             return
@@ -845,12 +838,29 @@ class ToolCall(Vertical, can_focus=True):
             # Keep all output in memory, but don't parse and style thousands
             # of hidden lines while the user types or opens a picker. The
             # latest output paints as soon as this activity comes into view.
-            self._output_timer = self.set_timer(0.1, self._paint_output)
+            self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
             return
         self._flush_output_buffer()
         if self.phase != "output":
             self._refresh_head()
         self._refresh_body()
+
+    async def _paint_stream_output(self) -> None:
+        # Streaming timers often expire together. Yield between their costly
+        # previews so input and navigation can run between individual paints.
+        if not self.is_attached:
+            return
+        if not self._open or self._defer_output_paint():
+            self._paint_output()
+            return
+        app = self.app
+        lock = getattr(app, "_tool_output_paint_lock", None)
+        if lock is None:
+            lock = app._tool_output_paint_lock = asyncio.Lock()
+        async with lock:
+            if self.is_attached:
+                self._paint_output()
+            await asyncio.sleep(1 / 60)
 
     def _defer_output_paint(self) -> bool:
         return (
@@ -912,7 +922,7 @@ class ToolCall(Vertical, can_focus=True):
             # Resize and theme messages may have been queued before a modal
             # opened or output scrolled away. Defer hidden output there too.
             if self._output_timer is None:
-                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_output)
+                self._output_timer = self.set_timer(TOOL_OUTPUT_FRAME_SECONDS, self._paint_stream_output)
             return
         try:
             body = self.query_one(".tool-body", Static)
@@ -1493,13 +1503,6 @@ class AssistantMessage(Vertical):
         padding: 0 1;
         background: $background;
     }
-    AssistantMessage > .assistant-head {
-        height: 1;
-        margin: 0;
-        padding: 0;
-        color: $primary;
-        background: $background;
-    }
     AssistantMessage > .assistant-preview {
         margin: 0 0 1 0;
         padding: 0;
@@ -1558,13 +1561,6 @@ class AssistantMessage(Vertical):
         color: $foreground;
         background: $panel;
     }
-    AssistantMessage > .assistant-finish {
-        height: 1;
-        margin: 1 0;
-        color: $primary;
-        display: none;
-    }
-    AssistantMessage > .assistant-finish.-visible { display: block; }
     AssistantMessage > .assistant-body Markdown { margin: 0; padding: 0; background: transparent; }
     AssistantMessage > .assistant-body MarkdownFence {
         margin: 0 0 1 0;
@@ -1578,19 +1574,19 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownParagraph { margin: 0 0 1 0; }
     AssistantMessage > .assistant-body MarkdownBlock { color: $foreground; }
     AssistantMessage > .assistant-body MarkdownBlock > .strong {
-        color: $primary;
+        color: $foreground;
         text-style: bold;
     }
     AssistantMessage > .assistant-body MarkdownBullet {
-        color: $accent;
+        color: $text-muted;
     }
     AssistantMessage > .assistant-body MarkdownH1,
     AssistantMessage > .assistant-body MarkdownH2 {
-        color: $primary;
+        color: $foreground;
         text-style: bold;
     }
     AssistantMessage > .assistant-body MarkdownH3 {
-        color: $accent;
+        color: $foreground;
         text-style: bold;
         margin-top: 1;
     }
@@ -1603,9 +1599,6 @@ class AssistantMessage(Vertical):
         text-style: bold;
     }
     AssistantMessage.-validation-pending > .assistant-body MarkdownH2 {
-        color: $warning;
-    }
-    AssistantMessage.-validation-pending > .assistant-finish {
         color: $warning;
     }
     AssistantMessage.-validation-pending > .assistant-body MarkdownTable {
@@ -1678,16 +1671,10 @@ class AssistantMessage(Vertical):
         self._composed = asyncio.Event()
 
     def compose(self) -> ComposeResult:
-        head = self.bot_name.lower()
-        if self.bot_icon:
-            head = f"{self.bot_icon} {head}"
-        if self._show_head:
-            yield Static(head, classes="assistant-head", markup=False)
         with Horizontal(classes="assistant-history-controls"):
             yield Button("Earlier activity", classes="assistant-history", compact=True)
             yield Button("Recent only", classes="assistant-recent", compact=True)
         yield Static("", classes="assistant-preview", markup=True)
-        yield Static(Rule("✦ Response", characters="─", align="left", style=""), classes="assistant-finish")
         yield TranscriptMarkdown("", classes="assistant-body")
         yield Static("", classes="assistant-foot", markup=True)
 
@@ -2047,7 +2034,7 @@ class AssistantMessage(Vertical):
         if target is None:
             return
         classes = set(getattr(target, "classes", ()) or ())
-        if "assistant-preview" in classes or "assistant-head" in classes or target is self:
+        if "assistant-preview" in classes or target is self:
             self.toggle_body()
             event.stop()
 
@@ -2095,19 +2082,12 @@ class AssistantMessage(Vertical):
         if len(self._buffer) != count and self.is_attached:
             self._paint_timer = self.set_timer(STREAM_FRAME_SECONDS, self._flush_stream)
 
-    def hide_finish(self) -> None:
-        """Remove the end-of-turn rule; the block continues with new content."""
-        rule = self._query_static(".assistant-finish")
-        if rule is not None:
-            rule.remove_class("-visible")
-
     async def delta(self, text: str) -> None:
         if not text or not self.is_attached:
             return
         await self._composed.wait()
         if self.finished:
             self.finished = False
-            self.hide_finish()
         self._drop_progress_line()
         self.streamed = True
         self._buffer.append(text)
@@ -2189,7 +2169,6 @@ class AssistantMessage(Vertical):
 
     async def finish(
         self, *, latency_ms: int | None, model: str | None, preset: str | None,
-        rule: bool = True,
     ) -> None:
         if not self.is_attached:
             return
@@ -2201,9 +2180,6 @@ class AssistantMessage(Vertical):
         if not self.is_attached:
             return
         self.finished = True
-        rule_widget = self._query_static(".assistant-finish")
-        if rule_widget is not None:
-            rule_widget.set_class(rule and bool(self.text.strip()), "-visible")
         await self.reveal()
         if not self.is_attached:
             return
@@ -2616,19 +2592,19 @@ class PromptQueue(Vertical):
 
 
 class ComposerShell(Vertical):
-    """Prompt, then mode · model, then the line under both."""
+    """Borderless prompt surface with a gutter and quiet model controls."""
 
     DEFAULT_CSS = """
     ComposerShell {
         height: auto;
         background: $panel;
-        padding: 1 2 0 2;
-        border-left: wide $foreground 35%;
+        padding: 1 2;
+        border: none;
     }
-    ComposerShell > TideRule { margin: 0; height: 1; }
-    ComposerShell.-focus { border-left: wide $foreground; }
-    ComposerShell.-busy { border-left: wide $foreground 70%; }
-    ComposerShell.-busy.-focus { border-left: wide $foreground; }
+    ComposerShell > .composer-input { height: auto; background: $panel; }
+    ComposerShell #composer-prompt { width: 2; height: 1; color: $text-muted; }
+    ComposerShell.-focus #composer-prompt { color: $primary; }
+    ComposerShell ComposerMeta { margin-top: 1; }
     """
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
@@ -2664,7 +2640,7 @@ class ComposerShell(Vertical):
 
 
 class ComposerMeta(Horizontal):
-    """Mode and model on the last row of the chat field."""
+    """Mode, model and effort on the last row of the chat field."""
 
     DEFAULT_CSS = """
     ComposerMeta {
@@ -2678,19 +2654,28 @@ class ComposerMeta(Horizontal):
     }
     ComposerMeta #meta-mode:hover { color: $primary; }
     ComposerMeta #meta-sep { width: auto; color: $text-muted; padding: 0 1; }
-    ComposerMeta #meta-model { width: 1fr; min-width: 0; height: 1; color: $text-muted; text-overflow: ellipsis; }
+    ComposerMeta #meta-model { width: auto; min-width: 0; height: 1; color: $text-muted; text-overflow: ellipsis; }
     ComposerMeta #meta-model:hover { color: $foreground; }
     ComposerMeta #meta-reasoning { width: auto; height: 1; padding-left: 1; color: $text-muted; }
     ComposerMeta #meta-reasoning:hover { color: $foreground; }
-    ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; text-align: right; color: $text-muted; }
+    ComposerMeta #meta-context { dock: right; width: auto; height: 1; padding-left: 2; text-align: right; color: $text-muted; }
     """
 
     def compose(self) -> ComposeResult:
         yield Static("", id="meta-mode", markup=True)
         yield Static("", id="meta-sep", markup=True)
         yield Static("", id="meta-model", markup=True)
-        yield Static("Reasoning Auto", id="meta-reasoning", markup=False)
+        yield Static("Auto", id="meta-reasoning", markup=False)
         yield Static("Context --", id="meta-context", markup=False)
+
+    def on_resize(self) -> None:
+        self._fit_model()
+
+    def _fit_model(self) -> None:
+        if self.is_mounted:
+            self.query_one("#meta-model", Static).styles.max_width = max(
+                0, self.content_size.width - getattr(self, "_reserved_cells", 0)
+            )
 
     def set_meta(
         self,
@@ -2709,14 +2694,13 @@ class ComposerMeta(Horizontal):
             if widget.content != value:
                 widget.update(value)
 
-        name, slug_provider = split_model_slug(model)
-        provider = provider or slug_provider
+        name, _slug_provider = split_model_slug(model)
         mode_w = self.query_one("#meta-mode", Static)
         sep_w = self.query_one("#meta-sep", Static)
         model_w = self.query_one("#meta-model", Static)
         context_w = self.query_one("#meta-context", Static)
         reasoning_w = self.query_one("#meta-reasoning", Static)
-        update(reasoning_w, f"Reasoning {reasoning or 'Auto'}")
+        update(reasoning_w, reasoning or "Auto")
         reasoning_w.tooltip = "Choose native reasoning effort (Ctrl+Shift+R)"
         if context_window > 0:
             percent = max(0, min(100, round(context_used * 100 / context_window)))
@@ -2725,17 +2709,21 @@ class ComposerMeta(Horizontal):
         else:
             update(context_w, "Context --")
             context_w.tooltip = "Context usage is not available yet"
+        prefix = f"{wave_frame(spin)} " if busy else ""
+        self._reserved_cells = (
+            cell_len(extra or f"{prefix}{mode}") + (0 if extra else 3)
+            + cell_len(reasoning or "Auto") + 1 + cell_len(str(context_w.content)) + 2
+        )
+        self._fit_model()
         if extra:
             update(mode_w, extra)
             update(sep_w, "")
             update(model_w, "")
             return
-        prefix = f"{wave_frame(spin)} " if busy else ""
         update(mode_w, f"[$primary]{prefix}{escape(mode)}[/]")
         if name:
             update(sep_w, "·")
-            tail = f"  [dim]{escape(provider)}[/]" if provider else ""
-            update(model_w, f"{escape(name)}{tail}")
+            update(model_w, escape(name))
         else:
             update(sep_w, "·")
             update(model_w, "no model")
@@ -2765,7 +2753,7 @@ class Composer(TextArea):
     Composer {
         height: auto;
         max-height: 12;
-        min-height: 2;
+        min-height: 1;
         border: none !important;
         background: $panel;
         color: $foreground;
@@ -2867,7 +2855,11 @@ class Composer(TextArea):
 
     def _shell(self) -> ComposerShell | None:
         parent = self.parent
-        return parent if isinstance(parent, ComposerShell) else None
+        while parent is not None:
+            if isinstance(parent, ComposerShell):
+                return parent
+            parent = parent.parent
+        return None
 
     def on_focus(self) -> None:
         shell = self._shell()
@@ -3282,8 +3274,8 @@ class DockHint(Static):
     DockHint {
         width: auto;
         height: 1;
-        padding: 0 1 0 0;
-        color: $foreground;
+        padding: 0 2 0 0;
+        color: $text-muted;
     }
     DockHint:hover { color: $foreground; }
     """
@@ -3358,6 +3350,14 @@ class DockBar(Horizontal):
         self._paint_path()
 
     def on_resize(self) -> None:
+        # Keep the path and common actions readable at small terminal widths.
+        # Every command remains in the palette and keeps its keyboard binding.
+        for hint_id, threshold in (
+            ("dock-provider", 150), ("dock-model", 130),
+            ("dock-mode", 115), ("dock-hide", 100), ("dock-settings", 75),
+        ):
+            for hint in self.query(f"#{hint_id}"):
+                hint.display = self.size.width >= threshold
         self._paint_path()
 
     def _paint_path(self) -> None:

@@ -94,7 +94,7 @@ def activity_palette(dark: bool = True) -> dict[str, str]:
         "mustard": "#D6BC78" if dark else "#795B13",
         "coral": "#E39B91" if dark else "#914747",
         "lavender": "#C6AFE3" if dark else "#705393",
-        "explore": "#B5BBD1" if dark else "#555E7A",
+        "explore": "#5EA8FF" if dark else "#286AC4",
         "tool": "#C3BDA3" if dark else "#6C6042",
         "muted": "#A3A3A3" if dark else "#626262",
     }

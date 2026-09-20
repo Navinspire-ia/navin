@@ -12,8 +12,9 @@ import time
 import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from threading import RLock
 from typing import Any, Callable
 
 from loguru import logger
@@ -94,6 +95,8 @@ _HEARTBEAT_S = 8.0
 _PREPARE_WORKERS = 8
 _PREPARE_TIMEOUT_S = 20.0
 _PREPARE_EXECUTOR: ThreadPoolExecutor | None = None
+_PERSIST_EXECUTOR: ThreadPoolExecutor | None = None
+_OutcomeArgs = tuple[str, str, str, str, str, str | None]
 
 
 def _prepare_executor() -> ThreadPoolExecutor:
@@ -105,6 +108,16 @@ def _prepare_executor() -> ThreadPoolExecutor:
             thread_name_prefix="navin-subagent-prep",
         )
     return _PREPARE_EXECUTOR
+
+
+def _persist_executor() -> ThreadPoolExecutor:
+    """Keep durable result writes off the UI and its general-purpose pool."""
+    global _PERSIST_EXECUTOR
+    if _PERSIST_EXECUTOR is None:
+        _PERSIST_EXECUTOR = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="navin-subagent-save",
+        )
+    return _PERSIST_EXECUTOR
 
 
 def _outcomes_dir() -> Path:
@@ -314,6 +327,9 @@ class SubagentManager:
         # files in _outcomes_dir(), hydrated per session on first touch, so the
         # same guarantee holds across a gateway restart.
         self._outcomes: dict[str, deque[SubagentOutcome]] = {}
+        self._outcome_lock = RLock()
+        self._pending_outcomes: list[tuple[_OutcomeArgs, asyncio.Future[None]]] = []
+        self._outcome_flush_scheduled = False
 
     def _build_hook(
         self,
@@ -846,12 +862,14 @@ class SubagentManager:
                 # checkout, so the review panel would offer to undo edits to
                 # files the user does not have, and would write into a tree that
                 # may be removed a moment later.
-                if checkout is None:
-                    self._publish_edits(sess_key, recorder)
                 if token is not None:
                     reset_workspace_scope(token)
                 reset_live_restrict_to_workspace(live_restrict_token)
                 reset_request_context(request_token)
+                if checkout is None and recorder.files and self._record_edits is not None:
+                    await asyncio.get_running_loop().run_in_executor(
+                        _persist_executor(), self._publish_edits, sess_key, recorder,
+                    )
             status.stop_reason = result.stop_reason
             # Settled before the announcement, and on every branch: a run that
             # fails halfway is exactly when the parent most needs to be told
@@ -1125,9 +1143,44 @@ class SubagentManager:
             metadata=metadata,
         )
 
-        self._record_outcome(task_id, label, task, result, status, override)
+        # Coalesce a simultaneous wave into one durable write per session.
+        # Every parent notification still waits until its result is saved.
+        loop = asyncio.get_running_loop()
+        saved = loop.create_future()
+        self._pending_outcomes.append(((task_id, label, task, result, status, override), saved))
+        if not self._outcome_flush_scheduled:
+            self._outcome_flush_scheduled = True
+            loop.call_soon(self._flush_pending_outcomes)
+        await saved
         await self.bus.publish_inbound(msg)
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+
+    def _flush_pending_outcomes(self) -> None:
+        # Do not evict an entry inside its own batch before saving it.
+        batch = self._pending_outcomes[:_MAX_OUTCOME_HISTORY]
+        del self._pending_outcomes[:len(batch)]
+        loop = asyncio.get_running_loop()
+        write = loop.run_in_executor(
+            _persist_executor(), self._record_outcomes, [args for args, _ in batch],
+        )
+
+        def finished(done: asyncio.Future) -> None:
+            error = None if done.cancelled() else done.exception()
+            for _, saved in batch:
+                if saved.done():
+                    continue
+                if done.cancelled():
+                    saved.cancel()
+                elif error is not None:
+                    saved.set_exception(error)
+                else:
+                    saved.set_result(None)
+            if self._pending_outcomes:
+                loop.call_soon(self._flush_pending_outcomes)
+            else:
+                self._outcome_flush_scheduled = False
+
+        write.add_done_callback(finished)
 
     def _publish_edits(self, session_key: str | None, recorder: TurnRecorder) -> None:
         """Hand a subagent's pre-edit baselines to the review store."""
@@ -1208,7 +1261,17 @@ class SubagentManager:
 
         payload = {
             "session_key": session_key,
-            "outcomes": [asdict(outcome) for outcome in queue],
+            # Frozen records contain only scalars. Deep-copying every field
+            # with asdict on each completion competes with UI work for the GIL.
+            "outcomes": [{
+                "task_id": outcome.task_id,
+                "label": outcome.label,
+                "task_description": outcome.task_description,
+                "status": outcome.status,
+                "summary": outcome.summary,
+                "finished_at": outcome.finished_at,
+                "session_key": outcome.session_key,
+            } for outcome in queue],
         }
         try:
             atomic_write_text(
@@ -1235,21 +1298,30 @@ class SubagentManager:
         result that never reached its parent turn is still recoverable through
         spawn(action="results") after the gateway restarts.
         """
-        summary = " ".join(result.split())
-        if len(summary) > _MAX_OUTCOME_SUMMARY:
-            summary = summary[: _MAX_OUTCOME_SUMMARY - 1].rstrip() + "…"
-        key = session_key or ""
-        queue = self._queue_for(key)
-        queue.append(SubagentOutcome(
-            task_id=task_id,
-            label=label,
-            task_description=task,
-            status=status,
-            summary=summary,
-            finished_at=time.time(),
-            session_key=session_key,
-        ))
-        self._persist_outcomes(key, queue)
+        self._record_outcomes([(task_id, label, task, result, status, session_key)])
+
+    def _record_outcomes(self, outcomes: list[_OutcomeArgs]) -> None:
+        """Append a wave atomically in memory, then persist each touched session."""
+        with self._outcome_lock:
+            touched: dict[str, deque[SubagentOutcome]] = {}
+            for task_id, label, task, result, status, session_key in outcomes:
+                summary = " ".join(result.split())
+                if len(summary) > _MAX_OUTCOME_SUMMARY:
+                    summary = summary[: _MAX_OUTCOME_SUMMARY - 1].rstrip() + "…"
+                key = session_key or ""
+                queue = self._queue_for(key)
+                queue.append(SubagentOutcome(
+                    task_id=task_id,
+                    label=label,
+                    task_description=task,
+                    status=status,
+                    summary=summary,
+                    finished_at=time.time(),
+                    session_key=session_key,
+                ))
+                touched[key] = queue
+            for key, queue in touched.items():
+                self._persist_outcomes(key, queue)
 
     def _merged_outcomes(self) -> list[SubagentOutcome]:
         """Every session's history, memory first then whatever is only on disk."""
@@ -1282,12 +1354,13 @@ class SubagentManager:
         injection window can still be recovered in full via spawn(results),
         including across a gateway restart.
         """
-        if session_key is not None:
-            matches = list(reversed(self._queue_for(session_key)))
-        else:
-            merged = self._merged_outcomes()
-            merged.sort(key=lambda outcome: outcome.finished_at, reverse=True)
-            matches = merged
+        with self._outcome_lock:
+            if session_key is not None:
+                matches = list(reversed(self._queue_for(session_key)))
+            else:
+                merged = self._merged_outcomes()
+                merged.sort(key=lambda outcome: outcome.finished_at, reverse=True)
+                matches = merged
         if limit is None:
             return matches
         return matches[: max(0, limit)]

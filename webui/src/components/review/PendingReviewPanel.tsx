@@ -1,7 +1,8 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Callout, DirectionalHint } from "@fluentui/react";
 import { Check, ChevronRight, Eye, EyeOff, FlaskConical, Loader2, X } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
@@ -30,8 +31,8 @@ function listPath(path: string): string {
 }
 
 /**
- * Pending agent edits as a thin bar on the composer: one line by default,
- * the file list only after a click. Same shape as Cursor, our own labels.
+ * Pending edits and decisions, with a header mode beside the session plan.
+ * The header opens files in a callout without pushing the chat down.
  */
 export function PendingReviewPanel({
   changes,
@@ -44,6 +45,7 @@ export function PendingReviewPanel({
   className,
   compact = false,
   tucked = false,
+  header = false,
   prove,
   proveHref = "#/code?panel=evolve",
 }: {
@@ -58,6 +60,7 @@ export function PendingReviewPanel({
   compact?: boolean;
   /** Sit behind the composer: the chat box covers the bottom edge. */
   tucked?: boolean;
+  header?: boolean;
   /** Evolve "Prove this change": prove the pending edits under load. */
   prove?: ProveChange;
   /** Code Evolve tab for this chat. Must keep `?chat=` or the session is dropped. */
@@ -67,6 +70,7 @@ export function PendingReviewPanel({
   const reduceMotion = useReducedMotion();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [hidden, setHidden] = useState(false);
+  const target = useRef<HTMLButtonElement>(null);
   const tx = useCallback(
     (key: string, fallback: string) => t(key, { defaultValue: fallback }),
     [t],
@@ -97,11 +101,27 @@ export function PendingReviewPanel({
     count: changes.length,
   });
   const shellClass = cn(
-    "w-full",
-    tucked
+    header ? "pending-review-header min-w-0 flex-1" : "w-full",
+    header ? "" : tucked
       ? "relative z-0 -mb-3 rounded-t-[22px] border border-b-0 border-white/25 bg-transparent pb-3 dark:border-white/20"
       : "rounded-lg border border-black/[0.08] dark:border-white/[0.12]",
     className,
+  );
+  const fileList = (
+    <ul className="max-h-[18rem] overflow-y-auto p-2">
+      {changes.map((change) => (
+        <ReviewRow
+          key={change.path}
+          change={change}
+          active={activePath === change.path}
+          busy={busy}
+          onAction={onAction}
+          onOpenFile={onOpenFile ? (path) => { onOpenFile(path); if (header) setExpanded(false); } : undefined}
+          acceptLabel={tx("dev.review.acceptFile", "Accept this file")}
+          rejectLabel={tx("dev.review.rejectFile", "Reject this file")}
+        />
+      ))}
+    </ul>
   );
 
   if (hidden) {
@@ -111,7 +131,7 @@ export function PendingReviewPanel({
         data-hidden="true"
         className={shellClass}
       >
-        <div className="flex h-7 items-center px-3">
+        <div className={cn("flex items-center", header ? "h-10" : "h-7 px-3")}>
           <button
             type="button"
             onClick={() => setHidden(false)}
@@ -141,11 +161,13 @@ export function PendingReviewPanel({
       data-testid="pending-review-panel"
       className={shellClass}
     >
-      <div className="flex h-7 items-center gap-2 px-3">
+      <div className={cn("flex items-center", header ? "pending-review-toolbar h-10 gap-1" : "h-7 gap-2 px-3")}>
         <button
+          ref={target}
           type="button"
           onClick={() => setExpanded((open) => !open)}
           aria-expanded={expanded}
+          title={filesLabel}
           data-testid="pending-review-toggle"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[12px] font-medium"
         >
@@ -184,18 +206,24 @@ export function PendingReviewPanel({
           disabled={busy}
           onClick={() => onAction("reject")}
           data-testid="pending-review-reject-all"
+          aria-label={rejectAllLabel}
+          title={rejectAllLabel}
           className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
         >
-          {compact ? <X className="h-3 w-3" aria-hidden /> : rejectAllLabel}
+          {compact || header ? <X className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {!compact ? <span className="pending-review-label">{rejectAllLabel}</span> : null}
         </button>
         <button
           type="button"
           disabled={busy}
           onClick={() => onAction("accept")}
           data-testid="pending-review-accept-all"
-          className="shrink-0 rounded-md bg-white/[0.08] px-2 py-0.5 text-[11.5px] text-foreground/90 transition-colors hover:bg-white/[0.12] disabled:opacity-50 dark:bg-white/[0.1]"
+          aria-label={acceptAllLabel}
+          title={acceptAllLabel}
+          className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
         >
-          {compact ? <Check className="h-3 w-3" aria-hidden /> : acceptAllLabel}
+          {compact || header ? <Check className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {!compact ? <span className="pending-review-label">{acceptAllLabel}</span> : null}
         </button>
         <button
           type="button"
@@ -205,11 +233,23 @@ export function PendingReviewPanel({
           aria-label={hideLabel}
           className="shrink-0 px-1 py-0.5 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
         >
-          {compact ? <EyeOff className="h-3 w-3" aria-hidden /> : hideLabel}
+          {compact || header ? <EyeOff className={cn("h-3 w-3", !compact && "pending-review-icon")} aria-hidden /> : null}
+          {!compact ? <span className="pending-review-label">{hideLabel}</span> : null}
         </button>
       </div>
 
-      <AnimatePresence initial={false}>
+      {header && expanded ? (
+        <Callout target={target} onDismiss={() => setExpanded(false)}
+          directionalHint={DirectionalHint.bottomRightEdge} gapSpace={6}
+          isBeakVisible={false} setInitialFocus role="dialog" ariaLabel={filesLabel}
+          styles={{ calloutMain: { width: "min(440px, calc(100vw - 24px))", borderRadius: 12,
+            background: "hsl(var(--popover))", color: "hsl(var(--foreground))" } }}>
+          <motion.div initial={false} animate={{ opacity: 1 }} transition={{ duration: reduceMotion ? 0 : 0.15 }}>
+            {fileList}
+          </motion.div>
+        </Callout>
+      ) : null}
+      {!header ? <AnimatePresence initial={false}>
         {expanded ? (
           <motion.div
             key="list"
@@ -219,23 +259,10 @@ export function PendingReviewPanel({
             transition={{ type: "spring", duration: 0.28, bounce: 0 }}
             className="overflow-hidden"
           >
-            <ul className="max-h-[12rem] overflow-y-auto px-1 pb-1">
-              {changes.map((change) => (
-                <ReviewRow
-                  key={change.path}
-                  change={change}
-                  active={activePath === change.path}
-                  busy={busy}
-                  onAction={onAction}
-                  onOpenFile={onOpenFile}
-                  acceptLabel={tx("dev.review.acceptFile", "Accept this file")}
-                  rejectLabel={tx("dev.review.rejectFile", "Reject this file")}
-                />
-              ))}
-            </ul>
+            {fileList}
           </motion.div>
         ) : null}
-      </AnimatePresence>
+      </AnimatePresence> : null}
     </div>
   );
 }
@@ -265,14 +292,15 @@ function ProveButton({
         data-testid="pending-review-prove-open"
         className="flex shrink-0 items-center gap-1 px-1 py-0.5 text-[11.5px] text-emerald-600 transition-colors hover:text-emerald-500 dark:text-emerald-400"
         title={tx("dev.review.proveOpen", "Open Evolve")}
+        aria-label={tx("dev.review.proveOpen", "Open Evolve")}
       >
         <FlaskConical className="h-3 w-3" aria-hidden />
-        {prove.state.job !== null
+        <span className="pending-review-label">{prove.state.job !== null
           ? t("dev.review.proveStarted", {
               defaultValue: "Proof #{{job}} running",
               job: prove.state.job,
             })
-          : tx("dev.review.proveStartedNoId", "Proof running")}
+          : tx("dev.review.proveStartedNoId", "Proof running")}</span>
       </a>
     );
   }
@@ -288,6 +316,7 @@ function ProveButton({
         prove.start();
       }}
       data-testid="pending-review-prove"
+      aria-label={failed ? tx("dev.review.proveRetry", "Proof failed - retry") : label}
       title={
         failed && prove.state.phase === "error"
           ? prove.state.message
@@ -308,7 +337,7 @@ function ProveButton({
       ) : (
         <FlaskConical className="h-3 w-3" aria-hidden />
       )}
-      {compact ? null : failed ? tx("dev.review.proveRetry", "Proof failed - retry") : label}
+      {compact ? null : <span className="pending-review-label">{failed ? tx("dev.review.proveRetry", "Proof failed - retry") : label}</span>}
     </button>
   );
 }

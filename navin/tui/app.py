@@ -22,7 +22,7 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Input, TextArea
+from textual.widgets import Input, Static, TextArea
 
 from navin.optional_live import live_modules_available
 from navin.tui.agi import AgiScreen
@@ -105,7 +105,6 @@ from navin.tui.widgets import (
     Sidebar,
     SlashMenu,
     SystemNote,
-    TideRule,
     Transcript,
     UpdateOffer,
     UserMessage,
@@ -533,11 +532,12 @@ class NavinApp(App[None]):
                 yield FindBar(id="find")
                 with Vertical(id="composer-block"):
                     with ComposerShell(id="composer-shell"):
-                        composer = Composer(placeholder="Ask anything...")
-                        composer.set_text(self._drafts.get(self.runtime.session_key, ""))
-                        yield composer
+                        with Horizontal(classes="composer-input"):
+                            yield Static("›", id="composer-prompt", markup=False)
+                            composer = Composer(placeholder="Ask anything...")
+                            composer.set_text(self._drafts.get(self.runtime.session_key, ""))
+                            yield composer
                         yield ComposerMeta(id="composer-meta")
-                        yield TideRule()
                     yield DockBar(id="dock")
             yield Sidebar(id="sidebar")
 
@@ -1073,7 +1073,6 @@ class NavinApp(App[None]):
             await self.transcript.add(self._current)
             return self._current
         if self._current.finished:
-            self._current.hide_finish()
             self._current.finished = False
         return self._current
 
@@ -1152,7 +1151,7 @@ class NavinApp(App[None]):
                 if token != self._render_token:
                     return
                 transcript.styles.visibility = "hidden"
-                await self._paint_history_rows(token, rows, before=anchor, final_rule=False)
+                await self._paint_history_rows(token, rows, before=anchor)
                 if token != self._render_token:
                     return
                 with self.batch_update():
@@ -1171,7 +1170,7 @@ class NavinApp(App[None]):
                     transcript.loading_history = False
 
     async def _paint_history_rows(
-        self, token: int, rows: list[dict[str, Any]], *, before: Any = None, final_rule: bool = True,
+        self, token: int, rows: list[dict[str, Any]], *, before: Any = None,
     ) -> None:
         def stale() -> bool:
             return token != self._render_token
@@ -1181,12 +1180,9 @@ class NavinApp(App[None]):
         if not rows:
             return
         show_tools = self.prefs.show_tools
-        last_assistant = max(
-            (i for i, row in enumerate(rows) if row["role"] != "user"), default=-1
-        )
         prev_role: str | None = None
 
-        for row_index, row in enumerate(rows):
+        for row in rows:
             if stale():
                 return
             if row["role"] == "user":
@@ -1248,7 +1244,6 @@ class NavinApp(App[None]):
                 latency_ms=meta.get("latency_ms"),
                 model=meta.get("model"),
                 preset=meta.get("model_preset"),
-                rule=final_rule and row_index == last_assistant,
             )
         if stale():
             return
@@ -1602,7 +1597,6 @@ class NavinApp(App[None]):
             if block is None:
                 block = await self._ensure_assistant()
             elif block.finished:
-                block.hide_finish()
                 block.finished = False
             if block.text.strip() != event.text.strip():
                 await block.set_text(event.text, render_as=event.render_as)

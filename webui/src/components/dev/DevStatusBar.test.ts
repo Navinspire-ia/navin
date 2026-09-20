@@ -36,16 +36,18 @@ describe("runtimeHealthTooltip", () => {
     expect(title).not.toContain("engineVersion");
   });
 
-  it("keeps a server-provided message and still names the engine", () => {
+  it("ignores outdated restart advice and marks unmeasured resources unknown", () => {
     const health: RuntimeHealth = {
       level: "warning",
       ok: false,
       pressure: true,
-      message: "RAM pressure",
+      message: "High memory use - reload recommended",
       engine: { version: "2.0.4" },
     };
     const title = runtimeHealthTooltip(health, t);
-    expect(title.startsWith("RAM pressure - ")).toBe(true);
+    expect(title).not.toContain("reload recommended");
+    expect(title).toContain("runtime.unavailable");
+    expect(title).not.toContain("0%");
     expect(title).toContain("engineVersion");
   });
 });

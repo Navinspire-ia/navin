@@ -129,6 +129,7 @@ export type ActivityJournalEntry = {
   searches?: number;
   filesList?: string[];
   queriesList?: string[];
+  operations?: Extract<JournalStep, { kind: "read" | "search" }>[];
   // read / edit
   file?: string;
   path?: string;
@@ -420,13 +421,11 @@ type ExploreAccumulator = {
   seq: number;
   paths: string[];
   pathSet: Set<string>;
-  reads: number;
   pathlessReads: number;
   searches: number;
   queries: string[];
   querySet: Set<string>;
-  lastPath: string;
-  searchTool: string;
+  operations: Extract<JournalStep, { kind: "read" | "search" }>[];
   status: ActivityJournalStatus;
   durationMs: number;
 };
@@ -436,13 +435,11 @@ function newExplore(seq: number): ExploreAccumulator {
     seq,
     paths: [],
     pathSet: new Set(),
-    reads: 0,
     pathlessReads: 0,
     searches: 0,
     queries: [],
     querySet: new Set(),
-    lastPath: "",
-    searchTool: "",
+    operations: [],
     status: "done",
     durationMs: 0,
   };
@@ -453,35 +450,6 @@ function flushExplore(acc: ExploreAccumulator | null, entries: ActivityJournalEn
   const files = acc.paths.length + acc.pathlessReads;
   const live = acc.status === "running";
   const durationMs = acc.durationMs > 0 ? acc.durationMs : undefined;
-  if (files === 1 && acc.searches === 0) {
-    entries.push({
-      id: `read:${acc.seq}`,
-      kind: "read",
-      tone: "read",
-      seq: acc.seq,
-      status: acc.status,
-      live,
-      durationMs,
-      file: fileBaseName(acc.lastPath || ""),
-      path: acc.lastPath || undefined,
-      count: acc.reads > 1 ? acc.reads : undefined,
-    });
-    return;
-  }
-  if (files === 0 && acc.searches === 1) {
-    entries.push({
-      id: `search:${acc.seq}`,
-      kind: "search",
-      tone: "explore",
-      seq: acc.seq,
-      status: acc.status,
-      live,
-      durationMs,
-      query: acc.queries[0] ?? "",
-      tool: acc.searchTool || undefined,
-    });
-    return;
-  }
   entries.push({
     id: `explore:${acc.seq}`,
     kind: "explore",
@@ -494,6 +462,7 @@ function flushExplore(acc: ExploreAccumulator | null, entries: ActivityJournalEn
     searches: acc.searches,
     filesList: acc.paths.length ? [...acc.paths] : undefined,
     queriesList: acc.queries.length ? [...acc.queries] : undefined,
+    operations: acc.operations,
   });
 }
 
@@ -512,13 +481,16 @@ export function buildJournalTimeline(
   steps.forEach((step, seq) => {
     if (step.kind === "read" || step.kind === "search") {
       if (!explore) explore = newExplore(seq);
-      explore.status = step.status;
+      // A later successful read must not hide a failed or still-running
+      // operation elsewhere in this group.
+      if (step.status === "error" || explore.status !== "error" && step.status === "running") {
+        explore.status = step.status;
+      }
+      explore.operations.push(step);
       explore.durationMs += step.durationMs ?? 0;
       if (step.kind === "read") {
-        explore.reads += 1;
         const path = step.path.trim();
         if (path) {
-          explore.lastPath = path;
           if (!explore.pathSet.has(path)) {
             explore.pathSet.add(path);
             explore.paths.push(path);
@@ -528,7 +500,6 @@ export function buildJournalTimeline(
         }
       } else {
         explore.searches += 1;
-        explore.searchTool = step.tool;
         const query = step.query.trim();
         if (query && !explore.querySet.has(query)) {
           explore.querySet.add(query);
@@ -787,6 +758,7 @@ export function currentJournalEntry(entries: ActivityJournalEntry[]): ActivityJo
 export function journalHasDetails(entry: ActivityJournalEntry): boolean {
   return Boolean(
     entry.filesList?.length
+    || entry.operations?.length
     || entry.queriesList?.length
     || entry.facts?.length
     || entry.occurrences?.length

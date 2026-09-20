@@ -243,25 +243,30 @@ def test_queue_sends_after_turn_end_without_any_assistant_message(tmp_path):
 
 
 @pytest.mark.parametrize("width", [48, 100])
-def test_context_percentage_stays_at_right_of_model_provider_line(tmp_path, width):
+@pytest.mark.parametrize("effort", ["", "high"])
+def test_context_percentage_stays_at_right_of_model_effort_line(tmp_path, width, effort):
     async def run():
         app = make_app(tmp_path)
         async with app.run_test(size=(width, 25)) as pilot:
             st = app.runtime.status
-            st.model = "model-with-a-long-name"
+            st.model = "example-provider/model-with-a-long-name"
             st.provider = "example-provider"
             st.context_used = 46000
             st.context_window = 200000
-            app._set_status()
+            with patch.object(app.runtime, "reasoning_details", return_value=(effort, ())):
+                app._set_status()
             await pilot.pause()
             meta = app.query_one(ComposerMeta)
             context = app.query_one("#meta-context", Static)
             model = app.query_one("#meta-model", Static)
+            reasoning = app.query_one("#meta-reasoning", Static)
             assert str(context.content) == "Context 23%"
-            assert "example-provider" in str(model.content)
+            assert str(model.content) == "model-with-a-long-name"
+            assert str(reasoning.content) == (effort or "Auto")
             assert context.region.right == meta.content_region.right
             assert context.region.y == model.region.y
-            assert context.region.x >= model.region.right
+            assert reasoning.region.x >= model.region.right
+            assert context.region.x >= reasoning.region.right
             assert app.query_one("#composer-block").styles.padding.top == 1
             assert app.transcript.styles.padding.bottom == 0
             assert app.screen.styles.background.hex == "#181A1D"

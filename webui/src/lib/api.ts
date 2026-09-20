@@ -2458,6 +2458,8 @@ export interface RuntimeHealth {
   message?: string | null;
   label?: string | null;
   reasons?: string[];
+  scope?: "machine";
+  cpu?: { usedRatio?: number | null };
   memory?: { usedRatio?: number | null; availableGb?: number | null };
   disk?: { usedRatio?: number | null; freeGb?: number | null; path?: string };
   pid?: number;

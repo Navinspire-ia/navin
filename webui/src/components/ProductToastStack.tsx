@@ -28,12 +28,13 @@ import {
   readDismissedUpdateToast,
 } from "@/lib/product-toasts";
 import { cn } from "@/lib/utils";
+import { runtimePressureTitle, runtimeResourceSummary } from "@/lib/runtime-health";
 
 /**
  * Cartes toast bas-gauche (style Cursor) :
  * - nouvelle version à installer ;
  * - annonces publiées depuis l'admin navin.live ;
- * - pression ressources (RAM / disque) avec Reload.
+ * - pression ressources de la machine avec actualisation des mesures.
  *
  * Les annonces sont lues directement depuis /api/announcements (pas via la
  * cloche). Elles restent affichées jusqu'à dismiss explicite, même après
@@ -66,7 +67,7 @@ function isRichAnnouncement(item: AnnouncementToast): boolean {
 
 const DISMISSED_ANNOUNCEMENTS_KEY = "navin.toasts.dismissed-announcements";
 const TOAST_SEEDED_KEY = "navin.toasts.announcements-seeded";
-const HEALTH_POLL_MS = 45_000;
+const HEALTH_POLL_MS = 10_000;
 const ANNOUNCEMENTS_POLL_MS = 60_000;
 const ANNOUNCEMENTS_FETCH_TIMEOUT_MS = 10_000;
 const MAX_TOASTS = 2;
@@ -106,7 +107,6 @@ export function ProductToastStack({
   onDismissUpdate,
   onSkipUpdate,
   onOpenAnnouncement,
-  onReload,
   token,
 }: {
   availableUpdate: UpdateInfo | null;
@@ -117,7 +117,6 @@ export function ProductToastStack({
   onDismissUpdate: () => void;
   onSkipUpdate: () => void;
   onOpenAnnouncement: (item: AnnouncementToast) => void | Promise<void>;
-  onReload: () => void;
   token: string;
 }) {
   const { t } = useTranslation();
@@ -127,28 +126,47 @@ export function ProductToastStack({
   const [announcementToasts, setAnnouncementToasts] = useState<AnnouncementToast[]>([]);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [healthDismissed, setHealthDismissed] = useState(false);
+  const [healthCheck, setHealthCheck] = useState(0);
+  const [healthChecking, setHealthChecking] = useState(false);
+  const [healthFailed, setHealthFailed] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
+    let inFlight = false;
+    let warmup: number | undefined;
+    let warmupRequested = false;
     const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      setHealthChecking(true);
       try {
         const payload = await fetchRuntimeHealth(token);
         if (!cancelled) {
           setHealth(payload);
+          setHealthFailed(false);
           if (!payload.pressure) setHealthDismissed(false);
+          if (payload.cpu?.usedRatio === null && !warmupRequested) {
+            warmupRequested = true;
+            warmup = window.setTimeout(() => void poll(), 1100);
+          }
         }
       } catch {
-        if (!cancelled) setHealth(null);
+        if (!cancelled) setHealthFailed(true);
+      } finally {
+        inFlight = false;
+        if (!cancelled) setHealthChecking(false);
       }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), HEALTH_POLL_MS);
+    const timer = window.setInterval(() => { if (!document.hidden) void poll(); }, HEALTH_POLL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.clearTimeout(warmup);
     };
-  }, [token]);
+  }, [token, healthCheck]);
 
   useEffect(() => {
     let cancelled = false;
@@ -585,6 +603,7 @@ export function ProductToastStack({
       {showHealth && health ? (
         <div
           role="alert"
+          data-testid="runtime-pressure-toast"
           className={cn(
             "pointer-events-auto overflow-hidden rounded-2xl border shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] backdrop-blur-md",
             cardEnter,
@@ -614,31 +633,14 @@ export function ProductToastStack({
                 {t("runtime.badge", { defaultValue: "Resources" })}
               </p>
               <p className="mt-0.5 text-[13.5px] font-semibold leading-snug">
-                {(() => {
-                  const reasons = health.reasons ?? [];
-                  if (reasons.includes("memory") && reasons.includes("disk")) {
-                    return t("runtime.both", {
-                      defaultValue: "Low memory and disk space - reload recommended",
-                    });
-                  }
-                  if (reasons.includes("memory")) {
-                    return t("runtime.memory", {
-                      defaultValue: "High memory use - reload recommended",
-                    });
-                  }
-                  if (reasons.includes("disk")) {
-                    return t("runtime.disk", {
-                      defaultValue: "Low disk space - free space or reload",
-                    });
-                  }
-                  return (
-                    health.message
-                    || t("runtime.pressure", {
-                      defaultValue: "High resource use - reload recommended",
-                    })
-                  );
-                })()}
+                {runtimePressureTitle(health, t)}
               </p>
+              <p className="mt-2 text-xs tabular-nums">{runtimeResourceSummary(health, t)}</p>
+              <p className="mt-2 text-xs opacity-80">{t("runtime.scope", { defaultValue: "Machine totals across all applications." })}</p>
+              {(health.reasons ?? []).includes("memory") ? <p className="mt-1 text-xs opacity-80">{t("runtime.memoryAdvice", { defaultValue: "Close unused applications or reduce concurrent tasks to free RAM." })}</p> : null}
+              {(health.reasons ?? []).includes("disk") ? <p className="mt-1 text-xs opacity-80">{t("runtime.diskAdvice", { defaultValue: "Free space on the workspace drive. Reloading does not free disk space." })}</p> : null}
+              {(health.reasons ?? []).includes("cpu") ? <p className="mt-1 text-xs opacity-80">{t("runtime.cpuAdvice", { defaultValue: "Wait for heavy tasks to finish or reduce concurrent tasks." })}</p> : null}
+              {healthFailed ? <p className="mt-2 text-xs">{t("runtime.checkFailed", { defaultValue: "Could not refresh. Showing the last measurements." })}</p> : null}
             </div>
             <button
               type="button"
@@ -659,11 +661,12 @@ export function ProductToastStack({
             </button>
             <button
               type="button"
-              onClick={onReload}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-400 px-3.5 py-1.5 text-[12.5px] font-semibold text-slate-950"
+              onClick={() => setHealthCheck((value) => value + 1)}
+              disabled={healthChecking}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-400 px-3.5 py-1.5 text-[12.5px] font-semibold text-slate-950 disabled:opacity-60"
             >
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-              {t("runtime.reload", { defaultValue: "Reload" })}
+              <RefreshCw className={cn("h-3.5 w-3.5", healthChecking && "animate-spin motion-reduce:animate-none")} aria-hidden />
+              {t("runtime.recheck", { defaultValue: "Recheck" })}
             </button>
           </div>
         </div>

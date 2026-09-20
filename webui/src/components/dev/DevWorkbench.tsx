@@ -953,20 +953,28 @@ export function DevWorkbench({
       return;
     }
     let cancelled = false;
+    let warmup: number | undefined;
+    let warmupRequested = false;
     const poll = () => {
       void fetchRuntimeHealth(token)
         .then((payload) => {
-          if (!cancelled) setRuntimeHealth(payload);
+          if (cancelled) return;
+          setRuntimeHealth(payload);
+          if (payload.cpu?.usedRatio === null && !warmupRequested) {
+            warmupRequested = true;
+            warmup = window.setTimeout(poll, 1100);
+          }
         })
         .catch(() => {
           if (!cancelled) setRuntimeHealth(null);
         });
     };
     poll();
-    const timer = window.setInterval(poll, 30_000);
+    const timer = window.setInterval(() => { if (!document.hidden) poll(); }, 10_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.clearTimeout(warmup);
     };
   }, [token]);
 
@@ -5023,21 +5031,6 @@ export function DevWorkbench({
           {(
             [
               {
-                // First module after the project folder picker.
-                key: "agi",
-                icon: <BrainCircuit className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.agiTab", "AGI"),
-                active: mode === "agi",
-                go: () => showMode("agi"),
-              },
-              {
-                key: "computer",
-                icon: <Monitor className="h-3.5 w-3.5 shrink-0" aria-hidden />,
-                label: tx("dev.computerTab", "Computer"),
-                active: mode === "computer",
-                go: () => showMode("computer"),
-              },
-              {
                 key: "guardrails",
                 icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.guardrailsTab", "Guardrails"),
@@ -5226,7 +5219,7 @@ export function DevWorkbench({
               </button>
             ))}
           <DevOtherMenu
-            triggerClassName={railItem(moreMenuActive)}
+            triggerClassName={railItem(moreMenuActive || mode === "agi" || mode === "computer")}
             showTriggerLabel={!railIconsOnly}
             onSeed={onSeedChat}
             onRun={onRunAction}
@@ -5236,8 +5229,6 @@ export function DevWorkbench({
               "evolve",
               "rules",
               "guardrails",
-              "agi",
-              "computer",
               "graph",
               "board",
             ])}
@@ -5828,28 +5819,6 @@ export function DevWorkbench({
                     them so Browser never slides under the project chip. */}
                 <div className="flex min-w-0 flex-1 items-center gap-1">
                 <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <button
-                      type="button"
-                      onClick={() => showMode("agi")}
-                      className={navBtn(mode === "agi")}
-                      title={tx("dev.agiTab", "AGI")}
-                      aria-label={tx("dev.agiTab", "AGI")}
-                      data-testid="dev-toolbar-agi"
-                    >
-                      <BrainCircuit className="h-4 w-4 shrink-0" aria-hidden />
-                      {label(tx("dev.agiTab", "AGI"))}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => showMode("computer")}
-                      className={navBtn(mode === "computer")}
-                      title={tx("dev.computerTab", "Computer")}
-                      aria-label={tx("dev.computerTab", "Computer")}
-                      data-testid="dev-toolbar-computer"
-                    >
-                      <Monitor className="h-4 w-4 shrink-0" aria-hidden />
-                      {label(tx("dev.computerTab", "Computer"))}
-                    </button>
                     {reviewChanges.length > 0 ? (
                       <button
                         type="button"
@@ -5953,7 +5922,7 @@ export function DevWorkbench({
                       onSeed={onSeedChat}
                       onRun={onRunAction}
                       activeFilePath={mode === "code" ? activeTab : null}
-                      items={overflowMenuItems((action) => action, ["agi", "computer"])}
+                      items={overflowMenuItems((action) => action)}
                     />
                     </div>
                     </div>

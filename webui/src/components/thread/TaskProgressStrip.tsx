@@ -18,7 +18,9 @@ export function TaskProgressStrip({
   className?: string;
 }) {
   const { t } = useTranslation();
-  if (!progress) return null;
+  // Tool cards already show their command, output and running state. Avoid
+  // duplicating command progress as a blue strip below the conversation.
+  if (!progress || progress.call_id || (progress.percent != null && progress.percent >= 100)) return null;
 
   const stepLabel =
     progress.step_index != null && progress.steps_total != null

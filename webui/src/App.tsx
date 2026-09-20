@@ -5037,7 +5037,6 @@ function Shell({
           onDismissUpdate={dismissAvailableUpdate}
           onSkipUpdate={() => void skipAvailableUpdate()}
           onOpenAnnouncement={(item) => void handleAnnouncementOpen(item)}
-          onReload={onRestart}
           token={token}
         />
         <PairingCodePopup
