@@ -1,62 +1,6 @@
 # Installation
 
-This page is the complete install guide: official packages, the CLI one-liner, and a source build of the gateway + WebUI.
-
-Related:
-
-- First session in the terminal: [CLI quickstart](./cli/quickstart.md)
-- One-liner only: [CLI install](./cli/install.md)
-- Product map: [Capabilities](./capabilities.md)
-- Site: [navin.live/download](https://navin.live/download) · [navin.live/en/docs](https://navin.live/en/docs)
-
-After any official install you should have two commands:
-
-| Command | Role |
-| --- | --- |
-| `navin-cli` | Terminal AGI in the current folder (this is the product CLI) |
-| `navin` | Desktop / workbench, doctor, status, gateway, `navin .` |
-
-Do not use `navin tui` or `navin agent` as the entry point.
-
-## 1. Desktop packages (recommended)
-
-Download from [navin.live/download](https://navin.live/download).
-
-| Platform | Files | Notes |
-| --- | --- | --- |
-| Windows | `.exe` setup or `.msi` | Signed by Navinspire. SmartScreen may still show: More info → Run anyway |
-| macOS | `.dmg` (arm64 or x64) | Drag Navin into Applications. If Gatekeeper blocks: right-click → Open |
-| Linux | `.AppImage`, `.deb`, `.rpm`, `.pkg.tar.zst` | AppImage may need `libfuse2` on older distros |
-
-User data stays in `~/.navin` (or `%USERPROFILE%\.navin` on Windows) across upgrades: config, workspaces, memory, projects.
-
-Windows SmartScreen ("Windows protected your PC") can appear on a correctly signed setup. Microsoft checks the publisher **and** the reputation of that exact file hash. Navinspire as signer does not clear it on the first downloads. An EV certificate no longer bypasses it. Keep More info → Run anyway until reputation builds, or install from the Microsoft Store when that listing exists. To check the file you actually downloaded:
-
-```powershell
-Get-AuthenticodeSignature ".\Navin-Desktop-2.0.1-windows-x64-setup.exe" |
-  Format-List Status, StatusMessage, SignerCertificate
-```
-
-`Status` should be `Valid`. That confirms the signature, not SmartScreen. The same check, including `navin.exe` / `Navin.exe` / `NavinUpdater.exe` inside the installer, is `packaging/windows/verify-windows-signatures.ps1`.
-
-If `navin` or `navin-cli` is missing from PATH after a DMG or portable install:
-
-```bash
-navin install-cli
-navin install-cli --force
-```
-
-Then:
-
-```bash
-cd your-project
-navin-cli
-navin .
-navin --version
-navin doctor
-```
-
-## 2. Official CLI one-liner
+## 1. Official CLI one-liner
 
 The script reads the official `releases.json`. It prefers a CLI archive when published, otherwise it extracts the desktop package. It writes `navin` and `navin-cli` to the user PATH. No sudo on Linux. Default prefix: `~/.local`.
 
@@ -101,7 +45,7 @@ curl http://localhost:3100/install -fsS | bash
 
 `/install` then serves files from this repository and does not hit production S3.
 
-## 3. First configuration
+## 2. First configuration
 
 In `navin-cli`, **Ctrl+G → Providers**: add a key (OpenRouter, OpenAI, Anthropic, …) or a local `apiBase` (Ollama `http://127.0.0.1:11434/v1`). Then **Models**: add a configuration and set it active.
 
@@ -117,7 +61,7 @@ This tree is BYOK only. Add keys in **Ctrl+G → Providers**. There is no Navin 
 
 Config file: `~/.navin/config.json`. Same file for `navin-cli` and the desktop.
 
-## 4. Build from source (gateway + WebUI)
+## 3. Build from source (gateway + WebUI)
 
 Use this when you clone the repository and want to run or change Navin locally.
 
@@ -266,7 +210,7 @@ navin gateway install-service
 
 [Long-running agent](./guides/long-running-ai-agent.md) · [Deploy the gateway](./guides/deploy-navin-gateway.md)
 
-## 5. Uninstall
+## 4. Uninstall
 
 - Desktop: use the OS uninstaller.
 - CLI prefix: remove `~/.local/bin/navin`, `~/.local/bin/navin-cli` and `~/.local/share/navin` (or your `NAVIN_PREFIX`).
@@ -278,7 +222,7 @@ navin cache --clear
 
 Does not delete chats, config, or workspaces.
 
-## 6. Troubleshooting
+## 5. Troubleshooting
 
 ```bash
 navin doctor
