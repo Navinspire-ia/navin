@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin: deine KI, dein Rechner. Entwickeln, recherchieren und automatisieren." width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # Aus einem Ziel wird erledigte Arbeit.
 
 **Ein Open-Source-Arbeitsbereich für KI-Agenten, die programmieren, recherchieren, Werkzeuge nutzen und Kontext zwischen Sitzungen bewahren.**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop behebt einen Fehler in der Rabattberechnung und besteht alle sechs Tests" width="100%"></a>
+  <br>
+  <sub>Gekürzte Aufnahme einer echten Navin Desktop-Sitzung: prüfen → korrigieren → 6 Tests bestanden. <a href="./docs/readme-demo.md">Standbild und Ablauf</a></sub>
+</p>
 
 Im Terminal, Browser oder in der Desktop-App. Wähle deine Modelle. Behalte die Kontrolle.
 
@@ -30,6 +36,12 @@ Navin verbindet das Modell mit deinen Dateien, dem Terminal, dem Browser und dei
 
 ## Loslegen
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[Navin Desktop für Windows, macOS oder Linux herunterladen](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. Öffne **Settings** mit **Ctrl+G** und hinterlege deinen API-Schlüssel oder die Adresse eines lokalen Modells.
 2. Wähle Modell und Modus: **Ask**, **Plan**, **Agent**, **Review**, **Security** oder **Debug**.
 3. Probiere: **„Lies dieses Projekt und erkläre, wie es funktioniert. Schlage dann eine sinnvolle Verbesserung vor.“**
-
-Lieber mit Fenster? [Navin Desktop für Windows, macOS oder Linux herunterladen](https://navin.live/download).
 
 Die Software ist unter ihrer Open-Source-Lizenz kostenlos nutzbar. Modell-APIs und externe Dienste können Nutzungsgebühren erheben. [Installation und Fehlerbehebung](./docs/Installation.md).
 
@@ -92,8 +102,9 @@ CLI aus dem Repository: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli
 Einige Workflows benötigen zusätzliche Abhängigkeiten, eingerichtete Integrationen oder ein kompatibles Modell. Details stehen in der [Funktionsübersicht](./docs/capabilities.md).
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="Navin CLI mit einem Beispiel zur Erkundung eines Projekts" width="100%">
-<br><sub>CLI-Vorschau mit einem Beispiel zur Projekterkundung.</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI behebt einen Fehler in der Rabattberechnung und besteht alle sechs Tests" width="100%"></a>
+  <br>
+  <sub>Gekürzte Aufnahme einer echten CLI-Sitzung: prüfen → korrigieren → 6 Tests bestanden. <a href="./docs/readme-demo.md#terminal">Standbild und Ablauf</a></sub>
 </p>
 
 ## Warum sich ein Blick auf Navin lohnt

@@ -1,11 +1,17 @@
 <div dir="rtl">
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin: ذكاؤك الاصطناعي على جهازك. برمجة وبحث وأتمتة." width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # حوّل هدفك إلى عمل يُنجَز.
 
 **مساحة عمل مفتوحة المصدر لوكلاء الذكاء الاصطناعي: برمجة وبحث واستخدام للأدوات، مع سياق يستمر بين الجلسات.**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="يصلح Navin Desktop خطأ في حساب الخصم ويشغّل الاختبارات الستة بنجاح" width="100%"></a>
+  <br>
+  <sub>جلسة Navin Desktop حقيقية مختصرة: فحص ← إصلاح ← نجاح الاختبارات الستة. <a href="./docs/readme-demo.md">صورة ثابتة وشرح</a></sub>
+</p>
 
 شغّل Navin في الطرفية أو المتصفح أو تطبيق سطح المكتب. اختر نماذجك واحتفظ بالتحكم.
 
@@ -34,6 +40,12 @@
 **وما يتبقى بعد المحادثة مهم أيضًا:** معرفة المشروع، والقرارات، والمهارات القابلة لإعادة الاستخدام، وسياق العمل.
 
 ## ابدأ الآن
+
+**Navin Desktop (Windows / macOS / Linux)**
+
+[نزّل Navin Desktop لنظام Windows أو macOS أو Linux](https://navin.live/download)
+
+**CLI**
 
 **Linux / macOS / WSL**
 
@@ -69,8 +81,6 @@ navin-cli
 1. افتح **Settings** باستخدام **Ctrl+G** وأضف مفتاح API الخاص بك أو عنوان نموذج محلي.
 2. اختر النموذج والوضع: **Ask** أو **Plan** أو **Agent** أو **Review** أو **Security** أو **Debug**.
 3. جرّب: **«اقرأ هذا المشروع واشرح كيف يعمل، ثم اقترح تحسينًا مفيدًا.»**
-
-تفضّل واجهة رسومية؟ [نزّل Navin Desktop لنظام Windows أو macOS أو Linux](https://navin.live/download).
 
 البرنامج مجاني بموجب رخصته مفتوحة المصدر. قد تفرض واجهات النماذج والخدمات الخارجية رسوم استخدام. [التثبيت وحل المشكلات](./docs/Installation.md).
 
@@ -113,8 +123,9 @@ make start
 قد تحتاج بعض المهام إلى إضافات أو تكاملات مهيأة أو نموذج متوافق. راجع [خريطة القدرات](./docs/capabilities.md).
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="واجهة Navin CLI مع مثال توضيحي لاستكشاف مشروع" width="100%">
-<br><sub>معاينة واجهة CLI باستخدام مثال توضيحي لاستكشاف مشروع.</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="يصلح Navin CLI خطأ في حساب الخصم ويشغّل الاختبارات الستة بنجاح" width="100%"></a>
+  <br>
+  <sub>جلسة CLI حقيقية مختصرة: فحص ← إصلاح ← نجاح الاختبارات الستة. <a href="./docs/readme-demo.md#terminal">صورة ثابتة وشرح</a></sub>
 </p>
 
 ## ما الذي يستحق التجربة؟

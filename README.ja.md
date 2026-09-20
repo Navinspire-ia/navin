@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin：あなたの AI を、あなたのマシンで。開発、調査、自動化。" width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # 目標を、完了した仕事に変える。
 
 **コードを書き、調査し、ツールを使い、セッションを越えてコンテキストを引き継ぐ、オープンソースの AI エージェントワークスペース。**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop が割引計算のバグを修正し、6 件すべてのテストに成功" width="100%"></a>
+  <br>
+  <sub>実際の Navin Desktop セッションを短縮した録画：確認 → 修正 → 6 件のテストに成功。 <a href="./docs/readme-demo.md">静止画と詳細</a></sub>
+</p>
 
 ターミナル、ブラウザー、デスクトップアプリで実行。モデルは自分で選び、コントロールは自分の手に。
 
@@ -30,6 +36,12 @@ Navin はモデルをファイル、ターミナル、ブラウザー、各種�
 
 ## はじめる
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[Windows、macOS、Linux 向けの Navin Desktop をダウンロード](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. **Ctrl+G** で **Settings** を開き、API キーまたはローカルモデルの接続先を設定します。
 2. モデルとモードを選びます：**Ask**、**Plan**、**Agent**、**Review**、**Security**、**Debug**。
 3. まずは **「このプロジェクトを読んで、仕組みを説明して。そのあと、役立つ改善を一つ提案して。」** と頼んでみてください。
-
-GUI を使いたい場合は、[Windows、macOS、Linux 向けの Navin Desktop をダウンロード](https://navin.live/download)できます。
 
 ソフトウェアはオープンソースライセンスの条件に従って無料で利用できます。外部のモデル API や連携サービスには、利用料金が発生する場合があります。[インストールとトラブルシューティング](./docs/Installation.md)。
 
@@ -92,8 +102,9 @@ Linux/macOS のネイティブサンドボックスには **rustup** も必要�
 一部のワークフローには、追加の依存関係、連携設定、対応モデルが必要です。詳しくは[機能一覧](./docs/capabilities.md)をご覧ください。
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="リポジトリの探索例を表示した Navin CLI" width="100%">
-<br><sub>リポジトリの探索を例にした CLI のプレビュー。</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI が割引計算のバグを修正し、6 件すべてのテストに成功" width="100%"></a>
+  <br>
+  <sub>実際の CLI セッションを短縮した録画：確認 → 修正 → 6 件のテストに成功。 <a href="./docs/readme-demo.md#terminal">静止画と詳細</a></sub>
 </p>
 
 ## Navin を試す理由

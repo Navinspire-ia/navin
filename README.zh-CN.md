@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin：你的 AI，你的设备。开发、研究与自动化。" width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # 让目标变成完成的工作。
 
 **开源 AI 智能体工作空间：编写代码、开展研究、调用工具，并在不同会话之间保留上下文。**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop 修复折扣计算错误，并通过全部六项测试" width="100%"></a>
+  <br>
+  <sub>真实 Navin Desktop 会话的精简录屏：检查 → 修复 → 六项测试全部通过。 <a href="./docs/readme-demo.md">静态截图与过程说明</a></sub>
+</p>
 
 在终端、浏览器或桌面应用中运行。自由选择模型，始终掌握控制权。
 
@@ -30,6 +36,12 @@ Navin 将模型连接到文件、终端、浏览器和工具。它可以制定�
 
 ## 快速开始
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[下载适用于 Windows、macOS 或 Linux 的 Navin Desktop](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. 按 **Ctrl+G** 打开 **Settings**，配置自己的 API 密钥或本地模型服务地址。
 2. 选择模型和模式：**Ask**、**Plan**、**Agent**、**Review**、**Security** 或 **Debug**。
 3. 试试：**“阅读这个项目，解释它的工作方式，然后提出一项有价值的改进。”**
-
-更喜欢图形界面？[下载适用于 Windows、macOS 或 Linux 的 Navin Desktop](https://navin.live/download)。
 
 软件可在开源许可证条款下免费使用。外部模型 API 和其他服务可能收取使用费用。[安装与故障排查](./docs/Installation.md)。
 
@@ -92,8 +102,9 @@ Linux/macOS 上的原生沙箱还需要 **rustup**（`make native`）。
 部分工作流需要额外依赖、已配置的集成或兼容模型。具体设置请参阅[能力总览](./docs/capabilities.md)。
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="Navin CLI 界面，展示代码库导览示例" width="100%">
-<br><sub>CLI 界面预览，使用代码库导览示例。</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI 修复折扣计算错误，并通过全部六项测试" width="100%"></a>
+  <br>
+  <sub>真实 CLI 会话的精简录屏：检查 → 修复 → 六项测试全部通过。 <a href="./docs/readme-demo.md#terminal">静态截图与过程说明</a></sub>
 </p>
 
 ## 为什么值得尝试 Navin

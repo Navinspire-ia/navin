@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin : votre IA, votre machine. Développer, rechercher et automatiser." width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # Un objectif. Un agent qui fait avancer le travail.
 
 **Un espace de travail IA open source pour coder, rechercher, utiliser des outils et retrouver le contexte d'une session à l'autre.**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop corrige un calcul de remise et fait passer les six tests" width="100%"></a>
+  <br>
+  <sub>Session Navin Desktop réelle, raccourcie : lire → corriger → 6 tests réussis. <a href="./docs/readme-demo.md">Image fixe et détails</a></sub>
+</p>
 
 Dans votre terminal, votre navigateur ou l'application desktop. Choisissez vos modèles. Gardez le contrôle.
 
@@ -30,6 +36,12 @@ Navin relie le modèle à vos fichiers, au terminal, au navigateur et à vos out
 
 ## Démarrer
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[Téléchargez Navin Desktop pour Windows, macOS ou Linux](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. Ouvrez **Settings** avec **Ctrl+G** et configurez un fournisseur avec votre clé API ou un modèle local.
 2. Choisissez un modèle et un mode : **Ask**, **Plan**, **Agent**, **Review**, **Security** ou **Debug**.
 3. Essayez : **« Lis ce projet et explique son fonctionnement. Propose ensuite une amélioration utile. »**
-
-Vous préférez une fenêtre ? [Téléchargez Navin Desktop pour Windows, macOS ou Linux](https://navin.live/download).
 
 Le logiciel est gratuit sous sa licence open source. Les API de modèles et les services externes peuvent facturer leur utilisation. [Installation et dépannage](./docs/Installation.md).
 
@@ -92,9 +102,9 @@ CLI depuis le dépôt : `.venv/bin/navin-cli` (Windows : `.venv\Scripts\navin-cl
 Certains workflows nécessitent des dépendances supplémentaires, des intégrations configurées ou un modèle compatible. Consultez la [carte des capacités](./docs/capabilities.md).
 
 <p align="center">
-  <img src="./assets/readme/cli.png" alt="CLI Navin avec un exemple de découverte de projet" width="100%">
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI corrige un calcul de remise et fait passer les six tests" width="100%"></a>
   <br>
-  <sub>Aperçu du CLI avec un exemple de découverte de projet.</sub>
+  <sub>Session CLI réelle, raccourcie : lire → corriger → 6 tests réussis. <a href="./docs/readme-demo.md#terminal">Image fixe et détails</a></sub>
 </p>
 
 ## Ce qui fait la différence

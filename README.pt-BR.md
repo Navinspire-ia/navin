@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin: sua IA, sua máquina. Desenvolva, pesquise e automatize." width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # Transforme um objetivo em trabalho entregue.
 
 **Um espaço de trabalho de agentes de IA de código aberto para programar, pesquisar, usar ferramentas e manter o contexto entre sessões.**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop corrige um erro no cálculo de desconto e passa nos seis testes" width="100%"></a>
+  <br>
+  <sub>Sessão real da Navin Desktop, resumida: analisar → corrigir → 6 testes aprovados. <a href="./docs/readme-demo.md">Imagem estática e detalhes</a></sub>
+</p>
 
 No terminal, no navegador ou no aplicativo desktop. Escolha seus modelos. Mantenha o controle.
 
@@ -30,6 +36,12 @@ O Navin conecta o modelo aos seus arquivos, terminal, navegador e ferramentas. E
 
 ## Começar
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[Baixe o Navin Desktop para Windows, macOS ou Linux](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. Abra **Settings** com **Ctrl+G** e configure sua chave de API ou o endereço de um modelo local.
 2. Escolha o modelo e o modo: **Ask**, **Plan**, **Agent**, **Review**, **Security** ou **Debug**.
 3. Experimente: **"Leia este projeto e explique como ele funciona. Depois, sugira uma melhoria útil."**
-
-Prefere uma janela? [Baixe o Navin Desktop para Windows, macOS ou Linux](https://navin.live/download).
 
 O software é gratuito sob sua licença de código aberto. APIs de modelos e serviços externos podem cobrar pelo uso. [Instalação e solução de problemas](./docs/Installation.md).
 
@@ -92,8 +102,9 @@ CLI pelo repositório: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`
 Alguns fluxos exigem dependências adicionais, integrações configuradas ou um modelo compatível. Consulte o [mapa de capacidades](./docs/capabilities.md).
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="Navin CLI com um exemplo ilustrativo de exploração de projeto" width="100%">
-<br><sub>Prévia do CLI com um exemplo de exploração de projeto.</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI corrige um erro no cálculo de desconto e passa nos seis testes" width="100%"></a>
+  <br>
+  <sub>Sessão real da CLI, resumida: analisar → corrigir → 6 testes aprovados. <a href="./docs/readme-demo.md#terminal">Imagem estática e detalhes</a></sub>
 </p>
 
 ## Por que explorar o Navin

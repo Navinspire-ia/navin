@@ -1,10 +1,16 @@
 <div align="center">
 
-<img src="./assets/readme/hero.svg" alt="Navin: din AI, din dator. Utveckla, undersök och automatisera." width="100%">
+<img src="./assets/navin-mark.svg" alt="Navin" width="64" height="64">
 
 # Gör ett mål till utfört arbete.
 
 **En arbetsmiljö med öppen källkod för AI-agenter som kan skriva kod, göra research, använda verktyg och behålla sammanhang mellan sessioner.**
+
+<p>
+  <a href="./docs/readme-demo.md"><img src="./assets/readme/desktop-demo.gif" alt="Navin Desktop rättar ett fel i rabattberäkningen och klarar alla sex tester" width="100%"></a>
+  <br>
+  <sub>Förkortad inspelning av en verklig Navin Desktop-session: granska → rätta → 6 godkända tester. <a href="./docs/readme-demo.md">Stillbild och genomgång</a></sub>
+</p>
 
 Kör i terminalen, webbläsaren eller skrivbordsappen. Välj dina modeller. Behåll kontrollen.
 
@@ -30,6 +36,12 @@ Navin kopplar modellen till dina filer, terminalen, webbläsaren och dina verkty
 
 ## Kom igång
 
+**Navin Desktop (Windows / macOS / Linux)**
+
+[Ladda ner Navin Desktop för Windows, macOS eller Linux](https://navin.live/download)
+
+**CLI**
+
 **Linux / macOS / WSL**
 
 ```bash
@@ -52,8 +64,6 @@ navin-cli
 1. Öppna **Settings** med **Ctrl+G** och konfigurera din API-nyckel eller adressen till en lokal modell.
 2. Välj modell och läge: **Ask**, **Plan**, **Agent**, **Review**, **Security** eller **Debug**.
 3. Prova: **”Läs projektet och förklara hur det fungerar. Föreslå sedan en användbar förbättring.”**
-
-Föredrar du ett fönster? [Ladda ner Navin Desktop för Windows, macOS eller Linux](https://navin.live/download).
 
 Programvaran är gratis att använda enligt villkoren i licensen för öppen källkod. Externa modell-API:er och anslutna tjänster kan ta betalt för användningen. [Installation och felsökning](./docs/Installation.md).
 
@@ -92,8 +102,9 @@ CLI från kodarkivet: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`)
 Vissa arbetsflöden kräver extra beroenden, konfigurerade integrationer eller en kompatibel modell. Se [funktionsöversikten](./docs/capabilities.md) för detaljer.
 
 <p align="center">
-<img src="./assets/readme/cli.png" alt="Navin CLI med ett exempel på genomgång av ett kodarkiv" width="100%">
-<br><sub>Förhandsvisning av CLI med en exempelgenomgång av ett kodarkiv.</sub>
+  <a href="./docs/readme-demo.md#terminal"><img src="./assets/readme/cli-demo.gif" alt="Navin CLI rättar ett fel i rabattberäkningen och klarar alla sex tester" width="100%"></a>
+  <br>
+  <sub>Förkortad inspelning av en verklig CLI-session: granska → rätta → 6 godkända tester. <a href="./docs/readme-demo.md#terminal">Stillbild och genomgång</a></sub>
 </p>
 
 ## Varför prova Navin?
