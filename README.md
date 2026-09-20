@@ -1,244 +1,64 @@
 <div align="center">
 
-<h2 align="center">
-  <img src="./assets/navin-mark.svg" alt="" width="42" height="42" valign="middle">
-  <strong>NAVIN</strong>
-  &nbsp;&nbsp;
-  <strong>100% Free Open Source <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
-</h2>
+<img src="./assets/readme/hero.svg" alt="Navin: your AI, your machine. Build, research and automate." width="100%">
 
-<p align="center">
-  <img src="./assets/agi.gif" alt="Navin AGI" width="280">
-</p>
+# Turn a goal into work that gets done.
 
-[English](./README.md) - [Français](./README.fr.md)
+**An open source AI agent workspace that can code, research, use tools and carry context across sessions.**
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-22c55e.svg)](./LICENSE)
-[![Commercial license](https://img.shields.io/badge/Commercial-license%20available-0ea5e9.svg)](./COMMERCIAL_LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat)](https://github.com/Navinspire-ia/navin)
+Run it in your terminal, your browser or the desktop app. Choose your models. Keep control.
 
-Navin combines **Persistent Memory**, **Auto-Skills**, **Self-Evolve**, **World Models**, **Policy Learning**, **Multi-Agent** systems, **Loops** and **Heartbeat** to move beyond static AI assistants toward agents that improve from experience.
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
 
-Code - Research - Scrape - Automate - Create - Market - Learn - Evolve
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Local first](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
-Your machine. Your models. Your agent.
-
-<br>
-
-[Download Navin](https://navin.live/download) - [Documentation](https://navin.live/en/docs) - [Contributing](./CONTRIBUTING.md)
-
-<br>
-
-⭐ Star Navin if you want AI agents you can actually own.
+**[Get started](#get-started)** · **[Download desktop](https://navin.live/download)** · **[Explore the docs](./docs/README.md)** · **[Contribute](./CONTRIBUTING.md)**
 
 </div>
 
-<p align="center">
-  <img src="./assets/navin.gif" alt="Navin studio: Code, Tenders, Career, Trading, Leads, Marketing and more" width="900">
-</p>
+## Give Navin a mission
 
-## Why Navin?
+> "Find the cause of this bug, fix it, run the relevant tests and explain the changes."
 
-Most AI tools stop after generating an answer.
+> "Research these competitors, compare their offers with sources and turn the findings into a report."
 
-Navin is built to take a goal and keep working.
+> "Watch this project for actionable changes and tell me when something needs my attention."
 
-<p align="center">
-  <img src="./assets/loop.gif" alt="Goal, Plan, Act, Verify, Remember, Learn, Continue" width="900">
-</p>
+Navin connects the model to your files, terminal, browser and tools. It can plan the work, delegate focused tasks to subagents, check results and continue while the goal and configured limits allow it.
 
-Navin runs as a desktop app and CLI, works locally, supports your own API keys and can use hundreds of text and multimodal models.
+**The interesting part is what carries forward:** project knowledge, decisions, reusable skills and the context of the work.
 
-## Built toward AGI
+## Get started
 
-Navin is moving beyond static assistants toward agents that learn from experience.
-
-<p align="center">
-  <img src="./assets/agi-caps.gif" alt="Memory, Skills, World, Policy, Eval" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="220">Capability</th>
-      <th align="left">What it does</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Persistent%20Memory-0369ff?style=flat-square" alt="Persistent Memory"></td>
-      <td>Remember useful experience across sessions, projects, code, notes and actions</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Auto--Skills-111111?style=flat-square" alt="Auto-Skills"></td>
-      <td>Create, test, repair and improve reusable Skills automatically</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/World%20Models-111111?style=flat-square" alt="World Models"></td>
-      <td>Predict what is likely to happen before taking an action</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Policy%20Learning-111111?style=flat-square" alt="Policy Learning"></td>
-      <td>Learn which tool or action is the best next step</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Evaluation-111111?style=flat-square" alt="Evaluation"></td>
-      <td>Every improvement must be measurable, testable and reversible</td>
-    </tr>
-  </tbody>
-</table>
-
-The goal is not just an agent that works. It is an agent that gets better at working.
-
-Navin does not claim to be AGI today. The project is building the capabilities required to move toward increasingly general autonomous intelligence.
-
-## Self-Evolve
-
-When Navin fails the same way more than once, it can turn that experience into a better reusable Skill.
-
-<p align="center">
-  <img src="./assets/self-evolve.gif" alt="Self-Evolve from failure to promote or rollback" width="900">
-</p>
-
-The rule is simple: better than before. Nothing important gets worse.
-
-## Memory + Graph
-
-Navin does not have to start from zero every session.
-
-<p align="center">
-  <img src="./assets/memory-graph.gif" alt="Memories flow into Project Brain then Agent Loop" width="900">
-</p>
-
-## Project Graph + Code Index
-
-Navin maps every codebase it works on. Two layers, one interactive graph:
-
-- **Project Graph** (metagraph): every file becomes a node colored by role (frontend, backend, config, test, docs), with import edges and one-sentence roles. Ask "where is X handled?" and the agent answers with the exact file list and dependency chain instead of grepping the whole tree. Rendered live in the Dev workbench Graph tab from `.navin/metadata/`.
-- **Code Index**: type-aware navigation on top of the map - definitions, references, callers and callees, plus impact analysis that lists every transitive caller and the tests at risk before you change a shared signature.
-
-The result: the agent navigates like someone who knows the codebase, not like someone reading it for the first time.
-
-## Same model, a fraction of the tokens
-
-A raw coding agent pays the model tax on every turn: it re-reads files, re-discovers structure and re-prints diffs, turn after turn. Navin moves that work to your machine:
-
-- **Local Project Graph + Code Index** answer "where is this handled?" without ever putting the tree into the prompt - the model receives the exact slice, not the repo.
-- **Durable project memory** (Project Brain) carries decisions, conventions and facts across sessions, so the agent does not re-learn your codebase in the context window.
-- **Structured tool results** (diffs, compact graph strips, quiet run journals) keep every step readable while keeping the billed surface tiny.
-- **Cached-token aware routing** - long agentic turns reuse cached context instead of rebilling it.
-
-On real usage, that compounds: the same GPT-6 work that burns ~$100 of context on a raw agent lands around ~$10 on Navin. Same model, same quality, roughly 10x fewer billed tokens - because the expensive part (understanding your code) happens locally, once.
-
-## One AI workspace
-
-Navin connects many workflows to the same agent, memory and project context.
-
-<p align="center">
-  <img src="./assets/workspace.gif" alt="Meeting to Code, Research to Campaign, Product to Leads" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="140">Module</th>
-      <th align="left">What Navin can do</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td><img src="https://img.shields.io/badge/Code-0369ff?style=flat-square" alt="Code"></td><td>Build, Debug, Review, Security, Git, Terminal</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Research-111111?style=flat-square" alt="Research"></td><td>Web research, multi-agent research, documents</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Scraping-111111?style=flat-square" alt="Scraping"></td><td>Crawl, extract, structure, analyze</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Leads-111111?style=flat-square" alt="Leads"></td><td>Find, enrich, score, qualify</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Marketing-111111?style=flat-square" alt="Marketing"></td><td>Research, strategy, content, campaigns</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Tenders-111111?style=flat-square" alt="Tenders"></td><td>Find opportunities, analyze, prepare responses</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Career-111111?style=flat-square" alt="Career"></td><td>Find jobs and freelance missions, analyze opportunities</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Meetings-111111?style=flat-square" alt="Meetings"></td><td>Record, transcribe, summarize, extract actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Notes-111111?style=flat-square" alt="Notes"></td><td>Write, search, ask, connect knowledge</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Projects-111111?style=flat-square" alt="Projects"></td><td>Tasks, decisions, context, agent execution</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/SEO-111111?style=flat-square" alt="SEO"></td><td>Audit, keywords, content, actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Media-111111?style=flat-square" alt="Media"></td><td>Image, video, music, speech, STT, TTS</td></tr>
-  </tbody>
-</table>
-
-One context. One memory. One agent system.
-
-## Installation
-
-### CLI
+**Linux / macOS / WSL**
 
 ```bash
 curl https://navin.live/install -fsS | bash
-cd your-project
-navin-cli
 ```
 
-Windows PowerShell:
+**Windows PowerShell**
 
 ```powershell
 irm 'https://navin.live/install?win32=true' | iex
 ```
 
-`navin-cli` is the terminal agent. `navin .` opens the desktop on the current folder.
+Open a terminal in your project, then launch:
 
-After launch, open **Settings** to add your keys and pick a model. In `navin-cli`, press **Ctrl+G**. The web UI is where you configure everything. You do not edit JSON by hand.
+```bash
+cd your-project
+navin-cli
+```
 
-### Desktop
+1. Open **Settings** with **Ctrl+G** and configure a provider with your API key or a local model endpoint.
+2. Select a model and a mode: **Ask**, **Plan**, **Agent**, **Review**, **Security** or **Debug**.
+3. Start with: **"Read this project and explain how it works. Then suggest one useful improvement."**
 
-Download from [navin.live/download](https://navin.live/download).
+Prefer a window? [Download Navin Desktop for Windows, macOS or Linux](https://navin.live/download).
 
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="240">Platform</th>
-      <th align="left">Download</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-macos-arm64.dmg</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/macOS-Intel-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS Intel">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-macos-x64.dmg</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-windows-x64-setup.exe</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.msi</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/Linux-x64-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>.AppImage</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.deb</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.rpm</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.pkg.tar.zst</code></a>
-      </td>
-    </tr>
-  </tbody>
-</table>
+The software is free to use under its open source license. External model APIs and connected services may charge for usage. [Installation and troubleshooting](./docs/Installation.md).
 
-### From source
+<details>
+<summary><strong>Build from source</strong></summary>
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -247,177 +67,103 @@ make install
 make start
 ```
 
-`make install` installs everything (system deps if needed, backend, WebUI). `make start` is **dev**: Vite at [http://localhost:5173/](http://localhost:5173/) plus the gateway.
+The development WebUI opens at [localhost:5173](http://localhost:5173). To run the CLI from the checkout:
 
 ```bash
-make build
-make start-prod
+.venv/bin/navin-cli
 ```
 
-`make build` writes the production WebUI to `navin/web/dist`. `make start-prod` (or `make start backend`) serves that build on the gateway, usually [http://localhost:8765/](http://localhost:8765/).
+Windows: `.venv\Scripts\navin-cli`. Prerequisites and production builds: [installation guide](./docs/Installation.md).
 
-```bash
-make stop
-```
+</details>
 
-Same thing with scripts: `sh scripts/install.sh` then `sh scripts/start.sh`. One shot: `sh scripts/start.sh --install`.
+## One workspace, many kinds of work
 
-`make start front` is Vite only. `make build front` / `make build backend` build one side. Restart: `make restart`.
+| You want to... | Navin brings |
+| --- | --- |
+| **Ship software** | Repository exploration, code editing, terminal commands, Git, browser preview, tests and review. |
+| **Understand a codebase** | Project Graph, Code Index, definitions, references and impact analysis. |
+| **Research and extract** | Web search, browser tools, scraping, structured extraction and source-based reports. |
+| **Create deliverables** | Documents, presentations, spreadsheets, architecture diagrams and media workflows. |
+| **Work on growth** | Leads, enrichment, SEO, marketing research and campaign preparation. |
+| **Handle professional workflows** | Tender analysis, career research, meeting transcription, notes and action items. |
+| **Delegate a larger task** | Focused subagents that work in parallel and bring results back to the main agent. |
+| **Keep work moving** | Goal loops, scheduled tasks and Heartbeat checks while the gateway is running. |
 
-From the repo: `.venv/bin/navin-cli` (Windows: `.venv\Scripts\navin-cli`).
-
-Details: [Installation](./docs/Installation.md).
-
-## Agents
-
-Navin switches mode for the kind of work you need. It can also spawn sub-agents for parallel and specialized work.
-
-<p align="center">
-  <img src="./assets/agents.gif" alt="Ask, Plan, Agent, Review, Security, Debug, then back to Agent" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="160">Mode</th>
-      <th align="left">Role</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Ask-0369ff?style=flat-square" alt="Ask"></td>
-      <td>Understand without modifying the project</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Plan-111111?style=flat-square" alt="Plan"></td>
-      <td>Create an execution plan</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Agent-111111?style=flat-square" alt="Agent"></td>
-      <td>Build, edit, run, test and iterate</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Review-111111?style=flat-square" alt="Review"></td>
-      <td>Review code and propose fixes</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Security-111111?style=flat-square" alt="Security"></td>
-      <td>Analyze and harden your application</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Debug-111111?style=flat-square" alt="Debug"></td>
-      <td>Reproduce, diagnose, fix and verify</td>
-    </tr>
-  </tbody>
-</table>
-
-## Agent Loop
-
-Navin does not generate code and stop.
-
-It can use your repository, terminal, browser, files, tools and memory to continue until the work is done or genuinely blocked.
+Some workflows need extra dependencies, configured integrations or a compatible model. See the [capability map](./docs/capabilities.md) for settings and module guides.
 
 <p align="center">
-  <img src="./assets/agent-loop.gif" alt="Mission, Plan, Act, Verify, Continue, then loop back" width="720">
+  <img src="./assets/readme/cli.png" alt="Navin CLI with an illustrative repository walkthrough" width="100%">
+  <br>
+  <sub>CLI preview with an example repository walkthrough.</sub>
 </p>
 
-## Loop + Heartbeat
+## What makes Navin worth exploring
 
-**Loop** keeps an agent on a goal across many cycles.
+**Context that survives the chat.** Project memory and the code graph help the agent recover decisions and find relevant files. Optional episodic memory adds recall of earlier work. [Memory](./docs/memory.md) · [Project Graph](./docs/navin_dev/en/graph.md)
 
-**Heartbeat** wakes autonomous tasks later and lets them continue.
+**Tools that do the work.** Files, shell, Git, browser automation, APIs and MCP connect reasoning to execution. Skills package repeatable workflows; plugins and integrations extend the toolset. [MCP setup](./docs/guides/configure-mcp-tools.md) · [Skills](./navin/skills/README.md)
+
+**Your choice of models.** Connect OpenAI, Anthropic, Google, Mistral, DeepSeek, Qwen and other providers, or local endpoints through Ollama, LM Studio and vLLM. Route different tasks to different models. Available capabilities depend on the selected provider and model. [Configuration](./docs/configuration.md)
+
+**Longer tasks with explicit controls.** Loops keep a goal moving; Heartbeat checks for useful follow-up work. Approvals, resource budgets, checkpoints and stop controls govern execution. [Automations](./docs/automations.md) · [Security](./SECURITY.md)
+
+Local execution keeps your workspace on your machine. When you choose a remote model or connected service, the relevant request data is sent to that service.
+
+## From a goal to verified work
 
 <p align="center">
-  <img src="./assets/loop-heartbeat.gif" alt="Loop cycles and Heartbeat ticks" width="900">
+  <img src="./assets/readme/agent-workflow.svg" alt="Goal to plan, permissions, tool execution, verification and delivery, with experience feeding project memory" width="100%">
 </p>
 
-Useful for coding, research, monitoring, scraping, tenders, leads, job search and long-running work.
+[Open the interactive workflow](./assets/readme/agent-workflow.html) by downloading the HTML and opening it in a browser. The diagram shows how execution and persistent context connect.
 
-Autonomy stays bounded by permissions, budgets, checkpoints and kill switches.
+## An agent that can learn from experience
 
-## Models
+Navin includes experimental, opt-in learning layers:
 
-Use the models you want. Add keys and pick a model in **Settings**.
+| Layer | What it explores |
+| --- | --- |
+| **Self-Evolve / Auto-Skills** | Turn repeated failures into candidate skills, evaluate them and promote or roll them back. |
+| **World model** | Learn local predictions of tool outcomes from recorded trajectories. |
+| **Policy learning** | Evaluate suggestions for the next action against held-out cases. |
 
-**Local:** Ollama - LM Studio - vLLM - OpenAI-compatible servers
+These layers are **off by default**. Evaluation gates control activation, and publishing a skill for every project requires a human action. They do not fine-tune the chat model.
 
-**BYOK:** bring your own API keys across 28+ providers and 380+ text and multimodal models, including OpenAI, Anthropic, Google, xAI, Qwen, Z.ai / GLM, Kimi, MiniMax, DeepSeek, Mistral, NVIDIA and more.
+The ambition is increasingly capable autonomous agents. **Navin does not claim to be AGI.**
 
-Multimodal workflows: Image - Video - Music - Vision - Speech - STT - TTS
+[Skills evolution](./docs/skills-evolution.md) · [World model](./docs/world-model.md) · [Policy learning](./docs/policy.md)
 
-## Tools and integrations
+## Connect the tools you already use
 
-Files - Code - Shell - Git - Browser - APIs - Databases - MCP - Plugins - SaaS
+- **Model access:** your own API keys or local inference.
+- **Extensions:** MCP servers, skills, plugins and custom tools.
+- **Channels:** Telegram, Slack, Discord, WhatsApp, Email, Teams and more through configured integrations.
+- **Surfaces:** CLI, WebUI and downloadable desktop applications.
 
-Extend Navin with Skills, MCP servers, plugins, custom tools, agent packs, workflows and integrations.
+This GitHub repository contains the public agent runtime, CLI, WebUI and supporting tools. Desktop packaging, the navin.live service, website infrastructure and release publishing are maintained separately.
 
-Channels: WhatsApp - Telegram - Slack - Discord - Email - Teams and more.
+## Build Navin with us
 
-## Local-first
+Try one real task. Tell us where the agent helped and where it got stuck.
 
-**Your machine. Your models. Your data.**
+- [Report a reproducible bug or propose a feature](https://github.com/Navinspire-ia/navin/issues).
+- Add a provider, improve a skill, build an integration or contribute an evaluation case.
+- Improve a translation or share a workflow others can reproduce.
+- Read [CONTRIBUTING.md](./CONTRIBUTING.md) and the [CLA](./CLA.md) before submitting a pull request.
 
-Run local models. Bring your own API keys. Use managed models only if you want them.
-
-No mandatory cloud. No mandatory model provider.
-
-## Safety
-
-Sandbox execution - Checkpoints - Permissions - Human approvals - Isolated work - Resource limits - Rollback - Kill switches
-
-More autonomy does not automatically mean more permissions.
-
-## Documentation
-
-[navin.live/en/docs](https://navin.live/en/docs) - [Installation](./docs/Installation.md) - [Capabilities](./docs/capabilities.md)
-
-## Contributing
-
-Navin is open source and contributions are welcome: agent runtime, CLI, Skills, MCP, providers, memory, world models, policy learning, evaluations, integrations, UI, documentation and bug fixes.
-
-Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request.
-
-## Contributors
-
-Built by [Navinspire IA](https://navinspire.ai) and the Navin community.
-
-[@aymenghad](https://github.com/aymenghad) -
-[@anisf](https://github.com/anisf) -
-[@Amira-ben-henda-eiagen](https://github.com/Amira-ben-henda-eiagen) -
-[@hasseniImen](https://github.com/hasseniImen) -
-[@maryem955](https://github.com/maryem955) -
-[@medkhalilklai](https://github.com/medkhalilklai) -
-[@SkanderBS2024](https://github.com/SkanderBS2024) -
-[@yosra-wanen](https://github.com/yosra-wanen) -
-[@nabilmersni2](https://github.com/nabilmersni2)
+Created by [Navinspire IA](https://navinspire.ai), maintained by [@aymenghad](https://github.com/aymenghad) and the [Navin contributors](https://github.com/Navinspire-ia/navin/graphs/contributors).
 
 ## License
 
-Navin is dual-licensed.
-
-- Open Source: [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE).
-- Commercial: a commercial license is available from Navinspire IA for organizations that want to integrate, modify, redistribute, embed, or commercialize Navin without the obligations of the AGPL-3.0. Contact [contact@navinspire.com](mailto:contact@navinspire.com).
-
-See [LICENSE](./LICENSE) and [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md) for details. Contributions are accepted under the [Contributor License Agreement](./CLA.md).
-
-Copyright © 2026-present Navinspire IA.
+[AGPL-3.0](./LICENSE), with a [commercial licensing option](./COMMERCIAL_LICENSE.md) from Navinspire IA. Contributions follow the [Contributor License Agreement](./CLA.md).
 
 <div align="center">
 
-100% Free. Open Source. Autonomous. Built toward AGI.
+**Make your next project a little more autonomous.**
 
-Plan - Act - Verify - Remember - Learn - Evolve
+[Install Navin](#get-started) · [Read the docs](./docs/README.md) · [Star the project](https://github.com/Navinspire-ia/navin)
 
-[Download Navin](https://navin.live/download) - [Documentation](https://navin.live/en/docs) - [Contribute](./CONTRIBUTING.md)
-
-<br>
-
-⭐ Star Navin if you want open-source agents that actually learn.
-
-<br>
-
-Your machine. Your models. Your agent.
-
-Made by [Navinspire IA](https://navinspire.ai) - Paris
+If Navin helps you, a star makes it easier for someone else to discover it.
 
 </div>

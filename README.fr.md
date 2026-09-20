@@ -1,244 +1,64 @@
 <div align="center">
 
-<h2 align="center">
-  <img src="./assets/navin-mark.svg" alt="" width="42" height="42" valign="middle">
-  <strong>NAVIN</strong>
-  &nbsp;&nbsp;
-  <strong>100% gratuit, open source, <img src="./assets/word-agi.svg" alt="AGI" height="34" valign="middle"></strong>
-</h2>
+<img src="./assets/readme/hero.svg" alt="Navin : votre IA, votre machine. Développer, rechercher et automatiser." width="100%">
 
-<p align="center">
-  <img src="./assets/agi.gif" alt="Navin AGI" width="280">
-</p>
+# Un objectif. Un agent qui fait avancer le travail.
 
-[English](./README.md) - [Français](./README.fr.md)
+**Un espace de travail IA open source pour coder, rechercher, utiliser des outils et retrouver le contexte d'une session à l'autre.**
 
-[![Licence : AGPL-3.0](https://img.shields.io/badge/Licence-AGPL--3.0-22c55e.svg)](./LICENSE)
-[![Licence commerciale](https://img.shields.io/badge/Commerciale-licence%20disponible-0ea5e9.svg)](./COMMERCIAL_LICENSE.md)
-[![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat)](https://github.com/Navinspire-ia/navin)
+Dans votre terminal, votre navigateur ou l'application desktop. Choisissez vos modèles. Gardez le contrôle.
 
-Navin combine **Persistent Memory**, **Auto-Skills**, **Self-Evolve**, **World Models**, **Policy Learning**, les systèmes **Multi-Agent**, les **Loops** et **Heartbeat** pour aller au-delà des assistants statiques, vers des agents qui s'améliorent avec l'expérience.
+[English](./README.md) · [Français](./README.fr.md) · [العربية](./README.ar.md) · [Español](./README.es.md) · [Português](./README.pt-BR.md) · [Deutsch](./README.de.md) · [简体中文](./README.zh-CN.md)
 
-Code - Research - Scrape - Automate - Create - Market - Learn - Evolve
+[![Licence AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-66d9b0?style=flat-square)](./LICENSE) [![Exécution locale](https://img.shields.io/badge/local-first-5599ff?style=flat-square)](./docs/configuration.md) [![GitHub stars](https://img.shields.io/github/stars/Navinspire-ia/navin?style=flat-square&color=ffd166)](https://github.com/Navinspire-ia/navin/stargazers)
 
-Votre machine. Vos modèles. Votre agent.
-
-<br>
-
-[Télécharger Navin](https://navin.live/download) - [Documentation](https://navin.live/fr/docs) - [Contribuer](./CONTRIBUTING.md)
-
-<br>
-
-⭐ Star Navin si vous voulez des agents IA que vous possédez vraiment.
+**[Démarrer](#démarrer)** · **[Télécharger l'application](https://navin.live/download)** · **[Documentation](./docs/README.md)** · **[Contribuer](./CONTRIBUTING.md)**
 
 </div>
 
-<p align="center">
-  <img src="./assets/navin.gif" alt="Studio Navin: Code, Tenders, Career, Trading, Leads, Marketing et plus" width="900">
-</p>
+## Confiez une mission à Navin
 
-## Pourquoi Navin ?
+> « Trouve la cause de ce bug, corrige-le, lance les tests pertinents et explique les changements. »
 
-La plupart des outils IA s'arrêtent après une réponse.
+> « Recherche ces concurrents, compare leurs offres avec des sources et transforme les résultats en rapport. »
 
-Navin prend un objectif et continue de travailler.
+> « Surveille ce projet et préviens-moi lorsqu'un changement demande mon attention. »
 
-<p align="center">
-  <img src="./assets/loop-fr.gif" alt="Objectif, Plan, Action, Verifier, Memoire, Apprendre, Continuer" width="900">
-</p>
+Navin relie le modèle à vos fichiers, au terminal, au navigateur et à vos outils. Il peut planifier, déléguer des tâches précises à des sous-agents, vérifier les résultats et poursuivre dans les limites configurées.
 
-Navin tourne en application desktop et en CLI, fonctionne en local, accepte vos propres clés API et peut utiliser des centaines de modèles texte et multimodaux.
+**Ce qui reste après la conversation compte aussi :** la connaissance du projet, les décisions, les compétences réutilisables et le contexte du travail.
 
-## Conçu vers l'AGI
+## Démarrer
 
-Navin va au-delà des assistants statiques : des agents qui apprennent de l'expérience.
-
-<p align="center">
-  <img src="./assets/agi-caps.gif" alt="Memory, Skills, World, Policy, Eval" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="220">Capacité</th>
-      <th align="left">Ce que ça fait</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Persistent%20Memory-0369ff?style=flat-square" alt="Persistent Memory"></td>
-      <td>Retenir l'expérience utile entre sessions, projets, code, notes et actions</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Auto--Skills-111111?style=flat-square" alt="Auto-Skills"></td>
-      <td>Créer, tester, réparer et améliorer des Skills réutilisables</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/World%20Models-111111?style=flat-square" alt="World Models"></td>
-      <td>Anticiper ce qui risque d'arriver avant d'agir</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Policy%20Learning-111111?style=flat-square" alt="Policy Learning"></td>
-      <td>Apprendre quelle action ou quel outil est le meilleur prochain pas</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Evaluation-111111?style=flat-square" alt="Evaluation"></td>
-      <td>Chaque amélioration doit être mesurable, testable et réversible</td>
-    </tr>
-  </tbody>
-</table>
-
-Le but n'est pas seulement un agent qui marche. C'est un agent qui devient meilleur à travailler.
-
-Navin ne prétend pas être l'AGI aujourd'hui. Le projet construit les capacités nécessaires pour aller vers une intelligence autonome de plus en plus générale.
-
-## Self-Evolve
-
-Quand Navin échoue plusieurs fois de la même façon, il peut transformer ça en une meilleure Skill réutilisable.
-
-<p align="center">
-  <img src="./assets/self-evolve.gif" alt="Self-Evolve de l'échec jusqu'à promote ou rollback" width="900">
-</p>
-
-La règle est simple : mieux qu'avant. Rien d'important ne se dégrade.
-
-## Memory + Graph
-
-Navin n'a pas à repartir de zéro à chaque session.
-
-<p align="center">
-  <img src="./assets/memory-graph.gif" alt="Mémoires vers Project Brain puis Agent Loop" width="900">
-</p>
-
-## Project Graph + Code Index
-
-Navin cartographie chaque base de code sur laquelle il travaille. Deux couches, un même graphe interactif :
-
-- **Project Graph** (metagraph) : chaque fichier devient un nœud coloré par rôle (frontend, backend, config, test, docs), relié par ses imports et décrit en une phrase. À la question "où est géré X ?", l'agent répond avec la liste exacte de fichiers et la chaîne de dépendances, sans parcourir tout l'arbre. Le graphe s'affiche en direct dans l'onglet Graph du workbench Dev, depuis `.navin/metadata/`.
-- **Code Index** : navigation type-aware par-dessus la carte - définitions, références, appelants et appelés, plus l'analyse d'impact qui liste tous les appelants transitifs et les tests à risque avant de modifier une signature partagée.
-
-Résultat : l'agent navigue comme quelqu'un qui connaît le code, pas comme quelqu'un qui le lit pour la première fois.
-
-## Même modèle, une fraction des tokens
-
-Un agent de code brut paie l'impôt modèle à chaque tour : il relit les fichiers, redécouvre la structure et réimprime les diffs, tour après tour. Navin déplace ce travail sur votre machine :
-
-- **Project Graph + Code Index locaux** répondent à "où est géré ceci ?" sans jamais mettre l'arborescence dans le prompt - le modèle reçoit l'extrait exact, pas le dépôt.
-- **La mémoire projet durable** (Project Brain) porte les décisions, conventions et faits entre les sessions, donc l'agent ne réapprend pas votre code dans la fenêtre de contexte.
-- **Des résultats d'outils structurés** (diffs, bandes de graphe compactes, journaux d'exécution silencieux) gardent chaque étape lisible avec une surface facturée minuscule.
-- **Le routage tient compte des tokens en cache** - les longs tours agentifs réutilisent le contexte au lieu de le refacturer.
-
-Sur l'usage réel, ça se cumule : le même travail GPT-6 qui brûle ~100 $ de contexte chez un agent brut revient à ~10 $ sur Navin. Même modèle, même qualité, environ 10x moins de tokens facturés - parce que la partie coûteuse (comprendre votre code) se fait localement, une seule fois.
-
-## Un seul workspace IA
-
-Navin relie beaucoup de workflows au même agent, à la même mémoire et au même contexte projet.
-
-<p align="center">
-  <img src="./assets/workspace.gif" alt="Meeting vers Code, Research vers Campaign, Product vers Leads" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="140">Module</th>
-      <th align="left">Ce que Navin peut faire</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr><td><img src="https://img.shields.io/badge/Code-0369ff?style=flat-square" alt="Code"></td><td>Build, Debug, Review, Security, Git, Terminal</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Research-111111?style=flat-square" alt="Research"></td><td>Recherche web, recherche multi-agents, documents</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Scraping-111111?style=flat-square" alt="Scraping"></td><td>Crawl, extraction, structure, analyse</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Leads-111111?style=flat-square" alt="Leads"></td><td>Trouver, enrichir, scorer, qualifier</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Marketing-111111?style=flat-square" alt="Marketing"></td><td>Recherche, stratégie, contenu, campagnes</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Tenders-111111?style=flat-square" alt="Tenders"></td><td>Trouver des opportunités, analyser, préparer les réponses</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Career-111111?style=flat-square" alt="Career"></td><td>Trouver jobs et missions freelance, analyser les opportunités</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Meetings-111111?style=flat-square" alt="Meetings"></td><td>Enregistrer, transcrire, résumer, extraire les actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Notes-111111?style=flat-square" alt="Notes"></td><td>Écrire, chercher, demander, relier la connaissance</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Projects-111111?style=flat-square" alt="Projects"></td><td>Tâches, décisions, contexte, exécution agent</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/SEO-111111?style=flat-square" alt="SEO"></td><td>Audit, mots-clés, contenu, actions</td></tr>
-    <tr><td><img src="https://img.shields.io/badge/Media-111111?style=flat-square" alt="Media"></td><td>Image, vidéo, musique, voix, STT, TTS</td></tr>
-  </tbody>
-</table>
-
-Un contexte. Une mémoire. Un système d'agents.
-
-## Installation
-
-### CLI
+**Linux / macOS / WSL**
 
 ```bash
 curl https://navin.live/install -fsS | bash
-cd your-project
-navin-cli
 ```
 
-Windows PowerShell :
+**Windows PowerShell**
 
 ```powershell
 irm 'https://navin.live/install?win32=true' | iex
 ```
 
-`navin-cli` est l'agent terminal. `navin .` ouvre le desktop sur le dossier courant.
+Ouvrez un terminal dans votre projet, puis lancez :
 
-Après le lancement, ouvrez **Settings** pour ajouter vos clés et choisir un modèle. Dans `navin-cli`, appuyez sur **Ctrl+G**. C'est l'interface qui configure tout. Pas besoin d'éditer du JSON à la main.
+```bash
+cd your-project
+navin-cli
+```
 
-### Desktop
+1. Ouvrez **Settings** avec **Ctrl+G** et configurez un fournisseur avec votre clé API ou un modèle local.
+2. Choisissez un modèle et un mode : **Ask**, **Plan**, **Agent**, **Review**, **Security** ou **Debug**.
+3. Essayez : **« Lis ce projet et explique son fonctionnement. Propose ensuite une amélioration utile. »**
 
-Téléchargez depuis [navin.live/download](https://navin.live/download).
+Vous préférez une fenêtre ? [Téléchargez Navin Desktop pour Windows, macOS ou Linux](https://navin.live/download).
 
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="240">Plateforme</th>
-      <th align="left">Téléchargement</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-macos-arm64.dmg</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/macOS-Intel-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS Intel">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-macos-x64.dmg</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>Navin-Desktop-windows-x64-setup.exe</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.msi</code></a>
-      </td>
-    </tr>
-    <tr>
-      <td>
-        <img src="https://img.shields.io/badge/Linux-x64-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
-      </td>
-      <td>
-        <a href="https://navin.live/download"><code>.AppImage</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.deb</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.rpm</code></a>
-        &nbsp;
-        <a href="https://navin.live/download"><code>.pkg.tar.zst</code></a>
-      </td>
-    </tr>
-  </tbody>
-</table>
+Le logiciel est gratuit sous sa licence open source. Les API de modèles et les services externes peuvent facturer leur utilisation. [Installation et dépannage](./docs/Installation.md).
 
-### Depuis les sources
+<details>
+<summary><strong>Installer depuis les sources</strong></summary>
 
 ```bash
 git clone https://github.com/Navinspire-ia/navin.git
@@ -247,177 +67,103 @@ make install
 make start
 ```
 
-`make install` installe tout (dependances systeme si besoin, backend, WebUI). `make start` est le **dev** : Vite sur [http://localhost:5173/](http://localhost:5173/) plus le gateway.
+La WebUI de développement est disponible sur [localhost:5173](http://localhost:5173). Pour lancer le CLI depuis le dépôt :
 
 ```bash
-make build
-make start-prod
+.venv/bin/navin-cli
 ```
 
-`make build` ecrit la WebUI prod dans `navin/web/dist`. `make start-prod` (ou `make start backend`) sert ce build via le gateway, en general [http://localhost:8765/](http://localhost:8765/).
+Windows : `.venv\Scripts\navin-cli`. Prérequis et version de production : [guide d'installation](./docs/Installation.md).
 
-```bash
-make stop
-```
+</details>
 
-Pareil avec les scripts : `sh scripts/install.sh` puis `sh scripts/start.sh`. En une fois : `sh scripts/start.sh --install`.
+## Un espace de travail, plusieurs métiers
 
-`make start front` = Vite seule. `make build front` / `make build backend` pour un seul cote. Relancer : `make restart`.
+| Vous voulez... | Navin vous apporte |
+| --- | --- |
+| **Développer une application** | Exploration du dépôt, édition du code, terminal, Git, aperçu navigateur, tests et revue. |
+| **Comprendre un projet** | Graphe du projet, index du code, définitions, références et analyse d'impact. |
+| **Rechercher et extraire** | Recherche web, navigateur, scraping, extraction structurée et rapports sourcés. |
+| **Créer des livrables** | Documents, présentations, tableurs, schémas d'architecture et workflows multimédias. |
+| **Développer votre activité** | Prospection, enrichissement de leads, SEO, études marketing et préparation de campagnes. |
+| **Gérer des tâches métier** | Analyse d'appels d'offres, recherche d'emploi, transcription de réunions, notes et actions. |
+| **Déléguer un travail complexe** | Sous-agents spécialisés qui travaillent en parallèle et rendent leurs résultats à l'agent principal. |
+| **Poursuivre dans la durée** | Boucles sur objectif, tâches planifiées et vérifications Heartbeat lorsque le gateway fonctionne. |
 
-Depuis le depot : `.venv/bin/navin-cli` (Windows : `.venv\Scripts\navin-cli`).
-
-Details : [Installation](./docs/Installation.md).
-
-## Agents
-
-Navin change de mode selon le travail. Il peut aussi créer des sous-agents pour un travail parallèle et spécialisé.
-
-<p align="center">
-  <img src="./assets/agents.gif" alt="Ask, Plan, Agent, Review, Security, Debug, puis retour vers Agent" width="900">
-</p>
-
-<table>
-  <thead>
-    <tr>
-      <th align="left" width="160">Mode</th>
-      <th align="left">Rôle</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Ask-0369ff?style=flat-square" alt="Ask"></td>
-      <td>Comprendre sans modifier le projet</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Plan-111111?style=flat-square" alt="Plan"></td>
-      <td>Créer un plan d'exécution</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Agent-111111?style=flat-square" alt="Agent"></td>
-      <td>Construire, éditer, lancer, tester et itérer</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Review-111111?style=flat-square" alt="Review"></td>
-      <td>Relire le code et proposer des correctifs</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Security-111111?style=flat-square" alt="Security"></td>
-      <td>Analyser et durcir l'application</td>
-    </tr>
-    <tr>
-      <td><img src="https://img.shields.io/badge/Debug-111111?style=flat-square" alt="Debug"></td>
-      <td>Reproduire, diagnostiquer, corriger et vérifier</td>
-    </tr>
-  </tbody>
-</table>
-
-## Agent Loop
-
-Navin ne génère pas du code pour s'arrêter.
-
-Il peut utiliser votre dépôt, le terminal, le navigateur, les fichiers, les outils et la mémoire jusqu'à ce que le travail soit fait, ou vraiment bloqué.
+Certains workflows nécessitent des dépendances supplémentaires, des intégrations configurées ou un modèle compatible. Consultez la [carte des capacités](./docs/capabilities.md).
 
 <p align="center">
-  <img src="./assets/agent-loop.gif" alt="Mission, Plan, Act, Verify, Continue, puis retour" width="720">
+  <img src="./assets/readme/cli.png" alt="CLI Navin avec un exemple de découverte de projet" width="100%">
+  <br>
+  <sub>Aperçu du CLI avec un exemple de découverte de projet.</sub>
 </p>
 
-## Loop + Heartbeat
+## Ce qui fait la différence
 
-**Loop** garde un agent sur un objectif pendant plusieurs cycles.
+**Le contexte survit à la conversation.** La mémoire du projet et le graphe du code aident l'agent à retrouver les décisions et les fichiers utiles. La mémoire épisodique, optionnelle, permet de rappeler des travaux précédents. [Mémoire](./docs/memory.md) · [Graphe du projet](./docs/navin_dev/fr/graph.md)
 
-**Heartbeat** réveille des tâches autonomes et les fait continuer plus tard.
+**Les outils relient la réflexion à l'action.** Fichiers, shell, Git, navigateur, API et MCP permettent d'exécuter le travail. Les Skills décrivent des méthodes réutilisables ; les plugins et intégrations étendent les possibilités. [Configurer MCP](./docs/guides/configure-mcp-tools.md) · [Skills](./navin/skills/README.md)
+
+**Vous choisissez les modèles.** Connectez OpenAI, Anthropic, Google, Mistral, DeepSeek, Qwen et d'autres fournisseurs, ou des modèles locaux avec Ollama, LM Studio et vLLM. Affectez différents modèles aux différentes tâches. Les capacités dépendent du fournisseur et du modèle choisis. [Configuration](./docs/configuration.md)
+
+**Le travail peut durer, avec des limites explicites.** Les boucles poursuivent un objectif ; Heartbeat recherche les suites utiles. Validations humaines, budgets de ressources, checkpoints et commandes d'arrêt encadrent l'exécution. [Automatisations](./docs/automations.md) · [Sécurité](./SECURITY.md)
+
+L'exécution locale conserve votre espace de travail sur votre machine. Si vous choisissez un modèle distant ou un service connecté, les données nécessaires à la requête lui sont transmises.
+
+## De l'objectif au résultat vérifié
 
 <p align="center">
-  <img src="./assets/loop-heartbeat.gif" alt="Loop et Heartbeat" width="900">
+  <img src="./assets/readme/agent-workflow.svg" alt="Objectif, planification, permissions, outils, vérification et livraison, avec retour d'expérience vers la mémoire du projet" width="100%">
 </p>
 
-Utile pour le code, la recherche, le monitoring, le scraping, les appels d'offres, les leads, la recherche d'emploi et les tâches longues.
+[Téléchargez le schéma interactif](./assets/readme/agent-workflow.html) et ouvrez le fichier HTML dans un navigateur. Le schéma et ses commandes sont en anglais.
 
-L'autonomie reste bornée par les permissions, les budgets, les checkpoints et les kill switches.
+## Un agent qui peut apprendre de l'expérience
 
-## Modèles
+Navin inclut des mécanismes d'apprentissage expérimentaux, à activer volontairement :
 
-Utilisez les modèles que vous voulez. Ajoutez vos clés et choisissez un modèle dans **Settings**.
+| Mécanisme | Ce qu'il explore |
+| --- | --- |
+| **Self-Evolve / Auto-Skills** | Transformer les échecs répétés en Skills candidats, les évaluer, puis les promouvoir ou revenir en arrière. |
+| **World model** | Apprendre des prédictions locales sur les résultats des outils à partir des trajectoires enregistrées. |
+| **Policy learning** | Évaluer des suggestions d'actions suivantes sur des cas réservés à l'évaluation. |
 
-**Local :** Ollama - LM Studio - vLLM - serveurs compatibles OpenAI
+Ces mécanismes sont **désactivés par défaut**. Des évaluations conditionnent leur activation. Publier un Skill pour tous les projets exige une action humaine. Le modèle de conversation n'est pas réentraîné.
 
-**BYOK :** vos propres clés API, 28+ providers et 380+ modèles texte et multimodaux, dont OpenAI, Anthropic, Google, xAI, Qwen, Z.ai / GLM, Kimi, MiniMax, DeepSeek, Mistral, NVIDIA et d'autres.
+L'ambition : des agents autonomes de plus en plus capables. **Navin ne prétend pas être une AGI.**
 
-Workflows multimodaux : Image - Vidéo - Musique - Vision - Voix - STT - TTS
+[Évolution des Skills](./docs/skills-evolution.md) · [World model](./docs/world-model.md) · [Policy learning](./docs/policy.md)
 
-## Outils et intégrations
+## Connectez vos outils
 
-Fichiers - Code - Shell - Git - Navigateur - APIs - Bases - MCP - Plugins - SaaS
+- **Modèles :** vos clés API ou une exécution locale.
+- **Extensions :** serveurs MCP, Skills, plugins et outils personnalisés.
+- **Canaux :** Telegram, Slack, Discord, WhatsApp, Email, Teams et d'autres via les intégrations configurées.
+- **Interfaces :** CLI, WebUI et applications desktop téléchargeables.
 
-Étendez Navin avec des Skills, serveurs MCP, plugins, outils custom, agent packs, workflows et intégrations.
+Ce dépôt GitHub contient le moteur agent public, le CLI, la WebUI et les outils associés. Le packaging desktop, le service navin.live, l'infrastructure du site et la publication des versions sont maintenus séparément.
 
-Canaux : WhatsApp - Telegram - Slack - Discord - Email - Teams et d'autres.
+## Construisons Navin ensemble
 
-## Local-first
+Essayez une vraie tâche. Dites-nous où l'agent vous a aidé et où il a bloqué.
 
-**Votre machine. Vos modèles. Vos données.**
+- [Signalez un bug reproductible ou proposez une fonctionnalité](https://github.com/Navinspire-ia/navin/issues).
+- Ajoutez un fournisseur, améliorez un Skill, développez une intégration ou un cas d'évaluation.
+- Améliorez une traduction ou partagez un workflow reproductible.
+- Lisez [CONTRIBUTING.md](./CONTRIBUTING.md) et le [CLA](./CLA.md) avant une pull request.
 
-Modèles locaux. Vos clés API. Modèles managés seulement si vous les voulez.
-
-Pas de cloud obligatoire. Pas de provider obligatoire.
-
-## Sécurité
-
-Sandbox - Checkpoints - Permissions - Validations humaines - Isolation - Limites de ressources - Rollback - Kill switches
-
-Plus d'autonomie ne veut pas dire plus de permissions.
-
-## Documentation
-
-[navin.live/fr/docs](https://navin.live/fr/docs) - [Installation](./docs/Installation.md) - [Capabilities](./docs/capabilities.md)
-
-## Contribuer
-
-Navin est open source. Les contributions sont les bienvenues : runtime agent, CLI, Skills, MCP, providers, mémoire, world models, policy learning, évaluations, intégrations, UI, documentation et correctifs.
-
-Lisez [CONTRIBUTING.md](./CONTRIBUTING.md) avant d'ouvrir une pull request.
-
-## Contributeurs
-
-Construit par [Navinspire IA](https://navinspire.ai) et la communauté Navin.
-
-[@aymenghad](https://github.com/aymenghad) -
-[@anisf](https://github.com/anisf) -
-[@Amira-ben-henda-eiagen](https://github.com/Amira-ben-henda-eiagen) -
-[@hasseniImen](https://github.com/hasseniImen) -
-[@maryem955](https://github.com/maryem955) -
-[@medkhalilklai](https://github.com/medkhalilklai) -
-[@SkanderBS2024](https://github.com/SkanderBS2024) -
-[@yosra-wanen](https://github.com/yosra-wanen) -
-[@nabilmersni2](https://github.com/nabilmersni2)
+Créé par [Navinspire IA](https://navinspire.ai), maintenu par [@aymenghad](https://github.com/aymenghad) et les [contributeurs de Navin](https://github.com/Navinspire-ia/navin/graphs/contributors).
 
 ## Licence
 
-Navin est sous double licence.
-
-- Open source : [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE).
-- Commerciale : une licence commerciale est proposée par Navinspire IA aux organisations qui souhaitent intégrer, modifier, redistribuer, embarquer ou commercialiser Navin sans les obligations de l'AGPL-3.0. Contact : [contact@navinspire.com](mailto:contact@navinspire.com).
-
-Voir [LICENSE](./LICENSE) et [COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md). Les contributions sont acceptées sous le [Contributor License Agreement](./CLA.md).
-
-Copyright © 2026-present Navinspire IA.
+[AGPL-3.0](./LICENSE), avec une [offre de licence commerciale](./COMMERCIAL_LICENSE.md) proposée par Navinspire IA. Les contributions suivent le [Contributor License Agreement](./CLA.md).
 
 <div align="center">
 
-100% gratuit. Open source. Autonome. Conçu vers l'AGI.
+**Donnez plus d'autonomie à votre prochain projet.**
 
-Plan - Act - Verify - Remember - Learn - Evolve
+[Installer Navin](#démarrer) · [Lire la documentation](./docs/README.md) · [Mettre une étoile](https://github.com/Navinspire-ia/navin)
 
-[Télécharger Navin](https://navin.live/download) - [Documentation](https://navin.live/fr/docs) - [Contribuer](./CONTRIBUTING.md)
-
-<br>
-
-⭐ Star Navin si vous voulez des agents open source qui apprennent vraiment.
-
-<br>
-
-Votre machine. Vos modèles. Votre agent.
-
-Fait par [Navinspire IA](https://navinspire.ai) - Paris
+Si Navin vous aide, une étoile permet à d'autres de le découvrir.
 
 </div>

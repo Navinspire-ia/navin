@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Navin - Your AI. Your machine.</title>
+  <desc id="desc">An open source AI agent workspace for building, researching and automating, with persistent memory and your choice of models.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="400" gradientUnits="userSpaceOnUse"><stop stop-color="#08172C"/><stop offset="1" stop-color="#0D2544"/></linearGradient>
+    <linearGradient id="mark" x1="970" y1="82" x2="1150" y2="290" gradientUnits="userSpaceOnUse"><stop stop-color="#5296FF"/><stop offset="1" stop-color="#69E8C1"/></linearGradient>
+  </defs>
+  <rect width="1280" height="400" rx="24" fill="url(#bg)"/>
+  <path d="M760 0V400M0 322H1280" stroke="#25415D" stroke-opacity=".6"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <rect x="48" y="34" width="220" height="30" rx="15" fill="#15364B"/>
+    <circle cx="65" cy="49" r="4" fill="#78E2BE"/>
+    <text x="80" y="54" fill="#AFEEDB" font-size="12" letter-spacing="2">OPEN SOURCE AI AGENT</text>
+    <text x="43" y="180" fill="#F7FAFF" font-size="112" font-weight="800" letter-spacing="-6">NAVIN</text>
+    <text x="49" y="230" fill="#F7FAFF" font-size="30" font-weight="600">Your AI. Your machine.</text>
+    <text x="49" y="276" fill="#AABDD3" font-size="23">Build. Research. Automate. Keep going.</text>
+    <text x="48" y="369" fill="#C3D3E5" font-size="16">Persistent memory</text>
+    <circle cx="233" cy="363" r="2" fill="#5C83AA"/>
+    <text x="257" y="369" fill="#C3D3E5" font-size="16">Multi-agent execution</text>
+    <circle cx="464" cy="363" r="2" fill="#5C83AA"/>
+    <text x="488" y="369" fill="#C3D3E5" font-size="16">Your choice of models</text>
+    <text x="1228" y="369" text-anchor="end" fill="#78E2BE" font-size="16" font-weight="600">navin.live</text>
+  </g>
+  <rect x="872" y="54" width="234" height="234" rx="58" fill="#122F50" stroke="#30577B"/>
+  <g transform="translate(886 68) scale(3.2)">
+    <path d="M18 44V20h7.2c1.4 0 2.5 1.1 2.5 2.5v14.2c0 0 4.4-9.1 9.6-10.5 5.4-1.4 8.3 2 8.3 2s-7.8-4-12.5 4.8C28.6 41.2 24.8 41.2 24.8 41.2V24.5c0-1.4-1.1-2.5-2.5-2.5H18z" fill="#F7FAFF"/>
+    <path d="M46 20v24h-7.2c-1.4 0-2.5-1.1-2.5-2.5V27.3c0 0-4.4 9.1-9.6 10.5-5.4 1.4-8.3-2-8.3-2s7.8 4 12.5-4.8c4.5-8.5 8.3-8.5 8.3-8.5v16.7c0 1.4 1.1 2.5 2.5 2.5H46z" fill="#78E2BE"/>
+  </g>
+</svg>

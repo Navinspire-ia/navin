@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "From a goal to verified work",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "execution", "label": "Agent execution" },
+    { "id": "continuity", "label": "Across sessions" }
+  ],
+  "mainPath": ["goal", "plan", "permissions", "tools", "verify", "result"],
+  "nodes": [
+    { "id": "goal", "lane": "execution", "col": 0, "type": "external", "label": "Your goal", "sublabel": "Project + instructions" },
+    { "id": "plan", "lane": "execution", "col": 1, "type": "backend", "label": "Plan", "sublabel": "Context + model" },
+    { "id": "permissions", "lane": "execution", "col": 2, "type": "security", "label": "Permissions", "sublabel": "Policy + approvals" },
+    { "id": "tools", "lane": "execution", "col": 3, "type": "messagebus", "label": "Act", "sublabel": "Files, shell, browser, MCP", "width": 144 },
+    { "id": "verify", "lane": "execution", "col": 4, "type": "backend", "label": "Verify", "sublabel": "Tests + evidence" },
+    { "id": "result", "lane": "execution", "col": 5, "type": "frontend", "label": "Deliver", "sublabel": "Results + artifacts" },
+    { "id": "memory", "lane": "continuity", "col": 1, "type": "database", "label": "Project memory", "sublabel": "Decisions + useful context", "width": 144 },
+    { "id": "experience", "lane": "continuity", "col": 4, "type": "database", "label": "Experience", "sublabel": "Outcomes + reusable skills", "width": 144 }
+  ],
+  "edges": [
+    { "id": "goal-plan", "from": "goal", "to": "plan" },
+    { "id": "plan-permissions", "from": "plan", "to": "permissions" },
+    { "id": "permissions-tools", "from": "permissions", "to": "tools" },
+    { "id": "tools-verify", "from": "tools", "to": "verify" },
+    { "id": "verify-result", "from": "verify", "to": "result", "label": "ready" },
+    { "id": "verify-experience", "from": "verify", "to": "experience", "label": "record outcome", "role": "branch" },
+    { "id": "experience-memory", "from": "experience", "to": "memory", "label": "retain useful context", "variant": "dashed" },
+    { "id": "memory-plan", "from": "memory", "to": "plan", "label": "recall", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Keep working", "items": ["Incomplete work returns to the agent loop.", "Loops and Heartbeat support longer goals."] },
+    { "dot": "emerald", "title": "Stay in control", "items": ["Models and tools use your configured permissions.", "Approvals, budgets and stop controls bound autonomy."] }
+  ]
+}
