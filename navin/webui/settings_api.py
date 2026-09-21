@@ -2752,6 +2752,8 @@ def create_model_configuration(query: QueryParams) -> dict[str, Any]:
     )
     config.agents.defaults.model_preset = name
     config.agents.defaults.model_preset_user_pinned = True
+    config.agents.defaults.model = model
+    config.agents.defaults.provider = provider
     save_config(config)
     return settings_payload()
 
@@ -2772,6 +2774,13 @@ def import_model_configurations(query: QueryParams) -> dict[str, Any]:
     config = load_config()
     _validate_configured_provider(config, provider)
     base = config.resolve_default_preset()
+    activate_first = (
+        _query_first(query, "activate_first_external") == "true"
+        and provider != "navin"
+        and (not base.model or base.provider == "navin")
+        and not any(p.provider != "navin" and p.model and p.modality == "text"
+                    for p in config.model_presets.values())
+    )
     already = {
         preset.model
         for preset in config.model_presets.values()
@@ -2799,6 +2808,14 @@ def import_model_configurations(query: QueryParams) -> dict[str, Any]:
         imported.append(name)
 
     if imported:
+        if activate_first and not _is_media_model_slug(config.model_presets[imported[0]].model):
+            first = config.model_presets[imported[0]]
+            defaults = config.agents.defaults
+            defaults.model_preset = imported[0]
+            defaults.model_preset_user_pinned = True
+            defaults.model = first.model
+            defaults.provider = first.provider
+            defaults.context_window_tokens = first.context_window_tokens
         save_config(config)
     return {
         **settings_payload(),

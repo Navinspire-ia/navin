@@ -13,6 +13,8 @@ through the schema (``Config.model_validate``) or through the very same
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -188,11 +190,13 @@ def _provider_choices(
             bool(section.get("apiKey"))
             or bool(section.get("oauthKey"))
             or (spec.is_local and section.get("apiBase"))
+            or (section.get("authMode") == "none" and section.get("apiBase"))
             or spec.name == "navin"
         )
         if configured:
             out.append((spec.name, spec.display_name or spec.name))
             seen.add(spec.name)
+            seen.add(alias)
     for alias, section in sorted(providers.items()):
         if alias in seen or not isinstance(section, dict) or not section.get("apiKey"):
             continue
@@ -1633,10 +1637,12 @@ class SettingsHub(ModalScreen[bool]):
         for k in ("auth_mode", "api_type", "endpoint_region", "access_plan", "wire_protocol"):
             if k in answer:
                 query[k] = [answer[k]]
-        self._provider_update(spec_name, query, f"{display} saved")
+        saved = await self._provider_update(spec_name, query, f"{display} saved").wait()
+        if saved and spec_name != "navin":
+            await self._add_catalog_model(spec_name)
 
     @work(thread=True, exclusive=True, group="provider")
-    def _provider_update(self, name: str, query: dict[str, list[str]], ok_message: str) -> None:
+    def _provider_update(self, name: str, query: dict[str, list[str]], ok_message: str) -> bool:
         try:
             from navin.webui.settings_api import update_provider_settings
 
@@ -1645,12 +1651,13 @@ class SettingsHub(ModalScreen[bool]):
             self.app.call_from_thread(
                 self._status, f"[$error]{escape(str(getattr(exc, 'message', exc)))}[/]"
             )
-            return
+            return False
         self.app.call_from_thread(
             self._after_external_write,
-            f"[$success]{escape(ok_message)}[/]  [dim]restart navin-cli to use it[/dim]",
+            f"[$success]{escape(ok_message)}[/]",
             name,
         )
+        return True
 
     @work(thread=True, exclusive=True, group="provider-test")
     def _provider_test(self, name: str) -> None:
@@ -1676,6 +1683,8 @@ class SettingsHub(ModalScreen[bool]):
 
     def _after_external_write(self, message: str, keep_key: str | None = None) -> None:
         """A settings_api helper saved config.json: reload and keep the cursor."""
+        if self._runtime is not None:
+            self._runtime.reload_from_disk()
         self._reload()
         if self._section is not None:
             if self._section.kind in {"providers", "models", "mcp", "skills", "rules"}:
@@ -1688,7 +1697,7 @@ class SettingsHub(ModalScreen[bool]):
 
     async def _model_action(self, key: str, row: HubRow | None) -> None:
         if key == "a":
-            await self._model_form(None)
+            await self._add_catalog_model()
             return
         if key == "r":
             await self._routing()
@@ -1696,7 +1705,10 @@ class SettingsHub(ModalScreen[bool]):
         if row is None:
             return
         if key in {"enter", "e"}:
-            await self._model_form(row.key)
+            if row.key == "default" and not _get(self._data, ("agents", "defaults", "model")):
+                await self._add_catalog_model()
+            else:
+                await self._model_form(row.key)
         elif key == "u":
             if self._apply_preset is not None:
                 result = self._apply_preset(row.key)
@@ -1715,7 +1727,71 @@ class SettingsHub(ModalScreen[bool]):
                 {"name": [row.key]}, "delete_model_configuration", f"{row.key} deleted"
             )
 
-    async def _model_form(self, name: str | None) -> None:
+    async def _add_catalog_model(self, provider: str | None = None) -> None:
+        from navin.webui import settings_api
+
+        if provider is None:
+            choices = [(key, label) for key, label in _provider_choices(self._data)
+                       if key and key != "navin"]
+            if not choices:
+                self._status("Configure a provider first, then choose its model.")
+                section = next(s for s in self._sections if s.id == "providers")
+                self.query_one("#nav", OptionList).highlighted = self._sections.index(section)
+                self._show_section(section)
+                self.query_one("#table", DataTable).focus()
+                return
+            if len(choices) == 1:
+                provider = choices[0][0]
+            else:
+                provider = await self.app.push_screen_wait(PickerScreen(
+                    "Choose a provider", [PickItem(key, label) for key, label in choices],
+                    hint="Enter: show models. Esc: cancel.",
+                ))
+                if provider is None:
+                    return
+        self._status(f"Loading models from {escape(provider)}...")
+        try:
+            catalog = await asyncio.to_thread(settings_api.provider_models_payload, {"provider": [provider]})
+        except Exception as exc:  # noqa: BLE001
+            catalog = {"models": [], "message": str(getattr(exc, "message", exc))}
+        rows = [row for row in catalog.get("models", []) if not row.get("media_modalities")]
+        items = [PickItem(row["id"], row.get("label") or row["id"], row["id"]) for row in rows]
+        items.append(PickItem("__manual__", "Enter a custom model ID", "For models absent from this list"))
+        selected = await self.app.push_screen_wait(PickerScreen(
+            f"{provider_label(provider)} models", items,
+            hint="Search, then Enter to add. Esc: cancel." if rows else str(catalog.get("message") or "No models returned. Enter a custom ID or Esc to cancel."),
+        ))
+        if selected is None:
+            self._status("Model selection cancelled. Provider settings are saved.")
+            return
+        if selected == "__manual__":
+            await self._model_form(None, provider=provider)
+            return
+        row = next(row for row in rows if row["id"] == selected)
+        previous_active = _get(self._data, ("agents", "defaults", "modelPreset"))
+        self._status(f"Saving {escape(selected)}...")
+        try:
+            await asyncio.to_thread(settings_api.import_model_configurations, {
+                "provider": [provider], "models": [json.dumps([row])],
+                "activate_first_external": ["true"],
+            })
+        except Exception as exc:  # noqa: BLE001
+            self._status(f"[$error]{escape(str(getattr(exc, 'message', exc)))}[/]")
+            return
+        self._after_external_write(f"[$success]{escape(selected)} added[/]")
+        active = _get(self._data, ("agents", "defaults", "modelPreset"))
+        if active and active != previous_active:
+            self._status(f"[$success]{escape(selected)} added and set as default[/]")
+            if self._apply_preset is not None:
+                result = self._apply_preset(active)
+                if hasattr(result, "__await__"):
+                    await result
+        section = next(s for s in self._sections if s.id == "models")
+        self.query_one("#nav", OptionList).highlighted = self._sections.index(section)
+        self._show_section(section)
+        self.query_one("#table", DataTable).focus()
+
+    async def _model_form(self, name: str | None, *, provider: str = "") -> None:
         providers = _provider_choices(self._data)
         if name == "default":
             defaults = _get(self._data, ("agents", "defaults"), {}) or {}
@@ -1756,7 +1832,7 @@ class SettingsHub(ModalScreen[bool]):
             query = {k: [v] for k, v in answer.items()}
             self._model_update(query, "update_agent_settings", "default model saved")
             return
-        preset = (_get(self._data, ("modelPresets", name), {}) if name else {}) or {}
+        preset = (_get(self._data, ("modelPresets", name), {}) if name else {"provider": provider}) or {}
         fields = [
             FormField(
                 "label",

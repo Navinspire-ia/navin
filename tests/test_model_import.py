@@ -60,6 +60,22 @@ class ImportModelConfigurationsTest(unittest.TestCase):
         )
         self.assertIsNone(load_config().agents.defaults.model_preset)
 
+    def test_cli_first_external_model_becomes_default_and_later_additions_keep_it(self):
+        import_model_configurations(_query(
+            provider="anthropic", models=json.dumps(["claude-sonnet-5"]),
+            activate_first_external="true",
+        ))
+        defaults = load_config().agents.defaults
+        self.assertEqual(defaults.model, "claude-sonnet-5")
+        self.assertEqual(defaults.provider, "anthropic")
+        self.assertEqual(defaults.model_preset, "claude-sonnet-5")
+        self.assertTrue(defaults.model_preset_user_pinned)
+        import_model_configurations(_query(
+            provider="anthropic", models=json.dumps(["claude-opus-5"]),
+            activate_first_external="true",
+        ))
+        self.assertEqual(load_config().agents.defaults.model_preset, "claude-sonnet-5")
+
     def test_models_already_saved_are_skipped(self):
         import_model_configurations(
             _query(provider="anthropic", models=json.dumps(["claude-opus-5"]))
