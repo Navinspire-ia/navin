@@ -252,6 +252,31 @@ class DeskTauriPackagingTest(unittest.TestCase):
         self.assertIn(import_line, sh)
         self.assertIn(import_line, ps1)
 
+    def test_installer_hooks_do_not_kill_the_updater_tree(self) -> None:
+        """The setup exe is a child of NavinUpdater.exe during in-app updates.
+
+        A ``taskkill /IM NavinUpdater.exe /F /T`` in the hooks takes the
+        running installer down with the helper: the update dies silently
+        (no updater log, no files touched), which is exactly what happened
+        updating 2.0.6 to 2.0.7 on a client machine. The staged helper locks
+        nothing in $INSTDIR, so only a treeless kill is allowed anywhere.
+        """
+        hooks = (ROOT / "desktop/src-tauri/windows/installer-hooks.nsh").read_text(
+            encoding="utf-8"
+        )
+        for line in hooks.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(";") or "taskkill" not in stripped:
+                continue
+            if "NavinUpdater.exe" in stripped:
+                self.assertNotIn("/T", stripped, line)
+        preinstall = hooks.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split(
+            "!macroend", 1
+        )[0]
+        self.assertNotIn("NavinUpdater.exe", preinstall)
+        # The sidecar family kill is the actual lock-breaker; keep it honest.
+        self.assertIn("taskkill /IM navin.exe /F /T", preinstall)
+
 
 if __name__ == "__main__":
     unittest.main()

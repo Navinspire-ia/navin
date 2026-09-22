@@ -86,6 +86,22 @@ def make_config(workspace: Path) -> Config:
     })
 
 
+async def _drain_runtime(app) -> None:
+    """Stop the runtime tasks the same way in every integration test."""
+    if app.runtime.agent_loop is not None:
+        app.runtime.agent_loop.stop()
+    if app.runtime._loop_task is not None:
+        app.runtime._loop_task.cancel()
+    if app.runtime._consumer_task is not None:
+        app.runtime._consumer_task.cancel()
+    await asyncio.gather(
+        app.runtime._loop_task or asyncio.sleep(0),
+        app.runtime._consumer_task or asyncio.sleep(0),
+        return_exceptions=True,
+    )
+    await app.runtime.close()
+
+
 def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
     async def run():
         (tmp_path / "a.json").write_text("{}\n")
@@ -162,28 +178,19 @@ def test_send_now_reaches_the_running_turn_end_to_end(tmp_path):
                     assert texts == ["first prompt", "urgent follow-up"], texts
                     assert not app.query_one(PromptQueue).display
             finally:
-                if app.runtime.agent_loop is not None:
-                    app.runtime.agent_loop.stop()
-                if app.runtime._loop_task is not None:
-                    app.runtime._loop_task.cancel()
-                if app.runtime._consumer_task is not None:
-                    app.runtime._consumer_task.cancel()
-                await asyncio.gather(
-                    app.runtime._loop_task or asyncio.sleep(0),
-                    app.runtime._consumer_task or asyncio.sleep(0),
-                    return_exceptions=True,
-                )
-                await app.runtime.close()
+                await _drain_runtime(app)
         set_config_path(old_config_path)
     asyncio.run(run())
 
 
-def test_send_now_lands_at_the_bottom_after_the_running_tasks(tmp_path):
-    """The echoed follow-up must sit at the very bottom of the transcript.
+def test_send_now_opens_a_fresh_bubble_below_the_message(tmp_path):
+    """A "Send now" follow-up reads like a normal chat exchange.
 
-    Regression: "Send now" used to move the whole in-flight assistant bubble
-    below the echoed message, so the prompt showed up right after the first
-    message instead of after the agent's running task cards.
+    Regression: the echo used to sit at the very bottom of the transcript
+    while the running bubble kept streaming above it for the rest of the
+    turn, so the message stayed pinned under every new task card. Now the
+    running bubble closes where it stands, the message lands below it, and
+    the agent continues in a fresh bubble below the message.
     """
 
     async def run():
@@ -238,6 +245,7 @@ def test_send_now_lands_at_the_bottom_after_the_running_tasks(tmp_path):
                             break
                         await asyncio.sleep(0.01)
                     assert app._current is not None, "the agent bubble never appeared"
+                    first_bubble = app._current
 
                     # Queue a prompt while the bubble runs, then Send now.
                     await app.submit_text("urgent follow-up")
@@ -247,13 +255,16 @@ def test_send_now_lands_at_the_bottom_after_the_running_tasks(tmp_path):
                     await pilot.click(row.query_one(".queue-send"))
                     await pilot.pause()
 
-                    # The echo must land BELOW the in-flight agent bubble,
-                    # i.e. after the agent's running task cards.
+                    # The running bubble is closed where it stands and the
+                    # echo lands BELOW it, i.e. after the agent's task cards.
                     echo = list(app.query(UserMessage))[-1]
                     order = list(app.transcript.children)
-                    assert order.index(app._current) < order.index(echo), order
+                    assert order.index(first_bubble) < order.index(echo), order
+                    assert order[-1] is echo, order
+                    assert app._current is None, "the running bubble must be parked"
 
-                    # Release the engine; the follow-up must reach the model.
+                    # Release the engine; the follow-up must reach the model
+                    # and the agent must continue BELOW the message.
                     provider.gate.set()
                     for _ in range(300):
                         if len(provider.calls) >= 3:
@@ -267,23 +278,32 @@ def test_send_now_lands_at_the_bottom_after_the_running_tasks(tmp_path):
                     ]
                     assert any("urgent follow-up" in t for t in user_texts), user_texts
 
+                    # The continued answer streams into a fresh bubble placed
+                    # below the user message, not above it.
+                    for _ in range(300):
+                        if app._current is not None and app._current is not first_bubble:
+                            break
+                        await asyncio.sleep(0.01)
+                    assert app._current is not None, "the agent never resumed"
+                    assert app._current is not first_bubble, "the old bubble kept streaming"
+                    order = list(app.transcript.children)
+                    assert order.index(echo) < order.index(app._current), order
+
+                    # The closed bubble still owns its tool card and gets its
+                    # final marks at turn end instead of staying open forever.
+                    for _ in range(300):
+                        if first_bubble.finished and not app._parked_bubbles:
+                            break
+                        await asyncio.sleep(0.01)
+                    assert first_bubble.finished, "the parked bubble never finished"
+                    assert not app._parked_bubbles
+
                     # The turn ends; the transcript keeps both user messages.
                     await pilot.pause()
                     texts = [r.raw_text for r in app.query(UserMessage)]
                     assert texts == ["first prompt", "urgent follow-up"], texts
                     assert not app.query_one(PromptQueue).display
             finally:
-                if app.runtime.agent_loop is not None:
-                    app.runtime.agent_loop.stop()
-                if app.runtime._loop_task is not None:
-                    app.runtime._loop_task.cancel()
-                if app.runtime._consumer_task is not None:
-                    app.runtime._consumer_task.cancel()
-                await asyncio.gather(
-                    app.runtime._loop_task or asyncio.sleep(0),
-                    app.runtime._consumer_task or asyncio.sleep(0),
-                    return_exceptions=True,
-                )
-                await app.runtime.close()
+                await _drain_runtime(app)
         set_config_path(old_config_path)
     asyncio.run(run())

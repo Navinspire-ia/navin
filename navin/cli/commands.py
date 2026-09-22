@@ -3721,6 +3721,12 @@ def update(
         raise typer.Exit(1) from exc
 
     if not info.get("available"):
+        if info.get("reason"):
+            console.print(
+                f"navin v{escape(str(info.get('latestVersion') or ''))} is published "
+                f"(you have {__version__}). {escape(str(info['reason']))}"
+            )
+            raise typer.Exit(1)
         console.print(f"{__logo__} navin v{__version__} is up to date.")
         return
 

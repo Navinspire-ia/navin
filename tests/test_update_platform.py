@@ -31,6 +31,34 @@ def _windows_only_manifest(version: str = "1.0.1") -> dict:
 
 
 class PlatformScopedUpdateTest(unittest.TestCase):
+    def test_manual_check_explains_missing_artifact_instead_of_up_to_date(self):
+        with (
+            mock.patch.object(service, "__version__", "1.0.0"),
+            mock.patch.object(service, "_install_kind", return_value="cli"),
+            mock.patch.object(service, "_platform_keys", return_value=("cli-linux-x64",)),
+            mock.patch.object(service, "_update_config", return_value=("https://updates.navin.live", "stable", "")),
+            mock.patch.object(service, "_fetch_manifest", return_value=_windows_only_manifest()),
+            mock.patch.object(service, "_CACHE", (0, None)),
+            mock.patch.object(service, "_set_checked_release"),
+        ):
+            result = service.check_for_update(force=True)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["latestVersion"], "1.0.1")
+        self.assertIn("no signed update package", result["reason"])
+
+    def test_manual_check_reconsiders_skipped_version(self):
+        with (
+            mock.patch.object(service, "__version__", "1.0.0"),
+            mock.patch.object(service, "_install_kind", return_value="windows-setup"),
+            mock.patch.object(service, "_platform_keys", return_value=("windows-setup-x64",)),
+            mock.patch.object(service, "_update_config", return_value=("https://updates.navin.live", "stable", "1.0.1")),
+            mock.patch.object(service, "_fetch_manifest", return_value=_windows_only_manifest()),
+            mock.patch.object(service, "_CACHE", (0, None)),
+            mock.patch.object(service, "_set_checked_release"),
+        ):
+            result = service.check_for_update(force=True)
+        self.assertTrue(result["available"])
+
     def test_macos_is_silent_when_only_windows_shipped(self):
         with (
             mock.patch.object(service, "__version__", "1.0.0"),

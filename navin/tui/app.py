@@ -146,6 +146,7 @@ _SETTINGS_SECTIONS = frozenset(
 )
 
 _TUI_SLASH: tuple[dict[str, Any], ...] = (
+    {"command": "/import", "title": "Import chats", "description": "Import Claude Code, Codex, OpenCode, OMP and Cursor chats"},
     {
         "command": "/settings",
         "title": "Settings",
@@ -221,6 +222,7 @@ class NavinActions(Provider):
             ("Model routing", "Choose model configurations by task", "open_settings('routing')"),
             ("Mode", "chat / ask / plan / agent / review / security / debug (ctrl+t)", "pick_mode"),
             ("Sessions", "Open or resume another session (ctrl+s)", "pick_session"),
+            ("Import chats", "Recover Claude Code, Codex, OpenCode, OMP and Cursor chats", "import_sessions"),
             ("Rename chat", "Change the name of this conversation (/title)", "rename_chat"),
             ("Project folder", "Change the project analysed by Graph and Evolve (ctrl+w)", "pick_project"),
             (
@@ -467,6 +469,10 @@ class NavinApp(App[None]):
         self.runtime = TuiRuntime(config, session_id=session_id, on_event=self._on_runtime_event)
         self.slash_rows: list[dict[str, Any]] = [dict(row) for row in _TUI_SLASH]
         self._current: AssistantMessage | None = None
+        # Bubbles closed early by a mid-turn "Send now" message. They still
+        # own the tool cards that were running, and get their final marks at
+        # turn end like any other bubble.
+        self._parked_bubbles: list[AssistantMessage] = []
         self._last_speaker: str | None = None
         self._render_token = 0
         self._history_lock = asyncio.Lock()
@@ -1076,6 +1082,45 @@ class NavinApp(App[None]):
             self._current.finished = False
         return self._current
 
+    async def _park_current_bubble(self) -> None:
+        """Close the running assistant bubble when a mid-turn message lands.
+
+        The follow-up then reads like a normal chat exchange: partial reply,
+        user message, then the agent continues in a fresh bubble below it.
+        The parked bubble keeps its tool cards; their end events are routed
+        back to it by ``_bubble_for_tool``.
+        """
+        bubble = self._current
+        self._current = None
+        if bubble is None or bubble.finished:
+            return
+        with contextlib.suppress(Exception):
+            await bubble.stream_end()
+        self._parked_bubbles.append(bubble)
+
+    def _bubble_for_tool(self, call_id: str) -> AssistantMessage | None:
+        """The bubble owning a tool call card, current or parked."""
+        if not call_id:
+            return None
+        if self._current is not None and self._current.has_tool(call_id):
+            return self._current
+        for bubble in self._parked_bubbles:
+            if bubble.has_tool(call_id):
+                return bubble
+        return None
+
+    async def _finish_parked_bubbles(
+        self, *, latency_ms: int | None, model: str | None, preset: str | None
+    ) -> None:
+        bubbles, self._parked_bubbles = self._parked_bubbles, []
+        for bubble in bubbles:
+            if not bubble.is_attached or bubble.finished:
+                continue
+            with contextlib.suppress(Exception):
+                await bubble.finish(
+                    latency_ms=latency_ms, model=model, preset=preset
+                )
+
     def _invalidate_history(self) -> int:
         """Stop any in-flight history paint (session switch, clear, reload)."""
         self._render_token += 1
@@ -1320,12 +1365,15 @@ class NavinApp(App[None]):
         user = UserMessage(text, show_head=self._last_speaker != "user")
         self._last_speaker = "user"
         await self.transcript.add(user)
-        # A mid-turn follow-up lands at the very bottom of the transcript,
-        # after the running turn's task cards. The running bubble keeps
-        # streaming above it; moving the bubble below the message would push
-        # the message back up, right after the previous exchange.
+        # A mid-turn follow-up is a normal chat exchange: the running bubble
+        # is closed where it stands, the user message lands below it, and the
+        # agent keeps answering in a fresh bubble below the message. Streaming
+        # into the old bubble would pin the message at the very bottom of the
+        # screen for the rest of the turn.
         if not followup:
             self._current = None
+        else:
+            await self._park_current_bubble()
         try:
             await self.runtime.send(inbound, followup=followup)
         except Exception as exc:  # noqa: BLE001 - retain the prompt and keep the chat open
@@ -1355,6 +1403,9 @@ class NavinApp(App[None]):
             return True
         if head == "/settings":
             await self.action_open_settings(arg)
+            return True
+        if head == "/import":
+            await self.action_import_sessions()
             return True
         if head == "/model" and not arg:
             await self.action_open_settings("models")
@@ -1521,7 +1572,7 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiToolEvent):
-            block = await self._ensure_assistant()
+            block = self._bubble_for_tool(event.call_id) or await self._ensure_assistant()
             await block.tool_event(
                 event.call_id,
                 event.name,
@@ -1608,6 +1659,12 @@ class NavinApp(App[None]):
                     model=event.metadata.get("model"),
                     preset=event.metadata.get("model_preset"),
                 )
+            if not self.runtime.turn_active:
+                await self._finish_parked_bubbles(
+                    latency_ms=event.metadata.get("latency_ms"),
+                    model=event.metadata.get("model"),
+                    preset=event.metadata.get("model_preset"),
+                )
             self.transcript.follow()
             return
         if isinstance(event, UiTurnEnd):
@@ -1619,11 +1676,14 @@ class NavinApp(App[None]):
                 # period to overtake the turn-end signal, then unblock the
                 # queue so a queued prompt still goes out automatically.
                 self._start_awaiting_grace_timer()
+            st = self.runtime.status
             if self._current is not None and not self._current.finished:
-                st = self.runtime.status
                 await self._current.finish(
                     latency_ms=event.latency_ms, model=st.model, preset=st.model_preset
                 )
+            await self._finish_parked_bubbles(
+                latency_ms=event.latency_ms, model=st.model, preset=st.model_preset
+            )
             self._refresh_side()
             self._load_account()
             self.transcript.follow()
@@ -1844,6 +1904,7 @@ class NavinApp(App[None]):
             return
         await self.submit_text("/new")
         self._current = None
+        self._parked_bubbles = []
         self._last_speaker = None
         self._activity.clear()
         self._refresh_side()
@@ -1857,6 +1918,7 @@ class NavinApp(App[None]):
             )
             await self.transcript.remove_children()
             self._current = None
+            self._parked_bubbles = []
             self._last_speaker = None
             if had_chat:
                 await self._note(
@@ -1962,6 +2024,9 @@ class NavinApp(App[None]):
             return
         latest = str(info.get("latestVersion") or "").strip()
         if not info.get("available") or not latest:
+            if info.get("reason"):
+                await self._note(f"navin {escape(latest)}: {escape(str(info['reason']))}", "warning")
+                return
             await self._note("navin is up to date.")
             return
         kind = str(info.get("installKind") or "")
@@ -2366,7 +2431,8 @@ class NavinApp(App[None]):
         )
 
         self.runtime.ensure_session_titles()
-        items = [PickItem("__new__", "New session", "", "")]
+        items = [PickItem("__new__", "New session", "", ""),
+                 PickItem("__import__", "Import chats", "Claude Code, Codex, OpenCode, OMP, Cursor")]
         for row in self.runtime.session_rows():
             key = str(row.get("key") or "")
             if not key:
@@ -2380,6 +2446,14 @@ class NavinApp(App[None]):
                 )
             )
         return items
+
+    async def action_import_sessions(self) -> None:
+        from navin.tui.session_import import SessionImportScreen
+
+        await self.push_screen(
+            SessionImportScreen(self.runtime.workspace),
+            lambda imported: self._refresh_side() if imported else None,
+        )
 
     async def _pick_session(self) -> None:
         if not self._engine_ready:
@@ -2397,6 +2471,12 @@ class NavinApp(App[None]):
             )
             if not chosen:
                 return
+            if chosen == "__import__":
+                from navin.tui.session_import import SessionImportScreen
+
+                await self.push_screen_wait(SessionImportScreen(self.runtime.workspace))
+                self._refresh_side()
+                continue
             if chosen.startswith(RENAME_PREFIX):
                 rest = chosen.removeprefix(RENAME_PREFIX)
                 key, sep, title = rest.partition("\n")
@@ -2462,6 +2542,7 @@ class NavinApp(App[None]):
             self.prefs.save()
             await self.transcript.remove_children()
             self._current = None
+            self._parked_bubbles = []
             self._last_speaker = None
             self._activity.clear()
             token = self._invalidate_history()
@@ -2840,6 +2921,7 @@ class NavinApp(App[None]):
         yield from super().get_system_commands(screen)
         yield SystemCommand("Navin help", "Keys, modes and slash commands", self.action_show_help)
         yield SystemCommand("Update Navin", "Install the latest signed release", self.action_update)
+        yield SystemCommand("Import chats", "Claude Code, Codex, OpenCode, OMP and Cursor", self.action_import_sessions)
         yield SystemCommand("AGI", "Skills evolution, world model, policy, transfer, memory", self.action_open_agi)
 
 

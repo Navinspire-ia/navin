@@ -1806,6 +1806,12 @@ class AssistantMessage(Vertical):
 
     # -- activity ---------------------------------------------------------
 
+    def has_tool(self, call_id: str) -> bool:
+        """Whether a tool call card with this call id lives on this bubble."""
+        if not call_id:
+            return False
+        return any(call_id in tool.call_ids for tool in self._tools.values())
+
     async def tool_event(
         self,
         call_id: str,

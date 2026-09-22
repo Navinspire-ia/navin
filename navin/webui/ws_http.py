@@ -4679,6 +4679,7 @@ class GatewayHTTPHandler:
             SessionImportError,
             run_external_session_import,
             scan_external_sessions,
+            session_import_job,
         )
 
         query = _parse_query(request.path)
@@ -4709,13 +4710,17 @@ class GatewayHTTPHandler:
                     limit = int(raw_limit) if raw_limit else 0
                 except ValueError:
                     return _http_error(400, "limit must be an integer")
-                payload = await asyncio.to_thread(
-                    run_external_session_import,
-                    Path(project_root),
-                    source=source,
-                    overwrite=overwrite,
-                    limit=limit,
-                )
+                job_id = (_query_first(query, "job_id") or "").strip()
+                if job_id or _query_first(query, "background") == "true":
+                    payload = session_import_job(
+                        Path(project_root), job_id=job_id, source=source,
+                        overwrite=overwrite, limit=limit,
+                    )
+                else:
+                    payload = await asyncio.to_thread(
+                        run_external_session_import, Path(project_root),
+                        source=source, overwrite=overwrite, limit=limit,
+                    )
         except SessionImportError as exc:
             return _http_error(exc.status, exc.message)
         return _http_json_response(payload)

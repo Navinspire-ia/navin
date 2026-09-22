@@ -1396,6 +1396,18 @@ class SettingsHub(ModalScreen[bool]):
                 detail="[b]default[/b]  agents.defaults: the model used when no configuration is selected.",
             )
         ]
+        selected = presets.get(active) or {}
+        if (active != "default" and selected.get("enabled", True) and selected.get("model")
+                and selected.get("provider") != "navin"):
+            fields = ("model", "provider", "contextWindowTokens", "maxTokens",
+                      "temperature", "reasoningEffort")
+            if any(
+                isinstance(preset, dict) and preset.get("enabled", True)
+                and preset.get("provider") != "navin"
+                and all(defaults.get(field) == preset.get(field) for field in fields)
+                for preset in presets.values()
+            ):
+                rows = []
         for name in sorted(presets):
             p = presets[name]
             if not isinstance(p, dict):
@@ -1773,7 +1785,6 @@ class SettingsHub(ModalScreen[bool]):
         try:
             await asyncio.to_thread(settings_api.import_model_configurations, {
                 "provider": [provider], "models": [json.dumps([row])],
-                "activate_first_external": ["true"],
             })
         except Exception as exc:  # noqa: BLE001
             self._status(f"[$error]{escape(str(getattr(exc, 'message', exc)))}[/]")

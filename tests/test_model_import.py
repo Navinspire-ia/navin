@@ -11,10 +11,11 @@ import unittest
 from pathlib import Path
 
 from navin.config.loader import get_config_path, load_config, save_config, set_config_path
-from navin.config.schema import ProviderConfig
+from navin.config.schema import ModelPresetConfig, ProviderConfig
 from navin.webui.settings_api import (
     WebUISettingsError,
     _snap_context_window_tokens,
+    create_model_configuration,
     import_model_configurations,
 )
 
@@ -58,7 +59,60 @@ class ImportModelConfigurationsTest(unittest.TestCase):
         import_model_configurations(
             _query(provider="anthropic", models=json.dumps(["claude-opus-5"]))
         )
-        self.assertIsNone(load_config().agents.defaults.model_preset)
+        import_model_configurations(
+            _query(provider="anthropic", models=json.dumps(["claude-sonnet-5"]))
+        )
+        self.assertEqual(load_config().agents.defaults.model_preset, "claude-opus-5")
+
+    def test_desktop_add_initializes_default_and_preserves_it_on_later_add(self):
+        for label in ("first", "second"):
+            create_model_configuration(_query(
+                label=label, provider="anthropic", model=f"claude-{label}",
+            ))
+        defaults = load_config().agents.defaults
+        self.assertEqual(defaults.model_preset, "first")
+        self.assertEqual(defaults.model, "claude-first")
+
+    def test_import_replaces_unpinned_managed_default(self):
+        config = load_config()
+        config.agents.defaults.provider = "navin"
+        config.agents.defaults.model = "managed-model"
+        save_config(config)
+        import_model_configurations(_query(provider="anthropic", models=json.dumps(["claude-sonnet-5"])))
+        self.assertEqual(load_config().agents.defaults.model_preset, "claude-sonnet-5")
+
+    def test_add_keeps_active_external_preset_even_if_raw_default_is_empty(self):
+        config = load_config()
+        config.model_presets["chosen"] = ModelPresetConfig(model="claude-chosen", provider="anthropic")
+        config.agents.defaults.model_preset = "chosen"
+        save_config(config)
+        create_model_configuration(_query(label="new", model="claude-new", provider="anthropic"))
+        self.assertEqual(load_config().agents.defaults.model_preset, "chosen")
+
+    def test_connected_account_keeps_managed_selection_and_routes(self):
+        for plan in ("free", "pro"):
+            with self.subTest(plan=plan):
+                config = load_config()
+                config.license.activation_token = "test-activation"
+                config.license.managed_api_key = "test-managed-key"
+                config.license.plan = plan
+                config.model_presets["main"] = ModelPresetConfig(model="managed-chat", provider="navin")
+                config.agents.defaults.model_preset = "main"
+                config.agents.defaults.model_preset_user_pinned = False
+                config.model_routes = {"fast": "main"}
+                save_config(config)
+                before = load_config().agents.defaults.model_dump()
+                create_model_configuration(_query(label=f"external-{plan}", model="claude-new", provider="anthropic"))
+                import_model_configurations(_query(provider="anthropic", models=json.dumps([f"claude-{plan}"])))
+                saved = load_config()
+                self.assertEqual(saved.agents.defaults.model_dump(), before)
+                self.assertEqual(saved.model_routes, {"fast": "main"})
+
+    def test_import_skips_media_when_selecting_first_chat_default(self):
+        import_model_configurations(_query(
+            provider="anthropic", models=json.dumps(["gpt-image-1", "claude-sonnet-5"]),
+        ))
+        self.assertEqual(load_config().agents.defaults.model_preset, "claude-sonnet-5")
 
     def test_cli_first_external_model_becomes_default_and_later_additions_keep_it(self):
         import_model_configurations(_query(

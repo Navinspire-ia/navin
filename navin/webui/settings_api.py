@@ -2721,6 +2721,31 @@ def _apply_computer_settings(config: Any, query: QueryParams) -> tuple[bool, boo
     return changed, restart
 
 
+def _activate_first_external_model(config: Any, names: list[str]) -> None:
+    """Initialize chat once; adding models must preserve an established choice."""
+    defaults = config.agents.defaults
+    current = config.resolve_preset()
+    # Connected accounts own their initial selection, including the free plan.
+    # Only an explicit model selection should override their catalog/routing.
+    if config.license.activation_token or config.license.managed_api_key:
+        return
+    if current.model and (
+        current.provider != "navin" or defaults.model_preset_user_pinned
+    ):
+        return
+    for name in names:
+        preset = config.model_presets[name]
+        if (preset.provider == "navin" or not preset.enabled
+                or preset.modality != "text" or _is_media_model_slug(preset.model)):
+            continue
+        defaults.model_preset = name
+        defaults.model_preset_user_pinned = True
+        for field in ("model", "provider", "max_tokens", "context_window_tokens",
+                      "temperature", "reasoning_effort"):
+            setattr(defaults, field, getattr(preset, field))
+        return
+
+
 def create_model_configuration(query: QueryParams) -> dict[str, Any]:
     label = (_query_first_alias(query, "label", "displayName") or "").strip()
     raw_name = (_query_first(query, "name") or label).strip()
@@ -2750,10 +2775,7 @@ def create_model_configuration(query: QueryParams) -> dict[str, Any]:
         temperature=base.temperature,
         reasoning_effort=base.reasoning_effort,
     )
-    config.agents.defaults.model_preset = name
-    config.agents.defaults.model_preset_user_pinned = True
-    config.agents.defaults.model = model
-    config.agents.defaults.provider = provider
+    _activate_first_external_model(config, [name])
     save_config(config)
     return settings_payload()
 
@@ -2763,8 +2785,8 @@ def import_model_configurations(query: QueryParams) -> dict[str, Any]:
 
     The bulk counterpart of :func:`create_model_configuration`: names are
     derived from the model ids, models already saved for that provider are
-    skipped, and the active preset is left untouched so importing a whole
-    catalog never hijacks the model in use.
+    skipped. The first external chat model initializes an unconfigured default;
+    subsequent imports preserve the model in use.
     """
     provider = (_query_first(query, "provider") or "").strip()
     if not provider:
@@ -2774,13 +2796,6 @@ def import_model_configurations(query: QueryParams) -> dict[str, Any]:
     config = load_config()
     _validate_configured_provider(config, provider)
     base = config.resolve_default_preset()
-    activate_first = (
-        _query_first(query, "activate_first_external") == "true"
-        and provider != "navin"
-        and (not base.model or base.provider == "navin")
-        and not any(p.provider != "navin" and p.model and p.modality == "text"
-                    for p in config.model_presets.values())
-    )
     already = {
         preset.model
         for preset in config.model_presets.values()
@@ -2808,14 +2823,7 @@ def import_model_configurations(query: QueryParams) -> dict[str, Any]:
         imported.append(name)
 
     if imported:
-        if activate_first and not _is_media_model_slug(config.model_presets[imported[0]].model):
-            first = config.model_presets[imported[0]]
-            defaults = config.agents.defaults
-            defaults.model_preset = imported[0]
-            defaults.model_preset_user_pinned = True
-            defaults.model = first.model
-            defaults.provider = first.provider
-            defaults.context_window_tokens = first.context_window_tokens
+        _activate_first_external_model(config, imported)
         save_config(config)
     return {
         **settings_payload(),

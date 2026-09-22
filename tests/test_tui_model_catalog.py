@@ -70,6 +70,8 @@ def test_single_provider_catalog_preview(tmp_path, monkeypatch, configure_provid
                 assert defaults.model == "claude-sonnet-5"
                 assert defaults.model_preset == "claude-sonnet-5"
                 assert hub._model_rows()[0].cells[2] == "claude-sonnet-5"
+                assert len(hub._model_rows()) == 1
+                assert hub._model_rows()[0].key == "claude-sonnet-5"
                 applied.assert_awaited_once_with("claude-sonnet-5")
                 app.save_screenshot(str(tmp_path / "model-catalog-preview.svg"))
 

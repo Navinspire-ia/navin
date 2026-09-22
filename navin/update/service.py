@@ -499,6 +499,7 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
             "currentVersion": __version__,
             "available": False,
             "configured": False,
+            "reason": "This build has no update server configured. Download the latest installer.",
             "installKind": kind,
             "channel": channel,
         }
@@ -511,7 +512,8 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
         return cached
     try:
         manifest = _fetch_manifest(base_url, channel)
-        release = _release_info(manifest, base_url=base_url, skipped_version=skipped_version)
+        # A manual check must reconsider a version previously dismissed in the UI.
+        release = _release_info(manifest, base_url=base_url, skipped_version="" if force else skipped_version)
         result = release or {
             "currentVersion": __version__,
             "available": False,
@@ -520,6 +522,17 @@ def check_for_update(*, force: bool = False) -> dict[str, Any]:
         }
         result["configured"] = True
         result["channel"] = channel
+        result.setdefault("latestVersion", str(manifest.get("version", "")))
+        if release is None and Version(result["latestVersion"]) > Version(__version__):
+            if not force and result["latestVersion"] == skipped_version:
+                reason = "This version was skipped. Check for updates manually to reconsider it."
+            elif kind == "unsupported":
+                reason = "Automatic updates are not supported for this installation. Download the latest installer."
+            elif not any(key in (manifest.get("artifacts") or {}) for key in _platform_keys(kind)):
+                reason = "The newer release has no signed update package for this installation and platform yet."
+            else:
+                reason = "The newer release is being rolled out and is not offered to this installation yet."
+            result["reason"] = reason
         _CACHE = (now, result)
         _set_checked_release(result)
         return result

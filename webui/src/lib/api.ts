@@ -2224,13 +2224,19 @@ export async function importExternalSessions(
   if (options?.limit) query.set("limit", String(options.limit));
   // The gateway handshake only forwards GET; declare the verb in the query.
   query.set("_method", "POST");
-  const suffix = `?${query}`;
-  return request<SessionImportResultPayload>(
-    `${base}/api/webui/sessions/import${suffix}`,
-    token,
-    undefined,
-    API_READ_TIMEOUT_MS,
-  );
+  query.set("background", "true");
+  type ImportJob = { job_id: string; status: "running" | "done"; result?: SessionImportResultPayload };
+  while (true) {
+    const payload = await request<ImportJob | SessionImportResultPayload>(
+      `${base}/api/webui/sessions/import?${query}`, token, undefined, API_SLOW_TIMEOUT_MS,
+    );
+    // Older gateways still return the synchronous result.
+    if ("sources" in payload) return payload;
+    if (payload.status === "done" && payload.result) return payload.result;
+    if (!payload.job_id || payload.status !== "running") throw new Error("Invalid session import response");
+    query.set("job_id", payload.job_id);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
 }
 
 export async function listImportRoots(

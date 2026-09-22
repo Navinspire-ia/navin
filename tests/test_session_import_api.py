@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest import mock
 
@@ -34,6 +35,50 @@ def _report(name: str, sessions: int) -> SourceReport:
 
 
 class SessionImportApiTests(unittest.TestCase):
+    def test_background_import_returns_immediately_and_is_not_started_twice(self):
+        started, finish = Event(), Event()
+        result = {"workspace": "/tmp/jobs", "sources": []}
+
+        def slow_import(*args, **kwargs):
+            started.set()
+            finish.wait(5)
+            return result
+
+        with mock.patch.object(session_import_api, "_IMPORT_JOBS", {}), mock.patch.object(
+            session_import_api, "run_external_session_import", side_effect=slow_import
+        ) as run:
+            try:
+                first = session_import_api.session_import_job(Path("/tmp/jobs"), source="codex")
+                self.assertTrue(started.wait(2))
+                self.assertEqual(first["status"], "running")
+                again = session_import_api.session_import_job(Path("/tmp/jobs"), source="codex")
+                self.assertEqual(first["job_id"], again["job_id"])
+                polled = session_import_api.session_import_job(Path("/tmp/jobs"), job_id=first["job_id"])
+                self.assertEqual(polled["status"], "running")
+                with self.assertRaises(session_import_api.SessionImportError):
+                    session_import_api.session_import_job(Path("/tmp/other"), job_id=first["job_id"])
+            finally:
+                finish.set()
+            session_import_api._IMPORT_JOBS[first["job_id"]][1].result(timeout=2)
+            done = session_import_api.session_import_job(Path("/tmp/jobs"), job_id=first["job_id"])
+            self.assertEqual(done["result"], result)
+            run.assert_called_once()
+
+    def test_failed_background_import_surfaces_the_error(self):
+        with mock.patch.object(session_import_api, "_IMPORT_JOBS", {}), mock.patch.object(
+            session_import_api, "run_external_session_import", side_effect=OSError("disk full")
+        ):
+            try:
+                job = session_import_api.session_import_job(Path("/tmp/fail"), source="codex")
+            except session_import_api.SessionImportError as exc:
+                self.assertIn("disk full", exc.message)
+                return
+            future = session_import_api._IMPORT_JOBS[job["job_id"]][1]
+            with self.assertRaises(OSError):
+                future.result(timeout=2)
+            with self.assertRaisesRegex(session_import_api.SessionImportError, "disk full"):
+                session_import_api.session_import_job(Path("/tmp/fail"), job_id=job["job_id"])
+
     def test_scan_reports_every_source(self) -> None:
         reports = [_report("codex", 2), _report("claude-code", 0)]
         with mock.patch.object(

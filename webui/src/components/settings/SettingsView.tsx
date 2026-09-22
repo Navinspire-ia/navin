@@ -1,6 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { isDuplicateDefault } from "@/lib/model-default-visibility";
 import {
   useCallback,
   useEffect,
@@ -1698,6 +1699,7 @@ export function SettingsView({
       for (const [index, batch] of batches.entries()) {
         const payload = await importModelConfigurations(token, provider, batch);
         applyPayload(payload);
+        onModelNameChange(payload.agent.model || null);
         setModelImportProgress({ done: index + 1, total: batches.length });
       }
       setModelImportOpen(false);
@@ -3517,10 +3519,15 @@ function VersionCheckRow({
           ) : null}
         </div>
         {installing ? <UpdateProgress status={updateStatus} /> : null}
-        {result && !result.available ? (
+        {result && !result.available && !result.reason ? (
           <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
             <Check className="h-3 w-3" aria-hidden />
             {tx("settings.about.upToDate", "You're up to date")}
+          </span>
+        ) : null}
+        {result && !result.available && result.reason ? (
+          <span className="max-w-md text-right text-[12px] text-muted-foreground">
+            {result.latestVersion ? `v${result.latestVersion}: ` : ""}{result.reason}
           </span>
         ) : null}
         {result?.available ? (
@@ -4676,17 +4683,7 @@ function ModelsSettings({
           ) {
             return false;
           }
-          // Hide the empty synthetic "Default" row when a named preset already
-          // drives chat - otherwise it just reads "Not configured" next to the
-          // real Free models and looks like something is broken.
-          if (
-            preset.is_default
-            && !(preset.model || "").trim()
-            && settings.agent.model_preset
-            && settings.agent.model_preset !== "default"
-          ) {
-            return false;
-          }
+          if (isDuplicateDefault(preset, settings)) return false;
           return true;
         })
         .sort((a, b) => {

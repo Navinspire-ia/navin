@@ -84,11 +84,29 @@ def _no_chromium_hint() -> str:
         "(add --with-deps on Linux if system libraries are missing)."
     )
 
+_CHALLENGE_JS = r"""
+() => {
+  const q = (sel) => !!document.querySelector(sel);
+  const markers = {
+    cloudflare: q('#challenge-running, #challenge-form, #challenge-error-text') ||
+      q('iframe[src*="challenges.cloudflare.com"], script[src*="challenges.cloudflare.com"]'),
+    turnstile: q('.cf-turnstile, [class*="cf-turnstile"]'),
+    hcaptcha: q('.h-captcha, iframe[src*="hcaptcha.com"]'),
+    recaptcha: q('.g-recaptcha, iframe[src*="recaptcha/api"], iframe[src*="recaptcha/enterprise"]'),
+  };
+  const text = (document.title + ' ' +
+    (document.body ? document.body.innerText.slice(0, 2000) : '')).toLowerCase();
+  if (/just a moment|attention required|checking your browser|verifying you are human/.test(text)) {
+    markers.cloudflare = true;
+  }
+  return markers;
+}
+"""
+
 _SNAPSHOT_JS = r"""
 () => {
   const out = { title: document.title, url: location.href, elements: [] };
-  window.__navinRefs = [];
-  const seen = new Set();
+  window.__navinRefs = [];  const seen = new Set();
   const visible = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return false;
@@ -218,6 +236,11 @@ class _BrowserSession:
         self.page: Any = None
         self.pages: list[Any] = []
         self.console: deque[str] = deque(maxlen=300)
+        # Console dedup: a dev server with a broken HMR websocket retries the
+        # same error every second; without collapsing, hundreds of identical
+        # lines flood the log and the model reads the same failure 100 times.
+        self._console_last_base: str | None = None
+        self._console_repeat = 0
         self.network: deque[dict[str, Any]] = deque(maxlen=300)
         self._network_seq = 0
         self.history: list[dict[str, Any]] = []
@@ -421,6 +444,31 @@ class _BrowserSession:
         if url:
             await page.goto(url, wait_until="domcontentloaded")
         return page
+
+    def log_console(self, line: str) -> None:
+        """Append a console line, collapsing consecutive identical repeats.
+
+        One line plus a "(x N)" counter carries the same information as N
+        copies and keeps the agent's console reads small and readable.
+        """
+        base = line[:500]
+        if base == self._console_last_base:
+            self._console_repeat += 1
+            if self.console:
+                marked = f"{base} (x {self._console_repeat})"
+                self.console[-1] = marked[:500] if len(marked) > 500 else marked
+            else:
+                self.console.append(base)
+            return
+        self._console_last_base = base
+        self._console_repeat = 1
+        self.console.append(base)
+
+    def clear_console(self) -> None:
+        """Clear the console log and its dedup state."""
+        self.console.clear()
+        self._console_last_base = None
+        self._console_repeat = 0
 
     def list_tabs(self) -> list[dict[str, Any]]:
         tabs: list[dict[str, Any]] = []
@@ -715,16 +763,18 @@ class _BrowserSession:
     def _wire_events(self, page: Any) -> None:
         def on_console(msg: Any) -> None:
             try:
-                self.console.append(f"[{msg.type}] {msg.text}"[:500])
+                self.log_console(f"[{msg.type}] {msg.text}")
             except Exception:
                 pass
 
         def on_page_error(err: Any) -> None:
-            self.console.append(f"[pageerror] {err}"[:500])
+            self.log_console(f"[pageerror] {err}")
 
         def on_request_failed(request: Any) -> None:
             failure = getattr(request, "failure", None)
-            self.console.append(f"[requestfailed] {request.method} {request.url} - {failure}"[:500])
+            self.log_console(
+                f"[requestfailed] {request.method} {request.url} - {failure}"
+            )
 
         def on_response(response: Any) -> None:
             try:
@@ -806,7 +856,7 @@ class _BrowserSession:
         self._pw = self._browser = self._context = self.page = None
         self.pages = []
         self._cdp = self._cdp_page = None
-        self.console.clear()
+        self.clear_console()
         self.network.clear()
         self.history.clear()
 
@@ -1401,11 +1451,16 @@ class BrowserTool(Tool):
                 if not allowed:
                     return ToolResult.error(refusal)
             if kwargs.get("new_tab"):
-                page = await session.new_page(url)
+                page = await session.new_page()
+                nav_error = await self._goto_with_retry(page, url)
+                if nav_error is not None:
+                    return ToolResult.error(nav_error)
             else:
-                session.console.clear()
+                session.clear_console()
                 session.network.clear()
-                await page.goto(url, wait_until="domcontentloaded")
+                nav_error = await self._goto_with_retry(page, url)
+                if nav_error is not None:
+                    return ToolResult.error(nav_error)
             await self._settle(page)
             return await self._snapshot(session, page)
 
@@ -1424,7 +1479,11 @@ class BrowserTool(Tool):
                     )
                     if not allowed:
                         return ToolResult.error(refusal)
-            page = await session.new_page(url)
+            page = await session.new_page()
+            if url:
+                nav_error = await self._goto_with_retry(page, url)
+                if nav_error is not None:
+                    return ToolResult.error(nav_error)
             await self._settle(page)
             return await self._snapshot(session, page)
 
@@ -1899,6 +1958,76 @@ class BrowserTool(Tool):
             pass
         await asyncio.sleep(0.3)
 
+    _MAX_NAV_ATTEMPTS = 3
+    _NAV_TIMEOUT_MS = 5_000
+
+    async def _goto_with_retry(self, page: Any, url: str) -> str | None:
+        """Bounded navigation: at most 3 connection attempts, then move on.
+
+        A dev server that is down or rejecting connections must not eat the
+        whole turn. Each attempt gets a short timeout; after 3 failures the
+        tool returns a clear error telling the model to skip browser testing
+        for this target and continue the task instead of retrying all day.
+        """
+        last_error = ""
+        for attempt in range(1, self._MAX_NAV_ATTEMPTS + 1):
+            try:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=self._NAV_TIMEOUT_MS,
+                )
+                return None
+            except Exception as exc:
+                last_error = str(exc).split("\n")[0][:200]
+                if attempt < self._MAX_NAV_ATTEMPTS:
+                    await asyncio.sleep(0.5 * attempt)
+        return (
+            f"Error: could not reach {url} after {self._MAX_NAV_ATTEMPTS} attempts "
+            f"({last_error}). Skip browser testing for this target and continue "
+            "the task."
+        )
+
+    _LOGIN_WALL_NOTE = (
+        "[login-wall] This page requires authentication (a visible password field "
+        "is present). Do not stay on this page and do not guess credentials. If the "
+        "credentials are known (config, .env, seed user), fill the form once; "
+        "otherwise ask the user to log in, wait for their confirmation, then "
+        "continue testing."
+    )
+
+    _CHALLENGE_NOTE = (
+        "[challenge:{kind}] An anti-bot challenge ({kind}) is blocking the page. "
+        "Do not retry the same navigation in a loop and do not attempt to solve or "
+        "bypass it programmatically. Tell the user a {kind} challenge is showing "
+        "and ask them to solve it (open the browser visibly), then take a new "
+        "snapshot to confirm it cleared; if it cannot clear, skip browser testing "
+        "for this target and continue the task."
+    )
+
+    async def _detect_challenge(self, page: Any) -> str | None:
+        """Return the challenge kind when an anti-bot wall blocks the page."""
+        try:
+            markers = await page.evaluate(_CHALLENGE_JS)
+        except Exception:
+            return None
+        if not isinstance(markers, dict):
+            return None
+        for kind in ("cloudflare", "turnstile", "hcaptcha", "recaptcha"):
+            if markers.get(kind):
+                return kind
+        return None
+
+    async def _detect_login_wall(self, page: Any) -> bool:
+        """True when a visible password input means the agent hit a login wall."""
+        try:
+            locator = page.locator('input[type="password"]')
+            if await locator.count() == 0:
+                return False
+            return bool(await locator.first.is_visible())
+        except Exception:
+            return False
+
     async def _locate(self, page: Any, kwargs: dict[str, Any]) -> Any:
         """Resolve ref / selector / text to a clickable Playwright target."""
         ref = kwargs.get("ref")
@@ -1927,6 +2056,11 @@ class BrowserTool(Tool):
     async def _snapshot(self, session: _BrowserSession, page: Any) -> str:
         data = await page.evaluate(_SNAPSHOT_JS)
         lines = [f"Page: {data.get('title') or '(no title)'}", f"URL: {data.get('url')}"]
+        challenge = await self._detect_challenge(page)
+        if challenge is not None:
+            lines.insert(2, self._CHALLENGE_NOTE.format(kind=challenge))
+        if await self._detect_login_wall(page):
+            lines.insert(3 if challenge is not None else 2, self._LOGIN_WALL_NOTE)
         elements = data.get("elements") or []
         if elements:
             lines.append(f"\nInteractive elements ({len(elements)}), target them with ref:")

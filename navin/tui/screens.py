@@ -823,6 +823,7 @@ memory, MCP servers and slash commands as Navin Desktop.
 | `Ctrl+O` | Model list |
 | `Ctrl+T` | Mode list (default: agent) |
 | `Ctrl+S` | Sessions (F2 renames, type to search) |
+| `/import` | Import chats from Claude Code, Codex, OpenCode, OMP and Cursor |
 | `Ctrl+W` | Workspace / project folder |
 | `Ctrl+D` | Account (navin.live) |
 | `Ctrl+B` | Show / hide the right panel |

@@ -5031,6 +5031,14 @@ export function DevWorkbench({
           {(
             [
               {
+                // First module after the project folder picker.
+                key: "agi",
+                icon: <BrainCircuit className="h-3.5 w-3.5 shrink-0" aria-hidden />,
+                label: tx("dev.agiTab", "AGI"),
+                active: mode === "agi",
+                go: () => showMode("agi"),
+              },
+              {
                 key: "guardrails",
                 icon: <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />,
                 label: tx("dev.guardrailsTab", "Guardrails"),
