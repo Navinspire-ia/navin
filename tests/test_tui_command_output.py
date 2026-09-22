@@ -190,10 +190,10 @@ def test_final_response_accents_preserve_the_message_in_both_renderers(monkeypat
             await app.block.finish(latency_ms=1, model=None, preset=None)
             await pilot.pause()
             paragraph = app.block.query_one(MarkdownParagraph)
-            assert paragraph.get_component_styles("strong").color != paragraph.styles.color
+            assert paragraph.get_component_styles("strong").text_style.bold
             assert app.block.query_one(Markdown).source == message
             assert app.block.copy_text() == message
-            assert "Response" in app.export_screenshot()
+            assert "Terminé." in app.export_screenshot()
     asyncio.run(run())
     stream = io.StringIO()
     console = Console(file=stream, force_terminal=True, color_system="standard")

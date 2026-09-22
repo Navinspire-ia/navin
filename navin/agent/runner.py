@@ -2410,6 +2410,13 @@ class AgentRunner:
             return payload + (escalation or ""), event, None
 
         if is_tool_error_result(tool_call.name, result):
+            from navin.utils.tool_hints import is_validation_pending
+
+            if closing_work and is_validation_pending(tool_call.name, str(result)):
+                return result, {
+                    "name": tool_call.name, "status": "error", "detail": "validation required before completion",
+                    "error_kind": "validation_required", "progress": "none",
+                }, None
             hint = tool_error_hint(result)
             await hook.on_execute_tool_error(context, tool_call, tool, params, result)
             event = {

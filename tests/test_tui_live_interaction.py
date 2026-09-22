@@ -8,6 +8,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from navin.tui.runtime import UiFileEdit, UiStreamDelta, UiToolEvent
 from navin.tui.screens import PickerScreen, PickItem
 from navin.tui.widgets import AssistantMessage, QueuedPromptRow, ToolCall, UserMessage, WorkingLine
 from tests.test_tui_queue import make_app
@@ -60,7 +61,12 @@ def test_send_selected_queue_item_now_keeps_task_draft_and_other_rows(tmp_path):
             assert sent.content == "use this now"
             assert app.runtime.bus.inbound_size == 0
             assert app.runtime._turn_started_at == started
-            assert app._current is block
+            assert app._current is None
+            assert block in app._parked_bubbles
+            await app._on_runtime_event(UiStreamDelta("I will use that instruction."))
+            assert app._current is not block
+            order = list(app.transcript.children)
+            assert order.index(app.query(UserMessage).last()) < order.index(app._current)
             assert app.composer.text == "unsent draft"
             assert app.query(QueuedPromptRow).first() is first_row
             assert len(app.query(QueuedPromptRow)) == 1
@@ -70,6 +76,72 @@ def test_send_selected_queue_item_now_keeps_task_draft_and_other_rows(tmp_path):
             assert sent.content == "another instruction"
             assert app.runtime._turn_started_at == started
             assert [r.raw_text for r in app.query(UserMessage)] == ["first", "use this now", "another instruction"]
+    asyncio.run(run())
+
+
+def test_send_now_keeps_running_tool_output_below_followup(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("run the checks")
+            await app.runtime.bus.consume_inbound()
+            await app._on_runtime_event(UiToolEvent("run", "exec", "start", {"command": "checks"}))
+            await app._on_runtime_event(UiToolEvent("run", "exec", "output", output="first line\npar"))
+            original = app._current
+            for index in range(2):
+                await app.submit_text(f"instruction {index}")
+                await pilot.pause()
+                await pilot.click(app.query_one(".queue-send"))
+                await app.runtime.bus.consume_inbound()
+                echo = app.query(UserMessage).last()
+                await app._on_runtime_event(UiToolEvent(
+                    "run", "exec", "output", output="tial\n" if index == 0 else "still working\n",
+                ))
+                await pilot.pause()
+                order = list(app.transcript.children)
+                assert order.index(echo) < order.index(app._current)
+                assert app._current is not original
+                assert len(app.query(ToolCall)) == 1
+                card = app.query_one(ToolCall)
+                assert card.arguments == {"command": "checks"}
+                assert card.output_lines[:2] == ["first line", "partial"]
+                assert card.region.y >= echo.region.bottom
+            await app._on_runtime_event(UiToolEvent("run", "exec", "end", result="Exit code: 0"))
+            assert app.query_one(ToolCall).phase == "end"
+            assert "still working" in app.query_one(ToolCall).copy_text()
+            assert [row.raw_text for row in app.query(UserMessage)] == [
+                "run the checks", "instruction 0", "instruction 1",
+            ]
+    asyncio.run(run())
+
+
+def test_send_now_moves_pending_file_edit_and_keeps_completed_activity(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            await app.submit_text("edit the files")
+            await app.runtime.bus.consume_inbound()
+            await app._on_runtime_event(UiFileEdit("done.py", call_id="done", added=1))
+            await app._on_runtime_event(UiFileEdit("next.py", call_id="edit", phase="start"))
+            original = app._current
+            await app.submit_text("also handle the error", send_now=True)
+            await app.runtime.bus.consume_inbound()
+            await app._on_runtime_event(UiFileEdit(
+                "next.py", call_id="edit", added=2, diff="+one\n+two", phase="end",
+            ))
+            await app._on_runtime_event(UiToolEvent("edit", "edit_file", "end", result="updated"))
+            await pilot.pause()
+            assert original.has_tool("done")
+            assert not original.has_tool("edit")
+            assert app._current.has_tool("edit")
+            assert len(app.query(ToolCall)) == 2
+            card = app._current.query_one(ToolCall)
+            assert card.file_path == "next.py"
+            assert card.diff_text == "+one\n+two"
+            assert card.added == 2
+            assert card.phase == "end"
+            order = list(app.transcript.children)
+            assert order.index(app.query(UserMessage).last()) < order.index(app._current)
     asyncio.run(run())
 
 

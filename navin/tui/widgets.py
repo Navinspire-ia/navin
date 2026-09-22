@@ -759,6 +759,21 @@ class ToolCall(Vertical, can_focus=True):
     def _head_text(self) -> str:
         return self._plain_head()
 
+    def continuation(self) -> ToolCall:
+        """Copy a live card's data without reusing its widget or timers."""
+        self._flush_output_buffer()
+        card = ToolCall(self.call_id, self.tool_name, dict(self.arguments))
+        for name in (
+            "phase", "result", "error", "percent", "added", "removed",
+            "edit_count", "diff_text", "file_path", "file_operation",
+            "file_recorded", "file_truncated", "file_binary", "_show_full", "_open",
+        ):
+            setattr(card, name, getattr(self, name))
+        card.call_ids = list(self.call_ids)
+        card._output_buffer = self._output_buffer
+        card._output_lines = list(self._output_lines)
+        return card
+
     def apply(
         self, *, phase: str, result: Any = None, error: str | None = None,
         output: str | None = None, percent: float | None = None,
@@ -955,7 +970,13 @@ class ToolCall(Vertical, can_focus=True):
             row[1] in {"add", "del"} for row in rows
         )
         preview_limit = GIT_PREVIEW_LINES if git_output else PREVIEW_OPEN_LINES
-        summary = compact_command_rows(rows, cache=self._command_summary_cache) if compact else rows[:preview_limit]
+        diagnostic = self.phase in {"error", "cancelled"} and not command_output
+        if diagnostic:
+            preview_limit = 3
+            summary = rows[:preview_limit]
+            compact = True
+        else:
+            summary = compact_command_rows(rows, cache=self._command_summary_cache) if compact else rows[:preview_limit]
         self._preview_overflow = (
             [row[2] for row in summary] != [row[2] for row in rows]
             or (compact and any(cell_len(row[2]) > max(1, width - 8) for row in summary))
@@ -1011,6 +1032,7 @@ class ToolCall(Vertical, can_focus=True):
         more = self.query_one(".tool-more", Button)
         more.display = self._open and (self._preview_overflow or bool(details))
         label = "Show less" if self._show_full else (
+            "Show error details" if diagnostic and self._preview_overflow else
             f"Full output ({len(rows)} lines)" if compact and self._preview_overflow
             else f"Show all (+{len(rows) - preview_limit} lines)" if len(rows) > preview_limit
             else "Show command"
@@ -1812,6 +1834,56 @@ class AssistantMessage(Vertical):
             return False
         return any(call_id in tool.call_ids for tool in self._tools.values())
 
+    async def continue_tool_in(self, call_id: str, target: AssistantMessage) -> None:
+        """Move a running call below a follow-up while retaining its output."""
+        for key, old in list(self._tools.items()):
+            if call_id not in old.call_ids or old.phase not in {"start", "output"}:
+                continue
+            card = old.continuation()
+            await target._mount_tool(key, card)
+            del self._tools[key]
+            for file_key, tool in list(self._file_tools.items()):
+                if tool is old:
+                    target._file_tools[file_key] = card
+                    del self._file_tools[file_key]
+            block = old._cluster_owner or old
+            if old._cluster_owner is not None:
+                cluster = old._cluster_owner
+                cluster.tools.remove(old)
+                cluster._retree()
+                cluster._refresh_head()
+            await old.remove()
+            if isinstance(block, ToolCluster) and block.tools:
+                continue
+            if block in self._activity_blocks:
+                index = self._activity_blocks.index(block)
+                self._activity_blocks.remove(block)
+                if index < self._activity_start:
+                    self._activity_start -= 1
+            self._pinned_activity.discard(block)
+            if isinstance(block, ToolCluster):
+                if self._cluster is block:
+                    self._cluster = None
+                await block.remove()
+        self._refresh_history_controls()
+
+    async def _mount_tool(self, key: str, widget: ToolCall) -> None:
+        preview = await self._ready_preview()
+        if preview is None:
+            return
+        self._tools[key] = widget
+        family = tool_cluster_kind(widget.tool_name)
+        if widget.tool_name == "manage_files" and widget.arguments.get("action") in {"delete", "move", "copy"}:
+            family = "edit"
+        if family:
+            cluster = await self._ensure_cluster(family)
+            if cluster is not None:
+                await cluster.add_call(widget)
+        else:
+            self._cluster = None
+            await self.mount(widget, before=preview)
+            self._register_activity(widget)
+
     async def tool_event(
         self,
         call_id: str,
@@ -1836,21 +1908,18 @@ class AssistantMessage(Vertical):
             return
         key = call_id or f"{name}:{len(self._tools)}"
         widgets = [tool for tool in self._tools.values() if key in tool.call_ids]
+        if not widgets and name == "board" and phase == "start" and arguments.get("task_id"):
+            # Retrying a completion prerequisite updates its existing card.
+            widgets = [tool for tool in self._tools.values() if tool.validation_pending and all(
+                tool.arguments.get(field) == arguments.get(field)
+                for field in ("action", "task_id", "status")
+            )]
+            if widgets:
+                widgets = widgets[-1:]
+                widgets[0].adopt(key, arguments)
         if not widgets:
             widget = ToolCall(key, name, arguments)
-            self._tools[key] = widget
-            family = tool_cluster_kind(name)
-            if name == "manage_files" and arguments.get("action") in {"delete", "move", "copy"}:
-                family = "edit"
-            if family:
-                cluster = await self._ensure_cluster(family)
-                if cluster is None:
-                    return
-                await cluster.add_call(widget)
-            else:
-                self._cluster = None
-                await self.mount(widget, before=preview)
-                self._register_activity(widget)
+            await self._mount_tool(key, widget)
             widgets = [widget]
         for widget in widgets:
             if phase == "start":
@@ -2871,6 +2940,8 @@ class Composer(TextArea):
         shell = self._shell()
         if shell is not None:
             shell.set_focus(True)
+        self._input_frame = None
+        self.call_after_refresh(self._paint_input)
 
     def on_blur(self) -> None:
         shell = self._shell()
@@ -2905,11 +2976,10 @@ class Composer(TextArea):
             insert = token
         else:
             insert = payload
-        if not self.text.strip():
-            self.load_text(insert)
-            self.move_cursor(self.document.end)
-            return
-        self.replace(insert, *self.selection, maintain_selection_offset=False)
+        self.history.checkpoint()
+        selection = ((0, 0), self.document.end) if not self.text.strip() else self.selection
+        self.replace(insert, *selection, maintain_selection_offset=False)
+        self.history.checkpoint()
 
     async def _on_paste(self, event: events.Paste) -> None:
         event.prevent_default()
@@ -2947,9 +3017,15 @@ class Composer(TextArea):
         self._paint_input()
 
     def _paint_input(self) -> None:
-        state = (self.text, self.selection, self.scroll_offset, self.region)
+        state = (self.text, self.selection, self.scroll_offset, self.region, self._cursor_visible)
         if state != self._input_frame and paint_input(self):
             self._input_frame = state
+
+    async def _on_mouse_up(self, event: events.MouseUp) -> None:
+        await super()._on_mouse_up(event)
+        # MouseDown hides the cursor. Repaint once selection ends, even when
+        # its position is unchanged and live output is awaiting layout.
+        self._paint_input()
 
     def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
         self._paint_input()
@@ -2981,12 +3057,16 @@ class Composer(TextArea):
     async def _paste_from_clipboard(self) -> None:
         from navin.tui.clipboard import pick_paste_text, read_clipboard
 
+        if getattr(self.app, "_copy_running", False) and self.app.clipboard:
+            self._insert_paste(self.app.clipboard)
+            return
         generation = self._paste_generation
+        snapshot = (self.text, self.selection)
         try:
             os_text = await asyncio.to_thread(read_clipboard)
         except Exception:  # noqa: BLE001 - clipboard failures must not close the chat
             os_text = ""
-        if generation != self._paste_generation:
+        if generation != self._paste_generation or snapshot != (self.text, self.selection):
             return
         text = pick_paste_text(self.app.clipboard, os_text)
         if text:

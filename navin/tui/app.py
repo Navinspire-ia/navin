@@ -62,6 +62,7 @@ from navin.tui.runtime import (
     UiChoiceClosed,
     UiChoiceRequested,
     UiContextCompacted,
+    UiDisplayError,
     UiEngineError,
     UiEvent,
     UiFileEdit,
@@ -470,8 +471,8 @@ class NavinApp(App[None]):
         self.slash_rows: list[dict[str, Any]] = [dict(row) for row in _TUI_SLASH]
         self._current: AssistantMessage | None = None
         # Bubbles closed early by a mid-turn "Send now" message. They still
-        # own the tool cards that were running, and get their final marks at
-        # turn end like any other bubble.
+        # own earlier activity. Live tool cards move to the current bubble
+        # when another event arrives, and all bubbles finish at turn end.
         self._parked_bubbles: list[AssistantMessage] = []
         self._last_speaker: str | None = None
         self._render_token = 0
@@ -481,6 +482,10 @@ class NavinApp(App[None]):
         self._pending_approvals: dict[str, ApprovalCard] = {}
         self._pending_choices: dict[str, ChoiceCard] = {}
         self._retry_wait_note: SystemNote | None = None
+        self._display_error_note: SystemNote | None = None
+        self._display_error_timer = None
+        self._pending_copy: tuple[str, bool] | None = None
+        self._copy_running = False
         self._activity: list[str] = []
         self._history_index: int | None = None
         self._history_draft = ""
@@ -1040,6 +1045,21 @@ class NavinApp(App[None]):
     async def _note(self, text: str, level: str = "info") -> None:
         await self.transcript.add(SystemNote(text, level))
 
+    async def _retire_display_error_note(self) -> None:
+        if self._display_error_timer is not None:
+            self._display_error_timer.stop()
+            self._display_error_timer = None
+        note, self._display_error_note = self._display_error_note, None
+        if note is not None and note.is_attached:
+            note.display = False
+            await note.remove()
+
+    async def _expire_display_error_note(self) -> None:
+        # The timer is executing this callback. Stopping it here would cancel
+        # this task while Textual is still removing the note.
+        self._display_error_timer = None
+        await self._retire_display_error_note()
+
     async def _retire_retry_wait_note(self) -> None:
         """Drop the stale "retrying" note once a turn runs again.
 
@@ -1071,13 +1091,27 @@ class NavinApp(App[None]):
         return name or raw or "navin"
 
     async def _ensure_assistant(self) -> AssistantMessage:
+        # Notes, prompts and update notices must not stay below live output.
+        # Resume after them, just as we do after a mid-turn user message.
+        children = self.transcript.children
+        tail = children[-1] if children else None
+        # A temporary display warning disappears on recovery. It must not
+        # leave an empty assistant segment behind when the next update works.
+        if tail is self._display_error_note:
+            tail = children[-2] if len(children) > 1 else None
+        if self._current is not None and (
+            not self._current.is_attached
+            or (tail is not None and tail is not self._current)
+        ):
+            await self._park_current_bubble()
         if self._current is None:
             self._current = AssistantMessage(
                 self._model_label(), show_head=self._last_speaker != "assistant"
             )
             self._last_speaker = "assistant"
-            await self.transcript.add(self._current)
-            return self._current
+            block = self._current
+            await self.transcript.add(block)
+            return block
         if self._current.finished:
             self._current.finished = False
         return self._current
@@ -1087,8 +1121,8 @@ class NavinApp(App[None]):
 
         The follow-up then reads like a normal chat exchange: partial reply,
         user message, then the agent continues in a fresh bubble below it.
-        The parked bubble keeps its tool cards; their end events are routed
-        back to it by ``_bubble_for_tool``.
+        Completed activity stays here; live tool cards move below the message
+        when their next event arrives.
         """
         bubble = self._current
         self._current = None
@@ -1108,6 +1142,14 @@ class NavinApp(App[None]):
             if bubble.has_tool(call_id):
                 return bubble
         return None
+
+    async def _continue_tool_bubble(self, call_id: str) -> AssistantMessage:
+        owner = self._bubble_for_tool(call_id)
+        current = await self._ensure_assistant()
+        if owner is not None and owner is not current:
+            await owner.continue_tool_in(call_id, current)
+            return current if current.has_tool(call_id) else owner
+        return current
 
     async def _finish_parked_bubbles(
         self, *, latency_ms: int | None, model: str | None, preset: str | None
@@ -1547,6 +1589,18 @@ class NavinApp(App[None]):
     # -- runtime events ---------------------------------------------------
 
     async def _on_runtime_event(self, event: UiEvent) -> None:
+        await self._render_runtime_event(event)
+        if not isinstance(event, UiDisplayError):
+            await self._retire_display_error_note()
+
+    async def _render_runtime_event(self, event: UiEvent) -> None:
+        if isinstance(event, UiDisplayError):
+            if self._display_error_note is None or not self._display_error_note.is_attached:
+                note = SystemNote(escape(event.text), "quiet")
+                self._display_error_note = note
+                await self.transcript.add(note)
+                self._display_error_timer = self.set_timer(5, self._expire_display_error_note)
+            return
         if isinstance(event, UiTurnStarted):
             self._stop_pending = False
             self._awaiting_reply = True
@@ -1572,7 +1626,7 @@ class NavinApp(App[None]):
             self.transcript.follow()
             return
         if isinstance(event, UiToolEvent):
-            block = self._bubble_for_tool(event.call_id) or await self._ensure_assistant()
+            block = await self._continue_tool_bubble(event.call_id)
             await block.tool_event(
                 event.call_id,
                 event.name,
@@ -1598,7 +1652,7 @@ class NavinApp(App[None]):
             return
         if isinstance(event, UiFileEdit):
             if self.prefs.show_tools:
-                block = await self._ensure_assistant()
+                block = await self._continue_tool_bubble(event.call_id)
                 await block.note_file_edit(
                     event.path, event.added, event.removed, diff=event.diff,
                     call_id=event.call_id, kind=event.kind, phase=event.phase,
@@ -1644,11 +1698,7 @@ class NavinApp(App[None]):
             self._awaiting_reply = False
             # The turn-end signal can overtake the final message. Keep writing
             # into the same bubble instead of opening a second one mid-sentence.
-            block = self._current
-            if block is None:
-                block = await self._ensure_assistant()
-            elif block.finished:
-                block.finished = False
+            block = await self._ensure_assistant()
             if block.text.strip() != event.text.strip():
                 await block.set_text(event.text, render_as=event.render_as)
             else:
@@ -1714,12 +1764,9 @@ class NavinApp(App[None]):
                 f"{escape(event.title)}{detail}",
                 event.level if event.level in {"warning", "error", "success"} else "info",
             )
-            self.notify(
-                event.title,
-                severity="warning" if event.level in {"warning", "error"} else "information",
-            )
             return
         if isinstance(event, UiRetryWait):
+            await self._retire_retry_wait_note()
             note = SystemNote(f"[$warning]{escape(event.text)}[/]", "warning")
             self._retry_wait_note = note
             await self.transcript.add(note)
@@ -1738,7 +1785,6 @@ class NavinApp(App[None]):
             self._pending_approvals[event.request_id] = card
             self._sync_shortcuts()
             await self.transcript.add(card)
-            self.notify(f"Permission needed: {event.tool}", severity="warning")
             self._set_status("[$warning]approval pending: y / a / n[/]")
             return
         if isinstance(event, UiApprovalClosed):
@@ -1762,7 +1808,6 @@ class NavinApp(App[None]):
             self._pending_choices[event.request_id] = card
             self._sync_shortcuts()
             await self.transcript.add(card)
-            self.notify("Navin asks a question", severity="information")
             return
         if isinstance(event, UiChoiceClosed):
             card = self._pending_choices.pop(event.request_id, None)
@@ -2217,7 +2262,7 @@ class NavinApp(App[None]):
 
     def copy_to_clipboard(self, text: str, *, to_os: bool = True, quiet: bool = False) -> bool:
         """Keep the in-app copy always. Paste with Ctrl+V / Cmd+V."""
-        from navin.tui.clipboard import osc52_allowed, write_os_clipboard
+        from navin.tui.clipboard import osc52_allowed
         from navin.utils.tool_hints import clip_transcript
 
         payload = clip_transcript(text)
@@ -2225,18 +2270,40 @@ class NavinApp(App[None]):
             return False
         self._clipboard = payload
         large = not osc52_allowed(payload)
-        os_ok = write_os_clipboard(payload) if to_os else False
         if to_os and not large:
             super().copy_to_clipboard(payload)
-        if large:
-            self._write_last_copy(payload)
+        self._pending_copy = (payload, to_os)
+        if not self._copy_running:
+            self._copy_running = True
+            self.run_worker(self._flush_clipboard(), group="clipboard-write")
         if not quiet:
             if large:
                 kb = max(1, len(payload.encode("utf-8")) // 1024)
                 self.notify(f"Copied {kb} KB", timeout=2)
-            elif to_os and not os_ok:
+            elif to_os:
                 self.notify("Copied", timeout=1.5)
         return True
+
+    async def _flush_clipboard(self) -> None:
+        """Serialize host writes and coalesce selection changes off the UI thread."""
+        from navin.tui.clipboard import osc52_allowed, write_os_clipboard
+
+        def write(payload: str, to_os: bool) -> None:
+            # A missing codec or unavailable host backend must not stop typing.
+            with contextlib.suppress(Exception):
+                if to_os:
+                    write_os_clipboard(payload)
+            if not osc52_allowed(payload):
+                self._write_last_copy(payload)
+
+        try:
+            while self._pending_copy is not None:
+                await asyncio.sleep(0.08)
+                pending, self._pending_copy = self._pending_copy, None
+                if pending is not None:
+                    await asyncio.to_thread(write, *pending)
+        finally:
+            self._copy_running = False
 
     def _selected_text(self) -> str:
         selected = ""

@@ -127,6 +127,79 @@ class ConsoleDedupTest(unittest.TestCase):
         self.assertEqual(len(issues), 3)
 
 
+class PortAgnosticHmrFloodTest(unittest.TestCase):
+    """The collapse must not depend on the dev server's id, port, or host."""
+
+    def setUp(self) -> None:
+        self.session = _BrowserSession(BrowserToolConfig())
+
+    def test_hmr_retries_with_rotating_ids_collapse(self) -> None:
+        for i in range(6):
+            self.session.log_console(
+                "[error] WebSocket connection to "
+                f"'ws://localhost:3010/_next/webpack-hmr?id=tok{i}zz-ABC' "
+                "failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+            )
+        entries = list(self.session.console)
+        self.assertEqual(len(entries), 1, entries)
+        self.assertIn("(x 6)", entries[0])
+
+    def test_requestfailed_hmr_flood_on_another_port_and_ip_collapses(self) -> None:
+        for i in range(4):
+            self.session.log_console(
+                "[requestfailed] GET http://192.168.1.50:4321/_next/webpack-hmr"
+                f"?id=rt{i}QW-9x - net::ERR_INVALID_HTTP_RESPONSE"
+            )
+        entries = list(self.session.console)
+        self.assertEqual(len(entries), 1, entries)
+        self.assertIn("(x 4)", entries[0])
+
+    def test_masking_only_hides_the_id_not_the_url(self) -> None:
+        self.session.log_console(
+            "[error] WebSocket connection to 'ws://127.0.0.1:3010/_next/webpack-hmr?id=a1' failed: x"
+        )
+        self.session.log_console(
+            "[error] WebSocket connection to 'ws://127.0.0.1:3010/_next/other?id=a2' failed: x"
+        )
+        self.assertEqual(len(list(self.session.console)), 2)
+
+    def test_react_devtools_ad_never_reaches_the_log(self) -> None:
+        page = _FakePage()
+        self.session._wire_events(page)
+        on_console = page.handlers["console"]
+        on_console(
+            _FakeMsg(
+                "log",
+                "Download the React DevTools for a better development "
+                "experience: https://react.dev/link/react-devtools",
+            )
+        )
+        on_console(_FakeMsg("error", "real problem"))
+        self.assertEqual(list(self.session.console), ["[error] real problem"])
+
+
+class ConsoleReadHintTest(unittest.TestCase):
+    def test_hmr_failures_carry_a_do_not_retry_hint(self) -> None:
+        tool = BrowserTool()
+        session = _BrowserSession(BrowserToolConfig())
+        for _ in range(30):
+            session.log_console(
+                "[error] WebSocket connection to "
+                "'ws://127.0.0.1:3010/_next/webpack-hmr?id=abc' "
+                "failed: Error during WebSocket handshake: net::ERR_INVALID_HTTP_RESPONSE"
+            )
+        out = tool._format_console(session)
+        self.assertIn("(x 30)", out)
+        self.assertIn("dev server (HMR)", out)
+        self.assertIn("instead of retrying", out)
+
+    def test_clean_console_gets_no_hint(self) -> None:
+        tool = BrowserTool()
+        session = _BrowserSession(BrowserToolConfig())
+        session.log_console("[log] ready")
+        self.assertNotIn("hot-reload", tool._format_console(session))
+
+
 class BoundedNavigationTest(unittest.IsolatedAsyncioTestCase):
     async def test_success_on_first_attempt_returns_none(self) -> None:
         tool = BrowserTool()

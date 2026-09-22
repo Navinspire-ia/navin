@@ -82,6 +82,10 @@ class BoardError(Exception):
         self.status = status
 
 
+class BoardValidationPendingError(BoardError):
+    """The task stays open until its required verification is complete."""
+
+
 def board_dir_for_project(project_path: Path | str) -> Path:
     return Path(project_path).expanduser() / ".navin" / "board"
 
@@ -510,12 +514,12 @@ class ProjectBoardStore:
                 merged_evidence if isinstance(merged_evidence, str) else ""
             ).strip()
             if merged_validation in ("test", "lint", "verify") and not evidence_text:
-                raise BoardError(
+                raise BoardValidationPendingError(
                     f"cannot mark {task_id} done: validation={merged_validation} "
                     "requires evidence (test_run / verify / lint output)"
                 )
             if acceptance_text and not evidence_text:
-                raise BoardError(
+                raise BoardValidationPendingError(
                     f"cannot mark {task_id} done: the task has acceptance criteria "
                     "but no evidence; record how each criterion was verified in "
                     "the evidence field first"
@@ -539,7 +543,7 @@ class ProjectBoardStore:
                     require_tests=(merged_validation == "test"),
                 )
                 if problem:
-                    raise BoardError(f"cannot mark {task_id} done: {problem}")
+                    raise BoardValidationPendingError(f"cannot mark {task_id} done: {problem}")
         with self._lock:
             tasks = self.read_tasks()
             task = self._find(tasks, task_id)

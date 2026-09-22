@@ -598,9 +598,24 @@ def file_operation_label(operation: str) -> str:
 
 def is_validation_pending(name: str, error: str | None) -> bool:
     """Recognize current and saved completion prerequisites, never permission errors."""
-    return name in {"board", "update_goal"} and bool(error) and error.lstrip().startswith((
+    if name not in {"board", "update_goal"} or not error:
+        return False
+    text = error.lstrip()
+    if text.startswith((
         "Validation pending: task remains open.",
         "Validation required before closing this work.",
+    )):
+        return True
+    # Older board results used the generic error prefix for these prerequisites.
+    text = text.removeprefix("Error: ")
+    if name != "board" or not text.startswith("cannot mark ") or " done: " not in text:
+        return False
+    reason = text.split(" done: ", 1)[1]
+    return reason.startswith((
+        "validation=", "the task has acceptance criteria but no evidence;",
+        "no verification run is recorded for this project.",
+        "the last verification run (", "the last passing verification is ",
+        "the last verification passed but did not run any tests,",
     ))
 
 

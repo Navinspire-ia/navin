@@ -39,6 +39,7 @@ from navin.board.store import (
     TASK_STATUSES,
     TASK_VALIDATIONS,
     BoardError,
+    BoardValidationPendingError,
     ProjectBoardStore,
 )
 from navin.bus.notify import publish_notification
@@ -518,6 +519,14 @@ class BoardTool(Tool):
                 fingerprint=fingerprint,
                 tokens=tokens,
                 replace=replace,
+            )
+        except BoardValidationPendingError as e:
+            return ToolResult.error(
+                "Validation pending: task remains open.\n"
+                f"{e.message}\n"
+                "Continue the required validation automatically. Retry closing only after it passes. "
+                "This is a validation prerequisite, not a request for user permission.",
+                recovery_hint="",
             )
         except BoardError as e:
             return ToolResult.error(f"Error: {e.message}")

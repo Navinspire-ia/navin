@@ -244,6 +244,11 @@ class UiEngineError(UiEvent):
     text: str
 
 
+@dataclass(frozen=True)
+class UiDisplayError(UiEvent):
+    text: str
+
+
 # ---------------------------------------------------------------------------
 # Status snapshot
 # ---------------------------------------------------------------------------
@@ -342,6 +347,7 @@ class TuiRuntime:
         self._turn_started_at: float | None = None
         self._streamed_this_turn = False
         self._closed = False
+        self._display_error_reported = False
         self._license_sync: Any = None
         from navin.tui.exit_summary import CliUsageHook
 
@@ -537,10 +543,18 @@ class TuiRuntime:
             result = self._on_event(event)
             if asyncio.iscoroutine(result):
                 await result
+            if not isinstance(event, UiDisplayError):
+                self._display_error_reported = False
         except Exception:  # noqa: BLE001 - UI failures must not kill the engine
             logger.exception("TUI event handler failed for {}", type(event).__name__)
-            if not isinstance(event, UiEngineError):
-                await self._emit(UiEngineError("Could not display a chat event. The CLI is still available."))
+            if not isinstance(event, UiDisplayError):
+                await self._report_display_error()
+
+    async def _report_display_error(self) -> None:
+        if self._display_error_reported or self._closed:
+            return
+        self._display_error_reported = True
+        await self._emit(UiDisplayError("A chat update could not be displayed. Work is continuing."))
 
     def _is_ours(self, msg: OutboundMessage) -> bool:
         if msg.channel == "system":
@@ -587,7 +601,7 @@ class TuiRuntime:
                 await asyncio.sleep(0)
             except Exception:  # noqa: BLE001
                 logger.exception("TUI failed to dispatch outbound message")
-                await self._emit(UiEngineError("Could not display a response. Check /history or send another message."))
+                await self._report_display_error()
 
     async def _dispatch(self, msg: OutboundMessage) -> None:
         event = outbound_event_from_message(msg)

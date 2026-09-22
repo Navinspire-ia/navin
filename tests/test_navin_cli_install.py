@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -61,6 +64,10 @@ def test_posix_script_uses_official_channel() -> None:
     assert "cd your-project && navin-cli" in text
     assert "https://navin.live/en/docs/cli" in text
     assert "_print_ready" in text
+    assert "sudo pacman -U --noconfirm --needed" in text
+    assert "pkexec pacman -U --noconfirm --needed" in text
+    assert "install_with_pacman" in text
+    assert "omarchy" in text
 
 
 def test_install_route_rewrites_only_loopback() -> None:
@@ -227,3 +234,175 @@ def test_generated_scripts_match_sources() -> None:
     windows_lit = rest.split(";\n", 1)[0]
     assert json.loads(posix_lit) == POSIX.read_text(encoding="utf-8")
     assert json.loads(windows_lit) == WINDOWS.read_text(encoding="utf-8")
+
+
+def _run_installer_functions(tmp_path: Path, script: str) -> subprocess.CompletedProcess:
+    functions = POSIX.read_text(encoding="utf-8").split('\nOS="$(os_name)"', 1)[0]
+    env = os.environ | {"NAVIN_PREFIX": str(tmp_path / "prefix"), "TMPDIR": str(tmp_path)}
+    return subprocess.run(
+        ["bash", "-c", functions + "\n" + script], env=env,
+        text=True, capture_output=True, timeout=30,
+    )
+
+
+def _cli_archive(tmp_path: Path, name: str, *, broken: bool = False) -> Path:
+    tree = tmp_path / name / "navin-dist"
+    tree.mkdir(parents=True)
+    engine = tree / "navin"
+    engine.write_text(
+        '#!/bin/sh\nif [ "$1" = python ]; then\n'
+        f'  exit {1 if broken else 0}\nfi\nprintf "%s\\n" "{name}:$*"\n',
+        encoding="utf-8",
+    )
+    engine.chmod(0o755)
+    archive = tmp_path / f"{name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as bundle:
+        bundle.add(tree, arcname="navin-dist")
+    return archive
+
+
+def test_reinstall_preserves_running_engine_and_switches_both_commands(tmp_path: Path) -> None:
+    first = _cli_archive(tmp_path, "first")
+    second = _cli_archive(tmp_path, "second")
+    legacy = tmp_path / "prefix/share/navin/pkg/navin-dist/navin"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("previous running archive", encoding="utf-8")
+    proc = _run_installer_functions(tmp_path, f'''
+install_from_tarball {shlex.quote(str(first))}
+"$BIN_DIR/navin" --version
+install_from_tarball {shlex.quote(str(second))}
+"$BIN_DIR/navin" --version
+"$BIN_DIR/navin-cli" "a message with spaces"
+''')
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [
+        "first:--version", "second:--version", "second:tui a message with spaces",
+    ]
+    trees = list((tmp_path / "prefix/share/navin/installs").glob("*/navin-dist/navin"))
+    assert len(trees) == 2
+    assert any("first:" in engine.read_text() for engine in trees)
+    assert legacy.read_text() == "previous running archive"
+
+
+@pytest.mark.parametrize("bad_payload", ["engine", "archive"])
+def test_failed_reinstall_keeps_previous_commands(tmp_path: Path, bad_payload: str) -> None:
+    first = _cli_archive(tmp_path, "first")
+    proc = _run_installer_functions(tmp_path, f"install_from_tarball {shlex.quote(str(first))}")
+    assert proc.returncode == 0, proc.stderr
+    bindir = tmp_path / "prefix/bin"
+    before = {name: (bindir / name).read_bytes() for name in ("navin", "navin-cli")}
+    bad = _cli_archive(tmp_path, "broken", broken=True)
+    if bad_payload == "archive":
+        bad.write_bytes(b"truncated download")
+    proc = _run_installer_functions(tmp_path, f"install_from_tarball {shlex.quote(str(bad))}")
+    assert proc.returncode != 0
+    assert {name: (bindir / name).read_bytes() for name in before} == before
+    assert len(list((tmp_path / "prefix/share/navin/installs").iterdir())) == 1
+    assert subprocess.check_output([str(bindir / "navin"), "--version"], text=True) == "first:--version\n"
+
+
+@pytest.mark.parametrize("launcher", ["root", "sudo", "pkexec", "missing", "failure"])
+def test_pacman_install_and_launcher_fallbacks(tmp_path: Path, launcher: str) -> None:
+    engine = tmp_path / "system/usr/lib/Navin/navin-dist/navin"
+    engine.parent.mkdir(parents=True)
+    engine.write_text('#!/bin/sh\nexit 0\n', encoding="utf-8")
+    engine.chmod(0o755)
+    legacy = tmp_path / "prefix/share/navin/pkg/active-archive"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("running", encoding="utf-8")
+    script = f'''
+id() {{ echo {0 if launcher == "root" else 1000}; }}
+command() {{
+  case "$*" in
+    '-v pacman') return 0 ;;
+    '-v sudo') [ {shlex.quote(launcher)} = sudo ] || [ {shlex.quote(launcher)} = failure ] ;;
+    '-v pkexec') [ {shlex.quote(launcher)} = pkexec ] ;;
+    *) builtin command "$@" ;;
+  esac
+}}
+pacman() {{
+  if [ "$1" = -Qlq ]; then
+    printf '%s\\n' {shlex.quote(str(engine))}
+  else
+    printf 'pacman:%s\\n' "$*"
+    [ {shlex.quote(launcher)} != failure ]
+  fi
+}}
+sudo() {{ printf 'sudo\\n'; "$@"; }}
+pkexec() {{ printf 'pkexec\\n'; "$@"; }}
+install_from_pacman '/tmp/official package.pkg.tar.zst'
+'''
+    proc = _run_installer_functions(tmp_path, script)
+    assert legacy.read_text() == "running"
+    bindir = tmp_path / "prefix/bin"
+    if launcher in {"missing", "failure"}:
+        assert proc.returncode != 0
+        assert not (bindir / "navin").exists()
+    else:
+        assert proc.returncode == 0, proc.stderr
+        assert "pacman:-U --noconfirm --needed /tmp/official package.pkg.tar.zst" in proc.stdout
+        for name in ("navin", "navin-cli"):
+            assert str(engine) in (bindir / name).read_text()
+        if launcher != "root":
+            assert proc.stdout.startswith(f"{launcher}\n")
+
+
+@pytest.mark.parametrize(
+    ("family", "pacman", "expected"),
+    [("arch", True, "navin-2.0.7-1-x86_64.pkg.tar.zst"),
+     ("other", True, "navin-2.0.7-1-x86_64.pkg.tar.zst"),
+     ("debian", False, "navin_2.0.7_amd64.deb"),
+     ("other", False, "navin-cli-2.0.7-linux-x64.tar.gz")],
+)
+def test_linux_package_selection(tmp_path: Path, family: str, pacman: bool, expected: str) -> None:
+    manifest = tmp_path / "releases.json"
+    manifest.write_text(json.dumps([
+        "navin-2.0.7-1-x86_64.pkg.tar.zst", "navin_2.0.7_amd64.deb",
+        "navin-cli-2.0.7-linux-x64.tar.gz",
+    ]), encoding="utf-8")
+    proc = _run_installer_functions(tmp_path, f'''
+linux_family() {{ printf '%s\\n' {shlex.quote(family)}; }}
+can_extract() {{ return 0; }}
+command() {{
+  if [ "$*" = '-v pacman' ]; then return {0 if pacman else 1}; fi
+  builtin command "$@"
+}}
+pick_linux_file 2.0.7 {shlex.quote(str(manifest))}
+''')
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == expected
+
+
+def test_full_piped_install_checks_download_and_launches_both_commands(tmp_path: Path) -> None:
+    depot = tmp_path / "depot"
+    release = depot / "v2.0.7"
+    release.mkdir(parents=True)
+    name = "navin-cli-2.0.7-linux-x64.tar.gz"
+    archive = _cli_archive(tmp_path, "official")
+    shutil.copyfile(archive, release / name)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (release / "SHA256SUMS.txt").write_text(f"{digest}  {name}\n", encoding="utf-8")
+    (depot / "releases.json").write_text(json.dumps([
+        {"version": "2.0.7", "files": [name]},
+    ]), encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ | {
+        "HOME": str(home), "NAVIN_PREFIX": str(home / ".local"),
+        "NAVIN_DOWNLOAD_BASE": depot.as_uri(), "TMPDIR": str(tmp_path),
+        "SHELL": "/bin/bash",
+    }
+    proc = subprocess.run(
+        ["bash"], input=POSIX.read_text(), env=env,
+        text=True, capture_output=True, timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "checking the installed engine" in proc.stderr
+    assert "installed:" in proc.stderr
+    for command, args, expected in (
+        ("navin", ["--version"], "official:--version\n"),
+        ("navin-cli", ["--help"], "official:tui --help\n"),
+    ):
+        assert subprocess.check_output(
+            [str(home / ".local/bin" / command), *args], env=env, text=True,
+        ) == expected

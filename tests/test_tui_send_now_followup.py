@@ -31,12 +31,17 @@ class ScriptedProvider(LLMProvider):
         super().__init__()
         self.responses = deque(responses)
         self.calls: list[list[dict]] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
 
     def get_default_model(self):
         return "test-send-now"
 
     async def chat(self, **kwargs):
         self.calls.append(list(kwargs.get("messages") or []))
+        if len(self.calls) == 1:
+            self.started.set()
+            await self.release.wait()
         return self.responses.popleft()
 
     async def chat_with_retry(self, **kwargs):
@@ -83,15 +88,15 @@ def test_followup_sent_mid_turn_reaches_model_and_history(tmp_path):
             ))
             # Wait until the turn actually started (first model call in flight),
             # then send the follow-up exactly like the TUI "Send now" does.
-            for _ in range(200):
-                if provider.calls:
-                    break
-                await asyncio.sleep(0.01)
-            assert provider.calls, "the first turn never reached the model"
+            await asyncio.wait_for(provider.started.wait(), 5)
             await loop.bus.publish_inbound(InboundMessage(
                 channel="cli", sender_id="user", chat_id="direct",
                 content="urgent follow-up", metadata={"_wants_stream": False},
             ))
+            async with asyncio.timeout(5):
+                while loop.bus.inbound_size:
+                    await asyncio.sleep(0.001)
+            provider.release.set()
 
             async with asyncio.timeout(30):
                 while True:

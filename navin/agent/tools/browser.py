@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import time
 import uuid
 from collections import deque
@@ -57,6 +58,16 @@ _INSTALL_HINT = (
     "pip install playwright && playwright install chromium "
     "(add --with-deps on Linux if system libraries are missing), then retry."
 )
+
+# React's dev-mode notice is an ad, not a page problem: it only pollutes
+# console reads, so it never reaches the log.
+_REACT_DEVTOOLS_AD_PREFIX = "Download the React DevTools for a better development experience"
+
+# Hot-reload websocket retries carry a fresh session id in the URL query
+# (?id=...) on every attempt. Masking it lets consecutive retries collapse
+# into one "(x N)" line no matter which id, port, or host the dev server
+# happened to use.
+_VOLATILE_ID_RE = re.compile(r"([?&]id=)[A-Za-z0-9_\-=%]+")
 
 
 def _installed_chromium() -> str | None:
@@ -445,13 +456,19 @@ class _BrowserSession:
             await page.goto(url, wait_until="domcontentloaded")
         return page
 
+    @staticmethod
+    def _normalize_console_line(line: str) -> str:
+        return _VOLATILE_ID_RE.sub(r"\1<id>", line)
+
     def log_console(self, line: str) -> None:
         """Append a console line, collapsing consecutive identical repeats.
 
         One line plus a "(x N)" counter carries the same information as N
         copies and keeps the agent's console reads small and readable.
+        Volatile query ids (?id=...) are masked first, so a dev server's
+        hot-reload retries collapse regardless of session id, port, or host.
         """
-        base = line[:500]
+        base = self._normalize_console_line(line)[:500]
         if base == self._console_last_base:
             self._console_repeat += 1
             if self.console:
@@ -763,7 +780,10 @@ class _BrowserSession:
     def _wire_events(self, page: Any) -> None:
         def on_console(msg: Any) -> None:
             try:
-                self.log_console(f"[{msg.type}] {msg.text}")
+                text = msg.text or ""
+                if text.startswith(_REACT_DEVTOOLS_AD_PREFIX):
+                    return
+                self.log_console(f"[{msg.type}] {text}")
             except Exception:
                 pass
 
@@ -2173,4 +2193,12 @@ class BrowserTool(Tool):
         if not session.console:
             return "Console is empty (no messages since the last navigation)."
         entries = list(session.console)[-100:]
-        return "Console messages (most recent last):\n" + "\n".join(entries)
+        text = "Console messages (most recent last):\n" + "\n".join(entries)
+        if any("webpack-hmr" in e or "WebSocket handshake" in e for e in entries):
+            text += (
+                "\nNote: repeated hot-reload websocket failures come from the app's "
+                "dev server (HMR), not from the page being tested. The page usually "
+                "still works: inspect and interact with it instead of retrying "
+                "navigation or blaming the test target."
+            )
+        return text

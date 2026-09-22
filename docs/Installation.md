@@ -2,7 +2,9 @@
 
 ## 1. Official CLI one-liner
 
-The script reads the official `releases.json`. It prefers a CLI archive when published, otherwise it extracts the desktop package. It writes `navin` and `navin-cli` to the user PATH. No sudo on Linux. Default prefix: `~/.local`.
+The script reads the official `releases.json`. On Linux it prefers the native package for the distribution, then falls back to the CLI archive or another supported format. On hosts with `pacman`, including Arch and Omarchy, it installs the official `.pkg.tar.zst` with `sudo pacman -U` (or `pkexec` when `sudo` is absent), which registers the desktop launcher. Other Linux hosts extract the package without sudo. macOS prefers the CLI archive when available. It writes `navin` and `navin-cli` to the user PATH. Default prefix: `~/.local`.
+
+Extracted CLI packages are checked before the commands switch to the new engine. Reinstallations keep previous extraction directories so open CLI sessions can finish using them.
 
 Linux, macOS, WSL:
 

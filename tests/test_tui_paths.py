@@ -90,13 +90,24 @@ class ClipboardTests(unittest.TestCase):
     def test_windows_keeps_large_copies_in_app(self) -> None:
         large = "x" * 5000
         with (
-            patch("navin.tui.clipboard.sys.platform", "linux"),
+            patch("navin.tui.clipboard.sys.platform", "win32"),
             patch("navin.tui.clipboard.write_clipboard") as write,
         ):
             self.assertFalse(write_os_clipboard(large))
             write.assert_not_called()
             self.assertTrue(write_os_clipboard("short"))
             write.assert_called_once_with("short")
+
+    def test_native_linux_writes_large_copies(self) -> None:
+        large = "x" * 5000
+        with (
+            patch("navin.tui.clipboard.sys.platform", "linux"),
+            patch.dict("navin.tui.clipboard.os.environ", {}, clear=True),
+            patch("navin.tui.clipboard.shutil.which", return_value=None),
+            patch("navin.tui.clipboard.write_clipboard", return_value=True) as write,
+        ):
+            self.assertTrue(write_os_clipboard(large))
+            write.assert_called_once_with(large)
 
     def test_macos_writes_large_copies_to_pbcopy(self) -> None:
         large = "x" * 5000

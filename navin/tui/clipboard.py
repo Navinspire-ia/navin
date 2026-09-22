@@ -96,13 +96,17 @@ def write_os_clipboard(text: str) -> bool:
     """Write to the host clipboard when it will not trip a terminal paste guard.
 
     Windows Terminal intercepts Ctrl+V above 5 KiB. Large copies therefore stay
-    in-app on Windows / WSL so Ctrl+V remains a normal paste. macOS pbcopy has
-    no such limit; large copies go to the OS clipboard there.
+    in-app on Windows / WSL so Ctrl+V remains a normal paste. Native Linux and
+    macOS backends have no such limit.
     """
     payload = text or ""
     if not payload:
         return False
-    if osc52_allowed(payload) or sys.platform == "darwin":
+    windows = sys.platform == "win32" or (sys.platform != "darwin" and bool(
+        os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP")
+        or shutil.which("clip.exe") or shutil.which("powershell.exe")
+    ))
+    if osc52_allowed(payload) or not windows:
         return write_clipboard(payload)
     return False
 
@@ -199,7 +203,7 @@ def _write_windows_clipboard(text: str) -> bool:
                 timeout=8 if len(text) > 8000 else 3,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired, LookupError):
             result = None
         if result is not None and result.returncode == 0:
             return True

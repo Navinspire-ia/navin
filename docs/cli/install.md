@@ -18,7 +18,9 @@ Windows PowerShell:
 irm 'https://navin.live/install?win32=true' | iex
 ```
 
-The script reads the official `releases.json`, prefers a CLI archive when published, otherwise extracts the desktop package. It puts `navin` and `navin-cli` on the user PATH (no sudo on Linux).
+The script reads the official `releases.json`. On Linux it prefers the native package for the distribution, then falls back to the CLI archive or another supported format. On hosts with `pacman`, including Arch and Omarchy, it installs the official `.pkg.tar.zst` with `sudo pacman -U` (or `pkexec` when `sudo` is absent), which registers the desktop launcher. Other Linux hosts extract the package without sudo. macOS prefers the CLI archive when available. It writes `navin` and `navin-cli` to the user PATH. Default prefix: `~/.local`.
+
+Extracted CLI packages are checked before the commands switch to the new engine. Reinstallations keep previous extraction directories so open CLI sessions can finish using them.
 
 ```bash
 cd your-project
