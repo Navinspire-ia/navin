@@ -1,0 +1,222 @@
+- name: bug
+  description: Confirmed defect or unexpected behavior reported via the bug template.
+  color: "#d73a4a"
+- name: regression
+  description: Previously working behavior that broke after a change.
+  color: "#d93f0b"
+- name: enhancement
+  description: New capability or product surface requested via the feature template.
+  color: "#a2eeef"
+- name: support
+  description: Question or usage help reported via the support template.
+  color: "#0075ca"
+- name: documentation
+  description: Docs gap or copy change reported via the docs template.
+  color: "#0075ca"
+- name: security
+  description: Vulnerability or hardening concern reported via the security template.
+  color: "#b60205"
+- name: duplicate
+  description: This issue or pull request already exists.
+  color: "#cfd3d7"
+- name: wontfix
+  description: This will not be worked on.
+  color: "#ffffff"
+- name: invalid
+  description: This doesn't seem right.
+  color: "#e4e669"
+- name: question
+  description: Further information is requested.
+  color: "#d876e3"
+- name: "help wanted"
+  description: Extra attention is needed.
+  color: "#008672"
+- name: "good first issue"
+  description: Good for newcomers.
+  color: "#7057ff"
+- name: accessibility
+  description: Accessibility or a11y improvement issue.
+  color: "#f143ab"
+- name: "area: agent-runtime"
+  description: Issues touching the agent runtime, tool loop, or session orchestration.
+  color: "#1d76db"
+- name: "area: cli"
+  description: Issues in the navin-cli command surface, args, or help output.
+  color: "#1d76db"
+- name: "area: desktop-ui"
+  description: Issues in the desktop shell, native window, or tray controls.
+  color: "#1d76db"
+- name: "area: webui"
+  description: Issues in the browser-based WebUI or its build pipeline.
+  color: "#1d76db"
+- name: "area: gateway"
+  description: Issues in the local gateway HTTP API or websocket transports.
+  color: "#1d76db"
+- name: "area: api"
+  description: Issues in the public Python or HTTP API surface.
+  color: "#1d76db"
+- name: "area: memory"
+  description: Issues in memory store, recall, or persistence layers.
+  color: "#1d76db"
+- name: "area: skills"
+  description: Issues in skill loading, contracts, or runtime discovery.
+  color: "#1d76db"
+- name: "area: mcp"
+  description: Issues in Model Context Protocol servers, clients, or transports.
+  color: "#1d76db"
+- name: "area: providers"
+  description: Issues in provider adapters, auth, or model selection.
+  color: "#1d76db"
+- name: "area: world-model"
+  description: Issues in the world model state, telemetry, or projection layer.
+  color: "#1d76db"
+- name: "area: policy-learning"
+  description: Issues in policy learning, feedback, or preference storage.
+  color: "#1d76db"
+- name: "area: evaluations"
+  description: Issues in evaluation harness, benchmarks, or scoring.
+  color: "#1d76db"
+- name: "area: packaging"
+  description: Issues in packaging scripts, metadata, or installer logic.
+  color: "#1d76db"
+- name: "area: installers"
+  description: Issues in install flows, bootstrap scripts, or update paths.
+  color: "#1d76db"
+- name: "area: docs"
+  description: Issues in documentation site, guides, or reference copy.
+  color: "#1d76db"
+- name: "area: ci"
+  description: Issues in continuous integration workflows or pipeline scripts.
+  color: "#1d76db"
+- name: "area: security"
+  description: Security posture that is not a vulnerability report.
+  color: "#1d76db"
+- name: "area: performance"
+  description: Issues around latency, throughput, or resource use.
+  color: "#1d76db"
+- name: "area:git-import"
+  description: Issues in git import or repository ingestion.
+  color: "#1d76db"
+- name: "area:session-import"
+  description: Issues in importing prior sessions.
+  color: "#1d76db"
+- name: "area:external-sessions"
+  description: Issues with external session sources.
+  color: "#1d76db"
+- name: "area:file-picker"
+  description: Issues in the file picker dialog.
+  color: "#1d76db"
+- name: "platform: windows"
+  description: Issue applies to Windows builds and runtime.
+  color: "#5319e7"
+- name: "platform: macos-arm64"
+  description: Issue applies to Apple Silicon macOS builds and runtime.
+  color: "#5319e7"
+- name: "platform: macos-x64"
+  description: Issue applies to Intel macOS builds and runtime.
+  color: "#5319e7"
+- name: "platform: linux"
+  description: Issue applies to Linux desktop builds and runtime.
+  color: "#5319e7"
+- name: "platform: wsl"
+  description: Issue applies inside Windows Subsystem for Linux.
+  color: "#5319e7"
+- name: "platform: docker"
+  description: Issue applies inside the published Docker image.
+  color: "#5319e7"
+- name: "platform: source"
+  description: Issue applies to source builds from a cloned checkout.
+  color: "#5319e7"
+- name: "os:arch"
+  description: Issues on Arch Linux and Arch-based distros.
+  color: "#5319e7"
+- name: "os:omarchy"
+  description: Issues specific to the Omarchy distribution.
+  color: "#5319e7"
+- name: "packaging: msi"
+  description: Issue affects the Windows MSI installer artifact.
+  color: "#6f57ff"
+- name: "packaging: exe"
+  description: Issue affects the Windows EXE installer artifact.
+  color: "#6f57ff"
+- name: "packaging: dmg"
+  description: Issue affects the macOS DMG installer artifact.
+  color: "#6f57ff"
+- name: "packaging: appimage"
+  description: Issue affects the Linux AppImage artifact.
+  color: "#6f57ff"
+- name: "packaging: deb"
+  description: Issue affects the Debian/Ubuntu deb package artifact.
+  color: "#6f57ff"
+- name: "packaging: rpm"
+  description: Issue affects the Fedora/RHEL rpm package artifact.
+  color: "#6f57ff"
+- name: "packaging: pacman"
+  description: Issue affects the Arch pacman package artifact.
+  color: "#6f57ff"
+- name: "packaging: pkg-tar-zst"
+  description: Issue affects the Arch pkg-tar-zst artifact.
+  color: "#6f57ff"
+- name: "packaging: aur"
+  description: Issue affects the AUR package definition.
+  color: "#6f57ff"
+- name: "packaging: onefile"
+  description: Issue affects the cross-platform onefile binary.
+  color: "#6f57ff"
+- name: "packaging: cli-archive"
+  description: Issue affects the cross-platform CLI archive artifact.
+  color: "#6f57ff"
+- name: packaging:pyinstaller
+  description: Issues in the PyInstaller build pipeline.
+  color: "#6f57ff"
+- name: "severity: critical"
+  description: Causes data loss, security exposure, or a blocked install.
+  color: "#b60205"
+- name: "severity: high"
+  description: Breaks a primary workflow with no acceptable workaround.
+  color: "#d93f0b"
+- name: "severity: medium"
+  description: Breaks an edge case that has an existing workaround.
+  color: "#fbca04"
+- name: "severity: low"
+  description: Polish or cosmetic issue with no functional impact.
+  color: "#0e8a16"
+- name: "priority: P0"
+  description: Drop everything - blocking or production safety.
+  color: "#b60205"
+- name: "priority: P1"
+  description: Required for the current milestone or MVP.
+  color: "#d93f0b"
+- name: "priority: P2"
+  description: Important but not blocking the current milestone.
+  color: "#fbca04"
+- name: "priority: P3"
+  description: Follow-up or polish, schedule after the current push.
+  color: "#0e8a16"
+- name: "status: needs-triage"
+  description: Awaiting a maintainer to apply area and labels.
+  color: "#cccccc"
+- name: "status: needs-repro"
+  description: Awaiting reproduction steps from the reporter.
+  color: "#cccccc"
+- name: "status: needs-design"
+  description: Awaiting design or scope decision from a maintainer.
+  color: "#cccccc"
+- name: "status: ready"
+  description: Triaged and ready for someone to pick up.
+  color: "#cccccc"
+- name: "status: in-progress"
+  description: Someone is actively working on this issue.
+  color: "#cccccc"
+- name: "status: blocked"
+  description: Work cannot continue until an external dependency clears.
+  color: "#cccccc"
+- name: "status: stale"
+  description: Inactive for a long period and likely needs a refresh.
+  color: "#cccccc"
+- name: "ux:error-message"
+  description: Issues with user-facing error messages or copy.
+  color: "#ededed"
+- name: "ux:hidden-files"
+  description: Issues with hidden file handling in pickers or browsers.
+  color: "#ededed"
