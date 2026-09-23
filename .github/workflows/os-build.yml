@@ -1,0 +1,862 @@
+name: OS installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Which platforms to build
+        type: choice
+        default: linux
+        options: [linux, macos, windows, all]
+      claw_ref:
+        description: Forgejo navin-claw ref (closed-source build inputs)
+        required: true
+        default: prod-v2
+      release_tag:
+        description: GitHub Release tag to attach the signed installers
+        required: true
+        default: v2.0.7
+      sign_windows:
+        description: Azure Trusted Signing on Windows (403 if the Entra app cannot sign)
+        type: boolean
+        default: true
+
+concurrency:
+  group: os-build-${{ github.ref }}-${{ inputs.targets }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  NAVIN_SKIP_NATIVE: "1"
+  CARGO_INCREMENTAL: "0"
+  SUCCESS_ICON: '<img src="https://api.iconify.design/octicon:check-circle-fill-16.svg?color=%231f883d" width="16" alt="passed" />'
+  FAIL_ICON: '<img src="https://api.iconify.design/octicon:x-circle-fill-16.svg?color=%23cf222e" width="16" alt="failed" />'
+  SKIP_ICON: '<img src="https://api.iconify.design/octicon:skip-16.svg?color=%236e7781" width="16" alt="skipped" />'
+
+jobs:
+  test:
+    name: Pytest once
+    if: ${{ inputs.targets == 'all' }}
+    needs: [webui]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Install test extras
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: uv pip install --system -e ".[dev-tools,documents,api,studio]" beautifulsoup4 pytest-asyncio
+      - name: Download WebUI dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: webui-dist
+          path: ${{ steps.claw.outputs.dir }}/navin/web/dist
+      - name: Seed workspace heartbeat
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: |
+          mkdir -p .navin
+          cp navin/templates/HEARTBEAT.md .navin/HEARTBEAT.md
+      - name: Run pytest
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: python -m pytest tests/ -q
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CLAW_SHA: ${{ steps.claw.outputs.sha }}
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| Pytest once | ${icon} ${JOB_STATUS} | Unit tests on ubuntu only; no eval API keys |"
+            echo
+            echo "claw HEAD \`${CLAW_SHA}\`"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  webui:
+    name: WebUI bundle
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    continue-on-error: false
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install WebUI dependencies
+        working-directory: ${{ steps.claw.outputs.dir }}/webui
+        run: npm ci
+      - name: Build WebUI
+        working-directory: ${{ steps.claw.outputs.dir }}/webui
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: npm run build
+      - name: Build browser extensions
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: node browser-extension/build.mjs
+      - name: Upload WebUI dist
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webui-dist
+          path: ${{ steps.claw.outputs.dir }}/navin/web/dist
+          retention-days: 1
+      - name: Upload browser extension zips
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-extension-zips
+          path: ${{ steps.claw.outputs.dir }}/navin/browser_extension/*.zip
+          retention-days: 1
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| WebUI bundle | ${icon} ${JOB_STATUS} | Built once and shared with OS jobs |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  linux:
+    name: Linux x64 installers
+    needs: [webui]
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'linux' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: stable
+      - name: Match Cargo jobs to runner CPUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NUMBER_OF_PROCESSORS:-}" ]; then
+            jobs="${NUMBER_OF_PROCESSORS}"
+          elif jobs="$(nproc 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          elif jobs="$(sysctl -n hw.ncpu 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          else
+            echo "could not read the runner CPU count"
+            exit 1
+          fi
+          jobs="$(printf '%s' "${jobs}" | tr -d '[:space:]')"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "runner CPU count is not a positive integer: ${jobs}"
+            exit 1
+          fi
+          echo "CARGO_BUILD_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "Cargo build jobs: ${jobs}"
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-linux-${{ steps.claw.outputs.sha }}
+          restore-keys: |
+            cargo-registry-linux-
+      - name: Install Linux desktop build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev patchelf libssl-dev file \
+            desktop-file-utils gstreamer1.0-libav gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good libglib2.0-dev-bin xdg-utils \
+            squashfs-tools libgdk-pixbuf2.0-bin libgtk-3-0 libgstreamer1.0-0
+      - name: Download WebUI dist if present
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: webui-dist
+          path: ${{ steps.claw.outputs.dir }}/navin/web/dist
+      - name: Download browser extension zips
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-extension-zips
+          path: ${{ steps.claw.outputs.dir }}/navin/browser_extension
+      - name: Point packaging installs at uv
+        shell: bash
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: python "${GITHUB_WORKSPACE}/.github/scripts/use-uv-pip.py" .
+      - name: Re-pin rolling Linux ffmpeg
+        working-directory: ${{ steps.claw.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # johnvansickle publishes a rolling static build. The prod-v2 pin
+          # no longer matches, so re-pin linux-x64 in this checkout only.
+          uv pip install --system certifi
+          python packaging/ffmpeg_vendor.py --target linux-x64 --force --update-manifest
+      - name: Build Linux sidecar
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          if [ -f navin/web/dist/index.html ]; then
+            export NAVIN_SKIP_WEB_BUILD=1
+          fi
+          sh packaging/linux/build-offline.sh
+      - name: Smoke-test Linux sidecar
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: sh packaging/smoke-test.sh os/linux/bin/x64/navin-dist/navin
+      - name: Free disk before pacman restage
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: |
+          set -euo pipefail
+          python3 -c 'from pathlib import Path; p=Path("packaging/linux/build-appimage.sh"); t=p.read_text().replace("--deb \"$deb_src\"", "--deb \"$deb_dir/$deb_name\"", 1); m="# .pkg.tar.zst from the Tauri .deb"; e="# CI: use os/linux deb copy; drop cargo target before pacman\nrm -rf desktop/src-tauri/target\nrm -rf build/linux\n"; assert "$deb_dir/$deb_name" in t and m in t, "patch failed"; p.write_text(t.replace(m, e+m, 1)); print("patched")'
+      - name: Build AppImage deb rpm
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: sh packaging/linux/build-appimage.sh
+      - name: Stage Linux artifacts
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: |
+          set -euo pipefail
+          # Bundlers leave several GB of cargo target. Copying the 1.3G
+          # AppImage/deb/rpm tree on top of that filled the runner.
+          rm -rf desktop/src-tauri/target
+          rm -rf "${HOME}/.cache/tauri" || true
+          if [ -d os/linux/pacman ]; then
+            echo "pacman=yes" >> "${GITHUB_OUTPUT}"
+          else
+            echo "pacman=no" >> "${GITHUB_OUTPUT}"
+          fi
+          find os/linux -type f -printf '%p %s\n' > "${RUNNER_TEMP}/linux-files.txt"
+        id: stage
+      - name: Upload Linux installers to Release
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find os/linux -type f \( \
+            -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
+            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' \
+          \) | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no Linux installers to upload"
+            exit 1
+          fi
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" \
+              --notes "Signed OS installers. Closed-source inputs are not in this repository." \
+              --latest=false
+          fi
+          bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${files[@]}"
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-x64
+          path: |
+            ${{ steps.claw.outputs.dir }}/os/linux/appimage
+            ${{ steps.claw.outputs.dir }}/os/linux/deb
+            ${{ steps.claw.outputs.dir }}/os/linux/rpm
+            ${{ steps.claw.outputs.dir }}/os/linux/pacman
+          retention-days: 5
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PACMAN: ${{ steps.stage.outputs.pacman }}
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          pacman="${PACMAN:-no}"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| Linux x64 installers | ${icon} ${JOB_STATUS} | sidecar smoke, AppImage, deb, rpm, pacman if produced |"
+            echo
+            echo "pacman produced: \`${pacman}\`"
+            echo
+            echo "<details><summary>Staged files (names and sizes only)</summary>"
+            echo
+            echo '```'
+            cat "${RUNNER_TEMP}/linux-files.txt" 2>/dev/null || true
+            echo '```'
+            echo
+            echo "</details>"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  macos:
+    name: macOS ${{ matrix.arch }} DMG
+    needs: [webui]
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'macos' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          # Intel PyInstaller runs under Rosetta on this Apple Silicon runner.
+          # Rust cross-compiles the shell, and the DMG is packed here too.
+          - arch: x64
+            runner: macos-14
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: stable
+      - name: Match Cargo jobs to runner CPUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NUMBER_OF_PROCESSORS:-}" ]; then
+            jobs="${NUMBER_OF_PROCESSORS}"
+          elif jobs="$(nproc 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          elif jobs="$(sysctl -n hw.ncpu 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          else
+            echo "could not read the runner CPU count"
+            exit 1
+          fi
+          jobs="$(printf '%s' "${jobs}" | tr -d '[:space:]')"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "runner CPU count is not a positive integer: ${jobs}"
+            exit 1
+          fi
+          echo "CARGO_BUILD_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "Cargo build jobs: ${jobs}"
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ steps.claw.outputs.dir }}/desktop/src-tauri/target
+            ${{ steps.claw.outputs.dir }}/navin-sandbox/target
+          key: cargo-macos-${{ matrix.arch }}-${{ steps.claw.outputs.sha }}
+      - name: Download WebUI dist if present
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: webui-dist
+          path: ${{ steps.claw.outputs.dir }}/navin/web/dist
+      - name: Download browser extension zips
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-extension-zips
+          path: ${{ steps.claw.outputs.dir }}/navin/browser_extension
+      - name: Build WebUI if the artifact is missing
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          if [ ! -f navin/web/dist/index.html ]; then
+            npm ci --prefix webui
+            npm run build --prefix webui
+          fi
+          if ! compgen -G "navin/browser_extension/*.zip" > /dev/null; then
+            node browser-extension/build.mjs
+          fi
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE_P12_BASE64:-}" ] || [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "APPLE_CERTIFICATE_P12_BASE64 or APPLE_CERTIFICATE_PASSWORD is empty"
+            exit 1
+          fi
+          cert="${RUNNER_TEMP}/apple-dev-id.p12"
+          keychain="${RUNNER_TEMP}/navin-signing.keychain-db"
+          printf '%s' "${APPLE_CERTIFICATE_P12_BASE64}" | tr -d '[:space:]' | base64 -D > "${cert}"
+          security create-keychain -p "${APPLE_CERTIFICATE_PASSWORD}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${APPLE_CERTIFICATE_PASSWORD}" "${keychain}"
+          # OpenSSL 3 writes AES PKCS#12 files. macOS security then reports
+          # "MAC verification failed" even when the password is correct.
+          if ! security import "${cert}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security; then
+            echo "security import rejected the PKCS#12; rewriting it with openssl -legacy"
+            openssl3=""
+            for candidate in /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+              if [ -x "${candidate}" ]; then
+                openssl3="${candidate}"
+                break
+              fi
+            done
+            if [ -z "${openssl3}" ]; then
+              brew install openssl@3
+              openssl3="$(brew --prefix openssl@3)/bin/openssl"
+            fi
+            pem="${RUNNER_TEMP}/apple-dev-id.pem"
+            legacy="${RUNNER_TEMP}/apple-dev-id-legacy.p12"
+            "${openssl3}" pkcs12 -in "${cert}" -passin env:APPLE_CERTIFICATE_PASSWORD -nodes -out "${pem}"
+            "${openssl3}" pkcs12 -export -legacy -in "${pem}" -out "${legacy}" -passout env:APPLE_CERTIFICATE_PASSWORD
+            rm -f "${pem}"
+            security import "${legacy}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
+            rm -f "${legacy}"
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${APPLE_CERTIFICATE_PASSWORD}" "${keychain}"
+          curl -fsSL -o "${RUNNER_TEMP}/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "${RUNNER_TEMP}/DeveloperIDG2CA.cer" -k "${keychain}" -T /usr/bin/codesign
+          existing="$(security list-keychains -d user | tr -d '"')"
+          security list-keychains -d user -s "${keychain}" ${existing}
+          security default-keychain -s "${keychain}"
+          rm -f "${cert}"
+          echo "codesign identities:"
+          security find-identity -v -p codesigning "${keychain}"
+          security find-identity -v -p codesigning "${keychain}" | grep -q "Developer ID Application: NAVINSPIRE IA (LLK4Z3NTL4)"
+      - name: Point packaging installs at uv
+        shell: bash
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: python "${GITHUB_WORKSPACE}/.github/scripts/use-uv-pip.py" .
+      - name: Install Rosetta and Intel Python
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          arch -x86_64 /usr/bin/true
+          dest="${RUNNER_TEMP}/python-x64"
+          rm -rf "${dest}"
+          mkdir -p "${dest}"
+          archive="${RUNNER_TEMP}/cpython-x64.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14+20260901-x86_64-apple-darwin-install_only.tar.gz"
+          tar -xzf "${archive}" -C "${dest}" --strip-components=1
+          py="${dest}/bin/python3"
+          machine="$(arch -x86_64 "${py}" -c 'import platform; print(platform.machine())')"
+          echo "Intel Python machine: ${machine}"
+          test "${machine}" = "x86_64"
+          echo "NAVIN_X64_PYTHON=${py}" >> "${GITHUB_ENV}"
+      - name: Cache x64 OpenSSL donor
+        if: matrix.arch == 'x64'
+        id: openssl-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.openssl-x64
+          key: openssl-3.5.8-macos-x86_64-v1
+      - name: Build x64 OpenSSL donor
+        if: matrix.arch == 'x64' && steps.openssl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          prefix="${GITHUB_WORKSPACE}/.openssl-x64"
+          src="${RUNNER_TEMP}/openssl-src"
+          rm -rf "${src}" "${prefix}"
+          mkdir -p "${src}"
+          curl -fsSL -o "${RUNNER_TEMP}/openssl.tar.gz" \
+            "https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/openssl.tar.gz" -C "${src}" --strip-components=1
+          (
+            cd "${src}"
+            ./Configure darwin64-x86_64-cc shared \
+              --prefix="${prefix}" --libdir=lib no-tests \
+              -mmacosx-version-min=11.0
+            make -j"$(sysctl -n hw.ncpu)"
+            make install_sw
+          )
+          test -f "${prefix}/lib/libssl.3.dylib"
+          lipo -archs "${prefix}/lib/libssl.3.dylib" | grep -q x86_64
+      - name: Add Intel Rust target
+        if: matrix.arch == 'x64'
+        run: rustup target add x86_64-apple-darwin
+      - name: Build macOS sidecar
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          NAVIN_MACOS_SINGLE_ARCH: "1"
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          if [ -f navin/web/dist/index.html ]; then
+            export NAVIN_SKIP_WEB_BUILD=1
+          fi
+          # evermeet.cx publishes a rolling ffmpeg zip. The prod-v2 pin for
+          # macos-x64 no longer matches, so re-pin that one target here.
+          # macOS arm64 uses a versioned osxexperts archive and stays pinned.
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            uv pip install --system certifi
+            python packaging/ffmpeg_vendor.py --target macos-x64 --force --update-manifest
+          fi
+          # PyInstaller may ship an older libssl than the sidecar was linked
+          # against. Swap in a same-architecture OpenSSL that has the symbol.
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          script = Path("packaging/macos/build-offline.sh")
+          text = script.read_text()
+          hook = os.environ["GITHUB_WORKSPACE"] + "/.github/scripts/use-linked-openssl.sh"
+          line = f'sh "{hook}" "$work/output/navin-dist"\n'
+          needle = '"$work/output/navin-dist/navin" python -c \\\n'
+          if hook not in text:
+              if needle not in text:
+                  raise SystemExit("desk import line not found in build-offline.sh")
+              script.write_text(text.replace(needle, line + needle, 1))
+          PY
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            # The shell stays arm64, so uv and cargo stay native. The x86_64
+            # interpreter makes PyInstaller emit an Intel sidecar. uname is
+            # overridden so that sidecar is written to os/macos/x64.
+            python3 - <<'PY'
+          from pathlib import Path
+          script = Path("packaging/macos/build-offline.sh")
+          text = script.read_text()
+          uname = 'machine="$(uname -m)"'
+          cargo = '(cd "$root/navin-sandbox" && cargo build --release)'
+          slash = chr(92)
+          installed = 'install -m 0755 "$root/navin-sandbox/target/release/navin-sandbox" ' + slash
+          installed_new = 'install -m 0755 "$root/navin-sandbox/target/x86_64-apple-darwin/release/navin-sandbox" ' + slash
+          if text.count(uname) != 1 or text.count(cargo) != 1 or text.count(installed) != 1:
+              raise SystemExit(
+                  f"x64 sidecar patch missed a line: uname={text.count(uname)} "
+                  f"cargo={text.count(cargo)} install={text.count(installed)}"
+              )
+          text = text.replace(uname, 'machine="${NAVIN_MACOS_ARCH_UNAME:-$(uname -m)}"', 1)
+          text = text.replace(
+              cargo,
+              '(cd "$root/navin-sandbox" && cargo build --release --target x86_64-apple-darwin)',
+              1,
+          )
+          text = text.replace(installed, installed_new, 1)
+          script.write_text(text)
+          print("x64 sidecar: Intel output dir, cross-compiled navin-sandbox")
+          PY
+            export PYTHON="${NAVIN_X64_PYTHON:?}"
+            export NAVIN_MACOS_ARCH_UNAME=x86_64
+            export NAVIN_OPENSSL_LIB="${GITHUB_WORKSPACE}/.openssl-x64/lib"
+            # cryptography 50 ships no macOS x86_64 wheel. Cargo stays arm64
+            # and treats the Intel interpreter as a cross build, so the
+            # Homebrew OpenSSL on this runner is the wrong architecture.
+            export OPENSSL_DIR="${GITHUB_WORKSPACE}/.openssl-x64"
+            export PKG_CONFIG_ALLOW_CROSS=1
+            export PKG_CONFIG_PATH="${OPENSSL_DIR}/lib/pkgconfig${PKG_CONFIG_PATH:+:}${PKG_CONFIG_PATH:-}"
+            test -x "${PYTHON}"
+            test -f "${NAVIN_OPENSSL_LIB}/libssl.3.dylib"
+            test -f "${OPENSSL_DIR}/include/openssl/ssl.h"
+          fi
+          sh packaging/macos/build-offline.sh
+      - name: Smoke-test macOS sidecar
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: |
+          sh packaging/smoke-test.sh "./os/macos/${{ matrix.arch }}/navin-dist/navin"
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            file "./os/macos/x64/navin-dist/navin" | grep -q x86_64
+            sandbox="$(find "./os/macos/x64/navin-dist" -name navin-sandbox -type f -print -quit)"
+            test -n "${sandbox}"
+            file "${sandbox}" | grep -q x86_64
+          fi
+      - name: Build macOS DMG
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "${APPLE_CERTIFICATE_PASSWORD}" "${RUNNER_TEMP}/navin-signing.keychain-db"
+          sh packaging/macos/build-desktop.sh
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            app_bin="$(find desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos -type f -path '*.app/Contents/MacOS/*' -print -quit)"
+            test -n "${app_bin}"
+            file "${app_bin}" | grep -q x86_64
+          fi
+      - name: Notarize and staple DMG
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_BASE64:-}" ] || [ -z "${APPLE_API_KEY_ID:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ]; then
+            echo "Apple notarization secrets are empty"
+            exit 1
+          fi
+          shopt -s nullglob
+          dmgs=(os/macos/"${ARCH}"/*.dmg)
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "expected one DMG under os/macos/${ARCH}, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          identity="Developer ID Application: NAVINSPIRE IA (LLK4Z3NTL4)"
+          keychain="${RUNNER_TEMP}/navin-signing.keychain-db"
+          security unlock-keychain -p "${APPLE_CERTIFICATE_PASSWORD}" "${keychain}"
+          codesign --force --timestamp --sign "${identity}" "${dmg}"
+          key="${RUNNER_TEMP}/AuthKey.p8"
+          printf '%s' "${APPLE_API_KEY_BASE64}" | base64 -D > "${key}"
+          chmod 600 "${key}"
+          xcrun notarytool submit "${dmg}" \
+            --key "${key}" \
+            --key-id "${APPLE_API_KEY_ID}" \
+            --issuer "${APPLE_API_ISSUER}" \
+            --wait
+          xcrun stapler staple "${dmg}"
+          xcrun stapler validate "${dmg}"
+          rm -f "${key}"
+          (cd "os/macos/${ARCH}" && shasum -a 256 "$(basename "${dmg}")" > "SHA256SUMS-desktop-${ARCH}.txt")
+          echo "notarized $(basename "${dmg}")"
+      - name: Upload notarized DMG to Release
+        id: release
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(os/macos/"${ARCH}"/*.dmg)
+          sums=(os/macos/"${ARCH}"/SHA256SUMS*)
+          if [ "${#dmgs[@]}" -ne 1 ] || [ "${#sums[@]}" -lt 1 ]; then
+            echo "expected one notarized DMG and a checksum, dmgs=${#dmgs[@]} sums=${#sums[@]}"
+            exit 1
+          fi
+          bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${dmgs[0]}" "${sums[@]}"
+          echo "released=1" >> "${GITHUB_OUTPUT}"
+          echo "uploaded $(basename "${dmgs[0]}") to ${TAG}"
+      - name: Upload macOS DMG artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.claw.outputs.dir }}/os/macos/${{ matrix.arch }}/*.dmg
+            ${{ steps.claw.outputs.dir }}/os/macos/${{ matrix.arch }}/SHA256SUMS*
+          retention-days: 5
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| macOS ${ARCH} DMG | ${icon} ${JOB_STATUS} | sidecar smoke, Developer ID, notarized DMG |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  windows:
+    name: Windows x64 MSI and NSIS
+    needs: [webui]
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'windows' }}
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      NAVIN_SKIP_PREREQS: "1"
+      AZURE_TENANT_ID: ${{ inputs.sign_windows && secrets.AZURE_TENANT_ID || '' }}
+      AZURE_CLIENT_ID: ${{ inputs.sign_windows && secrets.AZURE_CLIENT_ID || '' }}
+      AZURE_CLIENT_SECRET: ${{ inputs.sign_windows && secrets.AZURE_CLIENT_SECRET || '' }}
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: stable
+      - name: Match Cargo jobs to runner CPUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NUMBER_OF_PROCESSORS:-}" ]; then
+            jobs="${NUMBER_OF_PROCESSORS}"
+          elif jobs="$(nproc 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          elif jobs="$(sysctl -n hw.ncpu 2>/dev/null)" && [ -n "${jobs}" ]; then
+            :
+          else
+            echo "could not read the runner CPU count"
+            exit 1
+          fi
+          jobs="$(printf '%s' "${jobs}" | tr -d '[:space:]')"
+          if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "runner CPU count is not a positive integer: ${jobs}"
+            exit 1
+          fi
+          echo "CARGO_BUILD_JOBS=${jobs}" >> "${GITHUB_ENV}"
+          echo "Cargo build jobs: ${jobs}"
+      - name: Cache Cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-windows-${{ steps.claw.outputs.sha }}
+          restore-keys: |
+            cargo-registry-windows-
+      - name: Download WebUI dist if present
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: webui-dist
+          path: ${{ steps.claw.outputs.dir }}/navin/web/dist
+      - name: Download browser extension zips
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-extension-zips
+          path: ${{ steps.claw.outputs.dir }}/navin/browser_extension
+      - name: Re-pin rolling Windows ffmpeg
+        working-directory: ${{ steps.claw.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip install --system certifi
+          python packaging/ffmpeg_vendor.py --target windows-x64 --force --update-manifest
+      - name: Point packaging installs at uv
+        shell: bash
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: python "${GITHUB_WORKSPACE}/.github/scripts/use-uv-pip.py" .
+      - name: Build Windows desktop (MSI + NSIS)
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          NAVIN_SKIP_WEB_BUILD: "1"
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-desktop.ps1
+      - name: Upload Windows installers to Release
+        shell: bash
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find os/windows/x64 -type f \( \
+            -name '*.msi' -o -name '*.exe' -o -name 'SHA256SUMS*' \
+          \) | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no Windows installers to upload"
+            exit 1
+          fi
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" \
+              --notes "Signed OS installers. Closed-source inputs are not in this repository." \
+              --latest=false
+          fi
+          bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${files[@]}"
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64
+          path: ${{ steps.claw.outputs.dir }}/os/windows/x64/
+          retention-days: 5
+      - name: Smoke-test Windows sidecar
+        continue-on-error: true
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\smoke-test.ps1 -Executable "$env:LOCALAPPDATA\NavinBuild\windows\navin-dist\navin.exe"
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| Windows x64 MSI and NSIS | ${icon} ${JOB_STATUS} | sidecar smoke, Azure Trusted Signing, release upload |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"

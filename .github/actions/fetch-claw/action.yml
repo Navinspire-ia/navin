@@ -1,0 +1,49 @@
+name: Fetch closed-source claw tree
+description: Ephemeral clone of the closed-source tree. Does not commit anything.
+
+inputs:
+  ref:
+    description: Branch or tag on the closed-source repo
+    required: true
+  token:
+    description: PAT that can clone the closed-source repo
+    required: true
+  url:
+    description: Clone URL from repository secret CLAW_GIT_URL
+    required: true
+
+outputs:
+  dir:
+    description: Absolute path of the clone
+    value: ${{ steps.clone.outputs.dir }}
+  sha:
+    description: HEAD sha of the clone
+    value: ${{ steps.clone.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Clone navin-claw
+      id: clone
+      shell: bash
+      env:
+        FORGEJO_TOKEN: ${{ inputs.token }}
+        CLAW_REF: ${{ inputs.ref }}
+        CLAW_URL: ${{ inputs.url }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::${CLAW_URL}"
+        echo "::add-mask::${FORGEJO_TOKEN}"
+        dest="${RUNNER_TEMP}/navin-claw"
+        rm -rf "${dest}"
+        GIT_TERMINAL_PROMPT=0 git \
+          -c "http.extraHeader=Authorization: token ${FORGEJO_TOKEN}" \
+          -c core.protectNTFS=false \
+          clone --quiet --config core.protectNTFS=false --depth 1 --branch "${CLAW_REF}" \
+          "${CLAW_URL}" "${dest}"
+        sha="$(git -C "${dest}" rev-parse HEAD)"
+        {
+          echo "dir=${dest}"
+          echo "sha=${sha}"
+        } >> "${GITHUB_OUTPUT}"
+        echo "cloned ref ${CLAW_REF} at ${sha}"
