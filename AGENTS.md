@@ -11,6 +11,38 @@ Use this file for project-specific preferences, recurring workflow conventions, 
 - Architecture, diagrams, PPT visuals, tender/RFP technical answers, and Markdown plans/explanations use skill `archify` by default (HTML + SVG, not a Mermaid dump).
 - Do not mark an app done until Preview shows a working happy path and `verify` is clean.
 
+## GitHub issues (always)
+
+GitHub issue forms only run in the browser. `gh issue create` and the
+Issues API skip them, so a raw API issue lands as a blank body with no
+kind label.
+
+- MUST open issues with `python3 scripts/new-issue.py` (contract:
+  [`.github/ISSUE_INTAKE.md`](.github/ISSUE_INTAKE.md), schema:
+  [`.github/issue-intake.schema.json`](.github/issue-intake.schema.json)).
+- MUST NOT call `gh issue create` or `POST /repos/.../issues` directly.
+- MUST pass `--confirm-searched` and `--confirm-no-secrets`.
+- MUST NOT open a public issue for an unreleased vulnerability. Email
+  `security@navinspire.com`. See [SECURITY.md](./SECURITY.md).
+- MUST NOT apply triage labels (`area:*`, `platform:*`, `packaging:*`,
+  `severity:*`, `priority:*`, `status:*`). Kind label only; maintainers
+  add the rest.
+
+## Pull requests (always)
+
+GitHub squash-merge uses the PR title as the git subject. The release bot
+reads that subject to bump SemVer. Contract:
+[`.github/COMMIT_CONVENTION.md`](.github/COMMIT_CONVENTION.md).
+
+- MUST title PRs `<type>(<optional-scope>)!: <subject>` (at most 72
+  characters, lowercase subject, no trailing period).
+- MUST run `python3 scripts/commit_convention.py check-title` before
+  `gh pr create` or `gh pr edit --title`.
+- MUST NOT open a breaking PR (`type!:`) without a `BREAKING CHANGE:`
+  footer, a Migration section, and the `semver:major` label.
+- MUST NOT rewrite history on `main` to make old commits conventional.
+
+
 ## Scheduled Reminders
 
 - Before scheduling reminders, check available skills and follow skill guidance first.
