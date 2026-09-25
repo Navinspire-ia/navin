@@ -200,6 +200,9 @@ class UiSubagent(UiEvent):
     iteration: int
     done: bool
     error: str | None
+    started_ms_ago: int | None = None
+    tokens: int | None = None
+    task_description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -662,6 +665,9 @@ class TuiRuntime:
                     event.iteration,
                     event.done,
                     event.error,
+                    started_ms_ago=event.started_ms_ago,
+                    tokens=event.tokens,
+                    task_description=event.task_description,
                 )
             )
             return

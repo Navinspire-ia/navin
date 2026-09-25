@@ -25,6 +25,8 @@ the panel and the CLI; tests run it inline with a scripted runtime.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import asyncio
 import hashlib
 import json
@@ -456,7 +458,7 @@ def spawn_campaign(workspace: Path | str, *, actor: str = HUMAN, replay_of: str 
             env=env,
             cwd=str(workspace) if workspace.is_dir() else None,
             check=False,
-        )
+         **no_window_kwargs())
     except subprocess.TimeoutExpired:
         reason = f"campaign child killed after {timeout_s + _CHILD_GRACE_S:.0f}s"
         journal(workspace, "campaign_failed", reason=reason, actor=actor)

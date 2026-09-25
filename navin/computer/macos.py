@@ -19,6 +19,8 @@ requires, and divides by the pixel-per-point ratio before posting events.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import ctypes
 import ctypes.util
 import json
@@ -602,7 +604,7 @@ class MacOSBackend(ComputerBackend):
                 text=True,
                 timeout=20,
                 check=False,
-            )
+             **no_window_kwargs())
             if proc.returncode != 0:
                 err = (proc.stderr or "").strip()
                 if "not permitted" in err.lower() or "could not create" in err.lower():
@@ -819,7 +821,7 @@ class MacOSBackend(ComputerBackend):
                 text=True,
                 timeout=timeout,
                 check=False,
-            )
+             **no_window_kwargs())
         except subprocess.TimeoutExpired as exc:
             raise ComputerError(f"System Events did not answer within {timeout:.0f}s") from exc
         if proc.returncode != 0:
@@ -963,7 +965,7 @@ class MacOSBackend(ComputerBackend):
                 granted = False
         if not granted:
             proc = subprocess.run(["/usr/bin/open", panes[kind]], capture_output=True,
-                                  text=True, timeout=10, check=False)
+                                  text=True, timeout=10, check=False, **no_window_kwargs())
             if proc.returncode:
                 raise ComputerError(f"could not open macOS permissions: {proc.stderr.strip()}")
         return [Check(kind, granted, "granted" if granted else "awaiting your choice in System Settings")]

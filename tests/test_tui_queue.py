@@ -263,8 +263,9 @@ def test_context_percentage_stays_at_right_of_model_effort_line(tmp_path, width,
             assert str(context.content) == "Context 23%"
             assert str(model.content) == "model-with-a-long-name"
             assert str(reasoning.content) == (effort or "Auto")
-            assert context.region.right == meta.content_region.right
-            assert context.region.y == model.region.y
+            dock = app.query_one("#dock")
+            assert meta.parent is dock
+            assert context.region.y == model.region.y == dock.region.y
             assert reasoning.region.x >= model.region.right
             assert context.region.x >= reasoning.region.right
             assert app.query_one("#composer-block").styles.padding.top == 1

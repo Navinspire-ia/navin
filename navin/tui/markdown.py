@@ -54,13 +54,36 @@ def readable_validation_report(text: str) -> str | None:
     return state.completion_message(reason=reason)
 
 
+# Outcome words carry the result of a turn ("14 tests passed, lint clean,
+# verify PASS"). Uppercase verdicts and counted results only: prose such as
+# "error handling" stays neutral.
+_STATUS_OK = re.compile(
+    r"\b(?:PASS(?:ED)?|OK|SUCCESS)\b|[✓✔]"
+    r"|\b\d+\s+(?:tests?\s+|checks?\s+)?(?:passed|pass|passing|passés?|passent|réussis?|ok)\b"
+    r"|\b(?:lint|verify|build|typecheck)\s+(?:propre|clean|vert|green|ok)\b",
+)
+_STATUS_FAIL = re.compile(
+    r"\b(?:FAIL(?:ED|URE)?|ERROR)\b|[✗✖❌]"
+    r"|\b\d+\s+(?:tests?\s+|checks?\s+)?(?:failed|failing|failures?|errors?|échoués?|échecs?|en échec)\b"
+)
+_STATUS_WARN = re.compile(r"\b(?:WARN(?:ING)?|SKIPPED)\b|⚠|\b\d+\s+(?:skipped|warnings?|ignorés?)\b")
+
+
+def _status_spans(plain: str) -> list[Span]:
+    spans: list[Span] = []
+    for pattern, style in ((_STATUS_OK, ".status_ok"), (_STATUS_FAIL, ".status_fail"), (_STATUS_WARN, ".status_warn")):
+        spans.extend(Span(match.start(), match.end(), style) for match in pattern.finditer(plain))
+    return spans
+
+
 def restyle_inline_code(content: Content) -> Content:
-    """Accent commands and paths while leaving identifiers neutral."""
-    if not content.spans:
-        return content
+    """Accent commands, paths and outcome words; identifiers stay neutral."""
     plain = content.plain
+    status = _status_spans(plain) if plain else []
+    if not content.spans and not status:
+        return content
     new_spans: list[Span] = []
-    changed = False
+    changed = bool(status)
     for span in content.spans:
         if span.style == ".code_inline":
             piece = plain[span.start : span.end]
@@ -75,7 +98,7 @@ def restyle_inline_code(content: Content) -> Content:
         new_spans.append(span)
     if not changed:
         return content
-    return Content(plain, spans=new_spans)
+    return Content(plain, spans=new_spans + status)
 
 
 def install_path_styles() -> None:
@@ -84,7 +107,7 @@ def install_path_styles() -> None:
     if _INSTALLED:
         return
     classes = set(MarkdownBlock.COMPONENT_CLASSES)
-    classes.update({"code_path", "code_command"})
+    classes.update({"code_path", "code_command", "status_ok", "status_fail", "status_warn"})
     MarkdownBlock.COMPONENT_CLASSES = classes
     original = MarkdownBlock._token_to_content
 

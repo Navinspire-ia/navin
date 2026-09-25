@@ -633,7 +633,7 @@ def _filter_python_lint(body: str) -> str:
             current_file = ln.strip().rstrip(":")
             continue
         if re.search(
-            r"(?i)\berror\b|\bwarning\b|\bfail\b|\[([A-Z]\d+)\]|:\d+:\d+:|"
+            r"(?i)\berror\b|\bwarning\b|\bfail\b|\[([A-Z]\d+)\]|\b[A-Z]\d{3,4}\b|:\d+:\d+:|"
             r"Found \d+|All checks passed|would reformat|reformatted|"
             r"Success: no issues",
             ln,

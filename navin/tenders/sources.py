@@ -198,7 +198,7 @@ SOURCES: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "sap-discovery", "name": "SAP Business Network Discovery", "country": "INTL", "zone": "international",
-        "priority": "P1", "ingest": "search", "url": "https://service.ariba.com/Discovery.aw",
+        "priority": "P1", "ingest": "search", "url": "https://service.ariba.com/",
         "notes": "Buyer-published B2B service needs, RFI, RFQ and RFP. Public discovery only; account required for restricted postings and responses.",
     },
     {

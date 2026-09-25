@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import asyncio
 import hashlib
 import json
@@ -51,7 +53,7 @@ def run_solution(root: Path, inputs: list[Any]) -> Any:
     argv += ["/usr/bin/python3", "-I", "-S", "-B", "-c", script]
     try:
         with tempfile.TemporaryFile(mode="w+") as output, tempfile.TemporaryFile(mode="w+") as error:
-            result = subprocess.run(argv, input=json.dumps(inputs), stdout=output, stderr=error, text=True, timeout=8, check=False)
+            result = subprocess.run(argv, input=json.dumps(inputs), stdout=output, stderr=error, text=True, timeout=8, check=False, **no_window_kwargs())
             output.seek(0)
             error.seek(0)
             stdout, stderr = output.read(1048576), error.read(1048576)

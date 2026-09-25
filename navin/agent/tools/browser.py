@@ -217,7 +217,7 @@ class BrowserToolConfig(Base):
     headless: bool = True
     viewport_width: int = Field(default=1280, ge=320, le=3840)
     viewport_height: int = Field(default=800, ge=240, le=2160)
-    default_timeout_ms: int = Field(default=15_000, ge=1_000, le=120_000)
+    default_timeout_ms: int = Field(default=8_000, ge=1_000, le=120_000)
     executable_path: str | None = None  # custom Chromium/Chrome binary, optional
     screenshot_dir: str = "browser"  # subfolder of the media dir
     # playwright = Navin CDP/network/snapshot path (default, non-regressing).
@@ -255,6 +255,9 @@ class _BrowserSession:
         self.network: deque[dict[str, Any]] = deque(maxlen=300)
         self._network_seq = 0
         self.history: list[dict[str, Any]] = []
+        # Failed attempts per (action, target): the model gets two tries at
+        # the same navigation or element, then must change approach.
+        self.failures: dict[tuple[str, str], int] = {}
         self._bu_session: Any = None
         self._bu_tools: Any = None
         # Live view: mirror of this browser streamed to the Dev workbench.
@@ -1353,9 +1356,17 @@ class BrowserTool(Tool):
                         "return control using the live view before continuing."
                     )
                 session.set_live_target(self._bus)
+                key = self._attempt_key(action, kwargs)
+                if key is not None and session.failures.get(key, 0) >= self._MAX_SAME_FAILURES:
+                    return ToolResult.error(self._repeat_refusal(key))
                 session.emit_live_action(_live_action_line(action, kwargs))
                 try:
-                    return await self._dispatch(session, action, kwargs)
+                    result = await self._dispatch(session, action, kwargs)
+                    self._record_attempt(session, key, result)
+                    return result
+                except Exception:
+                    self._record_attempt(session, key, None)
+                    raise
                 finally:
                     with suppress(Exception):
                         await session.sync_live_view()
@@ -1364,6 +1375,65 @@ class BrowserTool(Tool):
         except Exception as exc:
             logger.warning("browser tool failed: {}", exc)
             return ToolResult.error(f"Error: browser {action} failed: {exc}")
+
+    _MAX_SAME_FAILURES = 2
+    # Reading the page never gets stuck on a target; only acting on one can.
+    _TARGETED_ACTIONS = frozenset({
+        "navigate", "new_tab", "click", "type", "select", "dropdown_options",
+        "upload_file", "response_body",
+    })
+
+    @classmethod
+    def _attempt_key(cls, action: str, kwargs: dict[str, Any]) -> tuple[str, str] | None:
+        if action not in cls._TARGETED_ACTIONS:
+            return None
+        if action in {"navigate", "new_tab"}:
+            target = (kwargs.get("url") or "").strip().rstrip("/")
+            if not target:
+                return None
+        else:
+            parts = [
+                f"{name}={kwargs[name]}" for name in ("ref", "selector", "text", "x", "y", "path", "request_id")
+                if kwargs.get(name) not in (None, "")
+            ]
+            if action == "type":
+                # Other text into the same failing field is still the same target.
+                parts = [part for part in parts if not part.startswith("text=")]
+            target = " ".join(parts)
+        return action, target
+
+    @staticmethod
+    def _attempt_failed(result: Any) -> bool:
+        if result is None:
+            return True
+        if getattr(result, "is_error", False):
+            return True
+        return isinstance(result, str) and result.startswith("Error:")
+
+    def _record_attempt(self, session: _BrowserSession, key: tuple[str, str] | None, result: Any) -> None:
+        if key is None:
+            return
+        if self._attempt_failed(result):
+            session.failures[key] = session.failures.get(key, 0) + 1
+            if len(session.failures) > 200:
+                session.failures.pop(next(iter(session.failures)))
+        else:
+            session.failures.pop(key, None)
+
+    def _repeat_refusal(self, key: tuple[str, str]) -> str:
+        action, target = key
+        if action in {"navigate", "new_tab"}:
+            return (
+                f"Error: {target} already failed {self._MAX_SAME_FAILURES} times in this "
+                "session; not trying again. Check that the server is running (read its "
+                "output or start it), use another URL, or skip browser testing for this "
+                "target and continue the task."
+            )
+        return (
+            f"Error: browser {action} on {target or 'this element'} already failed "
+            f"{self._MAX_SAME_FAILURES} times; not trying again. Take a snapshot and use "
+            "a different ref or selector, or move on without this step."
+        )
 
     @staticmethod
     def _guard_navigation_url(url: str) -> str | None:
@@ -1621,14 +1691,20 @@ class BrowserTool(Tool):
                 rounds = min(max(int(rounds / 200), 3), 40)  # ms-like values → rounds
             rounds = max(1, min(rounds, 40))
             pause = 0.45
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._SCROLL_INFINITE_BUDGET_S
             last_height = -1
             grew = 0
+            used = 0
             for i in range(rounds):
+                if i and loop.time() >= deadline:
+                    break
+                used += 1
                 await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(pause)
                 if kwargs.get("selector"):
                     with suppress(Exception):
-                        await page.locator(str(kwargs["selector"])).first.scroll_into_view_if_needed()
+                        await page.locator(str(kwargs["selector"])).first.scroll_into_view_if_needed(timeout=1_500)
                 new_height = await page.evaluate(
                     "() => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"
                 )
@@ -1641,7 +1717,8 @@ class BrowserTool(Tool):
                 "() => (document.body && document.body.innerText || '').length"
             )
             return (
-                f"Infinite scroll finished after up to {rounds} rounds "
+                f"Infinite scroll finished after {used} of up to {rounds} rounds"
+                f"{' (time budget reached)' if used < rounds else ''} "
                 f"(height={last_height}, grew={grew}, textChars={text_len}). "
                 f"URL: {page.url}. Use action=extract or content next."
             )
@@ -1959,12 +2036,12 @@ class BrowserTool(Tool):
     async def _click(self, target: Any) -> None:
         """Click with fallbacks for overlays that intercept pointer events."""
         try:
-            await target.click(timeout=5_000)
+            await target.click(timeout=3_000)
             return
         except Exception:
             pass
         try:
-            await target.click(force=True, timeout=3_000)
+            await target.click(force=True, timeout=1_500)
             return
         except Exception:
             pass
@@ -1973,19 +2050,20 @@ class BrowserTool(Tool):
     async def _settle(self, page: Any) -> None:
         """Give the page a chance to finish loading without hanging on SPAs."""
         try:
-            await page.wait_for_load_state("load", timeout=5_000)
+            await page.wait_for_load_state("load", timeout=2_000)
         except Exception:
             pass
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.15)
 
-    _MAX_NAV_ATTEMPTS = 3
+    _MAX_NAV_ATTEMPTS = 2
     _NAV_TIMEOUT_MS = 5_000
+    _SCROLL_INFINITE_BUDGET_S = 8.0
 
     async def _goto_with_retry(self, page: Any, url: str) -> str | None:
-        """Bounded navigation: at most 3 connection attempts, then move on.
+        """Bounded navigation: at most 2 connection attempts, then move on.
 
         A dev server that is down or rejecting connections must not eat the
-        whole turn. Each attempt gets a short timeout; after 3 failures the
+        whole turn. Each attempt gets a short timeout; after 2 failures the
         tool returns a clear error telling the model to skip browser testing
         for this target and continue the task instead of retrying all day.
         """

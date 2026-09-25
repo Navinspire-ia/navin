@@ -256,6 +256,8 @@ class SubagentProgressEvent(OutboundEvent):
     # the client cannot infer it from the frame's arrival time, and a task that
     # started ten minutes ago must not look like it just began.
     started_ms_ago: int | None = None
+    # Tokens processed so far (prompt + completion, all iterations).
+    tokens: int | None = None
 
 
 @dataclass(frozen=True)

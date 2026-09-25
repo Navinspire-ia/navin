@@ -874,7 +874,7 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
         with log.open("wb") as output, log.open("rb") as reader, subprocess.Popen(
             argv, stdout=output, stderr=subprocess.STDOUT,
             env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kwargs,
-        ) as process:
+         **no_window_kwargs()) as process:
             tail = b""
             try:
                 while True:

@@ -258,7 +258,7 @@ class CompactShortcutTests(unittest.TestCase):
 
 
 class DockBarTests(unittest.IsolatedAsyncioTestCase):
-    async def test_path_and_shortcuts_share_one_row(self) -> None:
+    async def test_path_status_and_two_shortcuts_share_one_row(self) -> None:
         from textual.app import App, ComposeResult
         from textual.widgets import Static
 
@@ -279,16 +279,20 @@ class DockBarTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dock.size.height, 1)
             self.assertIn("navin-ai-v2", path.content)
             self.assertNotIn("ctrl+p", path.content)
-            cmds = dock.query_one("#dock-commands", DockHint)
-            self.assertEqual(cmds.key, "ctrl+p")
-            self.assertEqual(cmds.label, "commands")
-            self.assertIn("^p", str(cmds.content))
-            self.assertNotIn("ctrl+p", str(cmds.content))
-            self.assertTrue(any(h.key == "ctrl+b" for h in dock.query(DockHint)))
+            # Only Settings and the panel toggle; the rest lives in Settings.
+            hints = list(dock.query(DockHint))
+            self.assertEqual([h.key for h in hints], ["ctrl+g", "ctrl+b"])
+            settings = dock.query_one("#dock-settings", DockHint)
+            self.assertIn("^g", str(settings.content))
+            self.assertNotIn("ctrl+g", str(settings.content))
+            # Mode, model, effort and context share the footer line.
+            self.assertTrue(dock.query("#composer-meta"))
+            panel = dock.query_one("#dock-hide", DockHint)
             dock.set_panel(True)
-            self.assertTrue(dock.has_class("-hidden"))
+            self.assertTrue(dock.display)
+            self.assertEqual(panel.label, "hide panel")
             dock.set_panel(False)
-            self.assertFalse(dock.has_class("-hidden"))
+            self.assertEqual(panel.label, "panel")
 
 
 if __name__ == "__main__":

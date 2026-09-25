@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from textual.content import Content, Span
@@ -87,16 +88,28 @@ class ClipboardTests(unittest.TestCase):
         self.assertFalse(osc52_allowed("x" * 5000))
         self.assertTrue(osc52_allowed("short"))
 
-    def test_windows_keeps_large_copies_in_app(self) -> None:
+    def test_windows_large_copies_reach_the_host_clipboard(self) -> None:
+        # A copy that stays in-app cannot be pasted into an editor or browser.
         large = "x" * 5000
         with (
             patch("navin.tui.clipboard.sys.platform", "win32"),
-            patch("navin.tui.clipboard.write_clipboard") as write,
+            patch("navin.tui.clipboard.write_clipboard", return_value=True) as write,
         ):
-            self.assertFalse(write_os_clipboard(large))
-            write.assert_not_called()
-            self.assertTrue(write_os_clipboard("short"))
-            write.assert_called_once_with("short")
+            self.assertTrue(write_os_clipboard(large))
+            write.assert_called_once_with(large)
+
+    def test_windows_writes_prefer_fast_clip_exe_for_any_size(self) -> None:
+        from navin.tui import clipboard
+
+        done = SimpleNamespace(returncode=0)
+        with (
+            patch("navin.tui.clipboard.shutil.which", side_effect=lambda name: f"/bin/{name}"),
+            patch("navin.tui.clipboard.subprocess.run", return_value=done) as run,
+        ):
+            self.assertTrue(clipboard._write_windows_clipboard("é" * 9000))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], ["/bin/clip.exe"])
+        self.assertEqual(run.call_args.kwargs["input"], ("é" * 9000).encode("utf-16-le"))
 
     def test_native_linux_writes_large_copies(self) -> None:
         large = "x" * 5000

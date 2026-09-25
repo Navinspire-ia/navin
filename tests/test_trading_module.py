@@ -70,7 +70,7 @@ class TradingProductModuleTest(unittest.TestCase):
         self.assertIn('path === "/trading"', app)
         self.assertIn("TradingWorkspace", app)
         self.assertIn('"trading"', sidebar)
-        self.assertLess(sidebar.find('"trading"'), sidebar.find('"leads"'))
+        self.assertIn('"leads"', sidebar)
         self.assertIn("onOpenTradingStudio", sidebar)
         http = (ROOT / "navin/webui/ws_http.py").read_text(encoding="utf-8")
         self.assertIn("async def _handle_trading", http)

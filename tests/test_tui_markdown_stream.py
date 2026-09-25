@@ -134,3 +134,18 @@ def test_answer_is_visible_before_stream_finishes():
             assert "before completion" in markdown.source
             assert block.copy_text() == block.text
     asyncio.run(run())
+
+
+def test_outcome_words_are_colored_and_prose_stays_neutral():
+    from textual.content import Content
+
+    from navin.tui.markdown import restyle_inline_code
+
+    text = "Vérifié : 14 tests passés, lint propre, verify PASS. 2 failed, 1 skipped. Fix error handling."
+    spans = {text[span.start:span.end]: span.style for span in restyle_inline_code(Content(text)).spans}
+    assert spans["14 tests passés"] == ".status_ok"
+    assert spans["lint propre"] == ".status_ok"
+    assert spans["PASS"] == ".status_ok"
+    assert spans["2 failed"] == ".status_fail"
+    assert spans["1 skipped"] == ".status_warn"
+    assert "error" not in spans

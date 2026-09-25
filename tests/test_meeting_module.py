@@ -237,9 +237,10 @@ class MeetingDocsAndFrontendTest(unittest.TestCase):
                 'path === "/meeting"',
                 "onOpenMeetingStudio",
                 "MeetingWorkbench",
-                # Full-width mode: the desk takes the shell, chat steps aside.
+                # The desk can cover the chat column, and its header opens it again.
                 "workbenchFocus",
-                "onToggleWorkbenchFocus",
+                "onToggleDeskChat",
+                "onToggleChat={onToggleDeskChat}",
             ),
             "webui/src/components/Sidebar.tsx": (
                 '"meeting"',
@@ -276,10 +277,8 @@ class MeetingDocsAndFrontendTest(unittest.TestCase):
                 "onSpeak",
                 "meetingJoinUrl",
                 "autoJoin",
-                # Workbench shell: tabs plus the full-width toggle that hides
-                # the chat column.
-                "focusMode",
-                "onToggleFocus",
+                # Workbench shell: tabs plus the header control that opens chat.
+                "onToggleChat",
                 'meeting.tabs.transcript"',
                 # Packaged WebView blocks window.open: conference links must go
                 # through the gateway helper.

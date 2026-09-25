@@ -13,7 +13,6 @@ import time
 from typing import Any
 
 from rich.cells import cell_len
-from rich.markup import escape
 from rich.text import Text
 from textual import events, on
 from textual.actions import SkipAction
@@ -25,6 +24,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.strip import Strip
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -34,6 +34,8 @@ from navin.tui.markdown import install_path_styles, readable_validation_report
 from navin.tui.markdown_stream import TranscriptMarkdown
 from navin.tui.modes import display_user_text
 from navin.tui.paths import PATH_INK, looks_like_path
+from navin.tui.perf import install as install_textual_perf
+from navin.tui.textmarkup import escape
 from navin.utils.command_output import (
     COMMAND_PREVIEW_LINES,
     GIT_PREVIEW_LINES,
@@ -74,6 +76,7 @@ from navin.utils.tool_hints import (
 )
 
 install_path_styles()
+install_textual_perf()
 
 # Coalesce bursts without making input or the engine wait for each paint.
 STREAM_FRAME_SECONDS = 1 / 20
@@ -83,6 +86,65 @@ ACTIVITY_PAGE_SIZE = 20
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+def content_width(widget: Widget) -> int:
+    """Content width from the last layout.
+
+    ``size`` and ``region`` resolve through the compositor's full map, which
+    Textual rebuilds for every widget after each scroll. Hot paths (render
+    lines, live previews, spinners) must not pay that on every frame.
+    """
+    width = widget.outer_size.width - widget.styles.gutter.width - widget.scrollbar_gutter.width
+    return max(0, width)
+
+
+def swap_classes(widget: Widget, remove: set[str] | frozenset[str], add: set[str] | frozenset[str]) -> None:
+    """Change several classes with one restyle of the widget subtree.
+
+    Each add_class / remove_class restyles the widget and all descendants;
+    a finished tool card used to pay that three times.
+    """
+    classes = (set(widget.classes) - set(remove)) | set(add)
+    if classes != set(widget.classes):
+        widget.set_classes(classes)
+
+
+class LocalDisplayStyles:
+    """Toggle children's ``display`` without restyling the whole subtree.
+
+    Textual restyles a parent and every descendant when one child's display
+    changes, only to refresh sibling-order pseudo classes (``:first-child``,
+    ``:last-child``, ``:odd``). Navin's CSS does not use them. On the chat
+    column that cost grew with the session: showing the Working line or the
+    slash menu restyled every message ever painted.
+    """
+
+    def _refresh_styles(self) -> None:
+        return
+
+
+def token_label(text: str) -> str:
+    """``~840 tokens`` / ``~1.2k tokens``: the unit a model is billed in.
+
+    Four characters per token is the usual estimate; exact tokenizing on
+    every streamed frame would cost more than the number is worth.
+    """
+    tokens = max(1, round(len(text) / 4)) if text.strip() else 0
+    if tokens >= 1000:
+        return f"~{tokens / 1000:.1f}k tokens"
+    return f"~{tokens} tokens"
+
+
+def on_screen(widget: Widget) -> bool:
+    """Whether a widget is in the current composition, without a full map."""
+    try:
+        screen = widget.screen
+    except Exception:  # noqa: BLE001 - detached
+        return False
+    if screen is not widget.app.screen:
+        return False
+    return widget in screen._compositor.visible_widgets
 
 # Single-width glyphs only: emoji are double-width in most terminals and break
 # column alignment (and some fonts render them as tofu).
@@ -189,8 +251,8 @@ def tool_color(name: str) -> str:
 
 
 def _markup_escape(text: str) -> str:
-    """Escape Rich markup so ``]`` inside args cannot leak a closing tag."""
-    return escape(text).replace("]", r"\]")
+    """Escape model or tool text for Textual markup."""
+    return escape(text)
 
 
 def summarize_arguments(arguments: dict[str, Any], limit: int = 90) -> str:
@@ -399,8 +461,8 @@ class UserMessage(Vertical):
     DEFAULT_CSS = """
     UserMessage {
         height: auto;
-        margin: 1 2 1 2;
-        padding: 1 2;
+        margin: 1 0 1 0;
+        padding: 1 1;
         border: none;
         background: $panel;
     }
@@ -474,8 +536,8 @@ class ReasoningBlock(Vertical):
     DEFAULT_CSS = """
     ReasoningBlock {
         height: auto;
-        margin: 0 2 0 2;
-        padding: 0 2;
+        margin: 0;
+        padding: 0 1;
         border-left: tall $accent 50%;
     }
     ReasoningBlock > .reasoning-head {
@@ -518,10 +580,9 @@ class ReasoningBlock(Vertical):
         joined = "".join(self._buffer)
         if self._open:
             self.query_one(".reasoning-body", Static).update(escape(joined[-6000:]))
-        words = len(joined.split())
         self.query_one(".reasoning-head", Static).update(
             ("[$success]✓[/] [$accent]reasoning[/]" if self._done else "[$accent]◌ thinking…[/]")
-            + f" [dim]({words} words, click to toggle)[/dim]"
+            + f" [dim]({token_label(joined)}, click to toggle)[/dim]"
         )
 
     def finish(self) -> None:
@@ -541,7 +602,7 @@ class ReasoningBlock(Vertical):
         self.toggle()
 
 
-class ToolCall(Vertical, can_focus=True):
+class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
     """One tool invocation: header line + expandable result."""
 
     DEFAULT_CSS = """
@@ -566,7 +627,8 @@ class ToolCall(Vertical, can_focus=True):
         max-height: 34;
         overflow-x: hidden;
         overflow-y: auto;
-        scrollbar-size-vertical: 1;
+        /* Scrolls with the wheel and PageUp/PageDown; no bar inside the card. */
+        scrollbar-size-vertical: 0;
         scrollbar-gutter: auto;
         background: $background;
     }
@@ -703,8 +765,7 @@ class ToolCall(Vertical, can_focus=True):
             node = getattr(node, "parent", None)
 
     def _tick(self) -> None:
-        if (self.phase in {"start", "output"} and self.screen is self.app.screen
-                and self.screen.can_view_partial(self)):
+        if self.phase in {"start", "output"} and on_screen(self):
             self._spin = (self._spin + 1) % self.SPINNER_STEPS
             self._refresh_head(notify_cluster=False, animation_only=True)
 
@@ -811,9 +872,11 @@ class ToolCall(Vertical, can_focus=True):
             self.error = error
             if self._spin_timer is not None:
                 self._spin_timer.pause()
-            self.remove_class("-running")
-            self.remove_class("-ok", "-error", "-cancelled", "-validation-pending")
-            self.add_class("-validation-pending" if self.validation_pending else "-ok" if phase == "end" else f"-{phase}")
+            swap_classes(
+                self,
+                {"-running", "-ok", "-error", "-cancelled", "-validation-pending"},
+                {"-validation-pending" if self.validation_pending else "-ok" if phase == "end" else f"-{phase}"},
+            )
             self._reveal_if_preview()
         if phase == "output":
             if progress_changed:
@@ -881,7 +944,7 @@ class ToolCall(Vertical, can_focus=True):
         return (
             self.phase == "output" and self._preview_overflow
             and self._body_size is not None and self._body_size[1] >= COMMAND_PREVIEW_LINES
-            and (self.screen is not self.app.screen or not self.screen.can_view_partial(self))
+            and not on_screen(self)
         )
 
     def adopt(self, call_id: str, arguments: dict[str, Any] | None) -> None:
@@ -895,8 +958,7 @@ class ToolCall(Vertical, can_focus=True):
             merged = dict(self.arguments) if isinstance(self.arguments, dict) else {}
             merged.update(arguments)
             self.arguments = merged
-        self.add_class("-running")
-        self.remove_class("-ok")
+        swap_classes(self, {"-ok"}, {"-running"})
         self.phase = "start"
         if self._spin_timer is not None:
             self._spin_timer.resume()
@@ -951,7 +1013,9 @@ class ToolCall(Vertical, can_focus=True):
             viewport.display = False
             self.query_one(".tool-more", Button).display = False
             return
-        width = max(0, int(viewport.scrollable_content_region.width or 0))
+        # Before the first layout this is 0: the preview uses its minimum
+        # width and on_resize repaints at the real one.
+        width = content_width(viewport) or content_width(self)
         body_key = (
             self._body_revision, width, self.app.current_theme.dark, self._show_full,
             self.file_path, self.file_operation, self.file_binary, self.file_truncated,
@@ -1090,17 +1154,14 @@ class ToolCall(Vertical, can_focus=True):
         if not self._has_preview():
             return
         self._open = True
-        self.add_class("-open")
 
     def collapse(self) -> None:
         self._open = False
-        self.remove_class("-open")
         self._refresh_head()
         self._refresh_body()
 
     def toggle(self) -> None:
         self._open = not self._open
-        self.set_class(self._open, "-open")
         self._refresh_body()
 
     def action_toggle(self) -> None:
@@ -1149,7 +1210,7 @@ class ToolCall(Vertical, can_focus=True):
             event.stop()
 
 
-class ToolCluster(Vertical, can_focus=True):
+class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
     """Cursor-style group: ``Explored`` / ``Edited``, then the operations."""
 
     TITLES = {"explore": "Explored", "edit": "Edited"}
@@ -1340,8 +1401,8 @@ class ProgressLine(Static):
     ProgressLine {
         height: auto;
         max-height: 2;
-        margin: 0 2 0 2;
-        padding: 0 2;
+        margin: 0;
+        padding: 0 1;
         color: $text-muted;
         text-style: italic;
     }
@@ -1393,7 +1454,7 @@ class WorkingLine(Static):
         height: 0;
         min-height: 0;
         margin: 0;
-        padding: 0 3;
+        padding: 0 1;
         color: $text-muted;
         background: $background;
         display: none;
@@ -1419,12 +1480,144 @@ class WorkingLine(Static):
         self.display = False
         self.remove_class("-visible")
 
+class AgentsPanel(Static):
+    """Agents working in parallel, under the chat: ``main`` then one row each.
+
+    ``● main``, then per agent its own name, what it is doing now, and on the
+    right how long it has run and the tokens it has used. Ten rows at most;
+    finished agents stay a few seconds with their outcome, then leave.
+    """
+
+    DEFAULT_CSS = """
+    AgentsPanel {
+        height: auto;
+        margin: 1 0 0 0;
+        padding: 0 1;
+        background: $background;
+        display: none;
+    }
+    """
+
+    MAX_ROWS = 10
+    DONE_LINGER_S = 4.0
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__("", *args, markup=False, **kwargs)
+        self._agents: dict[str, dict[str, Any]] = {}
+        self._main: tuple[bool, float] = (False, 0.0)
+        self._painted: tuple | None = None
+
+    @property
+    def active(self) -> bool:
+        return bool(self._agents)
+
+    def upsert(
+        self, task_id: str, *, label: str, status_line: str, phase: str,
+        done: bool, error: str | None, started_ms_ago: int | None,
+        tokens: int | None, task: str | None = None,
+    ) -> None:
+        now = time.monotonic()
+        row = self._agents.setdefault(task_id, {"started": now, "tokens": 0})
+        if started_ms_ago is not None:
+            row["started"] = now - started_ms_ago / 1000
+        row.update(label=(label or "").strip() or task_id, task=(task or "").strip(),
+                   status=(error or status_line or phase or "").strip(), phase=phase,
+                   error=bool(error))
+        if tokens:
+            row["tokens"] = tokens
+        if done or phase in {"done", "error"}:
+            row.setdefault("done_at", now)
+            row["elapsed"] = row.get("elapsed") or now - row["started"]
+        self.tick(*self._main)
+
+    def tick(self, main_active: bool, main_elapsed: float) -> None:
+        self._main = (main_active, main_elapsed)
+        now = time.monotonic()
+        for task_id in [key for key, row in self._agents.items()
+                        if "done_at" in row and now - row["done_at"] > self.DONE_LINGER_S]:
+            del self._agents[task_id]
+        if not self._agents:
+            if self.display:
+                self.display = False
+                self.update("")
+                self._painted = None
+            return
+        self.display = True
+        width = content_width(self) or max(20, self.app.size.width - 2)
+        key = (width, int(main_elapsed), main_active, int(now),
+               tuple((k, r["status"], r["tokens"], "done_at" in r) for k, r in self._agents.items()))
+        if key != self._painted:
+            self.update(self._render_rows(width, main_active, main_elapsed, now))
+            self._painted = key
+
+    @staticmethod
+    def _tokens(count: int) -> str:
+        if count >= 1_000_000:
+            return f"{count / 1_000_000:.1f}M"
+        if count >= 1000:
+            return f"{count / 1000:.1f}k"
+        return str(count)
+
+    def _names(self) -> dict[str, str]:
+        # Several agents launched with the same label read as one: name
+        # them by their task instead.
+        labels = [row["label"] for row in self._agents.values()]
+        names = {}
+        for task_id, row in self._agents.items():
+            name = row["label"]
+            if labels.count(name) > 1 and row["task"]:
+                name = row["task"].splitlines()[0]
+            names[task_id] = name
+        return names
+
+    def _render_rows(self, width: int, main_active: bool, main_elapsed: float, now: float) -> Text:
+        palette = {"blue": "#5EA8FF", "green": "#8FBC8F", "coral": "#E39B91", "muted": "#8A8A8A", "text": "#E6E6E6"}
+        if not self.app.current_theme.dark:
+            palette = {"blue": "#3D82FF", "green": "#2D6A4F", "coral": "#914747", "muted": "#626262", "text": "#20242A"}
+        out = Text(no_wrap=True, overflow="ellipsis")
+        out.append("● ", style=palette["blue"])
+        out.append("main", style=f"bold {palette['blue']}")
+        state = f"working · {format_elapsed(main_elapsed)}" if main_active else "waiting for agents"
+        out.append(f"  {state}", style=palette["muted"])
+        rows = sorted(self._agents.items(), key=lambda item: ("done_at" in item[1], item[1]["started"]))
+        budget = self.MAX_ROWS - 1
+        shown, hidden = (rows, []) if len(rows) <= budget else (rows[: budget - 1], rows[budget - 1:])
+        names = self._names()
+        name_width = min(28, max((cell_len(names[k]) for k, _ in shown), default=8))
+        for task_id, row in shown:
+            finished = "done_at" in row
+            elapsed = row["elapsed"] if finished else now - row["started"]
+            meta = format_elapsed(elapsed) + (f" · ↓ {self._tokens(row['tokens'])} tokens" if row["tokens"] else "")
+            glyph, ink = ("✗", palette["coral"]) if row["error"] else ("✓", palette["green"]) if finished else ("◯", palette["blue"])
+            name = names[task_id]
+            if cell_len(name) > name_width:
+                name = name[: max(1, name_width - 1)] + "…"
+            status = "Completed" if finished and not row["error"] else row["status"] or "Working…"
+            left = 2 + name_width + 2
+            room = max(0, width - left - cell_len(meta) - 2)
+            if cell_len(status) > room:
+                status = status[: max(0, room - 1)] + "…" if room > 1 else ""
+            gap = max(1, width - left - cell_len(status) - cell_len(meta))
+            out.append("\n")
+            out.append(f"{glyph} ", style=ink)
+            out.append(name.ljust(name_width), style=f"bold {palette['text']}")
+            out.append("  ")
+            out.append(status, style=palette["coral"] if row["error"] else palette["muted"])
+            out.append(" " * gap)
+            out.append(meta, style=palette["muted"])
+        if hidden:
+            running = sum("done_at" not in row for _, row in hidden)
+            out.append("\n")
+            out.append(f"  +{len(hidden)} more agents ({running} running)", style=palette["muted"])
+        return out
+
+
 class UpdateOffer(Static):
     """Persistent Codex-style line: a newer navin exists, /update installs it."""
 
     DEFAULT_CSS = """
     UpdateOffer {
-        margin: 1 2 0 2;
+        margin: 1 0 0 0;
         padding: 0 1;
         color: $accent;
         text-style: italic;
@@ -1450,7 +1643,7 @@ class UpdateOffer(Static):
 class SystemNote(Static):
     DEFAULT_CSS = """
     SystemNote {
-        margin: 1 2 0 2;
+        margin: 1 0 0 0;
         padding: 0 1;
         color: $text-muted;
         border-left: tall $border;
@@ -1461,10 +1654,10 @@ class SystemNote(Static):
         border-left: tall $error;
         color: $error;
         background: $panel;
-        padding: 1 2;
+        padding: 1 1;
     }
     SystemNote.-success { border-left: tall $success; }
-    SystemNote.-quiet { border-left: none; padding: 0 3; margin: 1 2 0 2; }
+    SystemNote.-quiet { border-left: none; padding: 0 1; margin: 1 0 0 0; }
     """
 
     def __init__(self, text: str, level: str = "info") -> None:
@@ -1476,8 +1669,8 @@ class SystemNote(Static):
 class SubagentCard(Static):
     DEFAULT_CSS = """
     SubagentCard {
-        margin: 0 2 0 2;
-        padding: 0 2;
+        margin: 0;
+        padding: 0 1;
         color: $text-muted;
         border-left: tall $accent 60%;
     }
@@ -1508,7 +1701,7 @@ class SubagentCard(Static):
         self.set_class(bool(error), "-error")
 
 
-class AssistantMessage(Vertical):
+class AssistantMessage(LocalDisplayStyles, Vertical):
     """An assistant turn: reasoning, activity (tools), streamed Markdown body."""
 
     ALLOW_SELECT = True
@@ -1516,12 +1709,12 @@ class AssistantMessage(Vertical):
     def render_line(self, y: int) -> Strip:
         # A turn may be thousands of rows tall. The default container renderer
         # builds a blank strip for every row on each resize while streaming.
-        return Strip.blank(self.size.width, self.visual_style.rich_style)
+        return Strip.blank(content_width(self), self.visual_style.rich_style)
 
     DEFAULT_CSS = """
     AssistantMessage {
         height: auto;
-        margin: 0 2;
+        margin: 0;
         padding: 0 1;
         background: $background;
     }
@@ -1595,20 +1788,31 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownH3 { margin: 0 0 1 0; padding: 0; background: transparent; border: none; }
     AssistantMessage > .assistant-body MarkdownParagraph { margin: 0 0 1 0; }
     AssistantMessage > .assistant-body MarkdownBlock { color: $foreground; }
+    /* One palette with the activity rows: blue emphasis, lavender code,
+       green paths and passes, mustard commands and warnings, coral failures. */
     AssistantMessage > .assistant-body MarkdownBlock > .strong {
-        color: $foreground;
+        color: #5EA8FF;
         text-style: bold;
     }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .strong { color: #3D82FF; }
+    AssistantMessage > .assistant-body MarkdownBlock > .em { color: $foreground; text-style: italic; }
+    AssistantMessage > .assistant-body MarkdownBlock > .status_ok { color: #8FBC8F; text-style: bold; }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .status_ok { color: #2D6A4F; }
+    AssistantMessage > .assistant-body MarkdownBlock > .status_fail { color: #E39B91; text-style: bold; }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .status_fail { color: #914747; }
+    AssistantMessage > .assistant-body MarkdownBlock > .status_warn { color: #D6BC78; text-style: bold; }
+    AssistantMessage > .assistant-body MarkdownBlock:light > .status_warn { color: #795B13; }
+    AssistantMessage > .assistant-body MarkdownBlock > .link { color: $accent; text-style: underline; }
     AssistantMessage > .assistant-body MarkdownBullet {
         color: $text-muted;
     }
     AssistantMessage > .assistant-body MarkdownH1,
     AssistantMessage > .assistant-body MarkdownH2 {
-        color: $foreground;
+        color: $primary;
         text-style: bold;
     }
     AssistantMessage > .assistant-body MarkdownH3 {
-        color: $foreground;
+        color: $accent;
         text-style: bold;
         margin-top: 1;
     }
@@ -1642,9 +1846,12 @@ class AssistantMessage(Vertical):
     AssistantMessage > .assistant-body MarkdownBulletList MarkdownParagraph,
     AssistantMessage > .assistant-body MarkdownOrderedList MarkdownParagraph { margin: 0; }
     AssistantMessage > .assistant-body MarkdownBlock > .code_inline,
-    AssistantMessage > .assistant-body MarkdownBlock:dark > .code_inline,
+    AssistantMessage > .assistant-body MarkdownBlock:dark > .code_inline {
+        color: #C6AFE3;
+        background: transparent;
+    }
     AssistantMessage > .assistant-body MarkdownBlock:light > .code_inline {
-        color: $foreground;
+        color: #705393;
         background: transparent;
     }
     AssistantMessage > .assistant-body MarkdownBlock > .code_path,
@@ -2078,8 +2285,8 @@ class AssistantMessage(Vertical):
         line = f"[$accent]{mark}[/] {_markup_escape(preview)}"
         if not self._folded():
             return line
-        extra = max(len(raw.split()) - len(preview.split()), 0)
-        hint = f"+{extra} mots · clic" if extra else "clic"
+        hidden = raw[len(preview.rstrip("…")):] if len(raw) > len(preview) else ""
+        hint = f"+{token_label(hidden)} · click" if hidden.strip() else "click"
         return f"{line}  [$text-muted]{hint}[/]"
 
     def _refresh_preview(self) -> None:
@@ -2314,11 +2521,12 @@ class AssistantMessage(Vertical):
         return "".join(self._buffer)
 
     def copy_text(self) -> str:
-        parts = [self.text.strip()]
-        for tool in self._tools.values():
-            detail = tool.copy_text()
-            if detail:
-                parts.append(detail)
+        # The answer as written (Markdown source), not the activity log:
+        # tool rows copy on their own. A turn with only tools copies them.
+        answer = self.text.strip()
+        if answer:
+            return clip_transcript(answer)
+        parts = [tool.copy_text() for tool in self._tools.values()]
         return clip_transcript("\n\n".join(part for part in parts if part))
 
 
@@ -2333,8 +2541,8 @@ class ApprovalCard(Vertical):
     DEFAULT_CSS = """
     ApprovalCard {
         height: auto;
-        margin: 1 2 0 2;
-        padding: 1 2;
+        margin: 1 0 0 0;
+        padding: 1 1;
         border: round $warning;
         background: $surface;
     }
@@ -2425,8 +2633,8 @@ class ChoiceCard(Vertical):
     DEFAULT_CSS = """
     ChoiceCard {
         height: auto;
-        margin: 1 2 0 2;
-        padding: 1 2;
+        margin: 1 0 0 0;
+        padding: 1 1;
         border: round $accent;
         background: $surface;
     }
@@ -2618,7 +2826,7 @@ class PromptQueue(Vertical):
     """Pending prompts stay outside the transcript until they are sent."""
 
     DEFAULT_CSS = """
-    PromptQueue { height: auto; display: none; margin: 0 2; padding: 0 2; background: $background; }
+    PromptQueue { height: auto; display: none; margin: 0; padding: 0 1; background: $background; }
     PromptQueue > Horizontal { height: auto; min-height: 1; }
     PromptQueue #queue-title { width: 1fr; color: $primary; }
     PromptQueue #queue-items { height: auto; max-height: 5; background: $background; }
@@ -2673,13 +2881,12 @@ class ComposerShell(Vertical):
     ComposerShell {
         height: auto;
         background: $panel;
-        padding: 1 2;
+        padding: 1 1;
         border: none;
     }
     ComposerShell > .composer-input { height: auto; background: $panel; }
     ComposerShell #composer-prompt { width: 2; height: 1; color: $text-muted; }
     ComposerShell.-focus #composer-prompt { color: $primary; }
-    ComposerShell ComposerMeta { margin-top: 1; }
     """
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
@@ -2715,25 +2922,28 @@ class ComposerShell(Vertical):
 
 
 class ComposerMeta(Horizontal):
-    """Mode, model and effort on the last row of the chat field."""
+    """Mode, model, effort and context on the footer line under the chat."""
 
     DEFAULT_CSS = """
     ComposerMeta {
+        width: auto;
         height: 1;
-        padding: 0 0 0 0;
-        background: $panel;
+        padding: 0 0 0 1;
+        background: $background;
     }
     ComposerMeta #meta-mode {
         width: auto;
         color: $primary;
+        text-style: bold;
     }
-    ComposerMeta #meta-mode:hover { color: $primary; }
+    ComposerMeta #meta-mode:hover { color: $foreground; }
+    /* Mode in its own ink; model, effort, context and path each one step quieter. */
     ComposerMeta #meta-sep { width: auto; color: $text-muted; padding: 0 1; }
-    ComposerMeta #meta-model { width: auto; min-width: 0; height: 1; color: $text-muted; text-overflow: ellipsis; }
-    ComposerMeta #meta-model:hover { color: $foreground; }
+    ComposerMeta #meta-model { width: auto; min-width: 0; max-width: 36; height: 1; color: $foreground; text-overflow: ellipsis; }
+    ComposerMeta #meta-model:hover { color: $primary; }
     ComposerMeta #meta-reasoning { width: auto; height: 1; padding-left: 1; color: $text-muted; }
     ComposerMeta #meta-reasoning:hover { color: $foreground; }
-    ComposerMeta #meta-context { dock: right; width: auto; height: 1; padding-left: 2; text-align: right; color: $text-muted; }
+    ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; color: $accent; }
     """
 
     def compose(self) -> ComposeResult:
@@ -2742,15 +2952,6 @@ class ComposerMeta(Horizontal):
         yield Static("", id="meta-model", markup=True)
         yield Static("Auto", id="meta-reasoning", markup=False)
         yield Static("Context --", id="meta-context", markup=False)
-
-    def on_resize(self) -> None:
-        self._fit_model()
-
-    def _fit_model(self) -> None:
-        if self.is_mounted:
-            self.query_one("#meta-model", Static).styles.max_width = max(
-                0, self.content_size.width - getattr(self, "_reserved_cells", 0)
-            )
 
     def set_meta(
         self,
@@ -2785,11 +2986,6 @@ class ComposerMeta(Horizontal):
             update(context_w, "Context --")
             context_w.tooltip = "Context usage is not available yet"
         prefix = f"{wave_frame(spin)} " if busy else ""
-        self._reserved_cells = (
-            cell_len(extra or f"{prefix}{mode}") + (0 if extra else 3)
-            + cell_len(reasoning or "Auto") + 1 + cell_len(str(context_w.content)) + 2
-        )
-        self._fit_model()
         if extra:
             update(mode_w, extra)
             update(sep_w, "")
@@ -3259,7 +3455,11 @@ class FindBar(Horizontal):
         self.post_message(self.Moved(event.value, 0))
 
 
-class Transcript(VerticalScroll):
+class ChatColumn(LocalDisplayStyles, Vertical):
+    """Transcript plus the prompt stack; their display toggles stay local."""
+
+
+class Transcript(LocalDisplayStyles, VerticalScroll):
     can_focus = True
 
     class OlderRequested(Message):
@@ -3272,8 +3472,9 @@ class Transcript(VerticalScroll):
         height: 1fr;
         align-vertical: bottom;
         padding: 0;
-        scrollbar-size-vertical: 1;
         background: $background;
+        /* No bar: the wheel, PageUp/PageDown and drag selection scroll. */
+        scrollbar-size-vertical: 0;
     }
     """
 
@@ -3282,6 +3483,21 @@ class Transcript(VerticalScroll):
     loading_history = False
     history_generation = 0
 
+    # Textual arranges every displayed widget on each layout, visible or not.
+    # A long chat therefore slows every paint, keystroke and scroll. Blocks
+    # far above the viewport are hidden (display: none) and come back when
+    # the reader scrolls up, so the cost follows the screen, not the session.
+    WINDOW_SCREENS = 4
+    WINDOW_MIN_LINES = 160
+    WINDOW_MIN_BLOCKS = 6
+    TRIM_DELAY_S = 0.3
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._windowed: list[Widget] = []
+        self._trim_timer: Timer | None = None
+        self._reveal_pending = False
+
     def watch_auto_follow(self, follow: bool) -> None:
         if self.is_attached:
             if follow:
@@ -3289,6 +3505,7 @@ class Transcript(VerticalScroll):
                 # anchor() stops that same animation; defer it until the frame
                 # has removed its completed entry to avoid Textual's KeyError.
                 self.call_later(self._resume_anchor)
+                self.schedule_trim()
             else:
                 self.anchor(False)
 
@@ -3296,7 +3513,112 @@ class Transcript(VerticalScroll):
         if self.is_attached and self.auto_follow:
             self.anchor()
 
+    # -- windowing --------------------------------------------------------
+
+    @property
+    def windowed_count(self) -> int:
+        return len(self._windowed)
+
+    def _window_budget(self, screens: int) -> int:
+        return max(self.WINDOW_MIN_LINES, self.outer_size.height * screens)
+
+    @staticmethod
+    def _block_height(child: Widget) -> int:
+        # Last laid-out size: reading region/size would rebuild the full map.
+        return child.outer_size.height + child.styles.margin.height
+
+    @staticmethod
+    def _can_window(child: Widget) -> bool:
+        # Pending prompts wait for an answer; never hide them.
+        return not isinstance(child, (ApprovalCard, ChoiceCard))
+
+    def schedule_trim(self) -> None:
+        if self._trim_timer is None and self.is_attached:
+            self._trim_timer = self.set_timer(self.TRIM_DELAY_S, self._trim)
+
+    def _trim(self) -> None:
+        self._trim_timer = None
+        if not self.is_attached or not self.auto_follow or self.loading_history:
+            return
+        children = self.children
+        windowed = {child for child in self._windowed if child.parent is self}
+        budget = self._window_budget(self.WINDOW_SCREENS)
+        used = kept = 0
+        cut: int | None = None
+        for index in range(len(children) - 1, -1, -1):
+            child = children[index]
+            if child in windowed:
+                break
+            if not child.display:
+                continue
+            used += self._block_height(child)
+            kept += 1
+            if used > budget and kept >= self.WINDOW_MIN_BLOCKS:
+                cut = index
+                break
+        if cut is None:
+            return
+        hidden = False
+        for child in children[:cut]:
+            if child.display and child not in windowed and self._can_window(child):
+                child.display = False
+                windowed.add(child)
+                hidden = True
+        if hidden:
+            self._windowed = [child for child in children if child in windowed]
+
+    def reveal_windowed(self, through: Widget | None = None) -> bool:
+        """Show hidden blocks above the viewport, keeping the reading position.
+
+        With ``through``, every hidden block from that one down is shown
+        (find, jump to a message). Otherwise about two screens are revealed.
+        """
+        self._windowed = [child for child in self._windowed if child.parent is self]
+        if not self._windowed:
+            return False
+        if through is not None:
+            if through not in self._windowed:
+                return False
+            chunk = self._windowed[self._windowed.index(through):]
+        else:
+            budget = self._window_budget(2)
+            used = 0
+            start = len(self._windowed)
+            while start > 0 and used < budget:
+                start -= 1
+                used += self._block_height(self._windowed[start])
+            chunk = self._windowed[start:]
+        del self._windowed[len(self._windowed) - len(chunk):]
+        anchor = next(
+            (child for child in self.children if child.display and child not in chunk
+             and self.children.index(child) > self.children.index(chunk[-1])),
+            None,
+        )
+        self.auto_follow = False
+        old_y = anchor.virtual_region.y if anchor is not None else 0
+        scroll_y = self.scroll_y
+        with self.app.batch_update():
+            for child in chunk:
+                child.display = True
+            self.screen._refresh_layout()
+            if anchor is not None and anchor.is_attached:
+                self.scroll_to(
+                    y=scroll_y + anchor.virtual_region.y - old_y, animate=False, immediate=True,
+                )
+        return True
+
+    def _reveal_older(self) -> None:
+        self._reveal_pending = False
+        if self.is_attached:
+            self.reveal_windowed()
+
     def request_older(self) -> None:
+        if self._windowed:
+            # Scroll watchers run inside the animator; reveal on the next tick.
+            if not self._reveal_pending:
+                self._reveal_pending = True
+                self.call_later(self._reveal_older)
+            return
         if self.has_older and not self.loading_history:
             self.loading_history = True
             self.auto_follow = False
@@ -3324,7 +3646,7 @@ class Transcript(VerticalScroll):
         self.auto_follow = self.is_vertical_scroll_end
 
     def page(self, direction: int) -> None:
-        height = max(1, self.size.height - 2)
+        height = max(1, self.outer_size.height - 2)
         self.nudge(direction * height)
 
     async def add(self, widget: Any) -> None:
@@ -3336,6 +3658,7 @@ class Transcript(VerticalScroll):
             # Resolve the bottom position in the same layout as the new
             # content, instead of painting and scrolling in separate frames.
             self.anchor()
+            self.schedule_trim()
 
 
 def compact_shortcut(key: str) -> str:
@@ -3380,7 +3703,7 @@ class DockHint(Static):
     def _paint(self) -> None:
         if self.key:
             shown = compact_shortcut(self.key)
-            self.update(f"[$text-muted]{escape(shown)}[/] {escape(self.label)}")
+            self.update(f"[$primary]{escape(shown)}[/] {escape(self.label)}")
         elif self.action:
             self.update(escape(self.label))
         else:
@@ -3391,8 +3714,36 @@ class DockHint(Static):
             self.app.call_later(self.app.run_action, self.action)
 
 
+def short_path(path: str, keep: int = 3) -> str:
+    """``~/projects/deploy7/guidia``: home as ``~`` and the last folders only."""
+    import os
+
+    raw = (path or "").replace("\\", "/").rstrip("/") or (path or "")
+    home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
+    prefix = ""
+    if home and (raw == home or raw.startswith(home + "/")):
+        prefix, raw = "~", raw[len(home):]
+    parts = [part for part in raw.split("/") if part]
+    if len(parts) > keep:
+        return f"{prefix}/…/" + "/".join(parts[-keep:])
+    if prefix:
+        return prefix + ("/" + "/".join(parts) if parts else "")
+    return raw
+
+
+class DockPath(Static):
+    """The path slot shrinks as the model line grows; refit it then."""
+
+    def on_resize(self) -> None:
+        if isinstance(self.parent, DockBar):
+            self.parent._paint_path()
+
+
 class DockBar(Horizontal):
-    """One footer line: project path, then shortcuts."""
+    """One footer line: mode, model, effort, context and path, then Settings and panel.
+
+    Every other command lives in Settings and the palette, and keeps its key.
+    """
 
     DEFAULT_CSS = """
     DockBar {
@@ -3403,15 +3754,14 @@ class DockBar(Horizontal):
         background: $background;
         overflow: hidden;
     }
-    DockBar.-hidden { display: none; height: 0; min-height: 0; }
     DockBar > #dock-path {
         width: 1fr;
         height: 1;
-        padding: 0 2 0 1;
-        color: $text-muted;
+        padding: 0 2 0 4;
+        color: $accent 70%;
         overflow: hidden;
     }
-    DockBar > #dock-path:hover { color: $foreground; }
+    DockBar > #dock-path:hover { color: $accent; }
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -3419,31 +3769,21 @@ class DockBar(Horizontal):
         self._path = ""
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="dock-path")
-        yield DockHint("ctrl+p", "commands", "command_palette", id="dock-commands")
-        yield DockHint("ctrl+b", "panel", "toggle_sidebar", id="dock-hide")
-        yield DockHint("ctrl+i", "Provider", "open_settings('providers')", id="dock-provider")
-        yield DockHint("ctrl+o", "Model", "pick_model", id="dock-model")
-        yield DockHint("ctrl+t", "Mode", "pick_mode", id="dock-mode")
-        yield DockHint("ctrl+s", "Session", "pick_session", id="dock-session")
+        yield ComposerMeta(id="composer-meta")
+        yield DockPath("", id="dock-path")
         yield DockHint("ctrl+g", "Settings", "open_settings", id="dock-settings")
+        yield DockHint("ctrl+b", "panel", "toggle_sidebar", id="dock-hide")
 
     def set_panel(self, visible: bool) -> None:
-        self.set_class(visible, "-hidden")
+        # The line stays: it carries the model and context in both layouts.
+        with contextlib.suppress(NoMatches):
+            self.query_one("#dock-hide", DockHint).set_label("hide panel" if visible else "panel")
 
     def set_path(self, path: str) -> None:
-        self._path = (path or "").replace("\\", "/").strip()
+        self._path = short_path((path or "").strip())
         self._paint_path()
 
     def on_resize(self) -> None:
-        # Keep the path and common actions readable at small terminal widths.
-        # Every command remains in the palette and keeps its keyboard binding.
-        for hint_id, threshold in (
-            ("dock-provider", 150), ("dock-model", 130),
-            ("dock-mode", 115), ("dock-hide", 100), ("dock-settings", 75),
-        ):
-            for hint in self.query(f"#{hint_id}"):
-                hint.display = self.size.width >= threshold
         self._paint_path()
 
     def _paint_path(self) -> None:
@@ -3452,10 +3792,19 @@ class DockBar(Horizontal):
         except Exception:  # noqa: BLE001
             return
         raw = self._path
-        width = slot.size.width or 24
+        width = content_width(slot) or 24
         if width < 8:
             width = 24
-        shown = raw if len(raw) <= width else fit_path(raw, width)
+        leaf = raw.rsplit("/", 1)[-1] or raw
+        if len(raw) <= width:
+            shown = raw
+        elif len(leaf) + 4 <= width:
+            shown = fit_path(raw, width)
+        elif len(leaf) <= width:
+            # Narrow terminal: the project name reads better than a cut path.
+            shown = leaf
+        else:
+            shown = leaf[: max(1, width - 1)] + "…"
         slot.update(escape(shown))
 
     def on_click(self, event: events.Click) -> None:
@@ -3741,7 +4090,7 @@ class Sidebar(Vertical):
         width: 1fr;
         height: 1fr;
         padding: 0;
-        scrollbar-size-vertical: 1;
+        scrollbar-size-vertical: 0;
     }
     Sidebar #side-panel {
         width: auto;

@@ -1,6 +1,6 @@
 [project]
 name = "navin-ai"
-version = "2.0.7"
+version = "2.0.8"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -67,7 +67,8 @@ dependencies = [
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
     # Archive text extraction for chat attachments (.7z / .rar; .zip is stdlib).
-    "py7zr>=1.0.0,<2.0.0",
+    # 1.0 removed SevenZipFile.read(). The extractor still uses that call.
+    "py7zr>=0.22.0,<1.0.0",
     "rarfile>=4.2,<5.0",
     # Computer is available in the standard CLI and desktop installation.
     "pillow>=10.0.0",

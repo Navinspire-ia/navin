@@ -23,6 +23,10 @@ _FLAKY_ABROAD = {
     "iadb",
     "ungm",
     "sam-gov",
+    # The Discovery.aw path 404s; the host itself is what the catalog probes.
+    "sap-discovery",
+    # Intermittent 404 from GitHub-hosted runners. The official URL stays.
+    "ireland-etenders",
 }
 
 

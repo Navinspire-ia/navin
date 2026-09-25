@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import io
 import json
 import re
@@ -121,7 +123,7 @@ def _attach_diagram_exports(store: Any, tender: dict[str, Any], response: dict[s
             source = Path(tmp) / "workflow.json"
             target = Path(tmp) / "workflow.html"
             source.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
-            result = subprocess.run([node, str(cli), "deliver", "workflow", str(source), str(target), "--quality", "showcase", "--json"], capture_output=True, text=True, timeout=20, check=True)
+            result = subprocess.run([node, str(cli), "deliver", "workflow", str(source), str(target), "--quality", "showcase", "--json"], capture_output=True, text=True, timeout=20, check=True, **no_window_kwargs())
             receipt = json.loads(result.stdout)
             validation = receipt.get("validation") or {}
             if not receipt.get("ok") or validation.get("checksPassed") != 9 or validation.get("warnings") != 0 or validation.get("errors") != 0:

@@ -16,11 +16,16 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-import psutil
+try:
+    import psutil
+except ImportError:  # POSIX-only dependency (resource) is absent on Windows
+    psutil = None
 
 
 def _memory_snapshot() -> tuple[float | None, float | None]:
     """(used_ratio, available_gb), accounting for reclaimable OS caches."""
+    if psutil is None:
+        return None, None
     try:
         memory = psutil.virtual_memory()
         if memory.total <= 0:
@@ -45,6 +50,8 @@ class _CpuSampler:
             previous = self._previous
             if previous is not None and now - previous[0] < 1:
                 return self._ratio, self._high_since is not None and now - self._high_since >= 30
+            if psutil is None:
+                return None, False
             try:
                 counters = psutil.cpu_times()
             except (OSError, ValueError, psutil.Error):

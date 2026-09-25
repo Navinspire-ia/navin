@@ -15,6 +15,8 @@ later runs skip the dialog.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import json
 import shutil
 import subprocess
@@ -208,7 +210,7 @@ def _system_python_with_gio() -> str | None:
                 capture_output=True,
                 timeout=10,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             continue
         if out.returncode == 0:
@@ -320,7 +322,7 @@ class PortalSession:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-        )
+         **no_window_kwargs())
         token = ""
         if self._token_file and self._token_file.exists():
             token = self._token_file.read_text(encoding="utf-8").strip()

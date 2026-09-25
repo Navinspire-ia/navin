@@ -97,7 +97,9 @@ class TranscriptMarkdown(Markdown):
     """Parse the unfinished block; reuse earlier blocks and collection rows."""
 
     def render_line(self, y: int) -> Strip:
-        return Strip.blank(self.size.width, self.visual_style.rich_style)
+        # outer_size is the last layout; size would rebuild the full map.
+        width = self.outer_size.width - self.styles.gutter.width
+        return Strip.blank(max(0, width), self.visual_style.rich_style)
 
     def _parser(self):
         return MarkdownIt("gfm-like") if self._parser_factory is None else self._parser_factory()

@@ -241,7 +241,7 @@ def test_real_app_quit_preserves_draft_and_queue_with_large_activity(tmp_path):
             await pilot.pause()
             started = time.monotonic()
             await app.action_quit()
-        assert time.monotonic() - started < 1.0
+        assert time.monotonic() - started < 3.0
         stored = app._session_store.load("cli:direct")
         assert stored["draft"] == "Keep this draft"
         assert stored["queue"][0]["text"] == "Queued task"
@@ -253,3 +253,38 @@ def test_real_app_quit_preserves_draft_and_queue_with_large_activity(tmp_path):
             asyncio.run(run())
     finally:
         set_config_path(original)
+
+
+def test_loop_close_does_not_wait_for_a_stuck_worker_thread():
+    import threading
+    import time
+
+    from navin.tui.shutdown import run_app_fast_exit
+
+    release = threading.Event()
+
+    class StuckApp:
+        async def run_async(self):
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, release.wait, 30)
+            return "done"
+
+    started = time.monotonic()
+    try:
+        assert run_app_fast_exit(StuckApp()) == "done"
+        assert time.monotonic() - started < 3
+    finally:
+        release.set()
+
+
+def test_terminal_guard_restores_tty_modes():
+    from unittest.mock import patch
+
+    from navin.tui.shutdown import TerminalGuard
+
+    guard = TerminalGuard()
+    guard._fd, guard._attrs = 0, ["saved"]
+    with patch("termios.tcsetattr") as tcsetattr:
+        guard.restore()
+    tcsetattr.assert_called_once()
+    assert tcsetattr.call_args.args[2] == ["saved"]

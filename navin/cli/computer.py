@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import os
 import re
 import shutil
@@ -509,7 +511,7 @@ def create_computer_app(*, console: Console) -> typer.Typer:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
-        )
+         **no_window_kwargs())
         time.sleep(0.8)
         if proc.poll() is not None:
             console.print(f"[red]Xvfb exited immediately (is {display} in use?)[/red]")
@@ -528,7 +530,7 @@ def create_computer_app(*, console: Console) -> typer.Typer:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         start_new_session=True,
-                    )
+                     **no_window_kwargs())
                     started.append(candidate)
                     break
             else:
@@ -551,7 +553,7 @@ def create_computer_app(*, console: Console) -> typer.Typer:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
-                )
+                 **no_window_kwargs())
                 started.append("x11vnc on localhost:5900")
             else:
                 started.append("x11vnc not installed")

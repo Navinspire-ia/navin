@@ -242,8 +242,20 @@ async def test_voice_prompt_envelope_returns_raw_and_rewritten_text():
     clear_voice_sessions_for_tests()
     config = SimpleNamespace(
         license=SimpleNamespace(plan="pro", managed_api_key="k"),
-        voice=SimpleNamespace(realtime_enabled=True),
-        transcription=SimpleNamespace(provider="openrouter"),
+        voice=SimpleNamespace(
+            realtime_enabled=True,
+            tts_provider="openrouter",
+            selection_explicit=True,
+            tts_model="google/gemini-3.1-flash-tts-preview",
+            voice="Kore",
+        ),
+        transcription=SimpleNamespace(
+            provider="openrouter",
+            selection_explicit=True,
+            model="whisper-1",
+            enabled=True,
+        ),
+        providers=SimpleNamespace(openrouter=SimpleNamespace(api_key="sk-byok"), navin=SimpleNamespace(api_key="")),
     )
     with (
         patch("navin.webui.voice_session_ws.load_config", return_value=config),

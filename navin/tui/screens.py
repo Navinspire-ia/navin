@@ -9,7 +9,6 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from rich.markup import escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -31,6 +30,7 @@ from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
 
 from navin.tui.frames import background_lines
+from navin.tui.textmarkup import escape
 
 # ---------------------------------------------------------------------------
 # Generic filterable picker

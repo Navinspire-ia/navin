@@ -113,14 +113,14 @@ class MediaSettingsPayloadTest(unittest.TestCase):
         self.assertFalse(payload["transcription"]["provider_configured"])
 
     def test_usable_runtime_fallback_is_still_shown(self) -> None:
-        """BYOK keeps its zero-setup mic: a fallback that can run stays visible."""
+        """A legacy BYOK fallback is not displayed as the saved Live selection."""
         config = Config()
         config.providers.openrouter = ProviderConfig(api_key="sk-byok")
         payload = self._payload(config)
-        self.assertEqual(payload["voice"]["tts_provider"], "openrouter")
-        self.assertTrue(payload["voice"]["tts_provider_configured"])
-        self.assertEqual(payload["transcription"]["provider"], "openrouter")
-        self.assertTrue(payload["transcription"]["provider_configured"])
+        self.assertEqual(payload["voice"]["tts_provider"], "")
+        self.assertFalse(payload["voice"]["tts_provider_configured"])
+        self.assertEqual(payload["transcription"]["provider"], "")
+        self.assertFalse(payload["transcription"]["provider_configured"])
 
     def test_explicit_pick_survives_a_missing_key(self) -> None:
         config = Config()

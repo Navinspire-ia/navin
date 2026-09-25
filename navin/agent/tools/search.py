@@ -956,9 +956,44 @@ class FindFilesTool(_SearchTool):
             return ToolResult.error(f"Error finding files: {e}")
 
 
+_SYMBOL_QUERY = re.compile(
+    r"^(?:(?P<decl>def|class|function|func|fn|interface|type)\s+)?"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\b[\\(]*$"
+)
+_INDEX_HINT_LIMIT = 2
+# The index parses source code; docs and config matches get no nudge.
+_CODE_FILE = re.compile(
+    r"\.(?:py|pyi|ts|tsx|js|jsx|mjs|go|rs|java|kt|rb|php|cs|swift|c|cc|cpp|h|hpp|vue|svelte)\b"
+)
+
+
+def symbol_index_hint(pattern: str) -> str:
+    """Point a symbol grep to code_index, which answers from parsed code.
+
+    Sessions showed grep and read_file for every "where is X / who calls X"
+    question while code_index sat unused. The nudge only fires for patterns
+    that are clearly identifiers (CamelCase, snake_case, a declaration).
+    """
+    match = _SYMBOL_QUERY.match((pattern or "").strip())
+    if match is None:
+        return ""
+    name = match.group("name")
+    # TODO / FIXME / HTTP are words to find, not symbols to resolve.
+    shouting = name.isupper() and "_" not in name
+    identifier = not shouting and ("_" in name or "." in name or any(char.isupper() for char in name[1:]))
+    if not (match.group("decl") or (identifier and len(name) >= 4)):
+        return ""
+    action = "definition" if match.group("decl") else "references"
+    return (
+        f"\n\nTip: `code_index action={action} name={name}` answers this from parsed code "
+        f"(also callers, and impact before changing a signature)."
+    )
+
+
 class GrepTool(_SearchTool):
     """Search file contents using a regex-like pattern."""
     _scopes = {"core", "subagent"}
+    _index_hints_shown = 0
 
     _MAX_RESULT_CHARS = 128_000
     _MAX_FILE_BYTES = 2_000_000
@@ -1370,7 +1405,14 @@ class GrepTool(_SearchTool):
                 )
             if notes:
                 result += "\n\n" + "\n".join(notes)
-            return recovery_note + result
+            hint = (
+                symbol_index_hint(pattern)
+                if self._index_hints_shown < _INDEX_HINT_LIMIT and _CODE_FILE.search(result)
+                else ""
+            )
+            if hint:
+                self._index_hints_shown += 1
+            return recovery_note + result + hint
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:

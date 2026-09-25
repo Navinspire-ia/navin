@@ -219,9 +219,13 @@ class DoctorAndRunPlanTest(unittest.TestCase):
                 devices=[],
                 avds=["Pixel_8_API_34"],
             )
-            plan = build_run_plan(
-                project, target="android", doctor=doctor, start_emulator=True
-            )
+            with patch(
+                "navin.mobile.bootstrap.acceleration_available",
+                return_value=(True, "ok"),
+            ):
+                plan = build_run_plan(
+                    project, target="android", doctor=doctor, start_emulator=True
+                )
             self.assertEqual(plan.emulator_command, "emulator -avd Pixel_8_API_34")
 
     def test_run_plan_blocked_when_doctor_missing_required(self):

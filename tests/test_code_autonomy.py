@@ -450,7 +450,7 @@ def test_verify_targets_the_matching_suite_in_mixed_projects(tmp_path, monkeypat
     write(tmp_path / "webui/package.json", '{"devDependencies":{"vitest":"*"}}')
     calls = []
 
-    def run(name, spec, root, selected):
+    def run(name, spec, root, selected, on_output=None):
         calls.append((name, selected))
         return testing.TestOutcome(runner=name, ran=True, passed=1, total=1, exit_code=0)
 

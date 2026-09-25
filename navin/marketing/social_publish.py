@@ -10,6 +10,8 @@ HTTP transports are injected. No adapter retries a publication request.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import ipaddress
 import json
 import math
@@ -261,7 +263,7 @@ def probe_video(path: Path) -> dict[str, Any]:
         result = subprocess.run(
             [binary, "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate", "-of", "json", str(path)],
             capture_output=True, timeout=10, check=True,
-        )
+         **no_window_kwargs())
         data = json.loads(result.stdout)
         stream = next(item for item in data.get("streams", []) if item.get("codec_type") == "video")
         duration = _number((data.get("format") or {}).get("duration"))

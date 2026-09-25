@@ -12,6 +12,8 @@ the binding. Applications only publish their tree when accessibility is on
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import json
 import shutil
 import subprocess
@@ -200,7 +202,7 @@ def _system_python_with_gi() -> str | None:
                 capture_output=True,
                 timeout=10,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             continue
         if out.returncode == 0:
@@ -233,7 +235,7 @@ def atspi_windows(*, focus_id: str | None = None, timeout: float = 20.0) -> list
             text=True,
             timeout=timeout,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ComputerError(f"AT-SPI window list failed: {exc}") from exc
     if out.returncode != 0:
@@ -269,7 +271,7 @@ def atspi_snapshot(
             text=True,
             timeout=timeout,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ComputerError(f"AT-SPI snapshot failed: {exc}") from exc
     if out.returncode != 0:

@@ -18,6 +18,8 @@ With the project flag off, ``note_turn`` returns before touching anything.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import json
 import os
 import queue
@@ -218,7 +220,7 @@ def spawn_train(
             env=env,
             cwd=str(workspace) if workspace.is_dir() else None,
             check=False,
-        )
+         **no_window_kwargs())
     except subprocess.TimeoutExpired:
         reason = f"training child killed after {timeout_s + _CHILD_GRACE_S:.0f}s"
         journal(workspace, "train_failed", reason=reason, actor=actor)

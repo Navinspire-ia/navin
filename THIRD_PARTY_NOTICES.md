@@ -23,6 +23,18 @@ are recorded in `packaging/ffmpeg-manifest.json`.
 
 Upstream: https://ffmpeg.org/
 
+Builds that enable GPL components are distributed under the GNU General Public
+License. The license text shipped with those binaries is
+`ffmpeg-COPYING.GPLv3.txt`. For three years after Navin distributes a GPL
+FFmpeg build, Navin provides a written offer for the corresponding source of
+that build. Write to contact@navinspire.com.
+
+Container images redistribute Debian's ffmpeg. The Debian source packages are
+at https://sources.debian.org/.
+
+The build providers named in `packaging/ffmpeg-manifest.json` are
+johnvansickle.com, www.osxexperts.net, evermeet.cx, github.com and www.gyan.dev.
+
 ## UI and assets
 
 ### Tabler Icons

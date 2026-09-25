@@ -13,6 +13,8 @@ WSL ``clip.exe`` treats UTF-8 stdin as the OEM code page (accents become
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import base64
 import os
 import shutil
@@ -93,22 +95,17 @@ def osc52_allowed(text: str) -> bool:
 
 
 def write_os_clipboard(text: str) -> bool:
-    """Write to the host clipboard when it will not trip a terminal paste guard.
+    """Write to the host clipboard, whatever the size.
 
-    Windows Terminal intercepts Ctrl+V above 5 KiB. Large copies therefore stay
-    in-app on Windows / WSL so Ctrl+V remains a normal paste. Native Linux and
-    macOS backends have no such limit.
+    A copy that only lives inside navin cannot be pasted into an editor or a
+    browser. Large copies used to stay in-app on Windows / WSL to dodge
+    Windows Terminal's large paste warning; that warning only concerns pasting
+    back into the terminal and can be turned off (``largePasteWarning``).
     """
     payload = text or ""
     if not payload:
         return False
-    windows = sys.platform == "win32" or (sys.platform != "darwin" and bool(
-        os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP")
-        or shutil.which("clip.exe") or shutil.which("powershell.exe")
-    ))
-    if osc52_allowed(payload) or not windows:
-        return write_clipboard(payload)
-    return False
+    return write_clipboard(payload)
 
 
 def _win_temp_dir() -> str:
@@ -124,7 +121,7 @@ def _win_temp_dir() -> str:
             capture_output=True,
             timeout=5,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         return ""
     raw = (result.stdout or b"").decode("utf-8", errors="replace").strip()
@@ -144,7 +141,7 @@ def _win_to_wsl(win_path: str) -> str:
                 text=True,
                 timeout=3,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             result = None
         if result is not None and result.returncode == 0:
@@ -181,7 +178,7 @@ def _write_windows_clipboard_file(text: str) -> bool:
             capture_output=True,
             timeout=20,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         result = None
     with suppress(OSError):
@@ -190,9 +187,11 @@ def _write_windows_clipboard_file(text: str) -> bool:
 
 
 def _write_windows_clipboard(text: str) -> bool:
-    """Copy Unicode text to the Windows clipboard (native or WSL)."""
-    if not osc52_allowed(text) and _write_windows_clipboard_file(text):
-        return True
+    """Copy Unicode text to the Windows clipboard (native or WSL).
+
+    clip.exe starts in milliseconds and reads any size from stdin; PowerShell
+    takes about a second to start and is only the fallback.
+    """
     clip = shutil.which("clip.exe")
     if clip:
         try:
@@ -202,7 +201,7 @@ def _write_windows_clipboard(text: str) -> bool:
                 capture_output=True,
                 timeout=8 if len(text) > 8000 else 3,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired, LookupError):
             result = None
         if result is not None and result.returncode == 0:
@@ -218,7 +217,7 @@ def _write_windows_clipboard(text: str) -> bool:
         f"[System.Convert]::FromBase64String('{b64}')); "
         "Set-Clipboard -Value $t"
     )
-    if len(command) > 7000:
+    if len(command) > 7000 or not osc52_allowed(text):
         return _write_windows_clipboard_file(text)
     try:
         result = subprocess.run(
@@ -232,7 +231,7 @@ def _write_windows_clipboard(text: str) -> bool:
             capture_output=True,
             timeout=5,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
@@ -259,7 +258,7 @@ def _read_windows_clipboard() -> str:
             capture_output=True,
             timeout=20,
             check=False,
-        )
+         **no_window_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         return ""
     if result.returncode != 0 or not result.stdout:
@@ -282,7 +281,7 @@ def read_clipboard() -> str:
                 encoding="utf-8",
                 timeout=2,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             continue
         if result.returncode != 0:
@@ -315,7 +314,7 @@ def write_clipboard(text: str) -> bool:
                 encoding="utf-8",
                 timeout=8 if len(payload) > 8000 else 3,
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired):
             continue
         if result.returncode == 0:

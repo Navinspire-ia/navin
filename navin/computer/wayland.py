@@ -22,6 +22,8 @@ portal and the compositors are converted with the stream's scale.
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import io
 import json
 import os
@@ -279,7 +281,7 @@ class WaylandBackend(ComputerBackend):
 
     @staticmethod
     def _run(cmd: list[str], *, timeout: float = 20.0, binary: bool = False) -> Any:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, **no_window_kwargs())
         if proc.returncode != 0:
             err = proc.stderr.decode("utf-8", "replace").strip()[-300:]
             raise ComputerError(f"{Path(cmd[0]).name} failed: {err or proc.returncode}")

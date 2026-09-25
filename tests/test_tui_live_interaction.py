@@ -24,9 +24,12 @@ def test_status_click_and_repeated_copy_or_modal_escape_do_not_cancel(tmp_path):
             await pilot.click(app.query_one(WorkingLine))
             app.composer.focus()
             app.composer.set_text("draft")
-            await pilot.press("ctrl+c", "ctrl+c", "ctrl+c")
+            # First press clears, second only arms quit; neither cancels work.
+            await pilot.press("ctrl+c", "ctrl+c")
             assert app.composer.text == ""
             assert app.runtime.bus.inbound_size == 0
+            assert not app._quitting
+            app._quit_armed_at = 0.0
             await app.push_screen(PickerScreen("Mode", [PickItem("chat", "Chat")]))
             await pilot.press("escape", "escape")
             assert len(app.screen_stack) == 1
@@ -276,4 +279,23 @@ def test_output_bursts_preserve_partial_lines_snapshots_and_copy(tmp_path):
             row.apply(phase="end")
             assert len(row.output_lines) == 5000
             assert row.output_lines[-1] == "last"
+    asyncio.run(run())
+
+
+def test_double_ctrl_c_on_an_empty_prompt_quits_and_a_single_press_does_not(tmp_path):
+    async def run():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(100, 32)) as pilot:
+            app.composer.focus()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not app._quitting
+            app._quit_armed_at -= app.QUIT_PRESS_WINDOW_S + 1
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not app._quitting, "presses far apart only re-arm"
+            with patch.object(app.runtime, "close", AsyncMock()):
+                await pilot.press("ctrl+c")
+                await pilot.pause()
+                assert app._quitting
     asyncio.run(run())

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import hashlib
 import ipaddress
 import json
@@ -33,7 +35,7 @@ def _source_metadata(path: str, size: int, modified_ns: int, changed_ns: int, vi
     probe = shutil.which("ffprobe") if video else None
     if probe:
         try:
-            result = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration", "-of", "json", path], capture_output=True, timeout=10, check=True)
+            result = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration", "-of", "json", path], capture_output=True, timeout=10, check=True, **no_window_kwargs())
             duration = float((json.loads(result.stdout).get("format") or {}).get("duration") or 0)
         except (OSError, subprocess.SubprocessError, ValueError):
             pass

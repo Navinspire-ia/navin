@@ -48,11 +48,13 @@ class TiktokenUnavailableFallbackTest(unittest.TestCase):
     def setUp(self) -> None:
         import navin.utils.helpers as helpers
 
+        helpers._get_token_encoding.cache_clear()
         patcher = patch.object(
             helpers.tiktoken, "get_encoding", side_effect=_broken_encoding()
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.addCleanup(helpers._get_token_encoding.cache_clear)
 
     def test_a_broken_encoding_still_yields_a_positive_estimate(self) -> None:
         estimated = estimate_prompt_tokens(_MESSAGES)

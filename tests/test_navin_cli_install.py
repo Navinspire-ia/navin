@@ -92,6 +92,10 @@ def test_windows_script_is_silent_official_setup() -> None:
     assert "navin agent" not in text
     assert "cd your-project; navin-cli" in text
     assert "https://navin.live/en/docs/cli" in text
+    # Windows PowerShell 5.1 wraps the releases array in one item; the
+    # installer must unwrap it or every package name check fails.
+    assert "Unwrap nested arrays" in text
+    assert "while ($data.Count -ge 1 -and $data[0] -is [System.Array])" in text
 
 
 def test_install_route_dispatches_on_win32() -> None:

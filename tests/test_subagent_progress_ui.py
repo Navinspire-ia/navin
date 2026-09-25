@@ -100,17 +100,38 @@ class SubagentProgressPublishTest(unittest.TestCase):
         self.assertEqual(events[0].model, "test-model")
         self.assertFalse(events[0].done)
 
-    def test_cli_origin_is_silent(self) -> None:
+    def test_cli_origin_gets_live_rows_with_time_and_tokens(self) -> None:
+        # The terminal UI draws one row per running agent under the chat.
         bus = _OutboundBus()
         mgr = SubagentManager.__new__(SubagentManager)
         mgr.bus = bus
         status = SubagentStatus(
             task_id="x",
-            label="cli",
+            label="tests-commerce",
             task_description="t",
             started_at=0.0,
             origin_channel="cli",
             origin_chat_id="direct",
+            usage={"prompt_tokens": 300_000, "completion_tokens": 35_500},
+        )
+        with mock.patch("navin.agent.subagent.time.monotonic", return_value=370.0):
+            mgr._publish_progress(status, force=True)
+        message = bus.outbound.get_nowait()
+        self.assertEqual((message.channel, message.chat_id), ("cli", "direct"))
+        self.assertEqual(message.event.tokens, 335_500)
+        self.assertEqual(message.event.started_ms_ago, 370_000)
+
+    def test_chat_channels_get_no_progress_noise(self) -> None:
+        bus = _OutboundBus()
+        mgr = SubagentManager.__new__(SubagentManager)
+        mgr.bus = bus
+        status = SubagentStatus(
+            task_id="x",
+            label="L",
+            task_description="t",
+            started_at=0.0,
+            origin_channel="telegram",
+            origin_chat_id="42",
         )
         mgr._publish_progress(status, force=True)
         self.assertTrue(bus.outbound.empty())

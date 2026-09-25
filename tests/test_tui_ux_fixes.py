@@ -74,7 +74,7 @@ class PromptFocusTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(100, 32)) as pilot:
                 await pilot.pause()
                 shell = app.query_one(ComposerShell)
-                meta = shell.query_one("ComposerMeta")
+                meta = app.query_one("ComposerMeta")
                 app.set_focus(None)
                 await pilot.pause()
 
@@ -87,7 +87,7 @@ class PromptFocusTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CopySelectionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_long_selection_reaches_the_in_app_clipboard(self):
+    async def test_long_selection_reaches_the_host_clipboard(self):
         with tempfile.TemporaryDirectory() as name:
             app = _make_app(Path(name))
             async with app.run_test(size=(100, 32)) as pilot:
@@ -101,14 +101,12 @@ class CopySelectionTests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(
                         NavinApp, "_selected_text", return_value=long_text,
                     ):
-                        with patch(
-                            "navin.tui.clipboard.osc52_allowed", return_value=False
-                        ):
-                            from textual import events
+                        from textual import events
 
-                            app._copy_on_select(events.TextSelected())
+                        app._copy_on_select(events.TextSelected())
                 self.assertEqual(captured.get("text"), long_text)
-                self.assertFalse(captured.get("kw", {}).get("to_os", True))
+                # Long selections reach the host clipboard too.
+                self.assertTrue(captured.get("kw", {}).get("to_os", True))
 
 
 class TerminalPreviewToolTests(unittest.TestCase):

@@ -208,26 +208,26 @@ class BoundedNavigationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertEqual(page.calls, 1)
 
-    async def test_transient_failures_retry_up_to_three_attempts(self) -> None:
+    async def test_a_transient_failure_retries_once(self) -> None:
         tool = BrowserTool()
-        page = _GotoPage(fail_times=2)
+        page = _GotoPage(fail_times=1)
         result = await tool._goto_with_retry(page, "http://127.0.0.1:3015/")
         self.assertIsNone(result)
-        self.assertEqual(page.calls, 3)
+        self.assertEqual(page.calls, 2)
 
-    async def test_a_dead_server_stops_at_three_attempts_and_says_move_on(self) -> None:
+    async def test_a_dead_server_stops_at_two_attempts_and_says_move_on(self) -> None:
         tool = BrowserTool()
         page = _GotoPage(fail_times=99)
         result = await tool._goto_with_retry(page, "http://127.0.0.1:3015/")
         self.assertIsNotNone(result)
-        self.assertEqual(page.calls, 3)
-        self.assertIn("after 3 attempts", result)
+        self.assertEqual(page.calls, 2)
+        self.assertIn("after 2 attempts", result)
         self.assertIn("ERR_CONNECTION_REFUSED", result)
         self.assertIn("Skip browser testing", result)
 
     async def test_each_attempt_uses_a_short_bounded_timeout(self) -> None:
         # The default navigation timeout is 15s; a dead server must not
-        # burn 15s per attempt on top of the 3-attempt cap.
+        # burn 15s per attempt on top of the 2-attempt cap.
         tool = BrowserTool()
         page = _GotoPage()
         await tool._goto_with_retry(page, "http://127.0.0.1:3015/")
@@ -236,3 +236,45 @@ class BoundedNavigationTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepeatedFailureGuardTest(unittest.TestCase):
+    def test_same_target_gets_two_tries_then_an_immediate_refusal(self) -> None:
+        tool = BrowserTool()
+        session = _BrowserSession(BrowserToolConfig())
+        key = tool._attempt_key("navigate", {"url": "http://127.0.0.1:3015/"})
+        self.assertEqual(key, tool._attempt_key("navigate", {"url": "http://127.0.0.1:3015"}))
+        tool._record_attempt(session, key, "Error: could not reach")
+        self.assertLess(session.failures[key], tool._MAX_SAME_FAILURES)
+        tool._record_attempt(session, key, None)
+        self.assertEqual(session.failures[key], 2)
+        refusal = tool._repeat_refusal(key)
+        self.assertIn("already failed 2 times", refusal)
+        self.assertIn("skip browser testing", refusal)
+
+    def test_success_clears_the_count_and_reads_are_never_blocked(self) -> None:
+        tool = BrowserTool()
+        session = _BrowserSession(BrowserToolConfig())
+        key = tool._attempt_key("click", {"ref": 4})
+        tool._record_attempt(session, key, "Error: ref 4 not found")
+        tool._record_attempt(session, key, "Snapshot ...")
+        self.assertNotIn(key, session.failures)
+        self.assertIsNone(tool._attempt_key("snapshot", {}))
+        self.assertIsNone(tool._attempt_key("wait", {"ms": 500}))
+
+    def test_typing_new_text_into_the_same_field_counts_as_the_same_target(self) -> None:
+        tool = BrowserTool()
+        first = tool._attempt_key("type", {"ref": 2, "text": "a"})
+        self.assertEqual(first, tool._attempt_key("type", {"ref": 2, "text": "b"}))
+        self.assertNotEqual(first, tool._attempt_key("type", {"ref": 3, "text": "a"}))
+
+
+class SymbolIndexHintTest(unittest.TestCase):
+    def test_symbol_greps_point_to_code_index_and_words_do_not(self) -> None:
+        from navin.agent.tools.search import symbol_index_hint
+
+        self.assertIn("action=references name=TuiRuntime", symbol_index_hint("TuiRuntime"))
+        self.assertIn("action=definition name=paint_input", symbol_index_hint("def paint_input"))
+        self.assertIn("name=AssistantMessage.copy_text", symbol_index_hint("AssistantMessage.copy_text"))
+        for word in ("error", "TODO", "foo.*bar", "a b", ""):
+            self.assertEqual(symbol_index_hint(word), "", word)

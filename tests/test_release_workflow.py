@@ -139,6 +139,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         )
         self.assertIn("ln -s /Applications", script)
         self.assertIn('hdiutil create -volname "Navin" -srcfolder "$stage"', script)
+        self.assertIn(
+            'hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -o "$dmg"',
+            script,
+        )
+        self.assertIn("hdiutil convert busy, retrying", script)
 
     def test_the_macos_sidecar_is_version_stamped(self):
         """The sidecar build must stamp the version the frozen binary reports.

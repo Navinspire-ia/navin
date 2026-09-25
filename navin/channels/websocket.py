@@ -3057,6 +3057,8 @@ class WebSocketChannel(BaseChannel):
             body["task_description"] = event.task_description
         if event.started_ms_ago is not None:
             body["started_ms_ago"] = int(event.started_ms_ago)
+        if event.tokens:
+            body["tokens"] = int(event.tokens)
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" subagent_progress ")

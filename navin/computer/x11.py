@@ -12,6 +12,8 @@ command-line grabber. Every path is picked at first use and reported by
 
 from __future__ import annotations
 
+from navin.utils.proc import no_window_kwargs
+
 import io
 import os
 import shutil
@@ -173,7 +175,7 @@ class X11Backend(ComputerBackend):
                 timeout=timeout,
                 env=self._env(),
                 check=False,
-            )
+             **no_window_kwargs())
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ComputerError(f"xdotool failed: {exc}") from exc
         if out.returncode != 0:
@@ -330,7 +332,7 @@ class X11Backend(ComputerBackend):
             try:
                 out = subprocess.run(
                     cmd, capture_output=True, timeout=15, env=self._env(), check=False
-                )
+                , **no_window_kwargs())
             except (OSError, subprocess.TimeoutExpired):
                 continue
             if out.returncode == 0 and out.stdout.startswith(b"\x89PNG"):

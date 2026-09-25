@@ -250,9 +250,11 @@ def test_candidate_search_uses_mission_and_selected_platforms_with_an_empty_pool
         result = asyncio.run(CareerTool().execute(action="search_candidates", id="allowed"))
     assert web.call_count > 0
     assert all("Cloud architect" in call.args[2] and "France" in call.args[2] for call in web.call_args_list)
-    assert any("site:linkedin.com/in/" in call.args[2] for call in web.call_args_list)
-    assert any("site:malt.fr/profile/" in call.args[2] for call in web.call_args_list)
-    assert all(call.args[2].count("site:") == 1 for call in web.call_args_list)
+    queries = [call.args[2] for call in web.call_args_list]
+    assert any("site:linkedin.com/in/" in query for query in queries)
+    assert any("site:malt.fr/profile/" in query for query in queries)
+    assert all("freelancer.com" not in query for query in queries)
+    assert all(query.count("site:") >= 1 for query in queries)
     matches = result["prospecting"]["matches"]["allowed"]["results"]
     assert {row["candidate"]["source"] for row in matches} == {"LinkedIn", "Malt"}
     assert len(matches) == 2

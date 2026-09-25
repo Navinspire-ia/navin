@@ -562,7 +562,10 @@ class MacUpdateTest(unittest.TestCase):
 
             def fake_popen(command, **kwargs):
                 spawned.append(command)
-                return mock.Mock()
+                ready = (kwargs.get("env") or {}).get("NAVIN_UPDATE_READY")
+                if ready:
+                    Path(ready).write_text("ready", encoding="utf-8")
+                return mock.Mock(poll=mock.Mock(return_value=None))
 
             with (
                 _Frozen(str(executable)),

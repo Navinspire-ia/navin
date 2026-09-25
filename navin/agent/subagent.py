@@ -132,6 +132,7 @@ def _outcomes_dir() -> Path:
     return get_runtime_subdir("subagents")
 # Cap WS fan-out so a chatty subagent does not flood the UI.
 _PROGRESS_MIN_INTERVAL_S = 0.45
+_LIVE_PROGRESS_CHANNELS = frozenset({"websocket", "cli"})
 
 
 @dataclass(slots=True)
@@ -1006,12 +1007,18 @@ class SubagentManager:
             return
         status.last_status_line = line
         status.last_progress_at = now
-        if status.origin_channel != "websocket":
+        # The desktop and the terminal UI both draw live agent rows; chat
+        # channels (Telegram, Slack...) would receive them as noise.
+        if status.origin_channel not in _LIVE_PROGRESS_CHANNELS:
             return
+        usage = status.usage or {}
+        tokens = int(usage.get("total_tokens") or 0) or (
+            int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+        )
         try:
             self.bus.outbound.put_nowait(
                 outbound_message_for_event(
-                    channel="websocket",
+                    channel=status.origin_channel,
                     chat_id=status.origin_chat_id,
                     event=SubagentProgressEvent(
                         task_id=status.task_id,
@@ -1025,6 +1032,8 @@ class SubagentManager:
                         task_description=status.task_description[:240]
                         if status.task_description
                         else None,
+                        started_ms_ago=max(0, int((now - status.started_at) * 1000)),
+                        tokens=tokens or None,
                     ),
                 )
             )

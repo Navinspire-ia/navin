@@ -1034,6 +1034,7 @@ def _highlight_preview_source(code: str, filename: str, dark: bool) -> Text:
     return source
 
 
+@lru_cache(maxsize=8192)
 def format_preview_markup_line(
     number: int | None,
     kind: str,
