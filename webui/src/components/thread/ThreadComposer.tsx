@@ -158,6 +158,7 @@ import type {
 import { ApiError, fetchProjectFiles, spawnMultitaskPrompt } from "@/lib/api";
 import { fetchReusableMediaFile, onMediaReuse } from "@/lib/media-reuse";
 import { useClient } from "@/providers/ClientProvider";
+import { ComposerPermissionMenu } from "@/components/thread/ComposerPermissionMenu";
 import {
   inferProviderFromModelName,
   logoFallbackUrls,
@@ -2794,6 +2795,9 @@ function ThreadComposerImpl({
               compact={toolbarCompact}
               onChange={setTurnMode}
             />
+            {!voiceRecorder.isRecording ? (
+              <ComposerPermissionMenu disabled={disabled} compact={toolbarCompact} />
+            ) : null}
             {modelLabel && !voiceRecorder.isRecording ? (
               !modelNeedsSetup && onModelSelect && modelOptions.length > 0 ? (
                 <ComposerModelPicker

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import re
 import shlex
@@ -111,6 +112,38 @@ _SCOPE_DRIFT_NUDGE = 2
 # Only repeated final answers without new validation or repair are capped.
 # Actual edit/check cycles can continue until the accepted task is complete.
 _MAX_VERIFY_FAIL_NUDGES = 2
+_MAX_TOTAL_VALIDATION_NUDGES = 8
+# Browser-driven test runs (Playwright, Cypress, Puppeteer, tests/browser,
+# e2e) per accepted request, installs of their browsers included. A CLI session
+# asked for a sidebar restyle ran one browser script after another, installed
+# Chromium twice and rewrote another feature's test; three runs is enough to
+# show the change works or to report why it cannot be shown here.
+_MAX_BROWSER_TEST_RUNS = 3
+# Browser runs are opt-in: none unless the request itself asks for a browser
+# check. "Change the sidebar style" never needed Chromium.
+_BROWSER_REQUEST_MARKERS = re.compile(
+    r"playwright|puppeteer|cypress|selenium|\be2e\b|end[- ]to[- ]end|navigateur|browser"
+    r"|screenshot|capture d'?\s?[ée]cran|test(?:s)? visuel|visual test",
+    re.IGNORECASE,
+)
+# The browser tool on the open web is for scraping (a JS-rendered page, a wall
+# the user cleared) or for a request that asks for it. Reading docs or
+# checking a fact goes through web_search / web_fetch / scrape: a Chromium
+# session per question is slow, noisy and was the habit of every turn.
+_SCRAPE_REQUEST_MARKERS = re.compile(
+    r"scrap|crawl|extra(?:ire|is|ct)|collect|r[ée]cup[ée]r|t[ée]l[ée]charg|download"
+    r"|dataset|appels? d'?offres?|tenders?|portail|portal|connecte[- ]toi|log ?in|sign ?in",
+    re.IGNORECASE,
+)
+_BROWSER_TEST_MARKERS = re.compile(
+    r"\b(?:playwright|cypress|puppeteer|webdriverio|selenium)\b"
+    r"|(?:^|[\s/'\"])tests?/(?:browser|e2e)/|\be2e\b",
+    re.IGNORECASE,
+)
+_BROWSER_TEST_LAUNCHERS = frozenset({
+    "python", "python3", "py", "node", "npx", "npm", "pnpm", "yarn", "bun", "bunx",
+    "deno", "uv", "pytest", "playwright", "cypress", "make", "esbuild", "cp",
+})
 
 
 # Programs that are a test run by themselves, and programs that are one only
@@ -404,9 +437,153 @@ def _call_read_only(tool: Any, params: Any) -> bool:
             return bool(getattr(tool, "read_only", False))
     return bool(getattr(tool, "read_only", False))
 
+_BROWSER_SCRIPT_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".mts")
+_BROWSER_SCRIPT_IMPORT = re.compile(
+    rb"(?:import|require|from)\b[^\n]{0,80}\b(?:playwright|puppeteer|selenium|cypress|webdriverio)\b",
+    re.IGNORECASE,
+)
+
+
+def _script_drives_a_browser(path: Path) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return bool(_BROWSER_SCRIPT_IMPORT.search(handle.read(8192)))
+    except OSError:
+        return False
+
+
+def _request_asks_for_browser(
+    messages: list[dict[str, Any]], pattern: re.Pattern[str] = _BROWSER_REQUEST_MARKERS,
+) -> bool:
+    """Whether the user's own request (not an injected notice) asks for a
+    browser check (or, with another pattern, for scraping)."""
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            )
+        text = str(content or "")
+        if text.lstrip().startswith("["):
+            continue  # "[Background command finished]" and other runtime notes
+        return bool(pattern.search(text))
+    return False
+
+
+def _browser_page_open(session_key: str | None) -> bool:
+    """A page is already open for this chat: "continue" after a captcha or a
+    login handoff keeps the browser it was using."""
+    from navin.agent.tools.browser import browser_session_active
+    from navin.agent.tools.context import current_request_session_key
+
+    return browser_session_active(session_key or current_request_session_key() or "default")
+
+
+def interrupted_work_recap(messages: list[dict[str, Any]], start: int) -> str:
+    """What the turn did before it stopped, from its own tool calls."""
+    edited: list[str] = []
+    commands = failures = 0
+    for message in messages[start:]:
+        role = message.get("role")
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                name = function.get("name") or call.get("name") or ""
+                raw = function.get("arguments", call.get("arguments"))
+                try:
+                    args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+                except (TypeError, ValueError):
+                    args = {}
+                if name in _EDIT_TOOL_NAMES:
+                    for path in sorted(edit_paths(args)):
+                        if path not in edited:
+                            edited.append(path)
+                elif name == "exec":
+                    commands += 1
+        elif role == "tool" and message.get("_tool_status") == "error":
+            failures += 1
+    if not edited and not commands:
+        return ""
+    lines = ["", "", "**Done before the stop**"]
+    if edited:
+        shown = ", ".join(f"`{path}`" for path in edited[:8])
+        more = f" (+{len(edited) - 8} more)" if len(edited) > 8 else ""
+        lines.append(f"- Files changed ({len(edited)}): {shown}{more}")
+    if commands:
+        failed = f", {failures} tool call(s) failed" if failures else ""
+        lines.append(f"- Commands run: {commands}{failed}")
+    lines.append("- Changes are saved. Send \"continue\" to pick up from here.")
+    return "\n".join(lines)
+
+
+_LOCAL_HOSTS = re.compile(
+    r"^(?:[a-z][a-z0-9+.-]*://)?(?:localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[::1\])(?:[:/]|$)",
+    re.IGNORECASE,
+)
+
+
+def opens_local_app(params: dict[str, Any]) -> bool:
+    """The browser tool pointed at the project's own dev server: a browser
+    test by another name. Browsing the web stays free."""
+    url = str(params.get("url") or "").strip()
+    return bool(url) and bool(_LOCAL_HOSTS.match(url))
+
+
+def _exec_cwd(workspace: Path | None, working_dir: Any) -> Path | None:
+    if isinstance(working_dir, str) and working_dir:
+        candidate = Path(working_dir).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        return workspace / candidate if workspace is not None else None
+    return workspace
+
+
+def is_browser_test_command(command: str, cwd: Path | None = None) -> bool:
+    """True when a shell command launches a browser test or installs its
+    browsers. Inspecting (``ls ~/.cache/ms-playwright``, ``grep playwright``)
+    is not a run: only simple commands led by a launcher count. A script with
+    no telling name (``python3 build/visual-button-check.py``) counts when it
+    imports a browser driver; ``cwd`` resolves its path."""
+    here = cwd
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        env = []
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            env.append(tokens.pop(0))  # FOO=bar prefixes
+        if not tokens:
+            continue
+        program = tokens[0].rsplit("/", 1)[-1].lower()
+        if program == "cd" and len(tokens) > 1 and here is not None:
+            here = (here / Path(tokens[1]).expanduser()) if not Path(tokens[1]).is_absolute() else Path(tokens[1])
+            continue
+        if program not in _BROWSER_TEST_LAUNCHERS:
+            continue
+        if _BROWSER_TEST_MARKERS.search(" ".join(env + tokens)):
+            return True
+        for token in tokens[1:]:
+            if token.lower().endswith(_BROWSER_SCRIPT_SUFFIXES):
+                script = Path(token).expanduser()
+                if not script.is_absolute():
+                    if here is None:
+                        continue
+                    script = here / script
+                if _script_drives_a_browser(script):
+                    return True
+    return False
+
+
 @dataclass(slots=True)
 class AgentLoopGuard:
     """Loop protection and validation shared by one accepted request's slices."""
+
+    browser_test_runs: int = 0
+    browser_tests_requested: bool | None = None
+    browser_scraping: bool | None = None
 
     external_lookups: dict[str, int] = field(default_factory=dict)
     workspace_violations: dict[str, int] = field(default_factory=dict)
@@ -511,6 +688,10 @@ class AgentRunSpec:
     # (evals and ephemeral jobs) retain the finite default.
     continue_on_max_iterations: bool = False
     loop_guard: AgentLoopGuard | None = None
+    # Browser test runs for this request when no shared loop_guard exists.
+    browser_test_runs: int = 0
+    browser_tests_requested: bool | None = None
+    browser_scraping: bool | None = None
     # CLI, desktop and their delegated work enable this regardless of module.
     # Source edits require tests; config/style edits require appropriate checks.
     validate_code_changes: bool = False
@@ -827,6 +1008,7 @@ class AgentRunner:
         messages: list[dict[str, Any]],
     ) -> AgentRunResult:
         final_content: str | None = None
+        run_start = len(messages)
         tools_used: list[str] = []
         usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
         peak_prompt_tokens = 0
@@ -1284,7 +1466,9 @@ class AgentRunner:
             # Validation belongs to the accepted request, not to its last
             # slice. A final narration cannot turn a missing/red check green.
             if spec.workspace and spec.validate_code_changes and validation.workspace_snapshot is not None:
-                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
+                validation.observe_workspace(
+                    await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
+                )
             if (
                 (spec.requires_verify_before_done or spec.validate_code_changes)
                 and validation.pending
@@ -1296,8 +1480,13 @@ class AgentRunner:
                 limit = spec.verify_fail_nudge_limit
                 limit = _MAX_VERIFY_FAIL_NUDGES if limit is None else limit
                 attempts = validation.nudge()
-                if attempts > limit:
-                    final_content = validation.completion_message()
+                # Two identical refusals stop a stuck finish. The total cap
+                # also stops a loop whose state keeps moving without progress
+                # (a test rewriting a tracked file made one run 496 turns).
+                if attempts > limit or validation.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES:
+                    final_content = validation.completion_message(
+                        reason="repeated" if attempts > limit else "no_progress",
+                    )
                     error = final_content
                     stop_reason = "validation_failed"
                     self._append_final_message(messages, final_content)
@@ -1361,6 +1550,10 @@ class AgentRunner:
                     final_content = user_facing_llm_error(
                         clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                     )
+                # Ending on an error must not erase what the turn already did:
+                # a 16-minute run that died on a provider refusal showed only
+                # the refusal, and the user could not tell what was saved.
+                final_content += interrupted_work_recap(messages, run_start)
                 stop_reason = "error"
                 error = final_content
                 self._append_model_error_placeholder(messages)
@@ -2020,49 +2213,46 @@ class AgentRunner:
         tool_results: list[tuple[Any, dict[str, str], BaseException | None]] = []
         validation = spec.loop_guard.validation if spec.loop_guard is not None else None
         validating = validation is not None and (spec.requires_verify_before_done or spec.validate_code_changes)
+
+        async def run_and_report(tool_call: ToolCallRequest) -> tuple[Any, dict[str, str], BaseException | None]:
+            outcome = await self._run_tool(
+                spec,
+                tool_call,
+                external_lookup_counts,
+                workspace_violation_counts,
+                hook,
+                context,
+                tool_failure_counts=tool_failure_counts,
+                readonly_call_counts=readonly_call_counts,
+                timing=timing,
+            )
+            await hook.on_tool_done(context, tool_call, outcome[0], outcome[1])
+            return outcome
+
         for batch in batches:
             watch_workspace = bool(
                 validating and spec.validate_code_changes and spec.workspace
                 and any(call.name in {"exec", "write_stdin", "run_cli_app", "spawn", "manage_files", "lsp"} for call in batch)
             )
             if watch_workspace:
-                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
+                validation.observe_workspace(
+                    await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
+                )
             execution_revision = validation.revision if validating else None
             if spec.concurrent_tools and len(batch) > 1:
-                batch_results = await asyncio.gather(*(
-                    self._run_tool(
-                        spec,
-                        tool_call,
-                        external_lookup_counts,
-                        workspace_violation_counts,
-                        hook,
-                        context,
-                        tool_failure_counts=tool_failure_counts,
-                        readonly_call_counts=readonly_call_counts,
-                        timing=timing,
-                    )
-                    for tool_call in batch
-                ))
+                batch_results = await asyncio.gather(*(run_and_report(tool_call) for tool_call in batch))
                 tool_results.extend(batch_results)
             else:
                 batch_results = []
                 for tool_call in batch:
-                    result = await self._run_tool(
-                        spec,
-                        tool_call,
-                        external_lookup_counts,
-                        workspace_violation_counts,
-                        hook,
-                        context,
-                        tool_failure_counts=tool_failure_counts,
-                        readonly_call_counts=readonly_call_counts,
-                        timing=timing,
-                    )
+                    result = await run_and_report(tool_call)
                     tool_results.append(result)
                     batch_results.append(result)
 
             if watch_workspace:
-                validation.observe_workspace(await asyncio.to_thread(workspace_code_snapshot, spec.workspace))
+                validation.observe_workspace(
+                    await asyncio.to_thread(workspace_code_snapshot, spec.workspace), root=spec.workspace,
+                )
             if validating:
                 for call, (result, event, _) in zip(batch, batch_results):
                     _, params, _ = spec.tools.prepare_call(call.name, call.arguments)
@@ -2177,6 +2367,72 @@ class AgentRunner:
             if spec.fail_on_tool_error:
                 return blocked + hint, event, RuntimeError(blocked)
             return blocked + hint, event, None
+        if tool_call.name in {"scrape", "browser"} and isinstance(params, dict) and not opens_local_app(params):
+            budget = spec.loop_guard if spec.loop_guard is not None else spec
+            if tool_call.name == "scrape":
+                # A scrape that hits a JS shell or a wall escalates to browser.
+                budget.browser_scraping = True
+            else:
+                if budget.browser_tests_requested is None:
+                    budget.browser_tests_requested = _request_asks_for_browser(spec.initial_messages)
+                if budget.browser_scraping is None:
+                    budget.browser_scraping = _request_asks_for_browser(
+                        spec.initial_messages, _SCRAPE_REQUEST_MARKERS,
+                    )
+                if not (
+                    budget.browser_tests_requested or budget.browser_scraping
+                    or _browser_page_open(spec.session_key)
+                ):
+                    blocked = (
+                        "Error: the browser is off for this request - the user did not ask "
+                        "for it and this is not scraping. Use web_search, web_fetch or "
+                        "scrape to read the web, and the project's checks for code."
+                    )
+                    return blocked, {
+                        "name": tool_call.name,
+                        "status": "error",
+                        "detail": "browser not requested",
+                    }, None
+        if isinstance(params, dict) and (
+            (
+                tool_call.name == "exec"
+                and is_browser_test_command(
+                    str(params.get("command") or params.get("cmd") or ""),
+                    _exec_cwd(spec.workspace, params.get("working_dir")),
+                )
+            )
+            or (tool_call.name == "browser" and opens_local_app(params))
+        ):
+            # One-shot runs have no shared guard; the spec is then the request.
+            budget = spec.loop_guard if spec.loop_guard is not None else spec
+            if budget.browser_tests_requested is None:
+                budget.browser_tests_requested = _request_asks_for_browser(spec.initial_messages)
+            if not budget.browser_tests_requested:
+                blocked = (
+                    "Error: browser tests are off for this request - the user did not ask "
+                    "for a browser check. Do not run, install, write or copy browser "
+                    "scripts. Validate with the type check, build, lint or unit tests, "
+                    "then finish and report."
+                )
+                return blocked, {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "browser tests not requested",
+                }, None
+            if budget.browser_test_runs >= _MAX_BROWSER_TEST_RUNS:
+                blocked = (
+                    f"Error: browser test budget used ({_MAX_BROWSER_TEST_RUNS} runs of "
+                    "Playwright/Cypress/e2e scripts or browser installs for this request). "
+                    "Do not run, install or edit browser tests again. Finish with what "
+                    "you have: report the change, the checks that passed and, in one "
+                    "line, what the browser runs showed or why they could not run."
+                )
+                return blocked, {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "browser test budget exhausted",
+                }, None
+            budget.browser_test_runs += 1
         lookup_error = repeated_external_lookup_error(
             tool_call.name,
             tool_call.arguments,

@@ -568,3 +568,30 @@ def test_subagent_cannot_report_untested_code_as_completed(tmp_path, monkeypatch
         assert "task is not validated" in outcome.summary
         assert "pricing.py" in outcome.summary
     asyncio.run(run())
+
+
+def test_rewriting_a_file_with_identical_content_is_not_an_edit(tmp_path):
+    # A test regenerated scripts.generated.ts on every run with the same
+    # bytes; each run looked like a new edit and one CLI task looped 496 turns.
+    generated = tmp_path / "scripts.generated.ts"
+    generated.write_text("export const A = 1;\n")
+    state = CodeValidationState()
+    state.observe_workspace({"scripts.generated.ts": (1, 20)}, root=tmp_path)
+    generated.write_text("export const A = 2;\n")
+    state.observe_workspace({"scripts.generated.ts": (2, 20)}, root=tmp_path)
+    assert state.revision == 1, "a real change counts"
+    state.record(VerificationEvidence(tests_ok=True, checks_ok=True, summary="23 passed"))
+    assert not state.pending
+    generated.write_text("export const A = 2;\n")
+    state.observe_workspace({"scripts.generated.ts": (3, 20)}, root=tmp_path)
+    assert state.revision == 1 and not state.pending, "same bytes, new mtime: still validated"
+
+
+def test_validation_reminders_have_a_total_cap_even_when_state_moves():
+    from navin.agent.runner import _MAX_TOTAL_VALIDATION_NUDGES
+
+    state = CodeValidationState()
+    for index in range(_MAX_TOTAL_VALIDATION_NUDGES + 1):
+        state.edited({f"a{index}.py"}, require_tests=True)
+        assert state.nudge() == 1, "every reminder looks new to the per-state cap"
+    assert state.total_nudges > _MAX_TOTAL_VALIDATION_NUDGES

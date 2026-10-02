@@ -60,6 +60,12 @@ def is_git_command(name: str, arguments: dict | None) -> bool:
     return False
 
 
+def is_exit_line(text: str) -> bool:
+    """The ``Exit code: N`` status line of a finished command."""
+    clean = Text.from_ansi(text).plain if "\x1b" in text else text
+    return bool(_EXIT.fullmatch(clean.strip().strip("= ")))
+
+
 def output_kind(text: str) -> str:
     """Color explicit outcomes without inferring success from arbitrary prose."""
     clean = text.strip().strip("= ")

@@ -63,7 +63,7 @@ export interface FileEditSummary {
 }
 
 export function FileEditGroup({
-  edits,
+  edits: allEdits,
   displayMode,
   onOpenFilePreview,
   density = "default",
@@ -74,6 +74,8 @@ export function FileEditGroup({
   density?: "default" | "diff-only";
 }) {
   const [requestedPage, setPage] = useState(0);
+  // A failed edit changed nothing; the agent retries. Never a "failed" row.
+  const edits = allEdits.filter((edit) => edit.status !== "error");
   if (edits.length === 0) return null;
   const page = Math.min(requestedPage, Math.ceil(edits.length / ACTIVITY_DETAIL_PAGE_SIZE) - 1);
   const start = page * ACTIVITY_DETAIL_PAGE_SIZE;

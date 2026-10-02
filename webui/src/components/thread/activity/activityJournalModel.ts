@@ -193,6 +193,7 @@ export const SEARCH_TOOL_RE = /search|grep|find_files|glob/i;
 
 const TOOL_TONE_BY_LEAF: Record<string, ActivityJournalTone> = {
   skill: "skill",
+  context: "skill",
   notes: "skill",
   board: "task",
   create_goal: "task",
@@ -255,8 +256,26 @@ export function journalToneForTool(name: string): ActivityJournalTone {
   return TOOL_TONE_BY_LEAF[toolLeaf(name)] ?? "tool";
 }
 
+/**
+ * A failure is a step, not a verdict: agents probe with commands that fail on
+ * purpose and retry a bad edit call. Whether the task worked is the final
+ * message's job, so no row is ever painted or labelled as failed. Only a
+ * missing computer setup stays visible, since the user has to act on it.
+ */
+export function isReportedFailure(entry: Pick<ActivityJournalEntry, "status" | "kind" | "tool" | "error">): boolean {
+  return entry.status === "error" && Boolean(computerSetupIssue(entry.tool, entry.error));
+}
+
+/** A failed step that is not a command changed nothing: it is not shown. */
+function isQuietFailure(step: JournalStep): boolean {
+  if (!("status" in step) || step.status !== "error" || step.kind === "shell") return false;
+  const tool = step.kind === "tool" || step.kind === "cli" ? step.name : step.kind === "mcp" ? step.toolName : "";
+  const error = "error" in step ? step.error : undefined;
+  return !computerSetupIssue(tool, error);
+}
+
 export function journalToneForEntry(entry: ActivityJournalEntry): ActivityJournalTone {
-  if (entry.status === "error") return "error";
+  if (isReportedFailure(entry)) return "error";
   return entry.tone;
 }
 
@@ -479,6 +498,7 @@ export function buildJournalTimeline(
   let explore: ExploreAccumulator | null = null;
 
   steps.forEach((step, seq) => {
+    if (isQuietFailure(step)) return;
     if (step.kind === "read" || step.kind === "search") {
       if (!explore) explore = newExplore(seq);
       // A later successful read must not hide a failed or still-running
@@ -738,7 +758,7 @@ export function summarizeJournal(entries: ActivityJournalEntry[]): ActivityJourn
       default:
         break;
     }
-    if (entry.status === "error") {
+    if (isReportedFailure(entry)) {
       if (computerSetupIssue(entry.tool, entry.error)) digest.setup = (digest.setup ?? 0) + 1;
       else digest.errors += 1;
     }

@@ -17,6 +17,15 @@ from typing import Any
 from navin.agent.skills import skill_source_label
 from navin.agent.tools.base import Tool
 
+SKILL_SUGGESTION_HEADER = "Skills that fit this request:"
+_SUGGEST_STOP_WORDS = frozenset({
+    "with", "that", "this", "from", "your", "into", "about", "have", "make", "want",
+    "need", "please", "then", "when", "what", "comme", "dans", "pour", "avec", "veux",
+    "faire", "change", "changer", "mettre", "plus", "tout", "tous", "sans", "être",
+    "salut", "merci", "bien", "file", "files", "code", "user", "using", "used",
+    "the", "and", "for", "les", "des", "une", "est", "app", "new", "all", "son", "ses",
+})
+
 
 class SkillCatalogTool(Tool):
     def __init__(
@@ -117,6 +126,57 @@ class SkillCatalogTool(Tool):
             disabled_skills=self._disabled,
             trust_workspace_harness_skills=self._trust_workspace_harness_skills,
         )
+
+    def runtime_context_provider(self):
+        return self._provide_skill_suggestions
+
+    async def _provide_skill_suggestions(self, request: Any) -> Any:
+        """Put the skills that fit this request in front of the model, every
+        new request, without waiting for it to think of ``action=graph``. In
+        real sessions it never did, so playbooks went unused."""
+        from navin.runtime_context import RuntimeContextBlock
+
+        text = (getattr(request, "original_user_text", None) or "").strip()
+        if len(text) < 12 or text.startswith(("[", "/")):
+            return None
+        try:
+            rows = await asyncio.to_thread(self._suggest_for_request, text)
+        except BaseException:  # orientation is never worth failing a turn
+            return None
+        if not rows:
+            return None
+        names = ", ".join(row["name"] for row in rows)
+        lines = [f"{SKILL_SUGGESTION_HEADER} {names}."]
+        lines.extend(f"- {row['name']}: {row['description']}" for row in rows)
+        lines.append("Read one with `skill action=read name=<name>` if it applies; ignore them otherwise.")
+        return RuntimeContextBlock(source="skills", content="\n".join(lines))
+
+    def _suggest_for_request(self, text: str) -> list[dict]:
+        import re
+
+        from navin.agent.skills_graph import build_skills_graph
+
+        graph = build_skills_graph(self._loader())
+
+        def words_of(value: str, shortest: int = 4) -> set[str]:
+            return {
+                w for w in re.findall(rf"[^\W_]{{{shortest},}}", value.lower())
+                if w not in _SUGGEST_STOP_WORDS
+            }
+
+        words = words_of(text, 3)
+        picked = []
+        for row in graph.suggest(text[:600], limit=8):
+            if not row.get("available", True):
+                continue
+            # A word of the request in the skill's name, or two in its
+            # description: one generic word in a long description is noise.
+            name_hit = words & words_of(row["name"].replace("-", " "), 3)
+            if name_hit or len((words & words_of(row["description"])) - {w for w in words if len(w) < 4}) >= 2:
+                picked.append(row)
+            if len(picked) == 3:
+                break
+        return picked
 
     async def execute(self, action: str = "find", query: str = "", name: str = "", **kwargs: Any) -> Any:
         # Scanning user libraries and parsing YAML must not freeze live

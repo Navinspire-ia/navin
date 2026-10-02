@@ -98,6 +98,26 @@ def test_windows_script_is_silent_official_setup() -> None:
     assert "while ($data.Count -ge 1 -and $data[0] -is [System.Array])" in text
 
 
+def test_served_windows_version_check_unwraps_before_returning() -> None:
+    # Regression (Windows client, PowerShell 5.1): the served installer printed
+    # "version 2.0.8 2.0.7 ... 1.0.0" and threw "no Windows package" because
+    # $data[0].version member-enumerated the whole wrapped releases array.
+    # The unwrap loop must sit inside Get-LatestVersion, between
+    # ConvertFrom-Json and the version return, in the script /install actually
+    # serves (scripts.generated.ts embeds windows.ps1).
+    generated = GENERATED.read_text(encoding="utf-8")
+    windows_export = generated.split("export const WINDOWS = ", 1)[1]
+    body = windows_export.split("function Get-LatestVersion", 1)[1]
+    body = body.split("\\nfunction ", 1)[0]
+    assert "ConvertFrom-Json" in body
+    loop_pos = body.find("while ($data.Count -ge 1 -and $data[0] -is [System.Array])")
+    unwrap_pos = body.find("$data = @($data[0])")
+    return_pos = body.find("return [string]$data[0].version")
+    assert 0 < loop_pos < unwrap_pos < return_pos, (
+        "Get-LatestVersion must unwrap the PS 5.1 wrapped array before reading version"
+    )
+
+
 def test_install_route_dispatches_on_win32() -> None:
     text = ROUTE.read_text(encoding="utf-8")
     assert "scripts.generated" in text

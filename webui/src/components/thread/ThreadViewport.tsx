@@ -594,6 +594,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           .slice(promptIndex + 1)
           .some((message) => message.role !== "user");
         if (!hasAgentOutput) return;
+        // Output has started: from here on the tail is what to follow, so
+        // stop re-pinning the prompt (the composer-height effect below would
+        // otherwise yank the view back up on every dock resize).
+        activeTurnPromptRef.current = null;
       }
     }
     scrollToBottom(false, isStreaming ? 3 : 1);
@@ -639,9 +643,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     pendingConversationScrollRef.current = false;
   }, [conversationKey, hasMessages, messages, scrollToBottom]);
 
+  // The ResizeObserver below follows the dock; re-measuring on every new
+  // `composer` element (each parent render, i.e. every streamed frame) forced a
+  // layout read per frame. Without ResizeObserver, keep the old trigger.
+  const composerMeasureKey = typeof ResizeObserver === "undefined" ? composer : null;
   useLayoutEffect(() => {
     measureComposerDock();
-  }, [composer, hasMessages, measureComposerDock]);
+  }, [composerMeasureKey, hasMessages, measureComposerDock]);
 
   useLayoutEffect(() => {
     if (!hasMessages || userReadingHistoryRef.current) return;
@@ -661,7 +669,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     const observer = new ResizeObserver(() => {
       if (userReadingHistoryRef.current) return;
       const el = scrollRef.current;
-      if (!el || isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight)) return;
+      // Any growth while following: the near-bottom slack is for reading
+      // the reader's intent, not for letting the tail drift out of view.
+      if (!el || el.scrollHeight - el.scrollTop - el.clientHeight <= 1) return;
       scrollToBottomNow(false);
     });
     observer.observe(content);

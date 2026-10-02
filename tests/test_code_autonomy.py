@@ -313,7 +313,10 @@ def test_build_workflows_can_execute_their_preview_and_device_tools(name):
     async def check():
         tool = RecoveryTool()
         tool.name = name
+        # The browser itself is opt-in per request (or scraping); this checks
+        # the build scope does not deny it.
         spec = run_spec(tool, allowed_tools=CODE_BUILD_ALLOWED_TOOLS)
+        spec.initial_messages = [{"role": "user", "content": "check the page in the browser"}]
         _, event, fatal = await AgentRunner()._dispatch_tool_call(
             spec, ToolCallRequest(id="probe", name=name, arguments={"target": "one"}), {}, {},
         )

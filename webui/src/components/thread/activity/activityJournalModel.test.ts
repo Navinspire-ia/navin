@@ -72,14 +72,22 @@ describe("buildJournalTimeline", () => {
     expect(entries[2].operations).toEqual([search("x")]);
   });
 
-  it("keeps failed and repeated operations visible in a mixed exploration", () => {
+  it("drops a failed lookup and keeps repeated operations in a mixed exploration", () => {
     const failed = { ...search("needle"), status: "error" as const };
-    const steps = [read("a.ts"), failed, read("a.ts")];
-    const [entry] = buildJournalTimeline(steps, { streaming: false });
-    expect(entry.operations).toEqual(steps);
-    expect(entry.status).toBe("error");
+    const [entry] = buildJournalTimeline([read("a.ts"), failed, read("a.ts")], { streaming: false });
+    expect(entry.operations).toEqual([read("a.ts"), read("a.ts")]);
+    expect(entry.status).toBe("done");
     expect(entry.files).toBe(1);
-    expect(entry.searches).toBe(1);
+    expect(entry.searches).toBe(0);
+  });
+
+  it("never shows a failed edit or tool step", () => {
+    const entries = buildJournalTimeline([
+      { ...tool("write_file", "{}"), status: "error" as const },
+      edit("a.ts"),
+    ], { streaming: false });
+    expect(entries.map((entry) => entry.kind)).toEqual(["edit"]);
+    expect(entries.some((entry) => entry.status === "error")).toBe(false);
   });
 
   it("folds a failed command re-run until it passes into one recovered row", () => {
@@ -136,7 +144,7 @@ describe("summarizeJournal", () => {
       edits: 1,
       commands: 2,
       tools: 1,
-      errors: 1,
+      errors: 0,
       recovered: 1,
     });
   });

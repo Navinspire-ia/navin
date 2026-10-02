@@ -1,7 +1,7 @@
 // Copyright (c) 2026-present Navinspire IA
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check, ChevronRight, CircleDashed, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -37,8 +37,15 @@ export function ReasoningCard({
 }) {
   const { t } = useTranslation();
   const reduceMotion = useReducedMotion();
-  const text = mergeReasoningParts(parts);
-  const summary = reasoningSummary(text);
+  // The cluster hands a fresh array every render; key on content so the merge
+  // and the summary regexes only rerun when the trace actually grew.
+  const partsKey = parts.join("\u0001");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const text = useMemo(() => mergeReasoningParts(parts), [partsKey]);
+  const summary = useMemo(
+    () => reasoningSummary(text, undefined, Boolean(streaming)),
+    [text, streaming],
+  );
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyResetRef = useRef<number | null>(null);

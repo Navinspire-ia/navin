@@ -86,3 +86,22 @@ def _isolated_reasoning_negotiation(tmp_path, monkeypatch):
         yield
     finally:
         reasoning_control._STORE_CACHE = None
+
+
+@pytest.fixture(autouse=True)
+def _scratch_dirs_closed(request, monkeypatch):
+    """pytest's tmp_path lives in the OS temp dir, which file tools now open
+    as scratch space. Boundary tests use tmp_path as "outside the project", so
+    keep it closed for them; tests of the scratch behaviour opt back in with
+    the ``scratch_dirs_open`` marker."""
+    if request.node.get_closest_marker("scratch_dirs_open"):
+        return
+    from navin.agent.tools import filesystem
+
+    monkeypatch.setattr(filesystem, "_scratch_dirs", lambda: [])
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "scratch_dirs_open: keep the OS temp dir open to file tools (see _scratch_dirs_closed)",
+    )

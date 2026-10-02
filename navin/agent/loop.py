@@ -232,6 +232,44 @@ class StateTraceEntry:
     error: str | None = None
 
 
+async def announce_runtime_context(
+    on_progress: Callable[..., Awaitable[None]] | None,
+    blocks: list[RuntimeContextBlock] | None,
+    turn_id: str | None,
+) -> None:
+    """Show, as one activity row, what orientation the turn starts from.
+
+    The project map and the matching skills reach the model silently in the
+    request; without a trace the user reasonably concluded they were never
+    used."""
+    if on_progress is None or not blocks:
+        return
+    from navin.agent.tools.skill_catalog import SKILL_SUGGESTION_HEADER
+    from navin.utils.progress_events import invoke_on_progress, on_progress_accepts_tool_events
+
+    parts: list[str] = []
+    for block in blocks:
+        if block.source == "metagraph":
+            parts.append("project map")
+        elif block.source == "skills":
+            first = block.content.splitlines()[0] if block.content else ""
+            names = first.removeprefix(SKILL_SUGGESTION_HEADER).strip().rstrip(".")
+            if names:
+                parts.append(f"skills: {names}")
+    if not parts or not on_progress_accepts_tool_events(on_progress):
+        return
+    summary = "Context loaded - " + "; ".join(parts)
+    with suppress(Exception):
+        await invoke_on_progress(
+            on_progress, "", tool_hint=False,
+            tool_events=[{
+                "version": 1, "phase": "end", "call_id": f"context-{turn_id or 'turn'}",
+                "name": "context", "arguments": {"label": "; ".join(parts)}, "result": summary,
+                "error": None, "files": [], "embeds": [],
+            }],
+        )
+
+
 @dataclass
 class TurnContext:
     msg: InboundMessage
@@ -3302,6 +3340,7 @@ class AgentLoop:
 
         if ctx.on_progress is None:
             ctx.on_progress = await self._build_bus_progress_callback(ctx.msg)
+        await announce_runtime_context(ctx.on_progress, ctx.runtime_context_blocks, ctx.turn_id)
         if ctx.on_retry_wait is None:
             ctx.on_retry_wait = await self._build_retry_wait_callback(ctx.msg)
         if ctx.msg.metadata.get(RECOVERY_ID_META) is not None:

@@ -1075,6 +1075,7 @@ class NavinApp(App[None]):
                 context_used=st.context_used,
                 context_window=st.context_window,
                 reasoning=reasoning,
+                permission=None if animation_only else self._permission_label(),
             )
         except Exception:  # noqa: BLE001 - meta not mounted yet
             pass
@@ -1083,6 +1084,30 @@ class NavinApp(App[None]):
                 self.query_one("#dock", DockBar).set_panel(self.prefs.sidebar)
             with contextlib.suppress(Exception):
                 self._one(Sidebar).set_panel_label(self.prefs.sidebar)
+
+    _PERMISSION_LABELS = {
+        "autonomous": "Full access",
+        "risky": "Ask before deleting",
+        "always": "Ask every command",
+    }
+
+    def _permission_label(self) -> str:
+        """The confirmation posture on the footer, re-read only when the
+        config file changes (``/permission`` and Settings both write it)."""
+        try:
+            from navin.config.loader import get_config_path, load_config
+            from navin.webui.exec_policy_api import read_approval_mode
+
+            path = get_config_path()
+            stamp = path.stat().st_mtime_ns if path.exists() else 0
+            cached = getattr(self, "_permission_cache", None)
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
+            label = self._PERMISSION_LABELS.get(read_approval_mode(load_config()), "")
+            self._permission_cache = (stamp, label)
+            return label
+        except Exception:  # noqa: BLE001 - the footer must never break the TUI
+            return ""
 
     def _render_mode(self) -> None:
         self._refresh_side()

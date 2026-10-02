@@ -139,6 +139,16 @@ class AgentHook:
     ) -> None:
         pass
 
+    async def on_tool_done(
+        self,
+        context: AgentHookContext,
+        tool_call: ToolCallRequest,
+        result: Any,
+        event: dict[str, Any],
+    ) -> None:
+        """One call of the batch finished, before its siblings and before the
+        post-batch bookkeeping; lets a UI show the result as soon as it exists."""
+
     async def emit_reasoning(self, reasoning_content: str | None) -> None:
         pass
 
@@ -237,6 +247,15 @@ class CompositeHook(AgentHook):
             params,
             result,
         )
+
+    async def on_tool_done(
+        self,
+        context: AgentHookContext,
+        tool_call: ToolCallRequest,
+        result: Any,
+        event: dict[str, Any],
+    ) -> None:
+        await self._for_each_hook_safe("on_tool_done", context, tool_call, result, event)
 
     async def on_execute_tool_error(
         self,

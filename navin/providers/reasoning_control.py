@@ -305,6 +305,22 @@ def classify_rejection(error: Exception | str) -> str | None:
     return None
 
 
+def suggested_floor(error: Exception | str) -> str | None:
+    """The lowest effort a refusal says it accepts, if it names one.
+
+    Z.ai: "cannot be disabled; please use low, high, or max". OpenAI:
+    "Supported values are: 'low', 'medium', and 'high'".
+    """
+    if isinstance(error, Exception):
+        text = f"{getattr(error, 'body', None)} {error}".lower()
+    else:
+        text = str(error).lower()
+    for effort in ("low", "medium", "high"):
+        if re.search(rf"\b{effort}\b", text):
+            return effort
+    return None
+
+
 def _negotiation_store_path() -> Path | None:
     override = os.environ.get("NAVIN_REASONING_NEGOTIATION_FILE", "").strip()
     if override:

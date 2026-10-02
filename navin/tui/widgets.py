@@ -41,6 +41,7 @@ from navin.utils.command_output import (
     GIT_PREVIEW_LINES,
     command_exit_code,
     compact_command_rows,
+    is_exit_line,
     is_git_command,
 )
 from navin.utils.pasted_content import (
@@ -70,6 +71,7 @@ from navin.utils.tool_hints import (
     is_validation_pending,
     preview_rows,
     redact_command,
+    short_run_target,
     tool_cluster_kind,
     tool_target,
     tool_verb,
@@ -775,13 +777,24 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             return wave_frame(self._spin)
         if self.validation_pending:
             return " ! "
-        if self.phase == "error":
-            return " ✗ "
         return " ✓ "
 
     @property
     def validation_pending(self) -> bool:
         return self.phase == "error" and is_validation_pending(self.tool_name, self.error)
+
+    @property
+    def quiet_failure(self) -> bool:
+        """A failed step that changed nothing: a bad edit call, a missing
+        file, a refused board move. The agent retries; the transcript never
+        shows it. A failed command keeps its row: its output is the step."""
+        return (
+            self.phase == "error"
+            and not self.validation_pending
+            and not self.file_recorded
+            and tool_verb(self.tool_name) != "run"
+            and self.tool_name != "test_run"
+        )
 
     def _plain_head(self) -> str:
         if self.cluster_kind == "explore":
@@ -798,18 +811,29 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
                 counts_known=not self.file_binary,
                 error=self.error,
             )
+        if getattr(self, "_command_below", False):
+            # The full command is printed under the heading: keep the heading
+            # to its first words instead of repeating 160 characters of it.
+            raw = self.arguments.get("command") or self.arguments.get("cmd")
+            if isinstance(raw, str):
+                label = label.replace(
+                    command_summary(raw.strip()), short_run_target(redact_command(raw.strip())),
+                )
         if self.percent is not None:
             from navin.utils.task_progress import progress_bar
 
             label += "  " + progress_bar(self.percent)
         if self.cluster_kind:
             mark = self.tree_mark or "  "
-            if self.cluster_kind == "explore" and self.phase in {"error", "cancelled"}:
-                label += "  (failed)" if self.phase == "error" else "  (cancelled)"
+            if self.cluster_kind == "explore" and self.phase == "cancelled":
+                label += "  (cancelled)"
             return f"{mark}{label}"
         if self.validation_pending:
             mark = "! "
-        elif self.phase in {"error", "cancelled"}:
+        elif self.phase == "cancelled":
+            # A failure is a step, not a verdict: agents probe and retry.
+            # Whether the task worked is the final message's job, not a red
+            # cross on a row.
             mark = "× "
         elif self.phase in {"start", "output"}:
             mark = f"{self._status_glyph().strip()} "
@@ -870,6 +894,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             self.phase = phase
             self.result = result
             self.error = error
+            self.display = not self.quiet_failure
             if self._spin_timer is not None:
                 self._spin_timer.pause()
             swap_classes(
@@ -1041,6 +1066,34 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             compact = True
         else:
             summary = compact_command_rows(rows, cache=self._command_summary_cache) if compact else rows[:preview_limit]
+        finished = self.phase in {"end", "error", "cancelled"}
+        status_only = False
+        has_diff = bool(self.diff_text) or any(row[1] in {"add", "del"} for row in rows)
+        if finished and not command_output and not has_diff and not diagnostic and not self._show_full and rows:
+            # Browser consoles, fetched pages, search hits: one heading line,
+            # the payload behind "Show output". Only diffs stay inline.
+            summary = []
+            status_only = True
+        if compact and self.phase == "error" and not self._show_full:
+            # A failed probe (`ls` of a file that is not there, a grep with no
+            # hit) is a step, not news: its command only, the output behind
+            # "Show output". The final message says if the task failed.
+            summary = []
+            status_only = True
+        elif compact and finished and not self._show_full and not diagnostic:
+            # A finished command reads as its full command line and its exit
+            # status; the output is one click (or F) away, not a wall of
+            # numbered lines in the transcript.
+            exit_rows = [row for row in summary if is_exit_line(row[2])]
+            if exit_rows:
+                # One error line survives: "Exit code: 0" after a piped
+                # `| tail` can sit under a traceback, and hiding it would make
+                # a failure read as a success.
+                errors = [row for row in summary if row[1] == "failure" and not is_exit_line(row[2])]
+                totals = [row for row in summary if _TEST_TOTALS.search(row[2]) and row not in errors]
+                kept = [*errors[-1:], *totals[-1:], exit_rows[-1]]
+                summary = [(index, row[1], row[2]) for index, row in enumerate(kept, 1)]
+                status_only = True
         self._preview_overflow = (
             [row[2] for row in summary] != [row[2] for row in rows]
             or (compact and any(cell_len(row[2]) > max(1, width - 8) for row in summary))
@@ -1091,13 +1144,17 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         details = self._command_details()
         if command.content != details:
             command.update(details)
-        command.display = self._open and self._show_full and bool(details)
+        command.display = self._open and bool(details) and (self._show_full or status_only)
+        if command.display != getattr(self, "_command_below", False):
+            self._command_below = command.display
+            self._refresh_head()
         viewport.display = body.display or command.display
         more = self.query_one(".tool-more", Button)
         more.display = self._open and (self._preview_overflow or bool(details))
         label = "Show less" if self._show_full else (
             "Show error details" if diagnostic and self._preview_overflow else
-            f"Full output ({len(rows)} lines)" if compact and self._preview_overflow
+            f"Show output ({len(rows)} lines)" if status_only and self._preview_overflow
+            else f"Full output ({len(rows)} lines)" if compact and self._preview_overflow
             else f"Show all (+{len(rows) - preview_limit} lines)" if len(rows) > preview_limit
             else "Show command"
         )
@@ -1271,7 +1328,8 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
 
     def _head_text(self) -> str:
         title = self.TITLES.get(self.kind, self.kind.title() or "Tools")
-        confirmed = [tool for tool in self.tools if tool.file_recorded and tool.phase == "end"]
+        shown = [tool for tool in self.tools if not tool.quiet_failure]
+        confirmed = [tool for tool in shown if tool.file_recorded and tool.phase != "cancelled"]
         if self.kind == "edit":
             operations = {file_operation_label(tool.file_operation) for tool in confirmed}
             if len(operations) == 1:
@@ -1280,21 +1338,18 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
                 title = "Editing" if any(tool.phase in {"start", "output"} for tool in self.tools) else "Edits"
         if any(tool.phase in {"start", "output"} for tool in self.tools):
             glyph = "◦"
-        elif any(tool.phase in {"error", "cancelled"} for tool in self.tools):
+        elif any(tool.phase == "cancelled" for tool in self.tools):
             glyph = "×"
         else:
             glyph = "•"
         extra = ""
-        if self.kind == "edit" and self.tools:
-            files = len({activity_path_key(tool.file_path) or tool.group_key or tool.call_id for tool in confirmed or self.tools})
+        if self.kind == "edit" and shown:
+            files = len({activity_path_key(tool.file_path) or tool.group_key or tool.call_id for tool in confirmed or shown})
             noun = "file" if files == 1 else "files"
             extra = f" {files} {noun}"
-            if any(tool.file_recorded and not tool.file_binary and tool.file_operation != "unchanged" for tool in self.tools):
-                extra += f" (+{sum(tool.added for tool in self.tools)} -{sum(tool.removed for tool in self.tools)})"
-            failures = sum(tool.phase == "error" for tool in self.tools)
-            cancelled = sum(tool.phase == "cancelled" for tool in self.tools)
-            if failures:
-                extra += f" · {failures} failed"
+            if any(tool.file_recorded and not tool.file_binary and tool.file_operation != "unchanged" for tool in shown):
+                extra += f" (+{sum(tool.added for tool in shown)} -{sum(tool.removed for tool in shown)})"
+            cancelled = sum(tool.phase == "cancelled" for tool in shown)
             if cancelled:
                 extra += f" · {cancelled} cancelled"
         elif not self._open and len(self.tools) > 1:
@@ -1307,7 +1362,9 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
             return
         try:
             head = self.query_one(".cluster-head", Static)
-            head.display = self.kind != "edit" or len(self.tools) > 1 or not self._open
+            shown = [tool for tool in self.tools if not tool.quiet_failure]
+            self.display = bool(shown) or not self.tools
+            head.display = self.kind != "edit" or len(shown) > 1 or not self._open
             key = (self._head_text(), self.app.current_theme.dark)
             if key != self._painted_head:
                 head.update(activity_head_text(key[0], dark=key[1]))
@@ -2504,10 +2561,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             summary = format_turn_summary(
                 summary_rows
             ) if summary_rows else "No completed operations"
-            failed = sum(tool.phase == "error" and not tool.validation_pending for tool in self._tools.values())
             cancelled = sum(tool.phase == "cancelled" for tool in self._tools.values())
-            if failed:
-                summary += f" · {failed} failed"
             if cancelled:
                 summary += f" · {cancelled} cancelled"
             foot.update(summary)
@@ -2921,6 +2975,9 @@ class ComposerShell(Vertical):
         self.set_class(focused, "-focus")
 
 
+_TEST_TOTALS = re.compile(r"\b\d+ (?:passed|failed|tests?|errors?)\b", re.IGNORECASE)
+
+
 class ComposerMeta(Horizontal):
     """Mode, model, effort and context on the footer line under the chat."""
 
@@ -2944,6 +3001,8 @@ class ComposerMeta(Horizontal):
     ComposerMeta #meta-reasoning { width: auto; height: 1; padding-left: 1; color: $text-muted; }
     ComposerMeta #meta-reasoning:hover { color: $foreground; }
     ComposerMeta #meta-context { width: auto; height: 1; padding-left: 2; color: $accent; }
+    ComposerMeta #meta-permission { width: auto; height: 1; padding-left: 2; color: $text-muted; }
+    ComposerMeta #meta-permission:hover { color: $foreground; }
     """
 
     def compose(self) -> ComposeResult:
@@ -2952,6 +3011,7 @@ class ComposerMeta(Horizontal):
         yield Static("", id="meta-model", markup=True)
         yield Static("Auto", id="meta-reasoning", markup=False)
         yield Static("Context --", id="meta-context", markup=False)
+        yield Static("", id="meta-permission", markup=False)
 
     def set_meta(
         self,
@@ -2965,6 +3025,7 @@ class ComposerMeta(Horizontal):
         context_used: int = 0,
         context_window: int = 0,
         reasoning: str = "",
+        permission: str | None = None,
     ) -> None:
         def update(widget: Static, value: str) -> None:
             if widget.content != value:
@@ -2977,6 +3038,10 @@ class ComposerMeta(Horizontal):
         context_w = self.query_one("#meta-context", Static)
         reasoning_w = self.query_one("#meta-reasoning", Static)
         update(reasoning_w, reasoning or "Auto")
+        if permission is not None:
+            permission_w = self.query_one("#meta-permission", Static)
+            update(permission_w, permission)
+            permission_w.tooltip = "Permissions: /permission auto | ask | always"
         reasoning_w.tooltip = "Choose native reasoning effort (Ctrl+Shift+R)"
         if context_window > 0:
             percent = max(0, min(100, round(context_used * 100 / context_window)))

@@ -35,6 +35,41 @@ class LockTimeoutError(TimeoutError):
     """Raised when an inter-process lock cannot be acquired in time."""
 
 
+_REPLACE_RETRY_DELAYS_S = (0.02, 0.05, 0.1, 0.2, 0.4)
+_IS_WINDOWS = os.name == "nt"
+
+
+def replace_with_retry(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    """``os.replace`` that survives Windows' transient sharing refusals.
+
+    On Windows a rename onto a file someone has open (an indexer, antivirus,
+    the 9P server behind a ``\\\\wsl.localhost`` path) fails with
+    ``WinError 5``/``32`` for a few milliseconds. Measured on a desktop session
+    writing a WSL project's board: the refusal surfaced to the agent as a tool
+    error and it re-issued the call. Retry briefly; if the rename never goes
+    through, overwrite in place so the data still lands.
+    """
+    for delay in (*_REPLACE_RETRY_DELAYS_S, None):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if not _IS_WINDOWS:
+                raise
+            if delay is None:
+                break
+            time.sleep(delay)
+    data = Path(source).read_bytes()
+    with open(destination, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        os.unlink(source)
+    except OSError:
+        pass
+
+
 def atomic_write_bytes(
     path: str | os.PathLike[str],
     data: bytes | bytearray | memoryview,
@@ -73,7 +108,7 @@ def atomic_write_bytes(
             stream.flush()
             os.fsync(stream.fileno())
 
-        os.replace(temporary, destination)
+        replace_with_retry(temporary, destination)
         temporary = None
         _fsync_directory(parent)
     finally:

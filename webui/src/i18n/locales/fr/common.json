@@ -2923,7 +2923,7 @@
     "activityJournalRunning": "En cours",
     "activityJournalDone": "Terminé",
     "activityJournalFailedTag": "Échec",
-    "activityJournalRecovered": "Échec puis corrigé",
+    "activityJournalRecovered": "Corrigé",
     "activityJournalCopy": "Copier la commande",
     "activityJournalCopied": "Copié",
     "activityDigestFiles_one": "{{count}} fichier",
@@ -9112,6 +9112,15 @@
         "full": "Accès complet",
         "projectAria": "Choisir un projet",
         "projectPlaceholder": "Sélectionner un projet"
+      },
+      "permission": {
+        "aria": "Permissions",
+        "autonomous": "Accès complet",
+        "autonomousHint": "Ne demande jamais",
+        "risky": "Demander avant suppression",
+        "riskyHint": "Seulement les actions irréversibles",
+        "always": "Demander à chaque commande",
+        "alwaysHint": "Chaque commande shell"
       }
     },
     "contextCompacted": "Conversation résumée pour rester dans la fenêtre de contexte",

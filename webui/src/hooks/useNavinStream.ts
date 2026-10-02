@@ -1328,7 +1328,16 @@ export function useNavinStream(
           if (!sideChannelEvent) {
             const label = progress?.step || progress?.label
               || (ev.kind === "progress" && structuredEvents.length === 0 ? ev.text : "");
-            if (label?.trim()) setActivityText(label.replace(/\s+/g, " ").trim());
+            if (label?.trim()) {
+              setActivityText(label.replace(/\s+/g, " ").trim());
+            } else if (
+              structuredEvents.length > 0
+              && structuredEvents.every((event) => event.phase === "end" || event.phase === "error")
+            ) {
+              // The tool that put "Running…" in the strip is done; a stale
+              // label pinned above the composer reads as still running.
+              setActivityText(null);
+            }
           }
           const turn = turnFieldsFromEvent(ev, "activity");
           // Progress-only frames (no tool_events) still update the strip.

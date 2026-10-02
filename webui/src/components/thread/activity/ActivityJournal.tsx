@@ -39,6 +39,7 @@ import {
   formatActivityDuration,
   journalHasDetails,
   journalTaskLink,
+  isReportedFailure,
   journalToneForEntry,
   type ActivityJournalDigest,
   type ActivityJournalEntry,
@@ -606,7 +607,7 @@ function alphaColor(color: string, percent: number): string {
 function JournalAside({ entry, streaming }: { entry: ActivityJournalEntry; streaming: boolean }) {
   const { t } = useTranslation();
   const running = entry.status === "running" && streaming;
-  const failed = entry.status === "error";
+  const failed = isReportedFailure(entry);
   const showsOutcome = entry.kind === "shell"
     || entry.kind === "cli"
     || entry.kind === "mcp"
@@ -634,12 +635,12 @@ function JournalAside({ entry, streaming }: { entry: ActivityJournalEntry; strea
       ) : failed ? (
         <span className={cn("inline-flex items-center gap-1 font-medium", JOURNAL_TONE_CLASS.error)}>
           <AlertCircle aria-hidden className="h-3.5 w-3.5" />
-          {t("message.activityJournalFailedTag", { defaultValue: "Failed" })}
+          {t("settings.computer.setupNeeded")}
         </span>
       ) : entry.recovered ? (
         <span className={cn("inline-flex items-center gap-1 font-medium", JOURNAL_TONE_CLASS.task)}>
           <Check aria-hidden className="h-3.5 w-3.5" />
-          {t("message.activityJournalRecovered", { defaultValue: "Failed, then fixed" })}
+          {t("message.activityJournalRecovered", { defaultValue: "Fixed" })}
         </span>
       ) : showsOutcome ? (
         <Check
@@ -850,8 +851,8 @@ function JournalLine({
   }
 
   if (entry.kind === "shell" || entry.kind === "cli") {
-    const verb = entry.status === "error"
-      ? t("message.activityJournalVerbFailed", { defaultValue: "Failed" })
+    const verb = isReportedFailure(entry)
+      ? t("settings.computer.setupNeeded")
       : live
         ? t("message.activityJournalVerbRunning", { defaultValue: "Running" })
         : t("message.activityJournalVerbRan", { defaultValue: "Ran" });
@@ -975,7 +976,7 @@ function ExploreOperations({ entry, streaming, onOpenFilePreview }: {
                   : operation.query || operation.tool}
               </span>
               {operation.status === "error" ? (
-                <span className={JOURNAL_TONE_CLASS.error}>{t("message.activityJournalVerbFailed", { defaultValue: "Failed" })}</span>
+                <span className={JOURNAL_TONE_CLASS.error}>{t("settings.computer.setupNeeded")}</span>
               ) : streaming && operation.status === "running" ? (
                 <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-label={t("message.shellRunRunning", { defaultValue: "Running" })} />
               ) : null}

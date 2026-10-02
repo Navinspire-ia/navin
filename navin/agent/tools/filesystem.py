@@ -55,6 +55,21 @@ def _split_approved_paths() -> tuple[list[Path], list[Path]]:
     return dirs, files
 
 
+def _scratch_dirs() -> list[Path]:
+    """The OS temp dirs, resolved (``/tmp`` is a symlink on macOS)."""
+    import tempfile
+
+    found: list[Path] = []
+    for raw in {tempfile.gettempdir(), "/tmp", "/var/tmp"}:
+        try:
+            path = Path(raw).resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if path.is_dir() and path not in found:
+            found.append(path)
+    return found
+
+
 def _existing_layout(fp: Path) -> text_decode.DecodedText | None:
     """How this file is currently encoded, so a rewrite does not convert it.
 
@@ -263,7 +278,10 @@ class _FsTool(Tool):
             sandbox_restricts_workspace=self._sandbox_restricts_workspace,
         )
         lifted_dirs, lifted_files = _split_approved_paths()
-        extra_dirs = [*(extra_allowed_dirs or []), *lifted_dirs]
+        # The OS temp dir is scratch space, like for exec: reading back
+        # /tmp/out.json or writing a throwaway script must never stop on a
+        # card (or, in the CLI, a refusal nobody can answer).
+        extra_dirs = [*(extra_allowed_dirs or []), *lifted_dirs, *_scratch_dirs()]
         extra_files = [*(extra_allowed_files or []), *lifted_files]
         resolved = resolve_workspace_path(
             path,

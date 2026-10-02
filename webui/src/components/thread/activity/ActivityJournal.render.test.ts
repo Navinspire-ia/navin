@@ -84,7 +84,8 @@ describe("ActivityJournal render", () => {
     expect(html).toContain('data-tone="task"');
     expect(html).toContain('data-tone="skill"');
     expect(html).toContain("Explored");
-    expect(html).toContain("Failed, then fixed");
+    expect(html).toContain("Fixed");
+    expect(html).not.toContain("Failed");
     // Both attempts of the retried command add up in the trailing duration.
     expect(html).toContain(">5s<");
     expect(html).toContain("2 attempts");

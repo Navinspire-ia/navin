@@ -97,6 +97,9 @@ VERIFY_BEFORE_DONE_CONTINUE_PROMPT = (
     "flow in Preview when relevant. Fix failures, check the acceptance criteria, "
     "then report what changed and the actual results. A discovery call, a test "
     "still running or a result from before the last edit is not validation. "
+    "Stay inside the request: do not install test tooling or browsers, do not "
+    "edit tests of features you did not touch, and do not chase failures in "
+    "files you did not change; name them in one line instead. "
     "Continue without asking the user to resume."
 )
 
@@ -108,7 +111,9 @@ VERIFY_FAILED_CONTINUE_PROMPT = (
     "Keep the patch minimal and in-scope. Keep repairing while making progress; "
     "do not remove assertions, skip failing tests or weaken acceptance criteria "
     "just to get green results. If an external blocker prevents a check, report "
-    "the exact blocker and unfinished validation rather than claiming completion."
+    "the exact blocker and unfinished validation rather than claiming completion. "
+    "A failure in code you did not change, or a missing tool or secret, is such "
+    "a blocker: report it, do not repair other features or install tooling."
 )
 
 NO_PROGRESS_CONTINUE_PROMPT = (

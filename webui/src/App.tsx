@@ -3,6 +3,7 @@
 
 import {
   Suspense,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -1893,33 +1894,37 @@ function Shell({
       ) {
         overlayReturnRouteRef.current = { ...leaving };
       }
-      setActiveKey(route.activeKey);
-      setView(route.view);
-      setSettingsInitialSection(route.settingsSection);
-      setTenderNotice(route.view === "tenders" ? route.tenderNotice || "" : "");
-      setTenderPane(
-        route.view === "tenders"
-          ? route.tenderNotice || route.tenderPane === "tenders"
-            ? "tenders"
-            : "home"
-          : "home",
-      );
-      setCareerJob(route.view === "career" ? route.careerJob || "" : "");
-      setCareerPane(
-        route.view === "career"
-          ? route.careerJob || route.careerPane === "offers"
-            ? "offers"
-            : "home"
-          : "home",
-      );
-      setLeadsLead(route.view === "leads" ? route.leadsLead || "" : "");
-      setLeadsPane(
-        route.view === "leads"
-          ? route.leadsLead || route.leadsPane === "book"
-            ? "book"
-            : "home"
-          : "home",
-      );
+      // A transition keeps the current view on screen while a lazy workbench
+      // loads, instead of flashing the shared "Loading workspace" fallback.
+      startTransition(() => {
+        setActiveKey(route.activeKey);
+        setView(route.view);
+        setSettingsInitialSection(route.settingsSection);
+        setTenderNotice(route.view === "tenders" ? route.tenderNotice || "" : "");
+        setTenderPane(
+          route.view === "tenders"
+            ? route.tenderNotice || route.tenderPane === "tenders"
+              ? "tenders"
+              : "home"
+            : "home",
+        );
+        setCareerJob(route.view === "career" ? route.careerJob || "" : "");
+        setCareerPane(
+          route.view === "career"
+            ? route.careerJob || route.careerPane === "offers"
+              ? "offers"
+              : "home"
+            : "home",
+        );
+        setLeadsLead(route.view === "leads" ? route.leadsLead || "" : "");
+        setLeadsPane(
+          route.view === "leads"
+            ? route.leadsLead || route.leadsPane === "book"
+              ? "book"
+              : "home"
+            : "home",
+        );
+      });
       writeShellRoute(route, options?.replace);
       // Remember which product module owns this chat so a later sidebar click
       // reopens Code / Montage / … instead of dumping into plain chat.
@@ -1966,55 +1971,55 @@ function Shell({
   // (resume last chat for that folder; create only when none exists).
 
   useEffect(() => {
-    const applyRoute = () => {
-      const route = readShellRoute();
-      setActiveKey(route.activeKey);
-      setView(route.view);
-      setSettingsInitialSection(route.settingsSection);
-      setTenderNotice(route.view === "tenders" ? route.tenderNotice || "" : "");
-      setTenderPane(
-        route.view === "tenders"
-          ? route.tenderNotice || route.tenderPane === "tenders"
-            ? "tenders"
-            : "home"
-          : "home",
-      );
-      setCareerJob(route.view === "career" ? route.careerJob || "" : "");
-      setCareerPane(
-        route.view === "career"
-          ? route.careerJob || route.careerPane === "offers"
-            ? "offers"
-            : "home"
-          : "home",
-      );
-      setLeadsLead(route.view === "leads" ? route.leadsLead || "" : "");
-      setLeadsPane(
-        route.view === "leads"
-          ? route.leadsLead || route.leadsPane === "book"
-            ? "book"
-            : "home"
-          : "home",
-      );
-      setWorkspaceError(null);
-      if (route.view === "chat" && !route.activeKey) {
-        setDraftWorkspaceScope(null);
-      }
-      if (route.openProjectPanel) {
-        setDevProjectHomeRequest((current) => ({
-          nonce: (current?.nonce ?? 0) + 1,
-        }));
-      }
-      if (route.openTemplatesPanel) {
-        setDevTemplatesRequest((current) => ({
-          nonce: (current?.nonce ?? 0) + 1,
-        }));
-      }
-      if (route.openEvolvePanel) {
-        setDevEvolveRequest((current) => ({
-          nonce: (current?.nonce ?? 0) + 1,
-        }));
-      }
-    };
+    const applyRoute = () => startTransition(() => {
+        const route = readShellRoute();
+        setActiveKey(route.activeKey);
+        setView(route.view);
+        setSettingsInitialSection(route.settingsSection);
+        setTenderNotice(route.view === "tenders" ? route.tenderNotice || "" : "");
+        setTenderPane(
+          route.view === "tenders"
+            ? route.tenderNotice || route.tenderPane === "tenders"
+              ? "tenders"
+              : "home"
+            : "home",
+        );
+        setCareerJob(route.view === "career" ? route.careerJob || "" : "");
+        setCareerPane(
+          route.view === "career"
+            ? route.careerJob || route.careerPane === "offers"
+              ? "offers"
+              : "home"
+            : "home",
+        );
+        setLeadsLead(route.view === "leads" ? route.leadsLead || "" : "");
+        setLeadsPane(
+          route.view === "leads"
+            ? route.leadsLead || route.leadsPane === "book"
+              ? "book"
+              : "home"
+            : "home",
+        );
+        setWorkspaceError(null);
+        if (route.view === "chat" && !route.activeKey) {
+          setDraftWorkspaceScope(null);
+        }
+        if (route.openProjectPanel) {
+          setDevProjectHomeRequest((current) => ({
+            nonce: (current?.nonce ?? 0) + 1,
+          }));
+        }
+        if (route.openTemplatesPanel) {
+          setDevTemplatesRequest((current) => ({
+            nonce: (current?.nonce ?? 0) + 1,
+          }));
+        }
+        if (route.openEvolvePanel) {
+          setDevEvolveRequest((current) => ({
+            nonce: (current?.nonce ?? 0) + 1,
+          }));
+        }
+    });
     window.addEventListener("hashchange", applyRoute);
     return () => window.removeEventListener("hashchange", applyRoute);
   }, []);
@@ -4367,10 +4372,39 @@ function Shell({
   useChatDensityAttribute();
 
   useEffect(() => {
-    const idle = window.setTimeout(() => {
-      void import("@/components/settings/SettingsView");
+    // Warm the workbench chunks one per idle slot, so the first visit to a
+    // module parses nothing on click. Settings and Code are the usual first
+    // stops, so they go first.
+    const queue: Array<() => Promise<unknown>> = [
+      () => import("@/components/settings/SettingsView"),
+      () => import("@/components/dev/DevWorkbench"),
+      () => import("@/components/notes/NotesWorkbench"),
+      () => import("@/components/studio/StudioWorkspace"),
+      () => import("@/components/montage/MontageWorkbench"),
+      () => import("@/components/meeting/MeetingWorkbench"),
+      () => import("@/components/crm/CrmWorkbench"),
+    ];
+    let handle = 0;
+    let cancelled = false;
+    const schedule = (run: () => void) =>
+      typeof window.requestIdleCallback === "function"
+        ? window.requestIdleCallback(run, { timeout: 4000 })
+        : window.setTimeout(run, 400);
+    const next = () => {
+      const load = queue.shift();
+      if (!load || cancelled) return;
+      void load().catch(() => undefined).finally(() => {
+        if (!cancelled) handle = schedule(next);
+      });
+    };
+    handle = window.setTimeout(() => {
+      handle = schedule(next);
     }, 800);
-    return () => window.clearTimeout(idle);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+      if (typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(handle);
+    };
   }, []);
 
   return (

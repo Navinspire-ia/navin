@@ -29,6 +29,7 @@ from typing import Any
 from loguru import logger
 
 from navin.board.plan import milestone_progress, plan_summary
+from navin.utils.atomic_io import replace_with_retry
 
 BOARD_SCHEMA_VERSION = 1
 
@@ -134,7 +135,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         f.write(b"\n")
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    replace_with_retry(tmp, path)
 
 
 def _read_json(path: Path) -> Any:

@@ -66,7 +66,8 @@ def test_board_validation_feedback_and_later_success(tmp_path, theme, width, sav
     asyncio.run(run())
 
 
-def test_real_board_permission_error_remains_an_error():
+def test_real_board_permission_error_stays_out_of_the_transcript():
+    """A failed step is never painted as failed; the final message reports it."""
     async def run():
         app = ActivityHost()
         async with app.run_test(size=(100, 24)):
@@ -75,10 +76,11 @@ def test_real_board_permission_error_remains_an_error():
                 None, "Permission denied while writing the board file.", None,
             )
             row = app.block.query_one(ToolCall)
-            assert "Failed: Board move" in row._head_text()
+            assert "Failed" not in row._head_text()
+            assert not row.display
             assert "Permission denied" in row.copy_text()
             assert row.has_class("-error")
             assert not row.validation_pending
             await app.block.finish(latency_ms=1, model="test", preset=None)
-            assert "1 failed" in str(app.block.query_one(".assistant-foot", Static).content)
+            assert "failed" not in str(app.block.query_one(".assistant-foot", Static).content)
     asyncio.run(run())

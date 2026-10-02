@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
@@ -14,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from navin.quality.evidence import VerificationEvidence
+from navin.utils import wsl
 from navin.utils.proc import no_window_kwargs
 
 _CODE_SUFFIXES = frozenset({
@@ -23,6 +25,12 @@ _CODE_SUFFIXES = frozenset({
     ".ex", ".exs", ".erl", ".hs", ".scala", ".clj", ".dart", ".lua", ".sql",
     ".sh", ".bash", ".zsh", ".ps1", ".bat", ".cmd", ".r", ".jl", ".pl",
 })
+# Component markup and styling: a type check / build proves them, and a test
+# rarely covers "the sidebar looks like ChatGPT now". Requiring tests for them
+# sent a restyle hunting browser suites, installing Playwright and rewriting
+# another feature's test to get a green run. Checks are still required.
+_UI_SUFFIXES = frozenset({".tsx", ".jsx", ".vue", ".svelte", ".astro"})
+_TEST_REQUIRED_SUFFIXES = _CODE_SUFFIXES - _UI_SUFFIXES
 _CHECK_SUFFIXES = _CODE_SUFFIXES | {
     ".json", ".yaml", ".yml", ".toml", ".ini", ".xml", ".html", ".css", ".scss",
     ".sass", ".less", ".graphql", ".proto", ".tf", ".hcl",
@@ -48,6 +56,69 @@ _GENERATED_DIRS = frozenset({
 })
 
 
+# Lists the files and stamps them inside the distribution, in one process, so a
+# Windows host watching a \\wsl.localhost project pays one wsl.exe start
+# instead of a 9P round trip per directory and per file.
+_WSL_SNAPSHOT_SCRIPT = (
+    "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+    "git ls-files -z --cached --others --exclude-standard -- .; "
+    "else find . -mindepth 1 -type d \\( "
+    + " -o ".join(f"-name {shlex.quote(name)}" for name in sorted(_GENERATED_DIRS))
+    + " \\) -prune -o -type f -printf '%P\\0'; fi"
+    " | xargs -0 -r stat --printf='%.9Y %s %n\\0' --"
+)
+_WSL_STAMP_SCRIPT = "stat --printf='%.9Y %s %n\\0' -- \"$@\""
+_WSL_SNAPSHOT_TIMEOUT_S = 60
+
+
+def _wsl_root(root: Path) -> wsl.WslLocation | None:
+    if os.name != "nt":
+        return None
+    return wsl.parse_unc(str(root))
+
+
+def _parse_wsl_stamps(raw: bytes) -> dict[str, tuple[int, int]] | None:
+    stamps: dict[str, tuple[int, int]] = {}
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        try:
+            mtime, size, name = os.fsdecode(record).split(" ", 2)
+            seconds, _, fraction = mtime.partition(".")
+            stamps[name.removeprefix("./")] = (
+                int(seconds) * 1_000_000_000 + int(fraction.ljust(9, "0")[:9] or 0),
+                int(size),
+            )
+        except ValueError:
+            return None  # an older stat without %.9Y: let the caller fall back
+    return stamps
+
+
+def _run_in_wsl(location: wsl.WslLocation, argv: list[str]) -> bytes | None:
+    distro = wsl.resolve_distro(location.distro) or location.distro
+    try:
+        result = subprocess.run(  # noqa: S603
+            [*wsl.command_prefix(distro, location.path), *argv],
+            capture_output=True, timeout=_WSL_SNAPSHOT_TIMEOUT_S, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # stat exits 1 (xargs 123) when a listed file vanished mid-run; the rest
+    # of the output is still good.
+    return result.stdout if result.returncode in (0, 1, 123) else None
+
+
+def _wsl_snapshot(location: wsl.WslLocation) -> dict[str, tuple[int, int] | None] | None:
+    raw = _run_in_wsl(location, ["sh", "-c", _WSL_SNAPSHOT_SCRIPT])
+    stamps = _parse_wsl_stamps(raw) if raw is not None else None
+    if stamps is None:
+        return None
+    return {
+        path: stamp for path, stamp in stamps.items()
+        if development_path(path) and not _GENERATED_DIRS.intersection(PurePosixPath(path).parts)
+    }
+
+
 def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
     """Observe shell/delegated edits without reading file contents or dependencies.
 
@@ -55,6 +126,14 @@ def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
     git init. The runner calls this off the event loop and only around tools
     that can edit arbitrary paths, not on each read in a long audit.
     """
+    location = _wsl_root(root)
+    if location is not None:
+        # Windows git refuses a WSL-owned repo (dubious ownership), and the
+        # os.walk fallback then stats the whole tree over 9P: minutes per
+        # exec in a measured desktop session, against a second from inside.
+        snapshot = _wsl_snapshot(location)
+        if snapshot is not None:
+            return snapshot
     paths = None
     try:
         result = subprocess.run(  # noqa: S603
@@ -76,6 +155,18 @@ def workspace_code_snapshot(root: Path) -> dict[str, tuple[int, int] | None]:
         if development_path(path) and not _GENERATED_DIRS.intersection(PurePosixPath(path).parts):
             snapshot[path] = _file_stamp(root / raw)
     return snapshot
+
+
+def _requires_tests(path: str) -> bool:
+    """Logic code needs a test run; UI markup only needs checks, unless the
+    edited file is itself a test (then it has to be run)."""
+    candidate = PurePosixPath(path.lower())
+    if candidate.suffix in _TEST_REQUIRED_SUFFIXES:
+        return True
+    if candidate.suffix in _UI_SUFFIXES:
+        name = candidate.name
+        return ".test." in name or ".spec." in name or "__tests__" in candidate.parts
+    return False
 
 
 def _file_stamp(path: Path) -> tuple[int, int] | None:
@@ -229,18 +320,40 @@ class CodeValidationState:
     test_result_note: str = ""
     last_nudge_key: tuple[Any, ...] | None = None
     ignored_nudges: int = 0
+    total_nudges: int = 0
     workspace_snapshot: dict[str, tuple[int, int] | None] | None = None
+    # Content of files seen changing, so a rewrite with identical bytes (a
+    # generator run by the tests, a formatter) is not mistaken for an edit.
+    content_hashes: dict[str, str] = field(default_factory=dict)
+    root: Path | None = None
 
-    def observe_workspace(self, snapshot: dict[str, tuple[int, int] | None]) -> None:
+    def observe_workspace(
+        self, snapshot: dict[str, tuple[int, int] | None], *, root: Path | None = None,
+    ) -> None:
+        if root is not None:
+            self.root = Path(root)
         before = self.workspace_snapshot
         self.workspace_snapshot = snapshot
         if before is None:
             return
         changed = {path for path in before.keys() | snapshot.keys() if before.get(path) != snapshot.get(path)}
+        changed = {path for path in changed if self._content_changed(path)}
         if changed:
             self.edited(changed, require_tests=any(
-                PurePosixPath(path.lower()).suffix in _CODE_SUFFIXES for path in changed
+                _requires_tests(path) for path in changed
             ))
+
+    def _content_changed(self, path: str) -> bool:
+        if self.root is None:
+            return True
+        try:
+            digest = hashlib.sha1((self.root / path).read_bytes()).hexdigest()  # noqa: S324 - change detection
+        except OSError:
+            self.content_hashes.pop(path, None)
+            return True
+        previous = self.content_hashes.get(path)
+        self.content_hashes[path] = digest
+        return previous != digest
 
     def sync_known_edits(self, root: Path, paths: set[str]) -> None:
         """File-tool edits were already observed; do not rediscover them as new."""
@@ -255,6 +368,15 @@ class CodeValidationState:
                     continue
             if development_path(path):
                 self.workspace_snapshot[path] = _file_stamp(root / path)
+        location = _wsl_root(root)
+        if location is not None:
+            # Same clock as workspace_code_snapshot: the 9P view of mtime does
+            # not carry the guest's full nanoseconds.
+            known = [path for path in paths if path in self.workspace_snapshot]
+            raw = _run_in_wsl(location, ["sh", "-c", _WSL_STAMP_SCRIPT, "sh", *known]) if known else None
+            stamps = _parse_wsl_stamps(raw) if raw is not None else None
+            for path, stamp in (stamps or {}).items():
+                self.workspace_snapshot[path] = stamp
 
     def edited(self, paths: set[str], *, require_tests: bool) -> None:
         self.paths.update(paths)
@@ -298,7 +420,7 @@ class CodeValidationState:
             relevant = {path for path in paths if development_path(path)}
             if require_verify or (validate_code and relevant) or (self.revision and name in {"verify", "lint"}):
                 self.edited(paths, require_tests=validate_code and any(
-                    PurePosixPath(path.lower()).suffix in _CODE_SUFFIXES for path in relevant
+                    _requires_tests(path) for path in relevant
                 ))
 
         evidence = getattr(result, "verification", None)
@@ -489,4 +611,5 @@ class CodeValidationState:
                bool(self.check_failure), bool(self.test_failure))
         self.ignored_nudges = self.ignored_nudges + 1 if key == self.last_nudge_key else 1
         self.last_nudge_key = key
+        self.total_nudges += 1
         return self.ignored_nudges

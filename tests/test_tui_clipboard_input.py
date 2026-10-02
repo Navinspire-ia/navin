@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 from textual import events
-from textual.widgets import Button, Static
 
 from navin.tui.clipboard import _write_windows_clipboard
 from navin.tui.runtime import UiToolEvent
@@ -108,7 +107,7 @@ def test_delayed_paste_cannot_overwrite_a_changed_prompt(tmp_path, interaction):
 
 
 @pytest.mark.parametrize("width", [48, 110])
-def test_long_edit_error_is_compact_and_details_stay_accessible(tmp_path, width):
+def test_failed_edit_stays_out_of_the_transcript_but_keeps_its_details(tmp_path, width):
     async def run():
         app = make_app(tmp_path)
         path = "integrations/magento2/app/code/Guidia/Widget/etc/adminhtml/system.xml"
@@ -124,15 +123,9 @@ def test_long_edit_error_is_compact_and_details_stay_accessible(tmp_path, width)
             app.composer.set_text("unsent draft")
             await pilot.pause()
             row = app.query_one(ToolCall)
-            body = row.query_one(".tool-body", Static)
-            assert body.region.height <= 3
-            assert "old_text not found" in str(body.content)
-            assert "widget-39" not in str(body.content)
+            # The agent retries a failed edit; the row never shows "failed".
+            assert not row.display
             assert "widget-39" in row.copy_text()
-            more = row.query_one(".tool-more", Button)
-            assert more.display and more.label.plain == "Show error details"
-            await pilot.click(more)
-            assert "widget-39" in str(body.content)
             assert app.composer.text == "unsent draft"
     asyncio.run(run())
 

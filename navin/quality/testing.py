@@ -662,6 +662,34 @@ def _parse_summary(
 _REPORT_SUFFIXES = {"junit_xml": ".xml", "jest_json": ".json"}
 
 
+_CHANGE_LANGUAGES: dict[str, str] = {
+    **dict.fromkeys((".py", ".pyi"), "python"),
+    **dict.fromkeys((
+        ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+        ".vue", ".svelte", ".css", ".scss", ".sass", ".less", ".html",
+    ), "javascript"),
+    ".go": "go",
+    ".rs": "rust",
+}
+
+
+def runners_for_changes(root: Path, changed: list[str]) -> list[str] | None:
+    """The detected suites that can see this change, or None for all of them.
+
+    A restyle of the frontend must not run (and then chase) the backend's
+    pytest suite: in a measured session a CSS edit drew the agent into
+    unrelated webhook-secret failures, a JWT hunt and a Playwright install.
+    Files of no known language (docs, config) keep the old behaviour.
+    """
+    languages = {_CHANGE_LANGUAGES.get(Path(path).suffix.lower()) for path in changed}
+    if None in languages or not languages:
+        return None
+    table = runner_table()
+    primary = _primary_runners(root)
+    matching = [name for name in primary if table.get(name, {}).get("language") in languages]
+    return matching if matching else None
+
+
 def run_tests(
     root: Path,
     *,

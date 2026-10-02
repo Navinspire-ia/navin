@@ -193,14 +193,15 @@ def test_added_deleted_reverted_failed_and_cancelled_have_distinct_outcomes(tmp_
             assert any("Added added.py (+2 -0)" in head for head in heads)
             assert any("Deleted deleted.py (+0 -2)" in head for head in heads)
             assert any("Reverted undo.py (+1 -1)" in head for head in heads)
-            assert any("Failed" in head and "never.py" in head for head in heads)
+            assert not any("Failed" in head for head in heads)
             assert any("Cancelled" in head and "sleep 60" in head for head in heads)
             failed = next(row for row in block.query(ToolCall) if row.call_id == "failed")
             assert "false success" not in failed.copy_text()
             assert "Permission denied" in failed.copy_text()
             assert failed.added == failed.removed == 0
+            assert not failed.display
             foot = str(block.query_one(".assistant-foot", Static).content)
-            assert "1 failed" in foot and "1 cancelled" in foot
+            assert "failed" not in foot and "1 cancelled" in foot
             assert "ran 1 command" not in foot
             cluster = block.query(ToolCluster).first()
             cluster.focus()
@@ -283,4 +284,36 @@ def test_binary_file_does_not_claim_zero_changed_lines(tmp_path):
             assert "+0 -0" not in row._head_text()
             assert "No text preview." in str(row.query_one(".tool-body").content)
             assert "+0 -0" not in app.block.query_one(ToolCluster)._head_text()
+    asyncio.run(run())
+
+
+def test_a_finished_command_shows_its_command_and_status_only():
+    """The transcript keeps the full command and its exit status; the output
+    is one click away. A traceback above "Exit code: 0" (a piped tail) stays."""
+    async def run():
+        app = ActivityHost()
+        async with app.run_test(size=(110, 28)) as pilot:
+            block = app.block
+            command = "cd frontend && sed -n 1,15p src/app/globals.css && echo === && sed -n 1,8p src/styles/fonts.css"
+            output = "/* tokens */\n:root .guidia-site-frame {\n  --ink: #111;\n}\nExit code: 0"
+            await block.tool_event("run", "exec", "end", {"command": command}, output, None, None)
+            row = block.query_one(ToolCall)
+            await pilot.pause()
+            body = str(row.query_one(".tool-body", Static).content)
+            assert "Exit code: 0" in body
+            assert ":root" not in body and "tokens" not in body
+            more = row.query_one(".tool-more", Button)
+            assert more.display and "Show output" in str(more.label)
+            more.scroll_visible(animate=False)
+            await pilot.pause()
+            await pilot.click(more)
+            assert ":root" in str(row.query_one(".tool-body", Static).content)
+
+            failing = "Traceback (most recent call last):\nModuleNotFoundError: No module named 'playwright'\nExit code: 0"
+            await block.tool_event("run2", "exec", "end", {"command": "python3 build/check.py 2>&1 | tail"}, failing, None, None)
+            await pilot.pause()
+            second = [tool for tool in block.query(ToolCall) if tool is not row][-1]
+            text = str(second.query_one(".tool-body", Static).content)
+            assert "ModuleNotFoundError" in text and "Exit code: 0" in text
+            assert "Traceback" not in text
     asyncio.run(run())

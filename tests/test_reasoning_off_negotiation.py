@@ -127,5 +127,79 @@ class MandatoryReasoningDowngradeTest(unittest.TestCase):
         self.assertEqual(_reasoning_of(provider, "none"), {"enabled": False})
 
 
+class NativeThinkingToggleRefusalTest(unittest.TestCase):
+    """GLM-5.3 on Z.ai answers thinking={"type": "disabled"} with code 1210."""
+
+    ZAI_ERROR = (
+        "Error code: 400 - {'error': {'code': '1210', 'message': 'This model "
+        "always engages in thinking and cannot be disabled; please use low, "
+        "high, or max'}}"
+    )
+
+    def _zai(self) -> OpenAICompatProvider:
+        from navin.providers.registry import find_by_name
+
+        return OpenAICompatProvider(
+            api_key="test",
+            api_base="https://api.z.ai/api/paas/v4",
+            default_model="glm-5.3",
+            spec=find_by_name("zai"),
+        )
+
+    def _kwargs(self, provider: OpenAICompatProvider, effort: str) -> dict:
+        return provider._build_kwargs(
+            [{"role": "user", "content": "hi"}], None, "glm-5.3", 8192, 0.1, effort, None,
+        )
+
+    def test_a_refused_off_retries_at_the_floor(self) -> None:
+        provider = self._zai()
+        first = self._kwargs(provider, "none")
+        self.assertEqual(first["extra_body"]["thinking"], {"type": "disabled"})
+
+        self.assertTrue(
+            provider._register_reasoning_rejection("glm-5.3", RuntimeError(self.ZAI_ERROR), "none")
+        )
+        retry = self._kwargs(provider, "none")
+        self.assertNotIn("thinking", retry.get("extra_body") or {})
+        self.assertEqual(retry.get("reasoning_effort"), "low")
+
+        # A second refusal must surface instead of looping.
+        self.assertFalse(
+            provider._register_reasoning_rejection("glm-5.3", RuntimeError(self.ZAI_ERROR), "none")
+        )
+
+    def test_an_explicit_effort_is_untouched(self) -> None:
+        provider = self._zai()
+        provider._register_reasoning_rejection("glm-5.3", RuntimeError(self.ZAI_ERROR), "none")
+        kwargs = self._kwargs(provider, "high")
+        self.assertEqual(kwargs["extra_body"]["thinking"], {"type": "enabled"})
+        self.assertEqual(kwargs.get("reasoning_effort"), "high")
+
+
+    def test_any_native_toggle_learns_it_and_omits_without_a_named_floor(self) -> None:
+        """Not a GLM special case: DeepSeek's toggle refusing off is handled
+        the same way, and with no floor named the endpoint default applies."""
+        from navin.providers.registry import find_by_name
+
+        provider = OpenAICompatProvider(
+            api_key="test",
+            api_base="https://api.deepseek.com",
+            default_model="deepseek-v4",
+            spec=find_by_name("deepseek"),
+        )
+        self.assertTrue(
+            provider._register_reasoning_rejection(
+                "deepseek-v4",
+                RuntimeError("400 - thinking cannot be disabled for this model"),
+                "none",
+            )
+        )
+        kwargs = provider._build_kwargs(
+            [{"role": "user", "content": "hi"}], None, "deepseek-v4", 8192, 0.1, "none", None,
+        )
+        self.assertNotIn("thinking", kwargs.get("extra_body") or {})
+        self.assertNotIn("reasoning_effort", kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()

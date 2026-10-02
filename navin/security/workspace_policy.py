@@ -152,6 +152,10 @@ def _prefer_workspace(path: str, candidate: Path, roots: list[Path]) -> bool:
         return candidate.exists()
     if candidate.exists():
         return True
+    if roots and _literal_parent_is_dir(path) and is_path_allowed(Path(path).expanduser(), roots):
+        # A new file in a real, allowed place (``/tmp/report.txt`` with the
+        # temp dir open): taken at its word, not filed under <project>/tmp.
+        return False
     if roots:
         return True
     # Unconfined and absent everywhere: respect the literal path when its parent

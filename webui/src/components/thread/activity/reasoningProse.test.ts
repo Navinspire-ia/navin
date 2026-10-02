@@ -46,4 +46,12 @@ describe("reasoningSummary", () => {
     expect(reasoningSummary(paragraph)).toBe(paragraph);
     expect(reasoningSummary(paragraph).length).toBeGreaterThan(160);
   });
+
+  it("keeps the newest words of a long paragraph while streaming", () => {
+    const paragraph = `${"Reading the admin shell and its theme tokens first. ".repeat(12)}Now checking postcss config.`;
+    const live = reasoningSummary(paragraph, undefined, true);
+    expect(live.endsWith("Now checking postcss config.")).toBe(true);
+    expect(live.length).toBeLessThanOrEqual(481);
+    expect(reasoningSummary(paragraph).endsWith("…")).toBe(true);
+  });
 });

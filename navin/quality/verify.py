@@ -33,7 +33,7 @@ from navin.quality.linters import (
     lint_file,
     lint_project,
 )
-from navin.quality.testing import TestOutcome, run_tests
+from navin.quality.testing import TestOutcome, run_tests, runners_for_changes
 from navin.utils.proc import no_window_kwargs
 
 _GIT_TIMEOUT_S = 20
@@ -156,6 +156,21 @@ class VerificationReport:
         lines.append(f"Next: {self.recommendation()}")
         return "\n".join(lines)
 
+    def failures_look_unrelated(self) -> bool:
+        """True when no failing test sits under a top-level directory the
+        change touched. Only judged when every failure names its file."""
+        if not self.changed_paths:
+            return False
+        failures = [f for o in self.test_outcomes for f in o.failures]
+        if not failures or any(
+            not f.file or Path(f.file).is_absolute() or f.file.startswith("..") for f in failures
+        ):
+            return False  # cannot place every failure relative to the project
+        touched = {_top_dir(path) for path in self.changed_paths}
+        if "" in touched:
+            return False  # a root-level file can affect anything
+        return all(_top_dir(f.file) not in touched for f in failures)
+
     def recommendation(self) -> str:
         if self.verdict == VERDICT_LINT_ERRORS:
             fixable = [
@@ -169,6 +184,13 @@ class VerificationReport:
                 )
             return "fix the lint errors above, then re-run verify action=check"
         if self.verdict == VERDICT_TEST_FAILURES:
+            if self.failures_look_unrelated():
+                return (
+                    "the failing tests live away from every file you changed and are "
+                    "likely pre-existing or environment-dependent (missing secrets, "
+                    "services). Do not chase them: mention them to the user in one "
+                    "line and finish the requested work"
+                )
             base = "fix the failing tests above, then re-run verify action=check"
             if self.snapshot_id:
                 return (
@@ -427,6 +449,11 @@ def restore_snapshot(root: Path, snapshot_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _top_dir(path: str) -> str:
+    parts = Path(path.replace("\\", "/")).parts
+    return parts[0] if len(parts) > 1 else ""
+
+
 def _verdict_for(
     lint_results: list[LinterResult],
     test_outcomes: list[TestOutcome],
@@ -491,6 +518,7 @@ def verify_changes(
     if with_tests:
         test_outcomes = run_tests(
             root, target=test_target,
+            runners=None if test_target else runners_for_changes(root, changed),
             **({"on_output": on_test_output} if on_test_output is not None else {}),
         )
 

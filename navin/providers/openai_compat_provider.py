@@ -40,6 +40,7 @@ from navin.providers.openai_responses import (
 )
 from navin.providers.reasoning_control import (
     REJECT_UNSUPPORTED,
+    REJECT_VALUE,
     WIRE_CHAT,
     WIRE_RESPONSES,
     ReasoningOffNegotiator,
@@ -47,6 +48,7 @@ from navin.providers.reasoning_control import (
     apply_shape,
     classify_rejection,
     off_shapes,
+    suggested_floor,
 )
 from navin.providers.session_affinity import current_session_id
 
@@ -505,6 +507,11 @@ class OpenAICompatProvider(LLMProvider):
         # Models that rejected the reasoning_effort parameter itself, at any
         # level. They reason (or not) on their own terms; stop sending it.
         self._reasoning_knob_rejected: set[str] = set()
+        # Models whose native thinking toggle refused "disabled" (GLM-5.3 on
+        # Z.ai: code 1210, "always engages in thinking"). Stop asking for off
+        # and ask for the lowest effort the refusal named instead (None when it
+        # named none: then say nothing and take the endpoint default).
+        self._thinking_off_rejected: dict[str, str | None] = {}
 
     def _build_client(self) -> None:
         """Create the OpenAI client using the current module-level AsyncOpenAI."""
@@ -921,6 +928,18 @@ class OpenAICompatProvider(LLMProvider):
         key = self._temperature_model_key(model)
         model_name = self._request_model_name(model or self.default_model)
         effort = (reasoning_effort or "").lower() if isinstance(reasoning_effort, str) else ""
+        if (
+            effort in ("none", "minimal", "minimum")
+            and key not in self._thinking_off_rejected
+            and _thinking_styles_for(self._spec, model_name)
+            and classify_rejection(e) == REJECT_VALUE
+        ):
+            self._thinking_off_rejected[key] = suggested_floor(e)
+            logger.info(
+                "Model {} refused to disable thinking; retrying at the lowest effort",
+                key,
+            )
+            return True
         if effort == "none":
             wire = WIRE_RESPONSES if self._should_use_responses_api(model, reasoning_effort) else WIRE_CHAT
             shapes = self._reasoning_off_shapes(model_name, wire)
@@ -1172,7 +1191,14 @@ class OpenAICompatProvider(LLMProvider):
         if reasoning_effort is not None:
             slug = _model_slug(model_name)
             thinking_enabled = semantic_effort not in ("none", "minimal")
+            model_key = self._temperature_model_key(model)
+            off_refused = not thinking_enabled and model_key in self._thinking_off_rejected
+            floor = self._thinking_off_rejected.get(model_key) if off_refused else None
+            if floor and not strip_effort:
+                kwargs["reasoning_effort"] = floor
             for thinking_style in _thinking_styles_for(spec, model_name):
+                if off_refused:
+                    continue
                 if not thinking_enabled and slug in _KIMI_ALWAYS_THINKING_MODELS:
                     continue
                 extra = _thinking_extra_body(thinking_style, thinking_enabled)

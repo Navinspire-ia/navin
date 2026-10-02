@@ -113,7 +113,7 @@ def test_reopen_large_saved_operation_retains_every_file_and_failure(tmp_path):
             cluster = block.query_one(ToolCluster)
             assert len(cluster.tools) == 790
             assert len(app.query(ToolCall)) == ACTIVITY_PAGE_SIZE
-            assert "1 failed" in cluster._head_text()
+            assert "failed" not in cluster._head_text()
             assert "File could not be changed" in cluster.tools[-1].copy_text()
             assert "new_788" in cluster.tools[-2].copy_text()
             await pilot.press("r", "e", "p", "r", "i", "s", "e")

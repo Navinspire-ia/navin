@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -47,6 +48,8 @@ class AgentProgressHook(AgentHook):
         self._stream_buf = ""
         self._think_extractor = IncrementalThinkExtractor()
         self._reasoning_open = False
+        # Calls whose finish event already went out from on_tool_done.
+        self._reported_call_ids: set[str] = set()
 
     def wants_streaming(self) -> bool:
         return self._on_stream is not None
@@ -199,14 +202,42 @@ class AgentProgressHook(AgentHook):
         else:
             self._reasoning_open = False
 
+    async def on_tool_done(
+        self,
+        context: AgentHookContext,
+        tool_call: Any,
+        result: Any,
+        event: dict[str, Any],
+    ) -> None:
+        """Show each result when its tool returns, not when the whole batch
+        (and the workspace bookkeeping after it) is done."""
+        call_id = str(getattr(tool_call, "id", "") or "")
+        if not call_id or not self._on_progress or not on_progress_accepts_tool_events(self._on_progress):
+            return  # no id to dedupe on: after_iteration reports it
+        single = SimpleNamespace(tool_calls=[tool_call], tool_results=[result], tool_events=[event])
+        tool_events = build_tool_event_finish_payloads(single)
+        if not tool_events:
+            return
+        self._reported_call_ids.add(call_id)
+        await invoke_on_progress(
+            self._on_progress,
+            "",
+            tool_hint=False,
+            tool_events=tool_events,
+        )
+
     async def after_iteration(self, context: AgentHookContext) -> None:
+        reported, self._reported_call_ids = self._reported_call_ids, set()
         if (
             self._on_progress
             and context.tool_calls
             and context.tool_events
             and on_progress_accepts_tool_events(self._on_progress)
         ):
-            tool_events = build_tool_event_finish_payloads(context)
+            tool_events = [
+                payload for payload in build_tool_event_finish_payloads(context)
+                if payload["call_id"] not in reported
+            ]
             if tool_events:
                 await invoke_on_progress(
                     self._on_progress,

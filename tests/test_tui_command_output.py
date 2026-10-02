@@ -49,7 +49,9 @@ def test_warning_wall_collapses_and_full_output_remains_accessible(theme, width)
             body = row.query_one(".tool-body", Static)
             preview = str(body.content)
             assert body.region.height <= 6
-            assert "(x40)" in preview and "6 passed" in preview
+            # Finished: totals and exit status only; the warning count is in
+            # the full output, one click away.
+            assert "6 passed" in preview and "(x40)" not in preview
             assert "@pytest.mark.asyncio" not in preview
             assert "Exit code: 0" in preview and "100%" in row._head_text()
             assert all(cell_len(line) <= body.size.width for line in preview.splitlines())
@@ -62,7 +64,7 @@ def test_warning_wall_collapses_and_full_output_remains_accessible(theme, width)
             await pilot.press("f")
             assert "@pytest.mark.asyncio" not in str(body.content)
             await app.block.finish(latency_ms=1, model=None, preset=None)
-            assert "(x40)" in str(body.content)
+            assert "6 passed" in str(body.content)
     asyncio.run(run())
 
 
@@ -152,7 +154,12 @@ def test_nonzero_exit_and_background_session_have_honest_headings():
             for call, result in [("bad", "FAILED test_example\nExit code: 1"), ("running", "Session ID: abc\nProcess running")]:
                 await app.block.tool_event(call, "exec", "end", {"command": "pytest"}, result, None, None)
             bad, running = app.block.query(ToolCall)
-            assert bad.phase == "error" and "Failed:" in bad._head_text()
+            # A failing command is a step, not a verdict: no "Failed:" on the
+            # heading and no error lines inline; the output is one click away.
+            assert bad.phase == "error" and "Failed" not in bad._head_text()
+            body = str(bad.query_one(".tool-body", Static).content)
+            assert "FAILED" not in body and "Exit code" not in body
+            assert "Show output" in str(bad.query_one(".tool-more", Button).label)
             assert "100%" not in running._head_text()
     asyncio.run(run())
 
@@ -200,3 +207,23 @@ def test_final_response_accents_preserve_the_message_in_both_renderers(monkeypat
     console.print(ResponseMarkdown(message))
     assert "\x1b[1;94m" in stream.getvalue()
     assert "Terminé." in Text.from_ansi(stream.getvalue()).plain
+
+
+def test_cli_never_prints_a_failed_step():
+    """A bad edit call, a refused git commit and a failing `ls` probe: no
+    "Failed", no cross, no error lines. The final message reports failures."""
+    stream = io.StringIO()
+    printer = ActivityPrinter(Console(file=stream, width=100, force_terminal=True))
+    printer.consume(tool_events=[
+        {"call_id": "patch", "name": "apply_patch", "phase": "error", "arguments": {"edits": [{}]},
+         "error": "Invalid parameters for tool 'apply_patch': missing required edits[0].path"},
+        {"call_id": "git", "name": "git", "phase": "error", "arguments": {"action": "commit"},
+         "error": "nothing is staged."},
+        {"call_id": "ls", "name": "exec", "phase": "end", "arguments": {"command": "ls .navin/tmp-note.txt"},
+         "result": "ls: cannot access '.navin/tmp-note.txt': No such file or directory\nExit code: 2"},
+    ])
+    rendered = Text.from_ansi(stream.getvalue()).plain
+    assert "Failed" not in rendered and "×" not in rendered
+    assert "Invalid parameters" not in rendered and "nothing is staged" not in rendered
+    assert "cannot access" not in rendered
+    assert "Ran ls" in rendered

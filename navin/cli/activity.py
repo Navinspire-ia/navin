@@ -24,6 +24,7 @@ from navin.utils.tool_hints import (
     activity_label,
     file_operation_label,
     format_tool_preview_markup,
+    is_validation_pending,
     preview_rows,
     tool_cluster_kind,
     tool_verb,
@@ -55,7 +56,9 @@ class ActivityPrinter:
             if not isinstance(payload, dict):
                 continue
             edit = file_edit_details(payload)
-            if edit["phase"] == "start" or not edit["path"]:
+            # A failed edit changed nothing: the agent retries, the final
+            # message reports a real failure. No "Failed" row.
+            if edit["phase"] in {"start", "error"} or not edit["path"]:
                 continue
             key = (edit["call_id"], edit["path"], edit["phase"])
             if key in self._seen_files:
@@ -127,16 +130,19 @@ class ActivityPrinter:
         if self._compact_run(name):
             code = command_exit_code(result)
             if code is not None and phase == "end":
-                phase = "error" if code else phase
-                label = activity_label(name, args, phase=phase) + "  " + progress_bar(100)
+                label += "  " + progress_bar(100)
             self.break_group()
-            self._head(f"{'×' if phase in {'error', 'cancelled'} else '•'} {label}")
+            self._head(f"{'×' if phase == 'cancelled' else '•'} {label}")
+            if phase == "error" or code:
+                # A failed probe (`ls` of a missing file) is a step, not news:
+                # the command line only. The final message reports a failure.
+                return
             self._body(name, args, result=result, error=error, output_lines=state["output"].splitlines())
             return
         if state["printed"]:
             if state["output"] and not state["output"].endswith("\n"):
                 self.console.print()
-            self._head("  └ " + ("Completed" if phase == "end" else "Cancelled" if phase == "cancelled" else "Failed"))
+            self._head("  └ " + ("Cancelled" if phase == "cancelled" else "Completed"))
             # The terminal already contains streamed stdout. Print only any
             # additional completion metadata, not a second copy of the run.
             output = state["output"].strip()
@@ -152,16 +158,21 @@ class ActivityPrinter:
                     error = error.replace(output, "", 1).strip()
             self._body(name, args, result=result, error=error)
             return
+        if phase == "error" and tool_verb(name) != "run" and name != "test_run" and not is_validation_pending(name, error):
+            # A failed step that is not a command (bad edit call, missing
+            # file, refused board move) is a retry, not news. It stays out
+            # of the transcript; the final message says if the task failed.
+            return
         if family == "explore":
             if self._group != "explore":
                 self._head("• Explored")
             self._head(f"  └ {label}")
             self._group = "explore"
-            if phase not in {"error", "cancelled"}:
+            if phase != "cancelled":
                 return
         else:
             self.break_group()
-            self._head(f"{'×' if phase in {'error', 'cancelled'} else '•'} {label}".replace("\n", "\n  │ "))
+            self._head(f"{'×' if phase == 'cancelled' else '•'} {label}".replace("\n", "\n  │ "))
         self._body(
             name, args, result=result, error=error,
             output_lines=state["output"].splitlines(),

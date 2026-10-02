@@ -21,6 +21,7 @@ from typing import Any, Mapping
 from loguru import logger
 
 from navin.board.store import BoardError, board_dir_for_project
+from navin.utils.atomic_io import replace_with_retry
 
 MISSION_SCHEMA_VERSION = 1
 MISSION_FILENAME = "mission.json"
@@ -99,7 +100,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         f.write(b"\n")
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    replace_with_retry(tmp, path)
 
 
 def _read_json(path: Path) -> Any:

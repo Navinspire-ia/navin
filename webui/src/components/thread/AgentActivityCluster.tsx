@@ -242,7 +242,12 @@ export const AgentActivityCluster = memo(function AgentActivityCluster({
     primaryCliStatus,
     primaryMcpDisplayName,
     primaryMcpStatus,
-  } = countActivity(messages, fileEdits, cliRuns, mcpRuns);
+  } = useMemo(
+    // The live duration ticker re-renders every 500ms; only new activity
+    // should pay for walking every message again.
+    () => countActivity(messages, fileEdits, cliRuns, mcpRuns),
+    [messages, fileEdits, cliRuns, mcpRuns],
+  );
   const hasPendingFileEdit = fileEdits.some((edit) => edit.pending);
   const hasNonReasoningActivity = toolCalls > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0;
   const reasoningMessages = useMemo(

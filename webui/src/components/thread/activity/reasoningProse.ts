@@ -36,8 +36,14 @@ function stripReasoningMarkup(value: string): string {
     .trim();
 }
 
-function clipReasoningSummary(value: string, maxChars: number): string {
+function clipReasoningSummary(value: string, maxChars: number, tail = false): string {
   if (value.length <= maxChars) return value;
+  if (tail) {
+    const cut = value.slice(value.length - (maxChars - 1));
+    const atSpace = cut.indexOf(" ");
+    const ceiling = Math.floor(maxChars * 0.55);
+    return `…${(atSpace >= 0 && atSpace < ceiling ? cut.slice(atSpace) : cut).trim()}`;
+  }
   const cut = value.slice(0, maxChars - 1);
   const atSpace = cut.lastIndexOf(" ");
   const floor = Math.floor(maxChars * 0.45);
@@ -49,18 +55,21 @@ const REASONING_SUMMARY_MIN_CHARS = 280;
 
 /**
  * Collapsed resume of a thinking trace: latest paragraphs, walking backward
- * until the text is long enough to read without expanding.
+ * until the text is long enough to read without expanding. While the trace is
+ * still streaming, an over-long paragraph is clipped from its head so the
+ * newest words stay visible instead of freezing on the paragraph's start.
  */
 export function reasoningSummary(
   text: string,
   maxChars = REASONING_SUMMARY_MAX_CHARS,
+  streaming = false,
 ): string {
   const paragraphs = text
     .split(/\n{2,}/)
     .map((part) => stripReasoningMarkup(part))
     .filter((part) => part.length > 40);
   if (paragraphs.length === 0) {
-    return clipReasoningSummary(stripReasoningMarkup(text), maxChars);
+    return clipReasoningSummary(stripReasoningMarkup(text), maxChars, streaming);
   }
   const picked: string[] = [];
   for (let i = paragraphs.length - 1; i >= 0; i -= 1) {
@@ -71,5 +80,5 @@ export function reasoningSummary(
     if (joined.length >= Math.min(REASONING_SUMMARY_MIN_CHARS, maxChars)) break;
     if (picked.length >= 4) break;
   }
-  return clipReasoningSummary(picked.join(" "), maxChars);
+  return clipReasoningSummary(picked.join(" "), maxChars, streaming);
 }

@@ -2925,7 +2925,7 @@
     "activityJournalRunning": "Running",
     "activityJournalDone": "Done",
     "activityJournalFailedTag": "Failed",
-    "activityJournalRecovered": "Failed, then fixed",
+    "activityJournalRecovered": "Fixed",
     "activityJournalCopy": "Copy command",
     "activityJournalCopied": "Copied",
     "activityDigestFiles_one": "{{count}} file",
@@ -9114,6 +9114,15 @@
         "full": "Full Access",
         "projectAria": "Choose project",
         "projectPlaceholder": "Select project"
+      },
+      "permission": {
+        "aria": "Permissions",
+        "autonomous": "Full access",
+        "autonomousHint": "Never asks",
+        "risky": "Ask before deleting",
+        "riskyHint": "Only irreversible actions",
+        "always": "Ask every command",
+        "alwaysHint": "Every shell command"
       }
     },
     "contextCompacted": "Conversation summarized to stay within the context window",

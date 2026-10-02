@@ -297,6 +297,13 @@ def writable_host_paths(workspace: str, cwd: str | None = None) -> list[str]:
     for sock in docker_socket_paths():
         _add(sock)
 
+    # Scratch space: build tools, test runners and the agent's own throwaway
+    # files all write to the OS temp dir, and failing there sent sandboxed
+    # runs into retry loops.
+    _add(tempfile.gettempdir())
+    _add("/tmp")
+    _add("/var/tmp")
+
     if cwd:
         _add(cwd)
 

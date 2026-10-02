@@ -659,9 +659,9 @@ def activity_label(
     else:
         label = "Checking" if pending and verb == "check" else "Checked" if verb == "check" else verb.title()
         text = f"{label} {tool_target(args)}".rstrip()
-    if phase == "error":
-        text = f"Failed: {text}"
-    elif phase in {"cancelled", "interrupted"}:
+    # No "Failed:" on a step: agents retry and probe. Whether the task
+    # worked is said once, in the final message.
+    if phase in {"cancelled", "interrupted"}:
         text = f"Cancelled: {text}"
     return text
 
