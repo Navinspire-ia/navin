@@ -1732,6 +1732,8 @@ export function ThreadShell({
     isStreaming,
     pendingChoices,
     respondToChoice,
+    pendingApprovals,
+    respondToApproval,
     onUtterance: handleThreadSend,
     wantsWav: settings?.transcription?.provider === "xiaomi_mimo",
     disabled: isViewer || !chatId,

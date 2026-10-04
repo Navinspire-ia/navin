@@ -86,6 +86,45 @@ def _cancel_leftovers(loop: asyncio.AbstractEventLoop, timeout: float) -> None:
     loop.run_until_complete(asyncio.wait(tasks, timeout=timeout))
 
 
+def close_subprocess_transports(loop: asyncio.AbstractEventLoop) -> int:
+    """Close child-process transports still open on *loop*, while it runs.
+
+    A cleanup cut short (a slow MCP server, a command still running) left
+    them to the garbage collector after loop.close(): their __del__ then
+    printed "Exception ignored ... RuntimeError: Event loop is closed" under
+    the exit summary. A child still running is killed with its process group
+    (commands start their own session), not just its shell.
+    """
+    import gc
+    from asyncio.base_subprocess import BaseSubprocessTransport
+
+    from navin.utils.proc import kill_posix_process_group, kill_windows_process_tree
+
+    leftovers = [
+        obj for obj in gc.get_objects()
+        if isinstance(obj, BaseSubprocessTransport)
+        and getattr(obj, "_loop", None) is loop and not obj.is_closing()
+    ]
+    for transport in leftovers:
+        with suppress(Exception):
+            pid = transport.get_pid()
+            if pid and transport.get_returncode() is None:
+                if sys.platform == "win32":
+                    kill_windows_process_tree(pid)
+                elif os.getpgid(pid) != os.getpgid(0):
+                    # Only a child that leads its own group: killpg on a
+                    # child sharing ours (git, an MCP server) would kill navin.
+                    kill_posix_process_group(pid)
+        with suppress(Exception):
+            # Kills a child still running (the process itself) and closes pipes.
+            transport.close()
+    if leftovers:
+        # Pipe closes are scheduled with call_soon: let them run.
+        with suppress(Exception):
+            loop.run_until_complete(asyncio.sleep(0.05))
+    return len(leftovers)
+
+
 def run_app_fast_exit(app, *, leftover_timeout: float = 1.0):
     """Run a Textual app, then close the loop without waiting on stuck threads.
 
@@ -102,6 +141,7 @@ def run_app_fast_exit(app, *, leftover_timeout: float = 1.0):
             _cancel_leftovers(loop, leftover_timeout)
             with suppress(Exception):
                 loop.run_until_complete(asyncio.wait_for(loop.shutdown_asyncgens(), leftover_timeout))
+            close_subprocess_transports(loop)
             executor = getattr(loop, "_default_executor", None)
             if executor is not None:
                 executor.shutdown(wait=False, cancel_futures=True)

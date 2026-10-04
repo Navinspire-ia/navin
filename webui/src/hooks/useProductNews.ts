@@ -105,7 +105,7 @@ export function useProductNews(
       source: "update",
       title: t("notifications.updateAvailable", {
         version,
-        defaultValue: "Navin {{version}} is available",
+        defaultValue: "An update is available",
       }),
       detail: installable
         ? availableUpdate?.notes?.trim()
@@ -139,7 +139,7 @@ export function useProductNews(
         source: "update",
         title: t("notifications.updateInstalled", {
           version: justInstalled.version,
-          defaultValue: "Navin {{version}} is installed",
+          defaultValue: "Navin is up to date",
         }),
         detail: t("notifications.updateInstalledDetail", {
           defaultValue: "The update is done, you are on the latest version.",
@@ -155,11 +155,11 @@ export function useProductNews(
       source: "update",
       title: t("notifications.updateFailed", {
         version: justInstalled.version,
-        defaultValue: "Navin {{version}} was not installed",
+        defaultValue: "The update was not installed",
       }),
       detail: t("notifications.updateFailedDetail", {
         version: justInstalled.currentVersion ?? "",
-        defaultValue: "You are still running {{version}}. Try again from Settings.",
+        defaultValue: "You are still on the previous version. Try again from Settings.",
       }),
       key: `update:failed:${justInstalled.version}`,
     });

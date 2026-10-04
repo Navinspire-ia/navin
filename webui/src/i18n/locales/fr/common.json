@@ -2581,7 +2581,7 @@
     "activityGroupShell": "Shell",
     "activityGroupVision": "Vision",
     "activityGroupWeb": "Web",
-    "activityGroupWorking": "Working",
+    "activityGroupWorking": "En cours",
     "activityThinkingFor": "Réflexion pendant {{duration}}",
     "activityThought": "Réflexion terminée",
     "activityThoughtFor": "Réflexion terminée en {{duration}}",
@@ -2838,7 +2838,7 @@
     "streaming": "en cours de génération",
     "toolMany": "{{count}} outils utilisés",
     "toolSingle": "Utilisation d’un outil",
-    "toolStepAdjusted": "Adjusted and continued",
+    "toolStepAdjusted": "Ajusté puis poursuivi",
     "toolStepHideError": "hide error",
     "toolStepHideOutput": "hide output",
     "toolStepRunning": "Running…",
@@ -3439,15 +3439,15 @@
     "requestFailed": "Requête échouée",
     "sessionExpired": "Session expirée - reconnexion",
     "title": "Notifications",
-    "updateAction": "Update",
-    "updateActionBusy": "Installing...",
-    "updateAvailable": "Navin {{version}} is available",
-    "updateAvailableDetail": "Click Update: Navin installs it and restarts itself.",
-    "updateFailed": "Navin {{version}} was not installed",
-    "updateFailedDetail": "You are still running {{version}}. Try again from Settings.",
-    "updateInstalled": "Navin {{version}} is installed",
-    "updateInstalledDetail": "The update is done, you are on the latest version.",
-    "updateManual": "Update it with your package manager."
+    "updateAction": "Mettre à jour",
+    "updateActionBusy": "Installation...",
+    "updateAvailable": "Une mise à jour est disponible",
+    "updateAvailableDetail": "Cliquez sur Mettre à jour : Navin l'installe et redémarre tout seul.",
+    "updateFailed": "La mise à jour n'a pas été installée",
+    "updateFailedDetail": "Vous êtes toujours sur la version précédente. Réessayez depuis les Paramètres.",
+    "updateInstalled": "Navin est à jour",
+    "updateInstalledDetail": "La mise à jour est faite, vous avez la dernière version.",
+    "updateManual": "Mettez-le à jour avec votre gestionnaire de paquets."
   },
   "onboarding": {
     "omniroute": {
@@ -9088,7 +9088,10 @@
           "question": "Question",
           "option": "Option {{letter}}",
           "recommended": "recommandé",
-          "other": "Vous pouvez aussi répondre librement"
+          "other": "Vous pouvez aussi répondre librement",
+          "approval": "Autorisation demandée",
+          "approvalPrompt": "Dites oui pour valider ou non pour refuser.",
+          "approvalRetry": "Je n'ai pas compris. Oui ou non ?"
         }
       },
       "voice": {
@@ -9443,7 +9446,7 @@
     "badge": "Mise à jour",
     "banner": "Navin v{{version}} est prête à être installée.",
     "cardBody": "Une nouvelle version est disponible avec les dernières corrections et fonctionnalités.",
-    "cardTitle": "Navin {{version}} est disponible",
+    "cardTitle": "Une mise à jour est disponible",
     "downloading": "Téléchargement {{percent}} %",
     "preparing": "Préparation du téléchargement...",
     "restarting": "Redémarrage de Navin...",

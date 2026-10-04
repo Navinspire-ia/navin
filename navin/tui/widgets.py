@@ -621,9 +621,8 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
         text-style: none;
     }
     ToolCall:focus > .tool-head { background: $surface; }
-    ToolCall.-error > .tool-head { color: $error; }
     ToolCall.-validation-pending > .tool-head { color: $warning; }
-    ToolCall.-cancelled > .tool-head { color: $warning; }
+    ToolCall.-cancelled > .tool-head { color: $text-muted; }
     ToolCall > .tool-output {
         height: auto;
         max-height: 34;
@@ -834,7 +833,7 @@ class ToolCall(LocalDisplayStyles, Vertical, can_focus=True):
             # A failure is a step, not a verdict: agents probe and retry.
             # Whether the task worked is the final message's job, not a red
             # cross on a row.
-            mark = "× "
+            mark = "• "
         elif self.phase in {"start", "output"}:
             mark = f"{self._status_glyph().strip()} "
         else:
@@ -1338,8 +1337,6 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
                 title = "Editing" if any(tool.phase in {"start", "output"} for tool in self.tools) else "Edits"
         if any(tool.phase in {"start", "output"} for tool in self.tools):
             glyph = "◦"
-        elif any(tool.phase == "cancelled" for tool in self.tools):
-            glyph = "×"
         else:
             glyph = "•"
         extra = ""
@@ -1349,9 +1346,6 @@ class ToolCluster(LocalDisplayStyles, Vertical, can_focus=True):
             extra = f" {files} {noun}"
             if any(tool.file_recorded and not tool.file_binary and tool.file_operation != "unchanged" for tool in shown):
                 extra += f" (+{sum(tool.added for tool in shown)} -{sum(tool.removed for tool in shown)})"
-            cancelled = sum(tool.phase == "cancelled" for tool in shown)
-            if cancelled:
-                extra += f" · {cancelled} cancelled"
         elif not self._open and len(self.tools) > 1:
             extra = f"  {len(self.tools)}"
         return f"{glyph} {title}{extra}"
@@ -1645,11 +1639,13 @@ class AgentsPanel(Static):
             finished = "done_at" in row
             elapsed = row["elapsed"] if finished else now - row["started"]
             meta = format_elapsed(elapsed) + (f" · ↓ {self._tokens(row['tokens'])} tokens" if row["tokens"] else "")
-            glyph, ink = ("✗", palette["coral"]) if row["error"] else ("✓", palette["green"]) if finished else ("◯", palette["blue"])
+            # An agent that ended in error says so in its own reply; the panel
+            # stays calm (no red cross), like tool rows.
+            glyph, ink = ("✓", palette["muted"]) if finished else ("◯", palette["blue"])
             name = names[task_id]
             if cell_len(name) > name_width:
                 name = name[: max(1, name_width - 1)] + "…"
-            status = "Completed" if finished and not row["error"] else row["status"] or "Working…"
+            status = "Done" if finished else row["status"] or "Working…"
             left = 2 + name_width + 2
             room = max(0, width - left - cell_len(meta) - 2)
             if cell_len(status) > room:
@@ -1659,7 +1655,7 @@ class AgentsPanel(Static):
             out.append(f"{glyph} ", style=ink)
             out.append(name.ljust(name_width), style=f"bold {palette['text']}")
             out.append("  ")
-            out.append(status, style=palette["coral"] if row["error"] else palette["muted"])
+            out.append(status, style=palette["muted"])
             out.append(" " * gap)
             out.append(meta, style=palette["muted"])
         if hidden:
@@ -2140,7 +2136,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         if widget.tool_name == "manage_files" and widget.arguments.get("action") in {"delete", "move", "copy"}:
             family = "edit"
         if family:
-            cluster = await self._ensure_cluster(family)
+            cluster = await self._ensure_cluster(family, widget.call_id)
             if cluster is not None:
                 await cluster.add_call(widget)
         else:
@@ -2200,9 +2196,31 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             widget.apply(phase=phase, result=result, error=error, output=output, percent=percent, output_mode=output_mode)
         self._release_finished_activity()
 
-    async def _ensure_cluster(self, kind: str) -> ToolCluster | None:
+    def _mounted_after(self, widget: Widget | None, anchor: Widget) -> bool:
+        """Whether ``widget`` sits below ``anchor`` in this bubble."""
+        if widget is None or not widget.is_attached or widget.parent is not self:
+            return False
+        children = list(self.children)
+        try:
+            return children.index(widget) > children.index(anchor)
+        except ValueError:
+            return False
+
+    async def _ensure_cluster(self, kind: str, call_id: str = "") -> ToolCluster | None:
         current = self._cluster
-        if current is not None and current.kind == kind and current.is_mounted:
+        # Only extend the newest block: reasoning or a card mounted since then
+        # would leave new rows above the live tail (or inside a paged-out block).
+        # A full cluster stops mounting rows (it pages them): a new call opens
+        # a new one so the newest row is still painted at the bottom. The files
+        # of one large patch stay together under the cluster's own paging.
+        # No call id (a replayed batch) counts as the same call.
+        same_call = not call_id or bool(
+            current and current.tools and call_id in current.tools[-1].call_ids
+        )
+        if (current is not None and current.kind == kind and current.is_mounted
+                and self._activity_blocks and self._activity_blocks[-1] is current
+                and (same_call or len(current.tools) < current._visible_limit)
+                and not self._mounted_after(self._progress_line, current)):
             return current
         preview = await self._ready_preview()
         if preview is None:
@@ -2237,7 +2255,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             key = call_id or f"file:{len(self._tools)}"
             match = ToolCall(key, tool, {"path": path})
             self._tools[f"{key}:file:{len(self._tools)}"] = match
-            cluster = await self._ensure_cluster("edit")
+            cluster = await self._ensure_cluster("edit", call_id)
             if cluster is None:
                 return
             await cluster.add_call(match)
@@ -2299,6 +2317,7 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
         if card is None:
             card = SubagentCard(task_id)
             self._subagents[task_id] = card
+            self._cluster = None
             await self.mount(card, before=preview)
         card.apply(label, phase, status_line, model, iteration, done, error)
 
@@ -2561,9 +2580,6 @@ class AssistantMessage(LocalDisplayStyles, Vertical):
             summary = format_turn_summary(
                 summary_rows
             ) if summary_rows else "No completed operations"
-            cancelled = sum(tool.phase == "cancelled" for tool in self._tools.values())
-            if cancelled:
-                summary += f" · {cancelled} cancelled"
             foot.update(summary)
             foot.add_class("-visible")
         else:
@@ -3698,7 +3714,12 @@ class Transcript(LocalDisplayStyles, VerticalScroll):
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
-        self.auto_follow = self.is_vertical_scroll_end
+        # Only a move up leaves the tail. A frame of a smooth scroll toward the
+        # end lands short of it too, and used to drop follow for the turn.
+        if self.is_vertical_scroll_end:
+            self.auto_follow = True
+        elif new_value < old_value:
+            self.auto_follow = False
         if new_value < old_value and new_value <= 3:
             self.request_older()
 

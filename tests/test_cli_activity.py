@@ -58,17 +58,23 @@ def test_retry_instructions_are_hidden_but_actual_tool_error_stays_visible():
     assert "Reissue" not in detail
 
 
-def test_tool_families_have_separate_accents_and_paths_stay_green():
+def test_row_heads_keep_family_accents_but_paths_stay_plain():
+    # Balance: one quiet hue per family on the verb; painting every path green
+    # on top of that read like a rainbow. Only diff counts are green/red.
     console = Console()
     colors = []
     for label in ["├ Search jsonb_populate_record in migrate.py", "└ Read migrate.py", "• Ran sed -n 1,20p migrate.py", "• Ran grep auth migrate.py", "• Edited migrate.py (+6 -3)"]:
         head = activity_head_text(label)
         colors.append(head.get_style_at_offset(console, 2).color.triplet.hex)
-        assert head.get_style_at_offset(console, label.index("migrate.py")).color.triplet.hex == "#8fbc8f"
+        assert head.get_style_at_offset(console, label.index("migrate.py")).color is None
     assert colors[0] == colors[1]
     assert colors[2] == colors[3]
     assert len({colors[0], colors[2], colors[4]}) == 3
     assert "#5ea8ff" not in colors
+    edited = "• Edited migrate.py (+6 -3)"
+    head = activity_head_text(edited)
+    assert head.get_style_at_offset(console, edited.index("+6")).color.triplet.hex == "#8fbc8f"
+    assert head.get_style_at_offset(console, edited.index("-3")).color.triplet.hex == "#e39b91"
 
 
 def test_diff_syntax_and_line_markers_share_one_flat_background():

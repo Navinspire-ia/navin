@@ -329,6 +329,54 @@ export function speechForChoice(choice: PendingChoice, strings: ChoiceSpeechStri
   return parts.join(" ");
 }
 
+export interface ApprovalSpeechStrings {
+  /** e.g. "Approval needed" */
+  title: string;
+  /** e.g. "Say yes to approve or no to refuse." */
+  prompt: string;
+}
+
+const APPROVAL_DETAIL_MAX = 160;
+
+/** What the voice says when a tool call waits for the user's approval. */
+export function speechForApproval(
+  request: { action: string; detail?: string },
+  strings: ApprovalSpeechStrings,
+): string {
+  const parts = [`${strings.title}: ${endSentence(request.action)}`];
+  const detail = (request.detail ?? "").trim();
+  if (detail) {
+    parts.push(endSentence(
+      detail.length > APPROVAL_DETAIL_MAX ? `${detail.slice(0, APPROVAL_DETAIL_MAX).trimEnd()}...` : detail,
+    ));
+  }
+  parts.push(endSentence(strings.prompt));
+  return parts.join(" ");
+}
+
+// Any hesitation or negation refuses: "oui mais attends" is not a go, and a
+// wrong yes on a push or a rollback costs more than asking again.
+const APPROVAL_DENY_RE =
+  /\b(?:non|no|nope|pas|refuse|refuses|refuser|deny|denied|dont|don t|never|jamais|attends|attend|wait|hold|surtout|negatif|negative)\b/;
+const APPROVAL_ALLOW_RE =
+  /\b(?:oui|yes|yeah|yep|ouais|ok|okay|d accord|vas y|va y|go|go ahead|valide|valides|je valide|approuve|j approuve|approve|approved|accepte|j accepte|accept|autorise|allow|confirme|confirm|fais le|do it|lance|lance le|c est bon|bien sur|sure|absolument|evidemment|parfait|carrement)\b/;
+const APPROVAL_MAX_WORDS = 8;
+// Yeses that carry a negation word ("pas de souci", "no problem").
+const APPROVAL_IDIOM_YES_RE =
+  /\b(?:pas de (?:souci|soucis|probleme|problemes)|sans (?:souci|probleme)|no (?:problem|worries)|why not|pourquoi pas)\b/g;
+
+/**
+ * A spoken answer to a pending approval, or null when it is neither a clear
+ * yes nor a clear no (the caller asks again rather than guessing).
+ */
+export function approvalFromSpeech(transcript: string): "allow" | "deny" | null {
+  const normalized = normalizeSpeech(transcript).replace(APPROVAL_IDIOM_YES_RE, "ok");
+  if (!normalized) return null;
+  if (APPROVAL_DENY_RE.test(normalized)) return "deny";
+  if (normalized.split(" ").length > APPROVAL_MAX_WORDS) return null;
+  return APPROVAL_ALLOW_RE.test(normalized) ? "allow" : null;
+}
+
 export type ChoiceSpeechMatch =
   | { kind: "option"; optionId: string }
   | { kind: "skip" }

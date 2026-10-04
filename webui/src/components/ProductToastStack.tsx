@@ -308,8 +308,7 @@ export function ProductToastStack({
               </p>
               <p className="mt-0.5 text-[14px] font-semibold leading-snug text-foreground">
                 {t("updates.cardTitle", {
-                  defaultValue: "Navin {{version}} is available",
-                  version: updateToast.latestVersion,
+                  defaultValue: "An update is available",
                 })}
               </p>
               {updateToast.supported === false && updateToast.reason ? (

@@ -769,6 +769,10 @@ class TuiRuntime:
         if event.tool_hint:
             if ch is not None and not getattr(ch, "send_tool_hints", True):
                 return
+            # The rows above already say it; a second "· read_file(...)" line
+            # under them only repeats the chain (the plain CLI skips it too).
+            if event.tool_events:
+                return
             await self._emit(UiProgress(text, tool_hint=True))
             return
         if ch is not None and not getattr(ch, "send_progress", True):

@@ -1659,6 +1659,10 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "(run ui-ux-pro-max --stack threejs before the scene). "
         "For architecture, sequence, workflow or data-flow in the Markdown plan, "
         "load archify and deliver a checked HTML diagram, never a Mermaid dump. "
+        "Plan artifacts are the only files you may write here: the archify "
+        "JSON and HTML (and an optional plan .md) go under .navin/plans/, "
+        "validated and delivered with the bundled archify CLI (the path is in "
+        "the archify skill); open the HTML with open_file_preview. "
         "Record each step on the board (status planned/todo only) with "
         "depends_on, acceptance, and validation (test|lint|verify|manual|none). "
         "Then board action=ledger_init with the goal, constraints, facts, "
@@ -1666,8 +1670,12 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "user just asked for, never the goal of a mission already in context. "
         "If ledger_init reports a mission still open, ask the user whether to "
         "close it, extend it, or abandon it; never pass replace=true on your own. "
-        "Stop after the plan: "
-        "ask for approval to build and tell the user to click Build on the plan "
+        "Stop after the plan: close with the plan summary, your remarks "
+        "(risks, open questions, which step you recommend first) and the "
+        "choices for the next action, then end the turn - the user decides. "
+        "Do not start, claim or try to execute step 1 here; a tool refused "
+        "in Plan means the plan is done, not that you should retry. "
+        "Ask for approval to build and tell the user to click Build on the plan "
         "panel (switches the composer to Agent and runs /forge), or call "
         "set_composer_mode(mode=agent) and recommend /forge. Recommend "
         "/checkpoint save before executing. Never start the work yourself in "
@@ -1857,7 +1865,8 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "Never invent findings: every claim needs a tool-observed excerpt. "
         "The editor already shows Review mode. "
         "PHASE 0 - SCOPE: call code_review(action=scope) first (or scope a "
-        "path). Review that change-set before the whole tree. "
+        "path). Review that change-set or the target the user named, and "
+        "only that; review the whole tree only when the user asked for it. "
         "PHASE 1 - DESCRIBE (pr-agent style): 3-6 bullets on intent, "
         "walkthrough of touched files, estimated review effort 1-5, whether "
         "relevant tests exist. "
@@ -1953,8 +1962,10 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "numbered hardening choices) via write_report=true (auto File Preview), "
         "then ask which # to start. Do not modify product source unless the "
         "user asks to fix; you may still read the tree, write security-report "
-        "files, and mkdir report folders. Cover ALL phases even if a phase is "
-        "clean - say so with evidence.",
+        "files, and mkdir report folders. On a whole-project audit, cover ALL "
+        "phases even if a phase is clean - say so with evidence. On a named "
+        "target (a task, file, feature, PR, diff), run only the phases that "
+        "apply to that target.",
     ),
     "/debug": (
         "Debug mode",
@@ -1996,7 +2007,10 @@ _WORKFLOW_BRIEFS: dict[str, tuple[str, str, str]] = {
         "with REAL evidence (stack/vars/before-after), file:line when known, "
         "related latent bugs, Deliverables, and Start with #N choices; File "
         "Preview opens automatically in the WebUI. Ask which # to start "
-        "for follow-ups. Apply fixes only when asked (or Auto-fix).",
+        "for follow-ups. SCOPE: fix the bug the user reported when they asked "
+        "for a fix (most debug requests do); for a diagnosis-only question, "
+        "stop at the report. Latent bugs you meet on the way go in the report, "
+        "never into extra fixes (unless Auto-fix).",
     ),
     "/probe": (
         "Vulnerability scan",
@@ -2684,7 +2698,8 @@ _TRACKED_RUN_CLAUSE = (
     "task (status=fix, severity as priority, the file path in the description) "
     "instead of leaving it in your answer only. Close with a short report: what "
     "changed, what you verified and how, and what is left. Use the board unless "
-    "the whole request is a single step."
+    "the request is a simple task (one deliverable, or a change to at most "
+    "three files): then zero board calls."
 )
 
 # Slash command → composer UI mode (color + menu). Emitted at workflow start so
@@ -2825,6 +2840,9 @@ _HTML_REPORT_CLAUSE = (
 
 # Extra close requirements for Review / Security / Debug HTML reports.
 _EXPERT_REPORT_CLAUSE = (
+    "A follow-up question about an existing report or finding (\"and #3?\", "
+    "\"why is this one high?\") is answered in chat with its evidence - do not "
+    "regenerate the report. For a new review/audit/debug pass: "
     "The HTML report is mandatory and must be downloadable via File Preview. "
     "It must include: (1) executive summary with severity counts; "
     "(2) each finding as a card with severity chip, file:line, impact, and a "
@@ -2952,14 +2970,35 @@ _WORKSPACE_FS_CLAUSE = (
 _CODE_VERIFY_CLAUSE = (
     "VERIFY BEFORE DONE (mandatory in Build/Code): before you say the work is "
     "finished or mark board tasks done, run `verify action=check` (or "
-    "`lint` + `test_run` when verify is unavailable). Put the command output "
-    "or result summary in the board task `evidence` field. Do not close with "
+    "`lint` + `test_run` when verify is unavailable). When the work is on the "
+    "board, put the command output or result summary in the board task "
+    "`evidence` field. Do not close with "
     "a claim of success based only on narration - evidence from tools first. "
     "PATCH DISCIPLINE: prefer `apply_patch` for code edits (atomic, reviewable). "
     "edit_file is fine for small exact replacements. Avoid rewrite-whole-file "
     "with write_file unless creating a new file. Keep diffs small and scoped "
     "to the claimed task. "
     "Keep chat short; prefer tool calls over long explanations."
+)
+
+# Composer modes: the user asked for one thing. Review/audit/debug turns kept
+# widening to the whole repo and Plan kept reaching for the first step.
+_STAY_ON_ASK_CLAUSE = (
+    "STAY ON THE ASK (hard): do exactly what the user asked in this message, "
+    "on the target they named, then stop. A review, audit, security pass or "
+    "debug session on one task, file, feature, PR or diff covers that target "
+    "only - not the rest of the repo, not neighbouring modules, not earlier "
+    "missions or open board tasks in context. Something you notice outside "
+    "the target gets one line under 'Also noticed' in the close-out, never "
+    "extra exploration, tasks or fixes. Do not start a next step nobody asked "
+    "for (board autonomy, when Runtime Context says it is enabled, is a "
+    "standing ask to chain ready tasks). When the asked work is done, give the recap or report (what was "
+    "done or found, evidence, what is left) and end the turn: the user picks "
+    "the next action."
+)
+
+_STAY_ON_ASK_WORKFLOWS = frozenset(
+    {"/ask", "/blueprint", "/forge", "/inspect", "/fortify", "/debug"}
 )
 
 _SIMPLE_TASK_CLAUSE = (
@@ -2983,7 +3022,8 @@ _CODE_STRICT_LOOP_CLAUSE = (
 
 _DEBUG_REPRO_VERIFY_CLAUSE = (
     "DEBUG LOOP (mandatory): (1) REPRO first - run the failing command/test and "
-    "capture BEFORE output before any code edit. (2) PATCH - minimal "
+    "capture BEFORE output before any code edit. (2) PATCH (when a fix was "
+    "asked) - minimal "
     "`apply_patch` (or `lsp action=rename apply=true` for renames) only after "
     "failing repro evidence. (3) VERIFY - re-run the SAME repro, then "
     "`verify action=check`. Do not claim fixed without green AFTER output. "
@@ -3522,7 +3562,7 @@ def _workflow_handler(command: str):
         # round-trip into tools (see focus_is_plain_question).
         if (
             delivery_armed
-            and code_build
+            and (code_build or expert_report)
             and not confirmed_question
             and focus_is_plain_question(focus)
         ):
@@ -3580,11 +3620,21 @@ def _workflow_handler(command: str):
             parts.append(_EXPERT_REPORT_CLAUSE)
             parts.append(_EVIDENCE_ONLY_CLAUSE)
             parts.append(_SCOPED_FANOUT_CLAUSE)
+        if actionable and command in _STAY_ON_ASK_WORKFLOWS:
+            parts.append(_STAY_ON_ASK_CLAUSE)
         if actionable and command == "/studio" and "contract-reviewer" in skill_names:
             parts.append(_LEGAL_CONTRACT_REVIEW_CLAUSE)
         if actionable:
             if confirmed_question:
                 parts.append(_CONFIRMED_FOCUS_CLAUSE)
+                if command == "/blueprint":
+                    # A yes to the plan is the go to build it. Plan refuses
+                    # every edit, so "start now with tools" only collected
+                    # refusals until the switch.
+                    parts.append(
+                        "In Plan, first call set_composer_mode(mode='agent') - "
+                        "it unlocks the build tools in this turn - then start."
+                    )
             parts.append(f"Focus / target given by the user: {gate_focus}")
             if confirmed_question:
                 parts.append(f'They answered "{focus}" to that question.')

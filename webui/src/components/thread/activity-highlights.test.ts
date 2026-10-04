@@ -213,11 +213,17 @@ describe("activity cluster source locks", () => {
     expect(thread).toContain("isLatestTurn={index === latestActivityIndex}");
     expect(thread).toContain("lastActivityUnitIndex");
     // Open only while live (or when the turn ended without an answer).
-    expect(cluster).toContain("isTurnStreaming || (isLatestTurn && !hasBodyBelow)");
+    // Earlier blocks of a running turn stay open too: folding them above the
+    // live block jumped the page under the reader.
+    expect(cluster).toContain("isTurnStreaming || turnRunning || (isLatestTurn && !hasBodyBelow)");
+    expect(thread).toContain("turnRunning={isStreaming && index > lastUserUnitIndex}");
     // The body slides shut instead of vanishing; file rows fold with it.
     expect(cluster).toContain("<ActivityFold open={bodyOpen}");
     expect(cluster).toContain('data-testid="file-edit-activity-toggle"');
     expect(cluster).toContain("useJustSettled(isTurnStreaming)");
+    // Live, the diff block under the journal kept the followed tail on old
+    // diffs while new steps landed above it: it only shows once settled.
+    expect(cluster).toContain("fileEdits.length && !isTurnStreaming ?");
   });
 
   it("honors the Activity detail preference: expanded, compact and digest", () => {

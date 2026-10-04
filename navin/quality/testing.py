@@ -676,6 +676,9 @@ _CHANGE_LANGUAGES: dict[str, str] = {
 def runners_for_changes(root: Path, changed: list[str]) -> list[str] | None:
     """The detected suites that can see this change, or None for all of them.
 
+    A change whose language no detected suite covers gets an empty list, not
+    every suite: a CSS edit in a pytest-only repo has no test to run.
+
     A restyle of the frontend must not run (and then chase) the backend's
     pytest suite: in a measured session a CSS edit drew the agent into
     unrelated webhook-secret failures, a JWT hunt and a Playwright install.
@@ -687,7 +690,7 @@ def runners_for_changes(root: Path, changed: list[str]) -> list[str] | None:
     table = runner_table()
     primary = _primary_runners(root)
     matching = [name for name in primary if table.get(name, {}).get("language") in languages]
-    return matching if matching else None
+    return matching
 
 
 def run_tests(
@@ -894,7 +897,9 @@ def _run_one(
 def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwargs: Any):
     """Drain runner output without pipes filling up, preserving the time limit."""
     timeout = kwargs.pop("timeout")
-    for key in ("capture_output", "text", "encoding", "errors"):
+    # creationflags too: the caller spreads no_window_kwargs() and so does the
+    # Popen below. Passing it twice was a TypeError on every Windows test run.
+    for key in ("capture_output", "text", "encoding", "errors", "creationflags"):
         kwargs.pop(key, None)
     deadline = time.monotonic() + timeout
     with tempfile.TemporaryDirectory(prefix="navin-test-output-") as logdir:
@@ -902,7 +907,8 @@ def _run_streaming(argv: list[str], *, on_output: Callable[[str], None], **kwarg
         with log.open("wb") as output, log.open("rb") as reader, subprocess.Popen(
             argv, stdout=output, stderr=subprocess.STDOUT,
             env={**os.environ, "PYTHONUNBUFFERED": "1"}, **kwargs,
-         **no_window_kwargs()) as process:
+            **no_window_kwargs(),
+        ) as process:
             tail = b""
             try:
                 while True:

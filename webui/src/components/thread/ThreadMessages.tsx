@@ -133,6 +133,7 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
   hasBodyBelow,
   isTurnStreaming,
   isLatestTurn,
+  turnRunning,
   showCopyAction,
   superseded,
   nextAssistant,
@@ -153,6 +154,7 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
   isLatestTurn: boolean;
+  turnRunning: boolean;
   showCopyAction: boolean;
   superseded: boolean;
   nextAssistant?: UIMessage;
@@ -189,6 +191,7 @@ const ThreadUnitRow = memo(function ThreadUnitRow({
           messages={unit.messages}
           isTurnStreaming={isTurnStreaming}
           isLatestTurn={isLatestTurn}
+          turnRunning={turnRunning}
           hasBodyBelow={hasBodyBelow}
           turnLatencyMs={unit.turnLatencyMs}
           startedAtMs={unit.startedAtMs}
@@ -329,6 +332,7 @@ export function ThreadMessages({
               hasBodyBelow={hasBodyBelow}
               isTurnStreaming={liveActivityClusterIndices.has(index)}
               isLatestTurn={index === latestActivityIndex}
+              turnRunning={isStreaming && index > lastUserUnitIndex}
               showCopyAction={
                 unit.type === "message" && unit.message.role === "assistant"
                   ? copyFlags[index]

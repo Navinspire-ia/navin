@@ -667,14 +667,19 @@ def activity_label(
 
 
 def activity_head_text(text: str, *, dark: bool = True) -> Text:
-    """Color the inline action and counts while keeping paths/commands literal."""
+    """Balanced row head: a soft accent on the verb, literal targets.
+
+    The verb keeps one quiet hue per family (explore, edit, run) so the chain
+    scans at a glance; paths stay plain (painting every one green made a busy
+    turn read like a rainbow) and only diff counts are green/red.
+    """
     rendered = Text(text)
     palette = activity_palette(dark)
     label = re.match(r"^[^\w\n]*(?P<action>[A-Za-z][\w-]*):?", text)
     if label:
         action = label["action"].lower()
-        if action in {"failed", "cancelled", "unchanged"}:
-            family = {"failed": "coral", "cancelled": "mustard", "unchanged": "muted"}[action]
+        if action in {"cancelled", "unchanged"}:
+            family = "muted"
         elif action in {"explored", "exploring"}:
             family = "explore"
         elif action in {"edit", "edited", "editing", "edits", "add", "added", "create", "created", "creating", "delete", "deleted", "deleting", "move", "moved", "moving", "copy", "copied", "copying"}:
@@ -685,17 +690,12 @@ def activity_head_text(text: str, *, dark: bool = True) -> Text:
             family = "tool"
         # Include the tree marker in the accent, on the same line as the target.
         rendered.stylize(palette[family], 0, label.end())
-    from navin.tui.paths import looks_like_path
-
-    for match in re.finditer(r"[^\s()\[\],]+", text):
-        if looks_like_path(match[0]):
-            rendered.stylize(palette["green"], match.start(), match.end())
     for match in re.finditer(r"(?<=[( ])\+\d+|(?<= )-\d+(?=[) ]|$)", text):
         color = palette["green"] if match[0].startswith("+") else palette["coral"]
         rendered.stylize(color, match.start(), match.end())
     for match in re.finditer(r"\[[━·]+\]\s+\d+(?:\.\d+)?%", text):
-        family = "coral" if "Failed:" in text else "green" if match[0].endswith(" 100%") else "blue"
-        rendered.stylize(palette[family], match.start(), match.end())
+        live = not match[0].endswith(" 100%")
+        rendered.stylize(palette["blue"] if live else palette["muted"], match.start(), match.end())
     return rendered
 
 
@@ -990,7 +990,7 @@ def _rows_from_unified_diff(text: str) -> list[tuple[int | None, str, str]]:
 
 def format_preview_line(number: int | None, kind: str, text: str) -> str:
     if number is None:
-        mark = {"add": "+", "del": "-", "ctx": "", "error": "× "}.get(kind, "")
+        mark = {"add": "+", "del": "-"}.get(kind, "")
         return f"{mark}{text}" if mark else text
     pad = f"{number:>4}"
     mark = {"add": "+", "del": "-", "ctx": " "}.get(kind, " ")
@@ -1069,7 +1069,8 @@ def format_preview_markup_line(
         "del": (PREVIEW_DEL_INK, PREVIEW_DEL_BG) if dark else ("#20242A", "#F5E6E3"),
         "ctx": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F5F5"),
         "meta": ("#BDBDBD", PREVIEW_CTX_BG) if dark else ("#575D66", "#F5F5F5"),
-        "error": (activity_palette(dark)["coral"], PREVIEW_CTX_BG if dark else "#F5F5F5"),
+        # Error text is output, not a verdict: same ink as context.
+        "error": (PREVIEW_CTX_INK, PREVIEW_CTX_BG) if dark else ("#20242A", "#F5F5F5"),
         **{
             kind: (activity_palette(dark)[accent], PREVIEW_CTX_BG if dark else "#F5F5F5")
             for kind, accent in {"success": "green", "warning": "mustard", "failure": "coral", "info": "blue"}.items()

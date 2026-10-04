@@ -47,7 +47,7 @@ export const TurnWorkingStatus = memo(function TurnWorkingStatus({
 
   if (!running) return null;
   const duration = formatTurnElapsed(now - (serverStart ?? fallbackStart.current ?? now));
-  const working = t("thread.activityGroupWorking", { defaultValue: "Working" });
+  const working = t("message.activityGroupWorking", { defaultValue: "Working" });
 
   return (
     <motion.div

@@ -118,6 +118,41 @@ def test_multi_file_and_repeated_events_keep_separate_diffs_and_exact_totals(tmp
     asyncio.run(run())
 
 
+def test_an_edit_after_reasoning_lands_below_it_not_in_the_older_group():
+    async def run():
+        app = ActivityHost()
+        async with app.run_test(size=(100, 32)):
+            block = app.block
+            await block.tool_event("one", "edit_file", "start", {"path": "a.py"}, None, None, None)
+            await block.note_file_edit("a.py", 1, 0, call_id="one", kind="edit", diff="@@ -0,0 +1 @@\n+a = 1\n")
+            await block.reasoning("Next, the second file.")
+            await block.reasoning("", end=True)
+            await block.tool_event("two", "edit_file", "start", {"path": "b.py"}, None, None, None)
+            await block.note_file_edit("b.py", 1, 0, call_id="two", kind="edit", diff="@@ -0,0 +1 @@\n+b = 1\n")
+            first, second = block.query(ToolCluster)
+            assert [tool.file_path for tool in first.tools] == ["a.py"]
+            assert [tool.file_path for tool in second.tools] == ["b.py"]
+            # The live tail is the last activity: the newest edit, not the old group.
+            assert block._activity_blocks[-1] is second
+    asyncio.run(run())
+
+
+def test_the_newest_row_stays_painted_past_one_page_of_calls():
+    # A full cluster pages its rows: the 21st read used to exist only in the
+    # count while the live tail stayed frozen on row 20.
+    async def run():
+        app = ActivityHost()
+        async with app.run_test(size=(100, 32)):
+            block = app.block
+            for index in range(25):
+                await block.tool_event(f"r{index}", "read_file", "start", {"path": f"f{index}.py"}, None, None, None)
+                await block.tool_event(f"r{index}", "read_file", "end", {"path": f"f{index}.py"}, "ok", None, None)
+            newest = next(row for row in block.query(ToolCall) if row.call_id == "r24")
+            assert newest.is_attached
+            assert block._activity_blocks[-1] is newest._cluster_owner
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("theme,width", [("navin", 110), ("navin-light", 46)])
 def test_full_output_button_keyboard_and_selection_work(theme, width):
     async def run():
@@ -201,7 +236,9 @@ def test_added_deleted_reverted_failed_and_cancelled_have_distinct_outcomes(tmp_
             assert failed.added == failed.removed == 0
             assert not failed.display
             foot = str(block.query_one(".assistant-foot", Static).content)
-            assert "failed" not in foot and "1 cancelled" in foot
+            # No outcome tallies on the foot: a stopped or failed step is a step, the
+            # final message carries the verdict.
+            assert "failed" not in foot and "cancelled" not in foot
             assert "ran 1 command" not in foot
             cluster = block.query(ToolCluster).first()
             cluster.focus()

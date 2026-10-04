@@ -16,6 +16,8 @@ class VerificationEvidence:
     checks_ok: bool | None = None
     tests_ok: bool | None = None
     summary: str = ""
+    # No test suite can see the change: requiring tests would be unsatisfiable.
+    no_test_suite: bool = False
 
     @property
     def ok(self) -> bool:
@@ -55,4 +57,5 @@ def verify_evidence(report: Any) -> VerificationEvidence:
         checks_ok=lint.checks_ok,
         tests_ok=tests.tests_ok,
         summary=f"{lint.summary}; {tests.summary}",
+        no_test_suite=bool(getattr(report, "no_test_suite", False)),
     )

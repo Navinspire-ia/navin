@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useEffect, useState } from "react";
-import { Check, Clock, Loader2, X } from "lucide-react";
+import { Check, Clock, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import type { SubagentProgressUpdate } from "@/lib/navin-client";
@@ -207,7 +207,8 @@ function SubagentCard({
             aria-hidden
           />
         ) : failed ? (
-          <X className="h-3.5 w-3.5 text-muted-foreground/60" aria-hidden />
+          // No cross on a row: the agent's own reply says how it ended.
+          <Check className="h-3.5 w-3.5 text-muted-foreground/60" aria-hidden />
         ) : (
           <Check className="h-3.5 w-3.5 text-emerald-500/80" aria-hidden />
         )}

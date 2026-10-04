@@ -418,7 +418,11 @@ class CodeValidationState:
         if status == "ok" and mutation:
             paths = edit_paths(params)
             relevant = {path for path in paths if development_path(path)}
-            if require_verify or (validate_code and relevant) or (self.revision and name in {"verify", "lint"}):
+            # Docs, notes and other non-development files never arm the gate:
+            # no checker covers them, so it could never be satisfied. An edit
+            # whose paths are unknown still arms it (the safe side).
+            if ((relevant or not paths) and (require_verify or validate_code)) \
+                    or (self.revision and name in {"verify", "lint"}):
                 self.edited(paths, require_tests=validate_code and any(
                     _requires_tests(path) for path in relevant
                 ))
@@ -426,6 +430,17 @@ class CodeValidationState:
         evidence = getattr(result, "verification", None)
         if isinstance(evidence, VerificationEvidence):
             self.record(evidence)
+            if name == "verify" and status == "ok" and self.revision:
+                if evidence.no_test_suite and self.needs_tests:
+                    # No suite can see this change: demanding tests would only
+                    # push the agent into writing unasked ones, or looping.
+                    self.needs_tests = False
+                    self.test_result_note = "No test suite covers the changed files."
+                if (evidence.checks_ok is None and evidence.tests_ok is None
+                        and not self.needs_tests and not self.failed):
+                    # verify ran and nothing applies (CSS, HTML, a file with
+                    # no linter): that is the verdict, not a missing one.
+                    self.checks_revision = self.revision
         elif name in {"verify", "lint", "test_run"}:
             self.record(_legacy_evidence(name, params, str(result or "")))
 

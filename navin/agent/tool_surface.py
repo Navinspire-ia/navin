@@ -14,8 +14,10 @@ Measured 2026-09-01: 54 schemas were ~29k tokens before the user message.
 
 from __future__ import annotations
 
+import shlex
 from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 # Tools that are expensive in schema size and rarely needed outside Agent.
@@ -54,8 +56,92 @@ _BUILD_TOOLS: frozenset[str] = frozenset(
 # but filing board tasks, asking the user and tinting the composer are how a
 # plan is delivered, not how it is executed.
 PLAN_SAFE_WRITE_TOOLS: frozenset[str] = frozenset(
-    {"board", "ask_user", "set_composer_mode"}
+    {"board", "ask_user", "set_composer_mode", "open_file_preview"}
 )
+
+# The one folder a Plan turn may write: the plan's own artifacts (the archify
+# diagram source and HTML, an optional Markdown plan). The brief asks for a
+# checked archify diagram, and refusing every write made Plan retry it forever.
+PLAN_ARTIFACT_DIR = ".navin/plans"
+_ARCHIFY_PLAN_ACTIONS = frozenset({"validate", "deliver", "brands"})
+_SHELL_CONTROL_CHARS = frozenset(";&|<>`$\n\r")
+
+
+def _inside_plan_dir(raw: Any, base: Path | None, workspace: Path) -> bool:
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    candidate = Path(raw.strip()).expanduser()
+    if not candidate.is_absolute():
+        if base is None:
+            return False
+        candidate = base / candidate
+    root = (workspace / PLAN_ARTIFACT_DIR).resolve()
+    try:
+        candidate.resolve().relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def plan_artifact_call(name: str, params: Any, workspace: Path | None) -> bool:
+    """Whether a Plan-turn call only writes the plan's own artifacts.
+
+    ``write_file`` into ``.navin/plans/``, or ``node .../archify.mjs
+    validate|deliver|brands`` whose file arguments all live there. Anything
+    else (another path, a shell operator, another program) stays refused.
+    """
+    if workspace is None or not isinstance(params, dict):
+        return False
+    workspace = workspace.resolve()
+    if name == "write_file":
+        return _inside_plan_dir(params.get("path"), workspace, workspace)
+    if name != "exec":
+        return False
+    command = params.get("command") or params.get("cmd")
+    if not isinstance(command, str) or any(ch in _SHELL_CONTROL_CHARS for ch in command):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if len(tokens) < 3 or PurePosixPath(tokens[0]).name not in {"node", "node.exe"}:
+        return False
+    if tokens[2] not in _ARCHIFY_PLAN_ACTIONS:
+        return False
+    working_dir = params.get("working_dir")
+    if isinstance(working_dir, str) and working_dir.strip():
+        cwd = Path(working_dir.strip()).expanduser()
+        if not cwd.is_absolute():
+            cwd = workspace / cwd
+    else:
+        cwd = workspace
+    # Only the bundled CLI: a script merely named archify.mjs could have been
+    # written into the plan dir a call earlier.
+    from navin.agent.skills import BUILTIN_SKILLS_DIR
+
+    script = Path(tokens[1]).expanduser()
+    if not script.is_absolute():
+        script = cwd / script
+    try:
+        if script.resolve() != (BUILTIN_SKILLS_DIR / "archify" / "bin" / "archify.mjs").resolve():
+            return False
+    except OSError:
+        return False
+    if tokens[2] == "brands":
+        return True
+    # validate <type> <candidate> [flags] / deliver <type> <candidate> <output>:
+    # the files come right after the type and must stay in the plan dir, and
+    # so must any other argument naming a file.
+    expected = 2 if tokens[2] == "deliver" else 1
+    files = tokens[4:4 + expected]
+    if len(files) < expected or any(token.startswith("-") for token in files):
+        return False
+    files += [
+        token for token in tokens[4 + expected:]
+        if not token.startswith("-") and PurePosixPath(token).suffix
+    ]
+    return all(_inside_plan_dir(path, cwd, workspace) for path in files)
+
 
 # Code-build workflows (/forge, /cruise). Everything else (studio desks,
 # scrape, MCP, generators other than images) stays out of the
@@ -115,22 +201,22 @@ _COMPACT_SCHEMA_DESC_CHARS = 220
 _MODE_DENIED: dict[str, frozenset[str]] = {
     "ask": _HEAVY_MEDIA_TOOLS | _BUILD_TOOLS | frozenset({"spawn", "cron"}),
     # Plan is design-only: no edits, no shell, no file management, no
-    # scheduling. Read-heavy tools (git queries, code_index, lsp) stay in the
+    # scheduling, apart from the plan's own artifacts under .navin/plans/. Read-heavy tools (git queries, code_index, lsp) stay in the
     # schema; the runner refuses any surviving mutating call per-action.
     # spawn stays for the same reason git does: spawn(action="results") only
     # reports how earlier subagents ended, which is exactly the research a plan
     # has to fold in. SpawnTool.call_read_only refuses action="start" per call,
     # because a subagent runs on its own spec and would mutate by proxy.
+    # write_file and exec stay in the schema for the plan's own artifacts
+    # (plan_artifact_call); the runner refuses every other path or command.
     "plan": _HEAVY_MEDIA_TOOLS
     | frozenset(
         {
             "apply_patch",
-            "write_file",
             "edit_file",
             "start_app",
             "mobile",
             "montage",
-            "exec",
             "write_stdin",
             "manage_files",
             "cron",

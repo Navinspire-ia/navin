@@ -69,21 +69,23 @@
     --composer-mode: 217 91% 52%;
     --composer-mode-fg: 217 80% 38%;
     --composer-mode-soft: 214 95% 95%;
-    /* Activity journal tones - one hue per operation family, shared by the
-       journal rows, the header digest and the live "now" line. Light values
-       keep at least 4.5:1 on white. */
+    /* Activity journal tones, shared by the journal rows, the header digest
+       and the live "now" line. Four families, as in the terminal UI: explore
+       (blue), edit (green), run (amber), tools (violet). Twelve hues in one
+       block read like a rainbow; the icon already tells finer kinds apart.
+       Light values keep at least 4.5:1 on white. */
     --tone-explore: 214 76% 44%;
-    --tone-read: 201 90% 32%;
     --tone-edit: 163 88% 25%;
     --tone-shell: 20 88% 38%;
-    --tone-cli: 193 80% 31%;
-    --tone-mcp: 295 70% 38%;
     --tone-skill: 263 68% 48%;
-    --tone-task: 30 90% 34%;
-    --tone-git: 175 75% 26%;
-    --tone-browser: 244 58% 50%;
-    --tone-tool: 221 78% 45%;
     --tone-error: 0 72% 42%;
+    --tone-read: var(--tone-explore);
+    --tone-browser: var(--tone-explore);
+    --tone-git: var(--tone-edit);
+    --tone-cli: var(--tone-shell);
+    --tone-task: var(--tone-shell);
+    --tone-mcp: var(--tone-skill);
+    --tone-tool: var(--tone-skill);
   }
 
   .dark {
@@ -135,16 +137,9 @@
     --composer-mode-fg: 213 96% 78%;
     --composer-mode-soft: 217 40% 16%;
     --tone-explore: 213 90% 70%;
-    --tone-read: 199 85% 62%;
     --tone-edit: 160 62% 54%;
     --tone-shell: 27 92% 62%;
-    --tone-cli: 188 80% 56%;
-    --tone-mcp: 292 84% 72%;
     --tone-skill: 255 88% 76%;
-    --tone-task: 43 96% 64%;
-    --tone-git: 172 64% 52%;
-    --tone-browser: 234 86% 74%;
-    --tone-tool: 213 92% 68%;
     --tone-error: 0 88% 70%;
   }
 }

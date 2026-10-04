@@ -3443,11 +3443,11 @@
     "title": "Notifications",
     "updateAction": "Update",
     "updateActionBusy": "Installing...",
-    "updateAvailable": "Navin {{version}} is available",
+    "updateAvailable": "An update is available",
     "updateAvailableDetail": "Click Update: Navin installs it and restarts itself.",
-    "updateFailed": "Navin {{version}} was not installed",
-    "updateFailedDetail": "You are still running {{version}}. Try again from Settings.",
-    "updateInstalled": "Navin {{version}} is installed",
+    "updateFailed": "The update was not installed",
+    "updateFailedDetail": "You are still on the previous version. Try again from Settings.",
+    "updateInstalled": "Navin is up to date",
     "updateInstalledDetail": "The update is done, you are on the latest version.",
     "updateManual": "Update it with your package manager."
   },
@@ -9090,7 +9090,10 @@
           "question": "Question",
           "option": "Option {{letter}}",
           "recommended": "recommended",
-          "other": "You can also answer in your own words"
+          "other": "You can also answer in your own words",
+          "approval": "Approval needed",
+          "approvalPrompt": "Say yes to approve or no to refuse.",
+          "approvalRetry": "I did not catch that. Yes or no?"
         }
       },
       "voice": {
@@ -9445,7 +9448,7 @@
     "badge": "Update",
     "banner": "Navin v{{version}} is ready to install.",
     "cardBody": "A new version is ready. Install now to get the latest fixes and features.",
-    "cardTitle": "Navin {{version}} is available",
+    "cardTitle": "An update is available",
     "downloading": "Downloading {{percent}}%",
     "preparing": "Preparing the download...",
     "restarting": "Restarting Navin...",

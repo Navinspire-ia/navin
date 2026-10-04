@@ -5,14 +5,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useVoiceSession, type VoiceSessionErrorKey } from "@/hooks/useVoiceSession";
+import type { PendingApproval } from "@/lib/approvals";
 import type { PendingChoice } from "@/lib/choices";
 import {
+  approvalFromSpeech,
   choiceAnswerFromMatch,
   completionCueWanted,
   liveVoiceStateFrom,
   matchChoiceFromSpeech,
   answerExpected,
   speechDedupeKey,
+  speechForApproval,
   speechForChoice,
   speechTextFromMarkdown,
   spokenProgressFromEvent,
@@ -96,11 +99,16 @@ interface UseLiveVoiceOptions {
     skipped?: boolean,
     customText?: string,
   ) => void;
+  /** Tool calls waiting for the user's go: read aloud, answered by voice. */
+  pendingApprovals?: PendingApproval[];
+  respondToApproval?: (requestId: string, allowed: boolean, remember?: boolean) => void;
   /** Send what the user said as a chat turn (flagged as a voice turn upstream). */
   onUtterance: (text: string) => void;
   wantsWav?: boolean;
   disabled?: boolean;
 }
+
+const NO_APPROVALS: PendingApproval[] = [];
 
 function assistantMessageIds(messages: readonly UIMessage[]): Set<string> {
   const ids = new Set<string>();
@@ -162,6 +170,8 @@ export function useLiveVoice({
   isStreaming,
   pendingChoices,
   respondToChoice,
+  pendingApprovals = NO_APPROVALS,
+  respondToApproval,
   onUtterance,
   wantsWav = false,
   disabled = false,
@@ -190,6 +200,12 @@ export function useLiveVoice({
   pendingChoicesRef.current = pendingChoices;
   const respondToChoiceRef = useRef(respondToChoice);
   respondToChoiceRef.current = respondToChoice;
+  const announcedApprovalsRef = useRef<Set<string>>(new Set());
+  const pendingApprovalsRef = useRef(pendingApprovals);
+  pendingApprovalsRef.current = pendingApprovals;
+  const respondToApprovalRef = useRef(respondToApproval);
+  respondToApprovalRef.current = respondToApproval;
+  const speakRef = useRef<(text: string) => void>(() => undefined);
   const onUtteranceRef = useRef(onUtterance);
   onUtteranceRef.current = onUtterance;
   const messagesRef = useRef(messages);
@@ -234,6 +250,19 @@ export function useLiveVoice({
     }),
     [t],
   );
+  const approvalStrings = useMemo(
+    () => ({
+      title: t("thread.composer.liveVoice.speech.approval", { defaultValue: "Approval needed" }),
+      prompt: t("thread.composer.liveVoice.speech.approvalPrompt", {
+        defaultValue: "Say yes to approve or no to refuse.",
+      }),
+    }),
+    [t],
+  );
+  const approvalRetryRef = useRef("");
+  approvalRetryRef.current = t("thread.composer.liveVoice.speech.approvalRetry", {
+    defaultValue: "I did not catch that. Yes or no?",
+  });
 
   // What the microphone heard is shown as-is; what goes to the agent is the
   // message the user would have typed. A spoken answer to the question card
@@ -249,13 +278,29 @@ export function useLiveVoice({
       return;
     }
     const epoch = conversationEpochRef.current;
+    const approval = respondToApprovalRef.current ? pendingApprovalsRef.current[0] : undefined;
     const choice = pendingChoicesRef.current[0];
     const context = lastAssistantContext(messagesRef.current, speechStringsRef.current);
     // A bare "oui" / "yeah" is an answer when a question is on the table,
     // otherwise it is a breath the STT put words on.
-    if (!transcriptIsMeaningful(raw, { answerExpected: Boolean(choice) || answerExpected(context) })) return;
+    const expected = Boolean(approval) || Boolean(choice) || answerExpected(context);
+    if (!transcriptIsMeaningful(raw, { answerExpected: expected })) return;
     setLastHeard(raw);
     setLastPrompt(null);
+    if (approval) {
+      // A suspended tool call waits on this answer: a clear yes or no settles
+      // it (never "always allow" by voice); anything else asks again instead
+      // of starting a turn the agent cannot run until the card is answered.
+      const decision = approvalFromSpeech(raw);
+      if (!decision) {
+        speakRef.current(approvalRetryRef.current);
+        return;
+      }
+      respondToApprovalRef.current?.(approval.requestId, decision === "allow", false);
+      setLastPrompt(raw);
+      void playSentCue();
+      return;
+    }
     if (choice) {
       const match = matchChoiceFromSpeech(raw, choice);
       if (match && match.kind !== "other") {
@@ -391,6 +436,18 @@ export function useLiveVoice({
       speak(text);
     });
   }, [chatId, client, enabled, session.state, speak, speechStrings]);
+
+  speakRef.current = speak;
+
+  // An approval card is read aloud once; the next utterance answers it. It
+  // comes before any question card: the run is suspended on it.
+  useEffect(() => {
+    if (!enabled || session.state !== "listening") return;
+    const approval = respondToApproval ? pendingApprovals[0] : undefined;
+    if (!approval || announcedApprovalsRef.current.has(approval.requestId)) return;
+    announcedApprovalsRef.current.add(approval.requestId);
+    speak(speechForApproval(approval, approvalStrings));
+  }, [approvalStrings, enabled, pendingApprovals, respondToApproval, session.state, speak]);
 
   // A question card is read aloud once; the next utterance answers it.
   useEffect(() => {

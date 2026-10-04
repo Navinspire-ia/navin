@@ -264,6 +264,79 @@ class PlanModeBlocksMutationsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["status"], "ok")
 
 
+class PlanArtifactsTest(unittest.IsolatedAsyncioTestCase):
+    """The brief asks Plan for a checked archify diagram. Refusing every write
+    made it retry that forever; only .navin/plans/ and the bundled CLI open."""
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from navin.agent.skills import BUILTIN_SKILLS_DIR
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+        self.archify = (BUILTIN_SKILLS_DIR / "archify" / "bin" / "archify.mjs").resolve()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _allowed(self, name: str, **params: Any) -> bool:
+        from navin.agent.tool_surface import plan_artifact_call
+
+        return plan_artifact_call(name, params, self.workspace)
+
+    def test_write_file_only_inside_the_plan_dir(self) -> None:
+        self.assertTrue(self._allowed("write_file", path=".navin/plans/arch.json"))
+        self.assertTrue(self._allowed("write_file", path=str(self.workspace / ".navin/plans/p.md")))
+        self.assertFalse(self._allowed("write_file", path="a.py"))
+        self.assertFalse(self._allowed("write_file", path=".navin/plans/../../a.py"))
+        self.assertFalse(self._allowed("write_file", path=".navin/plansx/a.json"))
+        self.assertFalse(self._allowed("edit_file", path=".navin/plans/arch.json"))
+
+    def test_only_the_bundled_archify_on_plan_files(self) -> None:
+        cli = f"node {self.archify}"
+        self.assertTrue(self._allowed(
+            "exec", command=f"{cli} validate workflow .navin/plans/a.json --quality showcase --json"))
+        self.assertTrue(self._allowed(
+            "exec", command=f"{cli} deliver workflow .navin/plans/a.json .navin/plans/a.html --json"))
+        self.assertTrue(self._allowed("exec", command=f'{cli} brands "AWS" --json'))
+        # Output outside the plan dir, another action, chained commands.
+        self.assertFalse(self._allowed(
+            "exec", command=f"{cli} deliver workflow .navin/plans/a.json index.html"))
+        self.assertFalse(self._allowed("exec", command=f"{cli} export workflow .navin/plans/a.json"))
+        self.assertFalse(self._allowed(
+            "exec", command=f"{cli} validate workflow .navin/plans/a.json; rm -rf src"))
+        self.assertFalse(self._allowed(
+            "exec", command=f"{cli} validate workflow .navin/plans/a.json && pip install x"))
+        # A script that is merely named archify.mjs (e.g. written into the plan dir).
+        self.assertFalse(self._allowed(
+            "exec", command="node .navin/plans/archify/bin/archify.mjs validate workflow .navin/plans/a.json"))
+        self.assertFalse(self._allowed(
+            "exec", command=f"node --require ./x.js {self.archify} validate workflow .navin/plans/a.json"))
+        self.assertFalse(self._allowed("exec", command="pip install requests"))
+
+    async def test_runner_lets_plan_artifacts_through_and_names_the_way(self) -> None:
+        result = await AgentRunner().run(_plan_spec(
+            [
+                _call("write_file", "1", path=".navin/plans/arch.json", content="{}"),
+                _call("write_file", "2", path="src/app.py", content="x"),
+                _DONE,
+            ],
+            workspace=self.workspace,
+        ))
+        plan_file, source = _events(result, "write_file")
+        self.assertEqual(plan_file["status"], "ok")
+        self.assertEqual(source["detail"], "blocked by plan mode")
+        refusal = next(
+            str(m.get("content")) for m in result.messages
+            if m.get("role") == "tool" and "Plan mode" in str(m.get("content", ""))
+        )
+        self.assertIn(".navin/plans/", refusal)
+        self.assertIn(str(self.archify), refusal)
+        self.assertIn("do not retry", refusal)
+
+
 class MidTurnModeSwitchTest(unittest.IsolatedAsyncioTestCase):
     async def test_plan_to_agent_handoff_unlocks_build_in_the_same_turn(self) -> None:
         """The brief's simple-task exception: switch, then do the work now."""

@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { OTHER_CHOICE_ID, type PendingChoice } from "./choices";
 import {
   answerExpected,
+  approvalFromSpeech,
+  speechForApproval,
   choiceAnswerFromMatch,
   chunkSpeechText,
   completionCueWanted,
@@ -310,5 +312,41 @@ describe("completionCueWanted / liveVoiceStateFrom", () => {
     expect(liveVoiceStateFrom({ ...base, agentWorking: true })).toBe("working");
     expect(liveVoiceStateFrom({ ...base, muted: true })).toBe("muted");
     expect(liveVoiceStateFrom(base)).toBe("listening");
+  });
+});
+
+
+describe("spoken approvals", () => {
+  it("reads the action, a capped detail and how to answer", () => {
+    const text = speechForApproval(
+      { action: "Push the branch to origin", detail: "git push origin navin/task-1" },
+      { title: "Autorisation demandée", prompt: "Dites oui pour valider ou non pour refuser." },
+    );
+    expect(text).toBe(
+      "Autorisation demandée: Push the branch to origin. git push origin navin/task-1. "
+      + "Dites oui pour valider ou non pour refuser.",
+    );
+    const long = speechForApproval({ action: "Run", detail: "x".repeat(400) }, { title: "T", prompt: "P" });
+    expect(long.length).toBeLessThan(200);
+  });
+
+  it("hears a clear yes in French and English", () => {
+    for (const said of ["Oui", "oui vas-y", "Vas-y.", "d'accord", "c'est bon", "ok fais-le", "je valide",
+      "pas de souci", "Yes", "go ahead", "sure, do it", "no problem"]) {
+      expect(approvalFromSpeech(said), said).toBe("allow");
+    }
+  });
+
+  it("refuses on any negation or hesitation", () => {
+    for (const said of ["Non", "non merci", "refuse", "surtout pas", "oui mais attends", "wait",
+      "no", "don't", "ne le fais pas"]) {
+      expect(approvalFromSpeech(said), said).toBe("deny");
+    }
+  });
+
+  it("asks again when it is neither", () => {
+    expect(approvalFromSpeech("")).toBeNull();
+    expect(approvalFromSpeech("quelle branche exactement")).toBeNull();
+    expect(approvalFromSpeech("ok mais explique moi d'abord ce que fait cette commande sur le serveur")).toBeNull();
   });
 });

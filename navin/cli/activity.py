@@ -132,7 +132,7 @@ class ActivityPrinter:
             if code is not None and phase == "end":
                 label += "  " + progress_bar(100)
             self.break_group()
-            self._head(f"{'×' if phase == 'cancelled' else '•'} {label}")
+            self._head(f"• {label}")
             if phase == "error" or code:
                 # A failed probe (`ls` of a missing file) is a step, not news:
                 # the command line only. The final message reports a failure.
@@ -142,7 +142,10 @@ class ActivityPrinter:
         if state["printed"]:
             if state["output"] and not state["output"].endswith("\n"):
                 self.console.print()
-            self._head("  └ " + ("Cancelled" if phase == "cancelled" else "Completed"))
+            if phase == "end":
+                self._head("  └ Done")
+            elif phase == "cancelled":
+                self._head("  └ Cancelled")
             # The terminal already contains streamed stdout. Print only any
             # additional completion metadata, not a second copy of the run.
             output = state["output"].strip()
@@ -172,7 +175,7 @@ class ActivityPrinter:
                 return
         else:
             self.break_group()
-            self._head(f"{'×' if phase == 'cancelled' else '•'} {label}".replace("\n", "\n  │ "))
+            self._head(f"• {label}".replace("\n", "\n  │ "))
         self._body(
             name, args, result=result, error=error,
             output_lines=state["output"].splitlines(),

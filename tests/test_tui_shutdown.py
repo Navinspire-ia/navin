@@ -13,6 +13,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
 from rich.console import Console
 
 from navin.agent.hook import AgentHookContext
@@ -288,3 +289,39 @@ def test_terminal_guard_restores_tty_modes():
         guard.restore()
     tcsetattr.assert_called_once()
     assert tcsetattr.call_args.args[2] == ["saved"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_exit_closes_leftover_children_without_a_closed_loop_traceback(tmp_path):
+    # A cleanup cut short left subprocess transports to the GC after
+    # loop.close(): "Exception ignored ... Event loop is closed" under the exit
+    # summary, and the children kept running as orphans.
+    script = """
+import asyncio, gc, os, sys, time
+from navin.tui.shutdown import close_subprocess_transports
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+procs = []
+async def main():
+    procs.append(await asyncio.create_subprocess_exec("sleep", "30", stdout=asyncio.subprocess.PIPE, start_new_session=True))
+    procs.append(await asyncio.create_subprocess_exec("sleep", "30", stdout=asyncio.subprocess.PIPE))
+loop.run_until_complete(main())
+pids = [p.pid for p in procs]
+assert close_subprocess_transports(loop) == 2
+asyncio.set_event_loop(None)
+loop.close()
+del procs
+gc.collect()
+time.sleep(0.2)
+def running(pid):
+    try:
+        return open(f"/proc/{pid}/stat").read().split()[2] != "Z"
+    except OSError:
+        return False
+print("alive", [pid for pid in pids if running(pid)])
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "Event loop is closed" not in result.stderr
+    assert "Exception ignored" not in result.stderr
+    assert "alive []" in result.stdout

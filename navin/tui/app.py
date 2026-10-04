@@ -1882,9 +1882,8 @@ class NavinApp(App[None]):
             )
             if event.phase == "start":
                 self._activity_push(f"⟳ {escape(event.name)}")
-            elif event.phase == "error":
-                self._activity_push(f"[$error]✗ {escape(event.name)}[/]")
-            elif event.phase == "end":
+            elif event.phase in {"end", "error"}:
+                # A failed step is a step: the verdict is the final message's.
                 self._activity_push(f"✓ {escape(event.name)}")
             self.transcript.follow()
             return
@@ -1932,7 +1931,7 @@ class NavinApp(App[None]):
                     task=event.task_description,
                 )
             if first or event.done:
-                mark = "✗" if event.error else "✓" if event.done else "◯"
+                mark = "✓" if event.done else "◯"
                 self._activity_push(f"{mark} {escape(event.label)}")
             return
         if isinstance(event, UiAssistantMessage):

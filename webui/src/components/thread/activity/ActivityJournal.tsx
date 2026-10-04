@@ -421,7 +421,9 @@ function JournalRow({
   mcpPreset?: McpPresetInfo;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(entry.kind === "explore");
+  // Folded like the rest ("Read 3 files"): an explore group that opened
+  // itself listed every read and pushed the live tail down on busy turns.
+  const [open, setOpen] = useState(false);
   const reduceMotion = useReducedMotion();
   const tone = journalToneForEntry(entry);
   const toneClass = JOURNAL_TONE_CLASS[tone] || JOURNAL_TONE_CLASS.tool;

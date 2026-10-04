@@ -92,3 +92,57 @@ class UiEditsNeedChecksNotTestsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoSuiteForTheChangeTest(unittest.TestCase):
+    """The gate must be satisfiable: a change no suite or linter can see used to
+    leave validation pending forever, so the agent retried until cut off."""
+
+    def test_a_language_no_suite_covers_runs_nothing_instead_of_everything(self) -> None:
+        with mock.patch.object(testing, "runner_table", return_value=TABLE), \
+             mock.patch.object(testing, "_primary_runners", return_value=["pytest"]):
+            self.assertEqual(testing.runners_for_changes(Path("."), ["frontend/A.tsx"]), [])
+
+    def _state_after_edit(self, path: str):
+        from navin.agent.code_validation import CodeValidationState
+
+        state = CodeValidationState()
+        state.observe(
+            "write_file", {"path": path, "content": "x"}, "ok", status="ok",
+            require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+        )
+        return state
+
+    def _verify(self, state, evidence) -> None:
+        from navin.agent.tools.base import ToolResult
+
+        state.observe(
+            "verify", {"action": "check"}, ToolResult("report", verification=evidence), status="ok",
+            require_verify=True, validate_code=True, is_test_command=lambda _c: False,
+        )
+
+    def test_a_docs_edit_never_arms_the_gate(self) -> None:
+        self.assertFalse(self._state_after_edit("README.md").pending)
+
+    def test_verify_with_nothing_applicable_closes_the_gate(self) -> None:
+        from navin.quality.evidence import VerificationEvidence
+
+        state = self._state_after_edit("web/styles.css")
+        self.assertTrue(state.pending)
+        self._verify(state, VerificationEvidence(summary="No linter ran.; No tests ran."))
+        self.assertFalse(state.pending)
+
+    def test_code_with_no_suite_does_not_demand_new_tests(self) -> None:
+        from navin.quality.evidence import VerificationEvidence
+
+        state = self._state_after_edit("scripts/tool.py")
+        self.assertTrue(state.needs_tests)
+        self._verify(state, VerificationEvidence(checks_ok=True, summary="Lint clean", no_test_suite=True))
+        self.assertFalse(state.pending)
+
+    def test_a_red_check_still_blocks(self) -> None:
+        from navin.quality.evidence import VerificationEvidence
+
+        state = self._state_after_edit("web/styles.css")
+        self._verify(state, VerificationEvidence(checks_ok=False, summary="Lint: 2 errors"))
+        self.assertTrue(state.pending)

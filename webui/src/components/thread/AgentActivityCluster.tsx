@@ -185,6 +185,10 @@ interface AgentActivityClusterProps {
    * only stays open when the turn ended without an answer below it.
    */
   isLatestTurn?: boolean;
+  /** The turn this block belongs to is still running (an earlier block of a
+   *  live turn). It stays open until the turn ends instead of folding above
+   *  the live block, which jumped the page under the reader. */
+  turnRunning?: boolean;
 }
 
 /**
@@ -206,6 +210,7 @@ export const AgentActivityCluster = memo(function AgentActivityCluster({
   onOpenFilePreview,
   liveTaskHint,
   isLatestTurn = true,
+  turnRunning = false,
 }: AgentActivityClusterProps) {
   const { t } = useTranslation();
   const fileEditDisplayMode = useFileEditDisplayMode();
@@ -276,7 +281,7 @@ export const AgentActivityCluster = memo(function AgentActivityCluster({
     ? true
     : activityMode === "digest"
       ? false
-      : isTurnStreaming || (isLatestTurn && !hasBodyBelow);
+      : isTurnStreaming || turnRunning || (isLatestTurn && !hasBodyBelow);
   const bodyOpen = userOpen ?? defaultOpen;
   const toggleBody = () => setUserOpen(!bodyOpen);
   const compactActivity = activityMode === "compact";
@@ -544,7 +549,9 @@ export const AgentActivityCluster = memo(function AgentActivityCluster({
                 isTurnStreaming
                 && reasoningMessages.some((message) => !!message.reasoningStreaming)
               }
-              duration={activityDuration}
+              // The turn clock is not thinking time once tools ran; the
+              // header already carries it.
+              duration={hasNonReasoningActivity ? undefined : activityDuration}
               compact={compactActivity}
               onOpenFilePreview={onOpenFilePreview}
             />
@@ -560,7 +567,10 @@ export const AgentActivityCluster = memo(function AgentActivityCluster({
           previewMax={compactActivity ? JOURNAL_PREVIEW_MAX_COMPACT : JOURNAL_PREVIEW_MAX}
         />
 
-        {fileEdits.length ? (
+        {/* Live, the journal already lists each edit where it happened. The
+            diff block sat under it, so new steps landed above it and the
+            followed tail stayed parked on old diffs: show it once settled. */}
+        {fileEdits.length && !isTurnStreaming ? (
           <div className="ml-1 mt-1 pl-1">
             <FileEditGroup
               edits={fileEdits}
@@ -1466,63 +1476,54 @@ function formatCliArgs(run: CliRunSummary): string {
 }
 
 function cliActivitySummaryKey(status: CliRunStatus | undefined, active: boolean): string {
-  if (status === "error") return "message.cliActivityFailedOne";
   return active && status === "running" ? "message.cliActivityRunningOne" : "message.cliActivityRanOne";
 }
 
 function cliActivitySummaryDefault(status: CliRunStatus | undefined, active: boolean): string {
-  if (status === "error") return "Failed @{{name}}";
   return `${active && status === "running" ? "Running" : "Ran"} @{{name}}`;
 }
 
 function cliActivityManySummaryKey(runs: CliRunSummary[], active: boolean): string {
-  if (runs.some((run) => run.status === "error")) return "message.cliActivityFailedMany";
   return active && runs.some((run) => run.status === "running")
     ? "message.cliActivityRunningMany"
     : "message.cliActivityRanMany";
 }
 
 function cliActivityManySummaryDefault(runs: CliRunSummary[], active: boolean): string {
-  if (runs.some((run) => run.status === "error")) return "{{count}} CLI apps failed";
   return `${active && runs.some((run) => run.status === "running") ? "Running" : "Ran"} {{count}} CLI apps`;
 }
 
 function mcpActivitySummaryKey(status: McpRunStatus | undefined, active: boolean): string {
-  if (status === "error") return "message.mcpActivityFailedOne";
   return active && status === "running" ? "message.mcpActivityRunningOne" : "message.mcpActivityRanOne";
 }
 
 function mcpActivitySummaryDefault(status: McpRunStatus | undefined, active: boolean): string {
-  if (status === "error") return "Failed {{name}}";
   return `${active && status === "running" ? "Calling" : "Called"} {{name}}`;
 }
 
 function mcpActivityManySummaryKey(runs: McpRunSummary[], active: boolean): string {
-  if (runs.some((run) => run.status === "error")) return "message.mcpActivityFailedMany";
   return active && runs.some((run) => run.status === "running")
     ? "message.mcpActivityRunningMany"
     : "message.mcpActivityRanMany";
 }
 
 function mcpActivityManySummaryDefault(runs: McpRunSummary[], active: boolean): string {
-  if (runs.some((run) => run.status === "error")) return "{{count}} MCP calls failed";
   return `${active && runs.some((run) => run.status === "running") ? "Calling" : "Called"} {{count}} MCP tools`;
 }
 
-function fileActivityVerb(editing: boolean, failed: boolean, deleted: boolean): string {
-  if (failed) return "Failed";
+// No "Failed" in a header: a failed step is a step (agents retry and probe).
+// Whether the task worked is said once, in the final message.
+function fileActivityVerb(editing: boolean, _failed: boolean, deleted: boolean): string {
   if (deleted) return editing ? "Deleting" : "Deleted";
   return editing ? "Editing" : "Edited";
 }
 
-function fileActivitySummaryKey(editing: boolean, failed: boolean, deleted: boolean): string {
-  if (failed) return "message.fileActivityFailedOne";
+function fileActivitySummaryKey(editing: boolean, _failed: boolean, deleted: boolean): string {
   if (deleted) return editing ? "message.fileActivityDeletingOne" : "message.fileActivityDeletedOne";
   return editing ? "message.fileActivityEditingOne" : "message.fileActivityEditedOne";
 }
 
-function fileActivityManySummaryKey(editing: boolean, failed: boolean, deleted: boolean): string {
-  if (failed) return "message.fileActivityFailedMany";
+function fileActivityManySummaryKey(editing: boolean, _failed: boolean, deleted: boolean): string {
   if (deleted) return editing ? "message.fileActivityDeletingMany" : "message.fileActivityDeletedMany";
   return editing ? "message.fileActivityEditingMany" : "message.fileActivityEditedMany";
 }

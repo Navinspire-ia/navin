@@ -20,6 +20,7 @@ Bundled from [tt-a1i/archify](https://github.com/tt-a1i/archify) (MIT, v2.16). T
 
 - Preloaded on `/studio`, `/tenders`, `/blueprint`, and the Documents desk. Follow this file; do not invent Mermaid-only dumps as the deliverable.
 - CLI from a Navin checkout: `node navin/skills/archify/bin/archify.mjs`. In a bound workspace, `skills/archify/bin/archify.mjs` maps to this folder.
+- Plan mode (`/blueprint`): write the candidate JSON and the HTML under `.navin/plans/` only, and run `validate` / `deliver` with the bundled CLI by its absolute path (a refused call names it). Nothing else is writable in Plan.
 - Skip `scripts/check-update.mjs` (vendored snapshot; do not phone home).
 - No unicode em dashes or en dashes in authored labels. Use a hyphen or rephrase.
 - PPT: `deliver` HTML, export PNG/SVG, place the export on the slide. Surrounding titles and bullets stay editable text.

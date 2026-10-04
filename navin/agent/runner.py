@@ -102,6 +102,17 @@ _REPEATED_CALL_BLOCKS = frozenset({
     "repeated identical tool call blocked",
     "repeated identical read blocked",
     "repeated external lookup blocked",
+    # Policy refusals: a model trying one workaround after another around a
+    # mode or opt-in gate made no progress either, and was never stopped.
+    "blocked by plan mode",
+    "blocked by read-only turn",
+    "blocked by workflow allowlist",
+    "blocked by mode denylist",
+    "blocked by code module denylist",
+    "blocked by module MCP denylist",
+    "browser not requested",
+    "server churn not requested",
+    "browser tests not requested",
 })
 _NO_PROGRESS_NUDGE = 5
 _NO_PROGRESS_STOP = 8
@@ -135,6 +146,21 @@ _SCRAPE_REQUEST_MARKERS = re.compile(
     r"|dataset|appels? d'?offres?|tenders?|portail|portal|connecte[- ]toi|log ?in|sign ?in",
     re.IGNORECASE,
 )
+# Production builds, killing a server and starting another one are opt-in. A
+# CSS tweak in a Next app ran `npm run build` under the live `next dev` (which
+# rewrote `.next` beneath it), killed the server on :3011, then started dev,
+# start, and a second server on :3012. The dev server reloads edits by itself.
+_SERVER_REQUEST_MARKERS = re.compile(
+    r"\bbuild|compil|d[ée]plo|deploy|\bprod\b|production|release|red[ée]marr|restart|relanc"
+    r"|reboot|\bkill|arr[êe]te? le serveur|stop the server|lance le serveur|start the server"
+    r"|d[ée]marre le serveur|npm run|\bport\b",
+    re.IGNORECASE,
+)
+_PACKAGE_RUNNERS = frozenset({"npm", "pnpm", "yarn", "bun"})
+_SERVER_SCRIPTS = frozenset({"build", "dev", "start", "serve", "preview"})
+_FRAMEWORK_CLIS = frozenset({"next", "vite", "nuxt", "astro", "remix", "svelte-kit", "ng"})
+_FRAMEWORK_VERBS = frozenset({"build", "dev", "start", "serve", "preview"})
+_KILLERS = frozenset({"kill", "pkill", "killall"})
 _BROWSER_TEST_MARKERS = re.compile(
     r"\b(?:playwright|cypress|puppeteer|webdriverio|selenium)\b"
     r"|(?:^|[\s/'\"])tests?/(?:browser|e2e)/|\be2e\b",
@@ -452,6 +478,10 @@ def _script_drives_a_browser(path: Path) -> bool:
         return False
 
 
+# Set by navin.command.builtin._workflow_handler before the user's own words.
+_WORKFLOW_FOCUS_MARKER = "Focus / target given by the user:"
+
+
 def _request_asks_for_browser(
     messages: list[dict[str, Any]], pattern: re.Pattern[str] = _BROWSER_REQUEST_MARKERS,
 ) -> bool:
@@ -467,7 +497,12 @@ def _request_asks_for_browser(
             )
         text = str(content or "")
         if text.lstrip().startswith("["):
-            continue  # "[Background command finished]" and other runtime notes
+            # A workflow turn ("[Build mode] (/forge) ...") carries the user's
+            # own words after the focus marker; skipping it read the previous
+            # message and refused a build or browser the user just asked for.
+            if _WORKFLOW_FOCUS_MARKER not in text:
+                continue  # "[Background command finished]" and other runtime notes
+            text = text.split(_WORKFLOW_FOCUS_MARKER, 1)[1]
         return bool(pattern.search(text))
     return False
 
@@ -540,6 +575,43 @@ def _exec_cwd(workspace: Path | None, working_dir: Any) -> Path | None:
     return workspace
 
 
+def is_server_churn_command(command: str) -> str:
+    """What a shell command would do to the app's servers: ``build`` (a
+    production build), ``kill`` (stopping a process) or ``serve`` (starting a
+    dev/prod server), or ``""``. Reading (``cat package.json``, ``grep build``,
+    ``curl localhost:3000``) and checks (``tsc``, ``eslint``) are not churn."""
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+        while tokens and tokens[0] in {"npx", "pnpx", "bunx", "exec", "nohup", "setsid", "sudo"}:
+            tokens.pop(0)
+        if not tokens:
+            continue
+        program = tokens[0].rsplit("/", 1)[-1].lower()
+        rest = [token.lower() for token in tokens[1:] if not token.startswith("-")]
+        if program in _KILLERS or (program == "fuser" and "-k" in tokens):
+            return "kill"
+        if program == "xargs" and rest and rest[0] in _KILLERS:
+            return "kill"
+        if program in _PACKAGE_RUNNERS:
+            script = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else rest[0] if rest else ""
+            if script == "build" or script.startswith("build:"):
+                return "build"
+            if script in _SERVER_SCRIPTS or script.startswith(("dev:", "start:")):
+                return "serve"
+        if program in _FRAMEWORK_CLIS:
+            verb = rest[0] if rest else ("dev" if program == "vite" else "")
+            if verb == "build":
+                return "build"
+            if verb in _FRAMEWORK_VERBS:
+                return "serve"
+    return ""
+
+
 def is_browser_test_command(command: str, cwd: Path | None = None) -> bool:
     """True when a shell command launches a browser test or installs its
     browsers. Inspecting (``ls ~/.cache/ms-playwright``, ``grep playwright``)
@@ -584,6 +656,7 @@ class AgentLoopGuard:
     browser_test_runs: int = 0
     browser_tests_requested: bool | None = None
     browser_scraping: bool | None = None
+    server_churn_requested: bool | None = None
 
     external_lookups: dict[str, int] = field(default_factory=dict)
     workspace_violations: dict[str, int] = field(default_factory=dict)
@@ -692,6 +765,7 @@ class AgentRunSpec:
     browser_test_runs: int = 0
     browser_tests_requested: bool | None = None
     browser_scraping: bool | None = None
+    server_churn_requested: bool | None = None
     # CLI, desktop and their delegated work enable this regardless of module.
     # Source edits require tests; config/style edits require appropriate checks.
     validate_code_changes: bool = False
@@ -2393,6 +2467,34 @@ class AgentRunner:
                         "status": "error",
                         "detail": "browser not requested",
                     }, None
+        churn = (
+            is_server_churn_command(str(params.get("command") or params.get("cmd") or ""))
+            if tool_call.name == "exec" and isinstance(params, dict) else ""
+        )
+        if churn:
+            budget = spec.loop_guard if spec.loop_guard is not None else spec
+            if budget.server_churn_requested is None:
+                budget.server_churn_requested = _request_asks_for_browser(
+                    spec.initial_messages, _SERVER_REQUEST_MARKERS,
+                )
+            if not budget.server_churn_requested:
+                what = {
+                    "build": "a production build",
+                    "kill": "stopping a process",
+                    "serve": "starting a server",
+                }[churn]
+                blocked = (
+                    f"Error: {what} is off for this request - the user did not ask for a "
+                    "build, a deploy or a server restart. A running dev server reloads "
+                    "edits by itself, and a build under it corrupts its cache. Check the "
+                    "change with `verify action=check` (type check, lint), use `start_app` "
+                    "only if no server runs yet, then finish and report."
+                )
+                return blocked, {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": "server churn not requested",
+                }, None
         if isinstance(params, dict) and (
             (
                 tool_call.name == "exec"
@@ -2536,17 +2638,30 @@ class AgentRunner:
                 }
                 return blocked + hint, event, None
             if spec.plan_read_only and candidate is not None:
-                from navin.agent.tool_surface import PLAN_SAFE_WRITE_TOOLS
+                from navin.agent.skills import BUILTIN_SKILLS_DIR
+                from navin.agent.tool_surface import (
+                    PLAN_ARTIFACT_DIR,
+                    PLAN_SAFE_WRITE_TOOLS,
+                    plan_artifact_call,
+                )
 
-                if tool_call.name not in PLAN_SAFE_WRITE_TOOLS and not _call_read_only(
-                    candidate, params
+                if (
+                    tool_call.name not in PLAN_SAFE_WRITE_TOOLS
+                    and not plan_artifact_call(tool_call.name, params, spec.workspace)
+                    and not _call_read_only(candidate, params)
                 ):
+                    archify = (BUILTIN_SKILLS_DIR / "archify" / "bin" / "archify.mjs").resolve()
                     blocked = (
                         f"Error: tool '{tool_call.name}' is not allowed in Plan "
                         "mode. Plan designs without mutating: explore with "
-                        "read-only tools and file board tasks. For the "
-                        "simple-task exception, call "
-                        "set_composer_mode(mode='agent') first, then do the work."
+                        "read-only tools and file board tasks. The only writes "
+                        f"allowed are the plan's own artifacts: write_file under "
+                        f"{PLAN_ARTIFACT_DIR}/ and `node {archify} validate|deliver "
+                        f"<type> <files under {PLAN_ARTIFACT_DIR}/>` for the diagram. "
+                        "For the simple-task exception, call "
+                        "set_composer_mode(mode='agent') first, then do the work. "
+                        "Otherwise do not retry or work around it: finish the "
+                        "plan with your remarks and let the user pick the next action."
                     )
                     event = {
                         "name": tool_call.name,
@@ -2749,6 +2864,12 @@ class AgentRunner:
         spec.composer_mode = mode
         spec.plan_read_only = mode == "plan"
         spec.read_only_tools = mode == "ask"
+        if mode in {"review", "security", "debug"}:
+            # The /forge brief sends code reviews, audits and debugging here
+            # "with the matching tools". Its build allowlist has neither
+            # security_scan nor debug_repair, so every one was refused and the
+            # model kept retrying. These modes run on the denylist alone.
+            spec.allowed_tools = None
 
     # SSRF is a hard security block at the tool boundary, but the agent turn
     # should recover conversationally instead of aborting the runtime.

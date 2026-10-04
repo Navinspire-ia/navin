@@ -30,6 +30,8 @@ from navin.command.builtin import (
     _EXPERT_REPORT_WORKFLOWS,
     _HTML_REPORT_CLAUSE,
     _HTML_REPORT_WORKFLOWS,
+    _STAY_ON_ASK_CLAUSE,
+    _STAY_ON_ASK_WORKFLOWS,
     _WORKFLOW_BRIEFS,
     _workflow_handler,
 )
@@ -120,6 +122,25 @@ class ExpertWorkflowWiringTest(unittest.TestCase):
                     self.assertIn("file:line", brief)
                 else:
                     self.assertIn("REAL evidence", brief)
+
+    def test_composer_modes_stay_on_the_named_target_and_hand_off(self) -> None:
+        # A review of one task kept widening into an audit of everything, and
+        # Plan kept reaching for step 1 instead of handing the next move back.
+        self.assertEqual(
+            _STAY_ON_ASK_WORKFLOWS,
+            frozenset({"/ask", "/blueprint", "/forge", "/inspect", "/fortify", "/debug"}),
+        )
+        # "auth module" is not a build/ask target, so only these reach the brief.
+        for command in ("/blueprint", "/inspect", "/fortify", "/debug"):
+            with self.subTest(command=command):
+                content, _, _ = _run_brief(command)
+                self.assertIn(_STAY_ON_ASK_CLAUSE, content)
+        content, _, _ = _run_brief("/cruise")
+        self.assertNotIn(_STAY_ON_ASK_CLAUSE, content)
+        plan = _WORKFLOW_BRIEFS["/blueprint"][2]
+        self.assertIn("the user decides", plan)
+        self.assertIn("Do not start, claim or try to execute step 1", plan)
+        self.assertIn("run only the phases that apply to that target", _WORKFLOW_BRIEFS["/fortify"][2])
 
     def test_handler_injects_all_clauses_skills_and_delivery(self) -> None:
         for command, expect in _EXPECTED.items():

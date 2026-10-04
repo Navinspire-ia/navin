@@ -266,3 +266,35 @@ class LintAcceptsAbsolutePathsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamingTestRunOnWindowsTest(unittest.TestCase):
+    """verify/test_run crashed on every Windows run: the caller spread
+    no_window_kwargs() into _run_streaming, which spread it again into Popen,
+    so creationflags arrived twice (TypeError). Agents then looped on a
+    verify that could never run."""
+
+    def test_creationflags_from_the_caller_is_not_passed_twice(self) -> None:
+        import sys
+
+        from navin.quality import testing as testing_mod
+
+        seen: list[dict] = []
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            seen.append(dict(kwargs))
+            kwargs.pop("creationflags", None)  # POSIX Popen refuses a nonzero value.
+            return real_popen(*args, **kwargs)
+
+        windows = {"creationflags": 0x08000000}
+        with mock.patch.object(testing_mod, "no_window_kwargs", return_value=windows), \
+                mock.patch.object(testing_mod.subprocess, "Popen", popen):
+            completed = testing_mod._run_streaming(
+                [sys.executable, "-c", "print('ok')"],
+                on_output=lambda _text: None,
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30, **testing_mod.no_window_kwargs(),
+            )
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(seen[0]["creationflags"], 0x08000000)

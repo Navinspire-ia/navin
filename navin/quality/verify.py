@@ -33,7 +33,7 @@ from navin.quality.linters import (
     lint_file,
     lint_project,
 )
-from navin.quality.testing import TestOutcome, run_tests, runners_for_changes
+from navin.quality.testing import TestOutcome, _primary_runners, run_tests, runners_for_changes
 from navin.utils.proc import no_window_kwargs
 
 _GIT_TIMEOUT_S = 20
@@ -58,6 +58,8 @@ class VerificationReport:
     duration_ms: int = 0
     snapshot_id: str = ""
     notes: list[str] = field(default_factory=list)
+    # Tests were requested but no suite can see this change (or none exists).
+    no_test_suite: bool = False
 
     @property
     def lint_errors(self) -> list[Diagnostic]:
@@ -515,10 +517,15 @@ def verify_changes(
             lint_results.append(result)
 
     test_outcomes: list[TestOutcome] = []
+    no_test_suite = False
     if with_tests:
+        runners = None if test_target else runners_for_changes(root, changed)
+        no_test_suite = not test_target and not (
+            runners if runners is not None else _primary_runners(root)
+        )
         test_outcomes = run_tests(
             root, target=test_target,
-            runners=None if test_target else runners_for_changes(root, changed),
+            runners=runners,
             **({"on_output": on_test_output} if on_test_output is not None else {}),
         )
 
@@ -529,6 +536,7 @@ def verify_changes(
         test_outcomes=test_outcomes,
         duration_ms=int((time.monotonic() - started) * 1000),
         notes=notes,
+        no_test_suite=no_test_suite,
     )
     if not changed and paths is None and not shutil.which("git"):
         report.notes.append(

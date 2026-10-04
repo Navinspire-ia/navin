@@ -35,15 +35,17 @@ class ToolSurfaceTest(unittest.TestCase):
         denied = denied_tools_for_composer_mode("plan")
         for name in (
             "apply_patch",
-            "write_file",
             "edit_file",
-            "exec",
             "write_stdin",
             "manage_files",
             "cron",
             "start_app",
         ):
             self.assertIn(name, denied, name)
+        # Kept for the plan's own artifacts; the runner refuses every other
+        # path or command (plan_artifact_call).
+        self.assertNotIn("write_file", denied)
+        self.assertNotIn("exec", denied)
 
     def test_plan_keeps_spawn_for_its_read_action(self) -> None:
         """spawn multiplexes a read and a write behind one name, like git.
@@ -75,7 +77,7 @@ class ToolSurfaceTest(unittest.TestCase):
     def test_plan_safe_write_tools_are_the_planning_surfaces(self) -> None:
         self.assertEqual(
             PLAN_SAFE_WRITE_TOOLS,
-            frozenset({"board", "ask_user", "set_composer_mode"}),
+            frozenset({"board", "ask_user", "set_composer_mode", "open_file_preview"}),
         )
 
     def test_filtered_definitions_accept_a_live_callable(self) -> None:
