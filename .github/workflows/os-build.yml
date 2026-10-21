@@ -20,6 +20,10 @@ on:
         description: Azure Trusted Signing on Windows (403 if the Entra app cannot sign)
         type: boolean
         default: true
+      publish_s3:
+        description: Publish the built platforms to the S3 download bucket (scripts/publish-os-to-s3.sh, like make aws-upload)
+        type: boolean
+        default: false
 
 concurrency:
   group: os-build-${{ github.ref }}-${{ inputs.targets }}
@@ -882,4 +886,113 @@ jobs:
             echo "| Job | Result | Work covered |"
             echo "| --- | --- | --- |"
             echo "| Windows x64 MSI and NSIS | ${icon} ${JOB_STATUS} | sidecar smoke, Azure Trusted Signing, CLI archive, release upload |"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  s3:
+    name: Publish to S3
+    # Same script as a local `make aws-upload`, run once after the platform
+    # jobs so SHA256SUMS.txt, releases.json and the signed update manifest are
+    # merged by a single writer. Platforms that failed are left out, like a
+    # local partial publish; re-running the failed jobs publishes them too.
+    needs: [test, linux, macos, windows]
+    if: ${{ !cancelled() && inputs.publish_s3 && needs.test.result != 'failure' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    concurrency:
+      group: os-build-s3-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout workflows
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch closed-source tree
+        id: claw
+        uses: ./.github/actions/fetch-claw
+        with:
+          ref: ${{ inputs.claw_ref }}
+          token: ${{ secrets.CLAW_GIT_TOKEN }}
+          url: ${{ secrets.CLAW_GIT_URL }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install manifest signing dependency
+        run: python -m pip install cryptography
+      - name: Download platform artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/os-artifacts
+      - name: Stage the os/ tree
+        id: stage
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          LINUX_RESULT: ${{ needs.linux.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: |
+          set -euo pipefail
+          # Rebuild the os/ layout of a local build: publish-os-to-s3.sh maps
+          # os/<platform>/... to the S3 keys. A platform job that succeeded
+          # must have left its artifact; one that failed or was not built is
+          # skipped (a matrix leg that failed uploaded nothing).
+          art="${RUNNER_TEMP}/os-artifacts"
+          staged=()
+          stage() {
+            local result="$1" name="$2" dest="$3"
+            if [ ! -d "${art}/${name}" ]; then
+              if [ "${result}" = success ]; then
+                echo "::error::${name}: the job succeeded but its artifact is missing, nothing was published"
+                exit 1
+              fi
+              echo "skip ${name} (job ${result:-not run})"
+              return 0
+            fi
+            mkdir -p "${dest}"
+            cp -al "${art}/${name}/." "${dest}/"
+            staged+=("${name}")
+          }
+          stage "${LINUX_RESULT}" linux-x64 os/linux
+          stage "${MACOS_RESULT}" macos-arm64 os/macos/arm64
+          stage "${MACOS_RESULT}" macos-x64 os/macos/x64
+          stage "${WINDOWS_RESULT}" windows-x64 os/windows/x64
+          if [ "${#staged[@]}" -eq 0 ]; then
+            echo "::error::no platform artifact in this run, nothing to publish"
+            exit 1
+          fi
+          echo "staged=${staged[*]}" >> "${GITHUB_OUTPUT}"
+          echo "staged for S3: ${staged[*]}"
+      - name: Publish with scripts/publish-os-to-s3.sh
+        working-directory: ${{ steps.claw.outputs.dir }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_BASE_URL: ${{ secrets.UPDATE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            [ -n "${!name:-}" ] || missing+=("${name}")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::add the repository secrets ${missing[*]} (same values as the local .env)"
+            exit 1
+          fi
+          # The script reads .env like a local run. Here the values come from
+          # the repository secrets above, so the file only has to exist.
+          : > .env
+          bash scripts/publish-os-to-s3.sh
+      - name: Write job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          STAGED: ${{ steps.stage.outputs.staged }}
+        run: |
+          icon="$SUCCESS_ICON"
+          [ "${JOB_STATUS}" = success ] || icon="$FAIL_ICON"
+          {
+            echo "| Job | Result | Work covered |"
+            echo "| --- | --- | --- |"
+            echo "| Publish to S3 | ${icon} ${JOB_STATUS} | publish-os-to-s3.sh: ${STAGED:-nothing staged} |"
           } | tee -a "${GITHUB_STEP_SUMMARY}"

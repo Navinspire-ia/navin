@@ -8,6 +8,10 @@ navin-cli-<version>-<os>-<arch>.tar.gz|.zip and its .sha256; the curl installer
 and `navin update` download them from the release. These tests run the real
 release upload steps of os-build.yml in bash against a fake build tree, with
 release-upload.sh replaced by a stub that prints what it would upload.
+
+The optional S3 job rebuilds the os/ tree of a local build from the run
+artifacts and runs the same scripts/publish-os-to-s3.sh as `make aws-upload`;
+its staging and publish steps run here too, with the script stubbed.
 """
 
 from __future__ import annotations
@@ -152,3 +156,113 @@ def test_run_artifacts_keep_the_cli_archive(job: str, name: str, expected: str) 
     step = next(s for s in _steps(job) if s.get("name") == name)
     paths = [p.strip() for p in step["with"]["path"].splitlines() if p.strip()]
     assert any(p.endswith(expected) for p in paths), paths
+
+
+# --- S3 publish: the run artifacts become the os/ tree of a local build -------
+
+# Artifact name -> files inside it, as upload-artifact roots them.
+ARTIFACTS = {
+    "linux-x64": [
+        f"appimage/x64/Navin-{VERSION}-linux-x64.AppImage",
+        f"deb/x64/navin_{VERSION}_amd64.deb",
+        f"bin/x64/navin-cli-{VERSION}-linux-x64.tar.gz",
+    ],
+    "macos-arm64": [f"Navin-Desktop-{VERSION}-macos-arm64.dmg", f"navin-cli-{VERSION}-macos-arm64.tar.gz"],
+    "macos-x64": [f"Navin-Desktop-{VERSION}-macos-x64.dmg", f"navin-cli-{VERSION}-macos-x64.tar.gz"],
+    "windows-x64": [f"Navin-Desktop-{VERSION}-windows-x64.msi", f"navin-cli-{VERSION}-windows-x64.zip"],
+    "webui-dist": ["index.html"],
+}
+
+
+def _run_s3_step(tmp_path: Path, name: str, env: dict[str, str]) -> tuple[int, str, Path]:
+    build = tmp_path / "claw"
+    build.mkdir(exist_ok=True)
+    result = subprocess.run(
+        ["bash", "-c", _script("s3", name, "x64")],
+        cwd=build, capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "RUNNER_TEMP": str(tmp_path),
+             "GITHUB_OUTPUT": str(tmp_path / "github-output"), **env},
+    )
+    return result.returncode, result.stdout + result.stderr, build
+
+
+def _stage(tmp_path: Path, artifacts: list[str], **results: str) -> tuple[int, str, Path]:
+    for artifact in artifacts:
+        for relative in ARTIFACTS[artifact]:
+            path = tmp_path / "os-artifacts" / artifact / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(artifact, encoding="utf-8")
+    env = {f"{job.upper()}_RESULT": results.get(job, "skipped") for job in ("linux", "macos", "windows")}
+    return _run_s3_step(tmp_path, "Stage the os/ tree", env)
+
+
+def test_s3_publish_only_runs_when_asked() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    publish = (workflow.get("on") or workflow[True])["workflow_dispatch"]["inputs"]["publish_s3"]
+    assert publish["type"] == "boolean" and publish["default"] is False
+    job = workflow["jobs"]["s3"]
+    assert "inputs.publish_s3" in job["if"] and set(job["needs"]) == {"test", "linux", "macos", "windows"}
+
+
+def test_s3_stage_rebuilds_the_local_os_tree(tmp_path: Path) -> None:
+    code, output, build = _stage(
+        tmp_path, ["linux-x64", "macos-arm64", "macos-x64", "windows-x64", "webui-dist"],
+        linux="success", macos="success", windows="success",
+    )
+    assert code == 0, output
+    # The paths publish-os-to-s3.sh reads (its MAPPINGS column 1, under os/).
+    for relative in (
+        f"linux/appimage/x64/Navin-{VERSION}-linux-x64.AppImage",
+        f"linux/deb/x64/navin_{VERSION}_amd64.deb",
+        f"linux/bin/x64/navin-cli-{VERSION}-linux-x64.tar.gz",
+        f"macos/arm64/Navin-Desktop-{VERSION}-macos-arm64.dmg",
+        f"macos/x64/navin-cli-{VERSION}-macos-x64.tar.gz",
+        f"windows/x64/navin-cli-{VERSION}-windows-x64.zip",
+    ):
+        assert (build / "os" / relative).is_file(), relative
+    assert not (build / "os" / "webui-dist").exists()
+    assert "staged=linux-x64 macos-arm64 macos-x64 windows-x64" in (tmp_path / "github-output").read_text()
+
+
+def test_s3_stage_leaves_out_a_failed_matrix_leg(tmp_path: Path) -> None:
+    code, output, build = _stage(tmp_path, ["linux-x64", "macos-x64"], linux="success", macos="failure")
+    assert code == 0, output
+    assert (build / "os" / "macos" / "x64" / f"Navin-Desktop-{VERSION}-macos-x64.dmg").is_file()
+    assert not (build / "os" / "macos" / "arm64").exists()
+    assert "skip macos-arm64" in output and "skip windows-x64" in output, output
+
+
+def test_s3_stage_fails_when_a_successful_job_left_no_artifact(tmp_path: Path) -> None:
+    code, output, build = _stage(tmp_path, ["macos-arm64", "macos-x64"], linux="success", macos="success")
+    assert code != 0 and "linux-x64: the job succeeded but its artifact is missing" in output, output
+    assert not (build / "os").exists()
+
+
+def test_s3_stage_fails_when_nothing_was_built(tmp_path: Path) -> None:
+    code, output, _ = _stage(tmp_path, ["webui-dist"], linux="failure", macos="failure", windows="failure")
+    assert code != 0 and "nothing to publish" in output, output
+
+
+def _publish(tmp_path: Path, **env: str) -> tuple[int, str, Path]:
+    script = tmp_path / "claw" / "scripts" / "publish-os-to-s3.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        'echo "PUBLISH args=$# env=$(wc -c < .env) key=${AWS_ACCESS_KEY_ID:+set} bucket=${BUCKET_NAME:-default}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "claw" / ".env").write_text("AWS_ACCESS_KEY_ID=stale\n", encoding="utf-8")
+    return _run_s3_step(tmp_path, "Publish with scripts/publish-os-to-s3.sh", env)
+
+
+def test_s3_publish_runs_the_local_script_with_the_repository_secrets(tmp_path: Path) -> None:
+    code, output, _ = _publish(tmp_path, AWS_ACCESS_KEY_ID="id", AWS_SECRET_ACCESS_KEY="secret", BUCKET_NAME="b")
+    assert code == 0, output
+    # Same call as `make aws-upload` (version from tauri.conf.json, all
+    # platforms), with the secrets from the environment and an empty .env.
+    assert "PUBLISH args=0 env=0 key=set bucket=b" in output, output
+
+
+def test_s3_publish_names_the_missing_secrets(tmp_path: Path) -> None:
+    code, output, _ = _publish(tmp_path, AWS_ACCESS_KEY_ID="", AWS_SECRET_ACCESS_KEY="")
+    assert code != 0 and "PUBLISH" not in output, output
+    assert "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY" in output, output
