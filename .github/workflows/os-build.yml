@@ -295,7 +295,8 @@ jobs:
           fi
           find os/linux -type f \( \
             -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
-            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' \
+            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' -o \
+            -name 'navin-cli-*.tar.gz' -o -name 'navin-cli-*.tar.gz.sha256' \
           \) -printf '%p %s\n' > "${RUNNER_TEMP}/linux-files.txt"
         id: stage
       - name: Upload Linux installers to Release
@@ -305,9 +306,18 @@ jobs:
           TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+          # build-offline.sh packs the CLI engine (curl install and
+          # `navin update`) next to the sidecar: publish it with the installers.
+          shopt -s nullglob
+          cli=(os/linux/bin/x64/navin-cli-*-linux-x64.tar.gz)
+          if [ "${#cli[@]}" -ne 1 ] || [ ! -f "${cli[0]}.sha256" ]; then
+            echo "expected one Linux CLI archive and its .sha256 under os/linux/bin/x64, found ${#cli[@]}"
+            exit 1
+          fi
           mapfile -t files < <(find os/linux -type f \( \
             -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
-            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' \
+            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' -o \
+            -name 'navin-cli-*.tar.gz' -o -name 'navin-cli-*.tar.gz.sha256' \
           \) | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no Linux installers to upload"
@@ -323,6 +333,7 @@ jobs:
             ${{ steps.claw.outputs.dir }}/os/linux/deb
             ${{ steps.claw.outputs.dir }}/os/linux/rpm
             ${{ steps.claw.outputs.dir }}/os/linux/pacman
+            ${{ steps.claw.outputs.dir }}/os/linux/bin/x64/navin-cli-*
           retention-days: 5
       - name: Write job summary
         if: always()
@@ -336,7 +347,7 @@ jobs:
           {
             echo "| Job | Result | Work covered |"
             echo "| --- | --- | --- |"
-            echo "| Linux x64 installers | ${icon} ${JOB_STATUS} | sidecar smoke, AppImage, deb, rpm, pacman if produced |"
+            echo "| Linux x64 installers | ${icon} ${JOB_STATUS} | sidecar smoke, CLI archive, AppImage, deb, rpm, pacman if produced |"
             echo
             echo "pacman produced: \`${pacman}\`"
             echo
@@ -695,9 +706,16 @@ jobs:
             echo "expected one notarized DMG and a checksum, dmgs=${#dmgs[@]} sums=${#sums[@]}"
             exit 1
           fi
-          bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${dmgs[0]}" "${sums[@]}"
+          # CLI engine packed by build-offline.sh (curl install and `navin update`).
+          cli=(os/macos/"${ARCH}"/navin-cli-*-macos-"${ARCH}".tar.gz)
+          if [ "${#cli[@]}" -ne 1 ] || [ ! -f "${cli[0]}.sha256" ]; then
+            echo "expected one macOS CLI archive and its .sha256 under os/macos/${ARCH}, found ${#cli[@]}"
+            exit 1
+          fi
+          bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" \
+            "${dmgs[0]}" "${sums[@]}" "${cli[0]}" "${cli[0]}.sha256"
           echo "released=1" >> "${GITHUB_OUTPUT}"
-          echo "uploaded $(basename "${dmgs[0]}") to ${TAG}"
+          echo "uploaded $(basename "${dmgs[0]}") and $(basename "${cli[0]}") to ${TAG}"
       - name: Upload macOS DMG artifact
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -706,6 +724,7 @@ jobs:
           path: |
             ${{ steps.claw.outputs.dir }}/os/macos/${{ matrix.arch }}/*.dmg
             ${{ steps.claw.outputs.dir }}/os/macos/${{ matrix.arch }}/SHA256SUMS*
+            ${{ steps.claw.outputs.dir }}/os/macos/${{ matrix.arch }}/navin-cli-*
           retention-days: 5
       - name: Write job summary
         if: always()
@@ -718,7 +737,7 @@ jobs:
           {
             echo "| Job | Result | Work covered |"
             echo "| --- | --- | --- |"
-            echo "| macOS ${ARCH} DMG | ${icon} ${JOB_STATUS} | sidecar smoke, Developer ID, notarized DMG |"
+            echo "| macOS ${ARCH} DMG | ${icon} ${JOB_STATUS} | sidecar smoke, CLI archive, Developer ID, notarized DMG |"
           } | tee -a "${GITHUB_STEP_SUMMARY}"
 
   windows:
@@ -829,8 +848,16 @@ jobs:
           TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+          # build-desktop.ps1 packs the signed engine as the CLI archive.
+          shopt -s nullglob
+          cli=(os/windows/x64/navin-cli-*-windows-x64.zip)
+          if [ "${#cli[@]}" -ne 1 ] || [ ! -f "${cli[0]}.sha256" ]; then
+            echo "expected one Windows CLI archive and its .sha256 under os/windows/x64, found ${#cli[@]}"
+            exit 1
+          fi
           mapfile -t files < <(find os/windows/x64 -type f \( \
-            -name '*.msi' -o -name '*.exe' -o -name 'SHA256SUMS*' \
+            -name '*.msi' -o -name '*.exe' -o -name 'SHA256SUMS*' -o \
+            -name 'navin-cli-*.zip' -o -name 'navin-cli-*.zip.sha256' \
           \) | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no Windows installers to upload"
@@ -854,5 +881,5 @@ jobs:
           {
             echo "| Job | Result | Work covered |"
             echo "| --- | --- | --- |"
-            echo "| Windows x64 MSI and NSIS | ${icon} ${JOB_STATUS} | sidecar smoke, Azure Trusted Signing, release upload |"
+            echo "| Windows x64 MSI and NSIS | ${icon} ${JOB_STATUS} | sidecar smoke, Azure Trusted Signing, CLI archive, release upload |"
           } | tee -a "${GITHUB_STEP_SUMMARY}"
