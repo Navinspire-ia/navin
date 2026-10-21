@@ -3,15 +3,15 @@
 
 The OS jobs fetch the closed-source tree and then run its build scripts.
 Those scripts install with `python -m pip`. This rewrites that checkout
-in place so the job uses uv, and fails if a pip install line was added
-or removed.
+in place so the job uses uv, and fails if an install command was added
+or removed. Comments and troubleshooting messages are not commands.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
-
 
 def rewrite(text: str, replacements: list[tuple[str, str, int]], label: str) -> str:
     for old, new, expected in replacements:
@@ -19,8 +19,11 @@ def rewrite(text: str, replacements: list[tuple[str, str, int]], label: str) -> 
         if found != expected:
             raise SystemExit(f"{label}: expected {expected} of {old!r}, found {found}")
         text = text.replace(old, new)
-    if "-m pip install" in text:
-        raise SystemExit(f"{label}: a pip install line is still present")
+    pip_command = re.compile(
+        r"""(?m)^\s*(?:&\s*)?(?:"[^"\n]+"|'[^'\n]+'|[^\s;]+)\s+-m\s+pip\s+install(?:\s|$)"""
+    )
+    if pip_command.search(text):
+        raise SystemExit(f"{label}: a pip install command is still present")
     return text
 
 
