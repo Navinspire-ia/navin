@@ -3,8 +3,22 @@
 Toutes les commandes se lancent a la racine du repo. Chaque artefact atterrit
 dans [`os/`](../os/README.md), avec son fichier de checksum SHA-256.
 PyInstaller et Tauri ne cross-compilent pas : chaque OS se builde sur son
-propre systeme (ou via le workflow GitHub Actions `os-release.yml`).
+propre systeme (ou via le workflow GitHub Actions `os-build.yml`).
 
+
+## Workflow CI
+
+Le workflow GitHub Actions `os-build.yml` peut etre lance manuellement avec
+`workflow_dispatch`. Pour une release complete, utiliser `targets=all`,
+`claw_ref=prod-v2`, `release_tag=v2.3.2` et `sign_windows=true`.
+
+Le job WebUI partage cree ou localise la release avant le lancement en parallele
+des uploads par plateforme. Le checkout de la source reste ephemere : seuls
+les artefacts distribuables et leurs checksums sont publies. Le job de tests
+installe aussi les dependances optionnelles `bedrock`, requises par les tests
+boto3.
+
+Les commandes locales ci-dessous necessitent l'arbre source complet.
 La distribution est **100 % Tauri** : le seul produit livre est l'app desktop
 native (fenetre Rust + WebView systeme) qui embarque le moteur en sidecar
 PyInstaller. Le sidecar (`make linux` / `make macos` / construit

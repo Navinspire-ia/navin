@@ -66,7 +66,7 @@ jobs:
           enable-cache: true
       - name: Install test extras
         working-directory: ${{ steps.claw.outputs.dir }}
-        run: uv pip install --system -e ".[dev-tools,documents,api,studio]" beautifulsoup4 pytest-asyncio
+        run: uv pip install --system -e ".[dev-tools,documents,api,studio,bedrock]" beautifulsoup4 pytest-asyncio
       - name: Download WebUI dist
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -140,6 +140,17 @@ jobs:
           name: browser-extension-zips
           path: ${{ steps.claw.outputs.dir }}/navin/browser_extension/*.zip
           retention-days: 1
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" \
+              --notes "Signed OS installers. Closed-source inputs are not in this repository." \
+              --target "${GITHUB_SHA}" --latest=false
+          fi
       - name: Write job summary
         if: always()
         env:
@@ -298,11 +309,6 @@ jobs:
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no Linux installers to upload"
             exit 1
-          fi
-          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" \
-              --notes "Signed OS installers. Closed-source inputs are not in this repository." \
-              --latest=false
           fi
           bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${files[@]}"
       - name: Upload Linux installers
@@ -550,13 +556,6 @@ jobs:
         run: |
           if [ -f navin/web/dist/index.html ]; then
             export NAVIN_SKIP_WEB_BUILD=1
-          fi
-          # evermeet.cx publishes a rolling ffmpeg zip. The prod-v2 pin for
-          # macos-x64 no longer matches, so re-pin that one target here.
-          # macOS arm64 uses a versioned osxexperts archive and stays pinned.
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            uv pip install --system certifi
-            python packaging/ffmpeg_vendor.py --target macos-x64 --force --update-manifest
           fi
           # PyInstaller may ship an older libssl than the sidecar was linked
           # against. Swap in a same-architecture OpenSSL that has the symbol.
@@ -830,11 +829,6 @@ jobs:
           if [ "${#files[@]}" -eq 0 ]; then
             echo "no Windows installers to upload"
             exit 1
-          fi
-          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" \
-              --notes "Signed OS installers. Closed-source inputs are not in this repository." \
-              --latest=false
           fi
           bash "${GITHUB_WORKSPACE}/.github/scripts/release-upload.sh" "${TAG}" "${files[@]}"
       - name: Upload Windows installers
