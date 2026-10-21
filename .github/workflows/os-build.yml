@@ -293,7 +293,10 @@ jobs:
           else
             echo "pacman=no" >> "${GITHUB_OUTPUT}"
           fi
-          find os/linux -type f -printf '%p %s\n' > "${RUNNER_TEMP}/linux-files.txt"
+          find os/linux -type f \( \
+            -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o \
+            -name '*.pkg.tar.zst' -o -name 'SHA256SUMS*' \
+          \) -printf '%p %s\n' > "${RUNNER_TEMP}/linux-files.txt"
         id: stage
       - name: Upload Linux installers to Release
         working-directory: ${{ steps.claw.outputs.dir }}
