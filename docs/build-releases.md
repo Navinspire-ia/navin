@@ -18,6 +18,9 @@ les artefacts distribuables et leurs checksums sont publies. Le job de tests
 installe aussi les dependances optionnelles `bedrock`, requises par les tests
 boto3.
 
+Le smoke test du sidecar Windows est obligatoire et s'execute avant l'upload
+des installateurs ; un echec bloque la release.
+
 Les commandes locales ci-dessous necessitent l'arbre source complet.
 La distribution est **100 % Tauri** : le seul produit livre est l'app desktop
 native (fenetre Rust + WebView systeme) qui embarque le moteur en sidecar

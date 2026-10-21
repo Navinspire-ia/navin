@@ -815,6 +815,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=8192
           NAVIN_SKIP_WEB_BUILD: "1"
         run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\build-desktop.ps1
+      - name: Smoke-test Windows sidecar
+        working-directory: ${{ steps.claw.outputs.dir }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\smoke-test.ps1 -Executable "$env:LOCALAPPDATA\NavinBuild\windows\navin-dist\navin.exe"
       - name: Upload Windows installers to Release
         shell: bash
         working-directory: ${{ steps.claw.outputs.dir }}
@@ -837,10 +840,6 @@ jobs:
           name: windows-x64
           path: ${{ steps.claw.outputs.dir }}/os/windows/x64/
           retention-days: 5
-      - name: Smoke-test Windows sidecar
-        continue-on-error: true
-        working-directory: ${{ steps.claw.outputs.dir }}
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\smoke-test.ps1 -Executable "$env:LOCALAPPDATA\NavinBuild\windows\navin-dist\navin.exe"
       - name: Write job summary
         if: always()
         env:
