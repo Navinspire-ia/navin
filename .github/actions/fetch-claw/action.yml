@@ -11,6 +11,12 @@ inputs:
   url:
     description: Clone URL from repository secret CLAW_GIT_URL
     required: true
+  version:
+    description: >-
+      Release version stamped into the clone (v-prefix allowed, e.g. v2.3.5).
+      Empty keeps the version committed in the tree.
+    required: false
+    default: ""
 
 outputs:
   dir:
@@ -47,3 +53,14 @@ runs:
           echo "sha=${sha}"
         } >> "${GITHUB_OUTPUT}"
         echo "cloned ref ${CLAW_REF} at ${sha}"
+    - name: Stamp release version
+      if: ${{ inputs.version != '' }}
+      shell: bash
+      env:
+        DEST: ${{ steps.clone.outputs.dir }}
+        RELEASE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # Every installer, file name and the S3 prefix read the version from
+        # the tree: stamp the tag here so release_tag alone decides it.
+        bash "${DEST}/scripts/set-version.sh" "${RELEASE_VERSION#v}"
